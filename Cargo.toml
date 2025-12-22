@@ -1,0 +1,88 @@
+[package]
+name = "rustle"
+version = "0.1.0"
+edition = "2024"
+description = "A modern music player built with Rust and iced, supporting NetEase Cloud Music"
+license = "AGPL-3.0-or-later"
+repository = "https://github.com/ArcticFoxNetwork/Rustle"
+homepage = "https://github.com/ArcticFoxNetwork/Rustle"
+readme = "README.md"
+keywords = ["music", "player", "netease", "iced", "gui"]
+categories = ["multimedia::audio"]
+
+[dependencies]
+iced = { version = "0.14", features = ["tokio", "advanced", "canvas", "image", "svg", "debug"] }
+iced_aw = { version = "0.13.0", features = ["full"] }
+wgpu = "27.0.1"
+bytemuck = { version = "1.24", features = ["derive"] }
+tokio = { version = "1.48", features = ["full"] }
+rodio = { version = "0.21.1", features = ["symphonia-all"] }
+spectrum-analyzer = "1.7.0"
+rtrb = "0.3.2"
+sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio-rustls", "macros"] }
+lofty = "0.22.4"
+walkdir = "2.5.0"
+directories = "6.0.0"
+
+serde = "1.0.228"
+serde_json = "1.0.145"
+tracing = "0.1.43"
+tracing-subscriber = "0.3.22"
+anyhow = "1.0.100"
+once_cell = "1.21.3"
+
+# Local playlist import
+rayon = "1.11.0"
+encoding_rs = "0.8.35"
+notify = { version = "8.0", features = ["serde"] }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+rfd = "0.15"
+async-stream = "0.3"
+rand = "0.9"
+cosmic-text = "0.15.0"
+parking_lot = "0.12"
+
+# SDF text rendering
+ttf-parser = "0.25"
+sdf_glyph_renderer = "1.0"
+ab_glyph = "0.2"
+quick-xml = "0.37"
+
+# Netease Cloud Music API
+qrcode-generator = "5.0"
+cookie_store = "0.21"
+isahc = { version = "1.7", features = ["cookies"] }
+lazy_static = "1.5"
+urlqstring = "0.2"
+openssl = { version = "0.10", features = ["vendored"] }
+hex = "0.4"
+base64 = "0.22"
+regex = "1.10"
+urlencoding = "2.1"
+dirs = "6.0.0"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+mpris-server = "0.9"
+ksni = { version = "0.3", default-features = false, features = ["tokio"] }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[patch.crates-io]
+winit = { git = "https://github.com/ArcticFoxNetwork/winit", branch = "wayland-visibility" }
+iced = { git = "https://github.com/ArcticFoxNetwork/iced", branch = "wayland-visibility" }
+iced_runtime = { git = "https://github.com/ArcticFoxNetwork/iced", branch = "wayland-visibility" }
+iced_winit = { git = "https://github.com/ArcticFoxNetwork/iced", branch = "wayland-visibility" }
+iced_core = { git = "https://github.com/ArcticFoxNetwork/iced", branch = "wayland-visibility" }
+iced_futures = { git = "https://github.com/ArcticFoxNetwork/iced", branch = "wayland-visibility" }
+iced_graphics = { git = "https://github.com/ArcticFoxNetwork/iced", branch = "wayland-visibility" }
+iced_widget = { git = "https://github.com/ArcticFoxNetwork/iced", branch = "wayland-visibility" }
+iced_renderer = { git = "https://github.com/ArcticFoxNetwork/iced", branch = "wayland-visibility" }
+iced_wgpu = { git = "https://github.com/ArcticFoxNetwork/iced", branch = "wayland-visibility" }

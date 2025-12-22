@@ -1,0 +1,303 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  APP_NAME: rustle
+  APP_DISPLAY_NAME: Rustle
+
+jobs:
+  linux-appimage:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libssl-dev \
+            libdbus-1-dev \
+            libasound2-dev \
+            libfuse2 \
+            fuse \
+            imagemagick
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Create AppImage directory structure
+        run: |
+          mkdir -p AppDir/usr/bin
+          mkdir -p AppDir/usr/share/applications
+          mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          cp target/release/${{ env.APP_NAME }} AppDir/usr/bin/
+
+      - name: Create desktop file
+        run: |
+          cat > AppDir/usr/share/applications/${{ env.APP_NAME }}.desktop << DESKTOP
+          [Desktop Entry]
+          Name=${{ env.APP_DISPLAY_NAME }}
+          Comment=A modern music player
+          Exec=${{ env.APP_NAME }}
+          Icon=${{ env.APP_NAME }}
+          Type=Application
+          Categories=Audio;Music;Player;
+          DESKTOP
+
+      - name: Setup icon and AppRun
+        run: |
+          # Generate 256x256 icon from high-res source
+          if [ -f "assets/icons/icon.png" ]; then
+            convert assets/icons/icon.png -resize 256x256 AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png
+          else
+            convert -size 256x256 xc:pink AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png 2>/dev/null || touch AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png
+          fi
+
+      - name: Create AppRun script
+        run: |
+          cat > AppDir/AppRun << APPRUN
+          #!/bin/bash
+          SELF=\$(readlink -f "\$0")
+          HERE=\${SELF%/*}
+          export PATH="\${HERE}/usr/bin:\${PATH}"
+          export LD_LIBRARY_PATH="\${HERE}/usr/lib:\${LD_LIBRARY_PATH}"
+          exec "\${HERE}/usr/bin/${{ env.APP_NAME }}" "\$@"
+          APPRUN
+          chmod +x AppDir/AppRun
+
+      - name: Link files to AppDir root
+        run: |
+          ln -sf usr/share/applications/${{ env.APP_NAME }}.desktop AppDir/
+          ln -sf usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png AppDir/
+
+      - name: Download appimagetool
+        run: |
+          wget -q https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage
+          chmod +x appimagetool-x86_64.AppImage
+
+      - name: Build AppImage
+        run: |
+          ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir ${{ env.APP_NAME }}-linux-x86_64.AppImage
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-appimage
+          path: ${{ env.APP_NAME }}-linux-x86_64.AppImage
+
+  macos:
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            os: macos-14
+            arch: x86_64
+          - target: aarch64-apple-darwin
+            os: macos-14
+            arch: arm64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Create app bundle directories
+        run: |
+          mkdir -p "${{ env.APP_DISPLAY_NAME }}.app/Contents/MacOS"
+          mkdir -p "${{ env.APP_DISPLAY_NAME }}.app/Contents/Resources"
+          cp target/${{ matrix.target }}/release/${{ env.APP_NAME }} "${{ env.APP_DISPLAY_NAME }}.app/Contents/MacOS/"
+
+      - name: Get version from Cargo.toml
+        id: version
+        run: |
+          VERSION=$(grep '^version' Cargo.toml | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Create Info.plist
+        run: |
+          cat > "${{ env.APP_DISPLAY_NAME }}.app/Contents/Info.plist" << PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>${{ env.APP_NAME }}</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.${{ env.APP_NAME }}.app</string>
+              <key>CFBundleName</key>
+              <string>${{ env.APP_DISPLAY_NAME }}</string>
+              <key>CFBundleIconFile</key>
+              <string>AppIcon</string>
+              <key>CFBundleVersion</key>
+              <string>${{ steps.version.outputs.version }}</string>
+              <key>CFBundleShortVersionString</key>
+              <string>${{ steps.version.outputs.version }}</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>LSMinimumSystemVersion</key>
+              <string>10.13</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+          </dict>
+          </plist>
+          PLIST
+
+      - name: Generate and copy icon
+        run: |
+          # Generate all icon sizes from high-res source (2048x2048)
+          if [ -f "assets/icons/icon.png" ]; then
+            mkdir -p "assets/icons/macos/icon.iconset"
+            # Generate all sizes for macOS iconset (including 1024x1024 for macOS 26)
+            sips -z 1024 1024 assets/icons/icon.png --out "assets/icons/macos/icon.iconset/icon_512x512@2x.png"
+            sips -z 512 512 assets/icons/icon.png --out "assets/icons/macos/icon.iconset/icon_512x512.png"
+            sips -z 512 512 assets/icons/icon.png --out "assets/icons/macos/icon.iconset/icon_256x256@2x.png"
+            sips -z 256 256 assets/icons/icon.png --out "assets/icons/macos/icon.iconset/icon_256x256.png"
+            sips -z 256 256 assets/icons/icon.png --out "assets/icons/macos/icon.iconset/icon_128x128@2x.png"
+            sips -z 128 128 assets/icons/icon.png --out "assets/icons/macos/icon.iconset/icon_128x128.png"
+            sips -z 64 64 assets/icons/icon.png --out "assets/icons/macos/icon.iconset/icon_32x32@2x.png"
+            sips -z 32 32 assets/icons/icon.png --out "assets/icons/macos/icon.iconset/icon_32x32.png"
+            sips -z 32 32 assets/icons/icon.png --out "assets/icons/macos/icon.iconset/icon_16x16@2x.png"
+            sips -z 16 16 assets/icons/icon.png --out "assets/icons/macos/icon.iconset/icon_16x16.png"
+            iconutil -c icns "assets/icons/macos/icon.iconset" -o "${{ env.APP_DISPLAY_NAME }}.app/Contents/Resources/AppIcon.icns"
+          elif [ -f "assets/icon.icns" ]; then
+            cp assets/icon.icns "${{ env.APP_DISPLAY_NAME }}.app/Contents/Resources/AppIcon.icns"
+          fi
+
+      - name: Create DMG
+        run: |
+          hdiutil create -volname "${{ env.APP_DISPLAY_NAME }}" -srcfolder "${{ env.APP_DISPLAY_NAME }}.app" -ov -format UDZO "${{ env.APP_NAME }}-macos-${{ matrix.arch }}.dmg"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: ${{ env.APP_NAME }}-macos-${{ matrix.arch }}.dmg
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install OpenSSL and ImageMagick
+        run: |
+          choco install openssl imagemagick -y
+          echo "OPENSSL_DIR=C:\Program Files\OpenSSL-Win64" >> $env:GITHUB_ENV
+
+      - name: Generate ICO icon
+        shell: pwsh
+        run: |
+          magick assets/icons/icon.png -define icon:auto-resize=256,128,64,48,32,16 assets/icons/icon.ico
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: windows-msvc
+
+      - name: Build release
+        env:
+          OPENSSL_DIR: C:\Program Files\OpenSSL-Win64
+          OPENSSL_LIB_DIR: C:\Program Files\OpenSSL-Win64\lib\VC\x64\MT
+          OPENSSL_INCLUDE_DIR: C:\Program Files\OpenSSL-Win64\include
+        run: cargo build --release
+
+      - name: Rename exe
+        shell: pwsh
+        run: |
+          Move-Item "target/release/${{ env.APP_NAME }}.exe" "${{ env.APP_NAME }}-windows-x86_64.exe"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: ${{ env.APP_NAME }}-windows-x86_64.exe
+
+  release:
+    needs: [linux-appimage, macos, windows]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure
+        run: ls -R artifacts
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            artifacts/linux-appimage/*
+            artifacts/macos-x86_64/*
+            artifacts/macos-arm64/*
+            artifacts/windows-x86_64/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true
+
+  aur:
+    needs: [release]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Update PKGBUILD versions
+        run: |
+          sed -i "s/pkgver=.*/pkgver=${{ steps.version.outputs.version }}/" aur/PKGBUILD
+          sed -i "s/pkgver=.*/pkgver=${{ steps.version.outputs.version }}/" aur-bin/PKGBUILD
+
+      - name: Publish rustle to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v3
+        with:
+          pkgname: rustle
+          pkgbuild: aur/PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ steps.version.outputs.version }}"
+          force_push: true
+
+      - name: Publish rustle-bin to AUR
+        uses: KSXGitHub/github-actions-deploy-aur@v3
+        with:
+          pkgname: rustle-bin
+          pkgbuild: aur-bin/PKGBUILD
+          commit_username: ${{ secrets.AUR_USERNAME }}
+          commit_email: ${{ secrets.AUR_EMAIL }}
+          ssh_private_key: ${{ secrets.AUR_SSH_PRIVATE_KEY }}
+          commit_message: "Update to ${{ steps.version.outputs.version }}"
+          force_push: true
