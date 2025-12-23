@@ -4,7 +4,6 @@
 //! to customize all keyboard shortcuts in the application.
 
 use std::collections::HashMap;
-use std::path::Path;
 
 use iced::keyboard::{Key, Modifiers};
 use serde::{Deserialize, Serialize};
@@ -32,44 +31,6 @@ pub enum Action {
     ToggleFullscreen,
 }
 
-impl Action {
-    /// Get all available actions
-    pub fn all() -> &'static [Action] {
-        &[
-            Action::PlayPause,
-            Action::NextTrack,
-            Action::PrevTrack,
-            Action::VolumeUp,
-            Action::VolumeDown,
-            Action::VolumeMute,
-            Action::SeekForward,
-            Action::SeekBackward,
-            Action::GoHome,
-            Action::GoSearch,
-            Action::ToggleQueue,
-            Action::ToggleFullscreen,
-        ]
-    }
-
-    /// Get human-readable name for the action
-    pub fn display_name(&self) -> &'static str {
-        match self {
-            Action::PlayPause => "播放/暂停",
-            Action::NextTrack => "下一首",
-            Action::PrevTrack => "上一首",
-            Action::VolumeUp => "增加音量",
-            Action::VolumeDown => "减少音量",
-            Action::VolumeMute => "静音",
-            Action::SeekForward => "快进",
-            Action::SeekBackward => "快退",
-            Action::GoHome => "返回首页",
-            Action::GoSearch => "搜索",
-            Action::ToggleQueue => "显示/隐藏队列",
-            Action::ToggleFullscreen => "全屏",
-        }
-    }
-}
-
 /// A keyboard shortcut consisting of modifiers and a key
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct KeyBinding {
@@ -95,12 +56,14 @@ impl KeyBinding {
     }
 
     /// Add Shift modifier
+    #[allow(dead_code)]
     pub fn shift(mut self) -> Self {
         self.modifiers.shift = true;
         self
     }
 
     /// Add Alt modifier
+    #[allow(dead_code)]
     pub fn alt(mut self) -> Self {
         self.modifiers.alt = true;
         self
@@ -116,12 +79,21 @@ impl KeyBinding {
         let mut parts = Vec::new();
 
         if self.modifiers.ctrl {
+            #[cfg(target_os = "macos")]
+            parts.push("⌘");
+            #[cfg(not(target_os = "macos"))]
             parts.push("Ctrl");
         }
         if self.modifiers.alt {
+            #[cfg(target_os = "macos")]
+            parts.push("⌥");
+            #[cfg(not(target_os = "macos"))]
             parts.push("Alt");
         }
         if self.modifiers.shift {
+            #[cfg(target_os = "macos")]
+            parts.push("⇧");
+            #[cfg(not(target_os = "macos"))]
             parts.push("Shift");
         }
 
@@ -141,9 +113,12 @@ pub struct ModifierSet {
 impl ModifierSet {
     /// Check if modifiers match
     pub fn matches(&self, modifiers: &Modifiers) -> bool {
-        self.ctrl == modifiers.control()
-            && self.alt == modifiers.alt()
-            && self.shift == modifiers.shift()
+        #[cfg(target_os = "macos")]
+        let ctrl_match = self.ctrl == modifiers.logo();
+        #[cfg(not(target_os = "macos"))]
+        let ctrl_match = self.ctrl == modifiers.control();
+
+        ctrl_match && self.alt == modifiers.alt() && self.shift == modifiers.shift()
     }
 }
 
@@ -475,48 +450,9 @@ impl Default for KeyBindings {
 }
 
 impl KeyBindings {
-    /// Create empty keybindings
-    pub fn empty() -> Self {
-        Self {
-            bindings: HashMap::new(),
-        }
-    }
-
-    /// Load keybindings from a JSON file
-    pub fn load_from_file(path: &Path) -> Result<Self, KeyBindingsError> {
-        let content =
-            std::fs::read_to_string(path).map_err(|e| KeyBindingsError::Io(e.to_string()))?;
-        let bindings: Self =
-            serde_json::from_str(&content).map_err(|e| KeyBindingsError::Parse(e.to_string()))?;
-        Ok(bindings)
-    }
-
-    /// Save keybindings to a JSON file
-    pub fn save_to_file(&self, path: &Path) -> Result<(), KeyBindingsError> {
-        let content = serde_json::to_string_pretty(self)
-            .map_err(|e| KeyBindingsError::Parse(e.to_string()))?;
-        std::fs::write(path, content).map_err(|e| KeyBindingsError::Io(e.to_string()))?;
-        Ok(())
-    }
-
-    /// Get the keybindings for an action
-    pub fn get(&self, action: &Action) -> Option<&Vec<KeyBinding>> {
-        self.bindings.get(action)
-    }
-
     /// Set keybindings for an action
     pub fn set(&mut self, action: Action, bindings: Vec<KeyBinding>) {
         self.bindings.insert(action, bindings);
-    }
-
-    /// Add a keybinding for an action
-    pub fn add(&mut self, action: Action, binding: KeyBinding) {
-        self.bindings.entry(action).or_default().push(binding);
-    }
-
-    /// Remove all keybindings for an action
-    pub fn clear(&mut self, action: &Action) {
-        self.bindings.remove(action);
     }
 
     /// Find the action that matches the given key event
@@ -541,24 +477,6 @@ impl KeyBindings {
     }
 }
 
-/// Errors that can occur with keybindings
-#[derive(Debug, Clone)]
-pub enum KeyBindingsError {
-    Io(String),
-    Parse(String),
-}
-
-impl std::fmt::Display for KeyBindingsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            KeyBindingsError::Io(e) => write!(f, "IO error: {}", e),
-            KeyBindingsError::Parse(e) => write!(f, "Parse error: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for KeyBindingsError {}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -566,7 +484,7 @@ mod tests {
     #[test]
     fn test_default_bindings() {
         let bindings = KeyBindings::default();
-        assert!(bindings.get(&Action::PlayPause).is_some());
+        assert!(bindings.find_action(&Key::Named(iced::keyboard::key::Named::Space), &Modifiers::default()).is_some());
     }
 
     #[test]
