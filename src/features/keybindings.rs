@@ -49,7 +49,19 @@ impl KeyBinding {
         }
     }
 
-    /// Add Ctrl modifier 
+    pub fn primary(mut self) -> Self {
+        #[cfg(target_os = "macos")]
+        {
+            self.modifiers.cmd = true;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.modifiers.ctrl = true;
+        }
+        self
+    }
+
+    #[allow(dead_code)]
     pub fn ctrl(mut self) -> Self {
         self.modifiers.ctrl = true;
         self
@@ -406,50 +418,50 @@ impl Default for KeyBindings {
         bindings.insert(
             Action::NextTrack,
             vec![
-                KeyBinding::new(KeyCode::N).ctrl(),
+                KeyBinding::new(KeyCode::N).primary(),
                 KeyBinding::new(KeyCode::MediaNext),
             ],
         );
         bindings.insert(
             Action::PrevTrack,
             vec![
-                KeyBinding::new(KeyCode::P).ctrl(),
+                KeyBinding::new(KeyCode::P).primary(),
                 KeyBinding::new(KeyCode::MediaPrev),
             ],
         );
         bindings.insert(
             Action::VolumeUp,
             vec![
-                KeyBinding::new(KeyCode::Up).ctrl(),
+                KeyBinding::new(KeyCode::Up).primary(),
                 KeyBinding::new(KeyCode::VolumeUp),
             ],
         );
         bindings.insert(
             Action::VolumeDown,
             vec![
-                KeyBinding::new(KeyCode::Down).ctrl(),
+                KeyBinding::new(KeyCode::Down).primary(),
                 KeyBinding::new(KeyCode::VolumeDown),
             ],
         );
         bindings.insert(
             Action::VolumeMute,
             vec![
-                KeyBinding::new(KeyCode::M).ctrl(),
+                KeyBinding::new(KeyCode::M).primary(),
                 KeyBinding::new(KeyCode::VolumeMute),
             ],
         );
         bindings.insert(
             Action::SeekForward,
-            vec![KeyBinding::new(KeyCode::Right).ctrl()],
+            vec![KeyBinding::new(KeyCode::Right).primary()],
         );
         bindings.insert(
             Action::SeekBackward,
-            vec![KeyBinding::new(KeyCode::Left).ctrl()],
+            vec![KeyBinding::new(KeyCode::Left).primary()],
         );
 
         // Navigation
-        bindings.insert(Action::GoHome, vec![KeyBinding::new(KeyCode::H).ctrl()]);
-        bindings.insert(Action::GoSearch, vec![KeyBinding::new(KeyCode::K).ctrl()]);
+        bindings.insert(Action::GoHome, vec![KeyBinding::new(KeyCode::H).primary()]);
+        bindings.insert(Action::GoSearch, vec![KeyBinding::new(KeyCode::K).primary()]);
 
         // UI
         bindings.insert(Action::ToggleQueue, vec![KeyBinding::new(KeyCode::Q)]);
