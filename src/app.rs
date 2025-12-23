@@ -208,12 +208,15 @@ impl App {
         let resize_sub =
             iced::window::resize_events().map(|(_id, size)| Message::WindowResized(size));
 
-        // 11. Mouse events for window dragging (top 48px area)
+        // 11. Mouse events for window dragging and sidebar resize
         let mouse_sub = if !self.core.window_hidden {
             iced::event::listen().filter_map(|event| match event {
                 iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
                     iced::mouse::Button::Left,
                 )) => Some(Message::MousePressed),
+                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                    iced::mouse::Button::Left,
+                )) => Some(Message::MouseReleased),
                 iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
                     Some(Message::MouseMoved(position))
                 }

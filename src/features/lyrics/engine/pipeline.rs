@@ -288,7 +288,7 @@ impl LyricsEnginePrimitive {
 
             // Use lens model to compute style
             let is_active = self.buffered_lines.contains(&idx);
-            // Note: velocity is 0 here since we don't have access to physics in primitive
+            // velocity 为 0，primitive 中无法访问物理状态
             let (mut scale, blur) = lens.calculate(distance_from_center, viewport.height, 0.0);
             let opacity = lens.calculate_opacity(distance_from_center, viewport.height);
             let glow = lens.calculate_glow(distance_from_center, viewport.height, is_active);

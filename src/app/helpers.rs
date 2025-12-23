@@ -47,7 +47,7 @@ pub async fn load_queue(db: Arc<Database>) -> Vec<DbSong> {
 
 /// Validate all songs in database and remove entries for missing files
 /// Returns the number of invalid songs removed
-/// Note: NCM songs (file_path starts with "ncm://") are skipped as they are cloud songs
+/// NCM songs (file_path starts with "ncm://") are skipped as they are cloud songs
 pub async fn validate_songs(db: Arc<Database>) -> u32 {
     let songs = match db.get_all_songs().await {
         Ok(songs) => songs,

@@ -208,9 +208,9 @@ pub fn extract_embedded_cover(audio_path: &Path, output_dir: &Path) -> Result<Op
     Ok(Some(output_path))
 }
 
-/// Get cover art path for a song, extracting embedded art if needed
+/// 获取歌曲封面路径，必要时提取内嵌封面
 ///
-/// This is the main function to use when loading songs.
+/// 加载歌曲时使用此函数
 /// It will:
 /// 1. Return external cover path if found
 /// 2. Extract embedded cover to cache dir if found

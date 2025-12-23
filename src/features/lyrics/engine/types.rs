@@ -15,8 +15,8 @@ use cosmic_text::Weight;
 
 /// Font configuration for lyrics rendering
 ///
-/// Controls font family, weight, and debug logging for the lyrics engine.
-/// This ensures consistent font usage across TextShaper and SdfCache.
+/// 控制字体族、字重和调试日志
+/// 确保 TextShaper 和 SdfCache 使用一致的字体
 #[derive(Debug, Clone)]
 pub struct FontConfig {
     /// Font family name (e.g., "Noto Sans CJK SC")
@@ -211,8 +211,8 @@ impl LyricLineData {
         ));
     }
 
-    /// Get total fade duration (for mask animation)
-    /// This is the time from line start to the last word's end
+    /// 获取总淡入时长（用于 mask 动画）
+    /// 从行开始到最后一个词结束的时间
     pub fn total_fade_duration(&self) -> u64 {
         let word_end = self
             .words
@@ -226,8 +226,8 @@ impl LyricLineData {
 
 /// Pre-computed mask animation data for a line
 ///
-/// Pre-computes animation keyframes for each word's mask position.
-/// This avoids real-time calculation and ensures smooth, accurate animations.
+/// 预计算每个词的 mask 位置动画关键帧
+/// 避免实时计算，确保平滑准确的动画
 #[derive(Debug, Clone)]
 pub struct LineMaskAnimation {
     /// Total duration of the fade animation (ms)
@@ -405,11 +405,11 @@ pub struct WordData {
     pub start_ms: u64,
     /// End time in milliseconds
     pub end_ms: u64,
-    /// Per-word romanized text (the romanWord)
-    /// This is displayed below the word during emphasis
+    /// 逐词罗马音（romanWord）
+    /// 强调时显示在词下方
     pub roman_word: Option<String>,
-    /// Whether this word should be emphasized (glow effect)
-    /// This is computed by chunk_and_split_words based on duration and length criteria
+    /// 是否强调（发光效果）
+    /// 由 chunk_and_split_words 根据时长和长度计算
     pub emphasize: bool,
     /// X position start (normalized 0-1, calculated during layout)
     pub x_start: f32,
@@ -579,7 +579,7 @@ pub fn emphasis_easing(x: f32) -> f32 {
 fn cubic_bezier(t: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
     // For a cubic bezier curve B(t) = (1-t)³P0 + 3(1-t)²tP1 + 3(1-t)t²P2 + t³P3
     // With P0=(0,0), P1=(x1,y1), P2=(x2,y2), P3=(1,1)
-    // We need to find t for a given x, then return y
+    // 根据 x 找到 t，然后返回 y
     //
     // For simplicity, we use Newton-Raphson iteration to find t from x
     // then calculate y
@@ -593,7 +593,7 @@ fn cubic_bezier(t: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
         let mt = 1.0 - t;
         let mt2 = mt * mt;
         // B(t) = (1-t)³*0 + 3(1-t)²t*p1 + 3(1-t)t²*p2 + t³*1
-        // Note: (1-t)³ term is multiplied by P0=0, so it's omitted
+        // (1-t)³ term is multiplied by P0=0, so it's omitted
         3.0 * mt2 * t * p1 + 3.0 * mt * t2 * p2 + t3
     };
 
@@ -626,7 +626,7 @@ fn cubic_bezier(t: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
 /// Regex: /^[\p{Unified_Ideograph}\u0800-\u9FFC]+$/u
 /// This checks if the ENTIRE string consists of CJK characters only.
 ///
-/// Note: the regex is quite broad. The \u0800-\u9FFC range includes:
+/// The regex is quite broad. The \u0800-\u9FFC range includes:
 /// - \u0800-\u0FFF: Various scripts (Samaritan, Mandaic, Syriac, etc.)
 /// - \u1000-\u109F: Myanmar
 /// - \u3000-\u303F: CJK Symbols and Punctuation

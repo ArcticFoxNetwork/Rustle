@@ -291,8 +291,8 @@ impl App {
         }
     }
 
-    /// Pre-calculate and cache next/prev indices for shuffle mode
-    /// This ensures preloading and actual playback use the same indices
+    /// 预计算并缓存 shuffle 模式的 next/prev 索引
+    /// 确保预加载和实际播放使用相同的索引
     pub fn cache_shuffle_indices(&mut self) {
         let queue_len = self.library.queue.len();
 
@@ -513,9 +513,7 @@ impl App {
             });
         }
 
-        // Clear current song's finished state to prevent re-triggering
-        // This is important because is_finished() might return true multiple times
-        // before the next song starts playing
+        // 清除播放完成状态，防止重复触发
         if let Some(player) = &mut self.core.audio {
             player.stop();
         }

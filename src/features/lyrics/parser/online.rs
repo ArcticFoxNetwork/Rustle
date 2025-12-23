@@ -113,7 +113,7 @@ pub async fn fetch_and_cache_lyrics(
     for (time, text) in lyrics_data {
         // Skip if same timestamp (translation line)
         if time == current_time && !lines.is_empty() {
-            // This is likely a translation line
+            // 可能是翻译行
             if let Some(last_line) = lines.last_mut() {
                 if last_line.translated_lyric.is_empty() {
                     last_line.translated_lyric = text.trim().to_string();

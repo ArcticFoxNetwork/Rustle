@@ -111,7 +111,11 @@ impl App {
             self.ui.playlist_page.current.as_ref().map(|p| p.id),
             &self.ui.sidebar_animations,
             self.ui.playlist_page.viewing_recently_played,
+            self.ui.sidebar_width,
         );
+
+        // Sidebar resize handle (draggable divider)
+        let resize_handle = components::sidebar_resize_handle::view(self.ui.sidebar_dragging);
 
         // Determine main content: playlist page or nav page
         // Get liked songs for playlist view (empty set if not logged in)
@@ -308,9 +312,11 @@ impl App {
             .into()
         };
 
-        // Main layout: sidebar + right content (with player bar and queue popup)
-        let main_layout: Element<'_, Message> =
-            row![sidebar, right_content].width(Fill).height(Fill).into();
+        // Main layout: sidebar + resize handle + right content (with player bar and queue popup)
+        let main_layout: Element<'_, Message> = row![sidebar, resize_handle, right_content]
+            .width(Fill)
+            .height(Fill)
+            .into();
 
         // Build overlays - always use consistent stack structure to preserve scroll
         let now = iced::time::Instant::now();

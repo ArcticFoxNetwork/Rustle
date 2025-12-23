@@ -106,7 +106,7 @@ pub fn start_tray_sync() -> anyhow::Result<(TrayHandle, mpsc::UnboundedReceiver<
 #[cfg(target_os = "linux")]
 mod linux {
     use super::*;
-    use ksni::{Handle, Icon, MenuItem, Status, ToolTip, Tray as KsniTray, TrayMethods, menu::*};
+    use ksni::{Icon, MenuItem, Status, ToolTip, Tray as KsniTray, TrayMethods, menu::*};
 
     /// Linux system tray implementation using ksni
     pub struct LinuxTray {
@@ -240,14 +240,14 @@ mod linux {
 
         vec![Icon {
             width: size as i32,
-            height: height as i32,
+            height: size as i32,
             data,
         }]
     }
 
     fn create_menu(
         state: &TrayState,
-        tx: &mpsc::UnboundedSender<TrayCommand>,
+        _tx: &mpsc::UnboundedSender<TrayCommand>,
     ) -> Vec<MenuItem<LinuxTray>> {
         let play_label = if state.is_playing { "暂停" } else { "播放" };
         let play_icon = if state.is_playing {
@@ -506,8 +506,7 @@ mod native {
         // Leak the tray icon to keep it alive for the lifetime of the application
         Box::leak(Box::new(tray));
 
-        // Set up event handlers that forward events to our channel
-        // This is the recommended approach for winit-based applications
+        // 设置事件处理器，将事件转发到 channel
         let cmd_tx_menu = cmd_tx.clone();
         tray_icon::menu::MenuEvent::set_event_handler(Some(
             move |event: tray_icon::menu::MenuEvent| {

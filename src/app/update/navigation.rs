@@ -192,6 +192,12 @@ impl App {
 
             Message::MouseMoved(position) => {
                 self.core.mouse_position = *position;
+                // Update sidebar width if dragging
+                if self.ui.sidebar_dragging {
+                    const MIN_WIDTH: f32 = 200.0;
+                    const MAX_WIDTH: f32 = 400.0;
+                    self.ui.sidebar_width = position.x.clamp(MIN_WIDTH, MAX_WIDTH);
+                }
                 Some(Task::none())
             }
 
@@ -203,6 +209,14 @@ impl App {
                 } else {
                     Some(Task::none())
                 }
+            }
+
+            Message::MouseReleased => {
+                // 结束侧边栏拖动
+                if self.ui.sidebar_dragging {
+                    self.ui.sidebar_dragging = false;
+                }
+                Some(Task::none())
             }
 
             Message::OpenSettings => {

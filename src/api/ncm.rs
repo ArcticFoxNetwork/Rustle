@@ -10,7 +10,7 @@ use std::{fs, io, path::PathBuf};
 use tracing::{debug, error};
 
 use super::ncm_api::{
-    CookieBuilder, CookieJar, MusicApi,
+    CookieJar, MusicApi,
     model::{SongInfo, SongUrl},
 };
 
@@ -36,16 +36,13 @@ pub const BASE_URL_LIST: [&str; 12] = [
 ];
 
 /// NCM API client with built-in quality settings
-///
-/// The client internally manages the music quality setting, so callers
-/// don't need to pass quality parameters. Use `set_quality()` to change
-/// the quality setting.
 #[derive(Clone)]
 pub struct NcmClient {
     pub client: MusicApi,
-    /// Music quality setting (0=128k, 1=192k, 2=320k, 3=SQ, 4=Hi-Res)
-    /// Using Arc<AtomicU32> for thread-safe sharing across async tasks
+    /// 音质设置 (0=128k, 1=192k, 2=320k, 3=SQ, 4=Hi-Res)
     quality: Arc<AtomicU32>,
+    /// Cookie 持久化存储
+    cookie_store: Arc<parking_lot::RwLock<CookieStore>>,
 }
 
 impl std::fmt::Debug for NcmClient {
@@ -61,10 +58,11 @@ impl NcmClient {
         Self {
             client: MusicApi::new(MAX_CONS),
             quality: Arc::new(AtomicU32::new(DEFAULT_QUALITY)),
+            cookie_store: Arc::new(parking_lot::RwLock::new(CookieStore::default())),
         }
     }
 
-    /// Create a new client with proxy settings
+    /// 带代理创建客户端
     pub fn with_proxy(proxy_url: Option<String>) -> Self {
         let mut client = Self::new();
         if let Some(url) = proxy_url {
@@ -75,16 +73,29 @@ impl NcmClient {
         client
     }
 
-    pub fn from_cookie_jar(cookie_jar: CookieJar) -> Self {
+    pub fn from_cookie_jar(
+        cookie_jar: Arc<CookieJar>,
+        cookie_store: CookieStore,
+        csrf_token: String,
+    ) -> Self {
+        let client = MusicApi::from_cookie_jar(cookie_jar, MAX_CONS);
+        // Set CSRF token
+        client.set_csrf(csrf_token);
         Self {
-            client: MusicApi::from_cookie_jar(cookie_jar, MAX_CONS),
+            client,
             quality: Arc::new(AtomicU32::new(DEFAULT_QUALITY)),
+            cookie_store: Arc::new(parking_lot::RwLock::new(cookie_store)),
         }
     }
 
-    /// Create a client from cookie jar with proxy settings
-    pub fn from_cookie_jar_with_proxy(cookie_jar: CookieJar, proxy_url: Option<String>) -> Self {
-        let mut client = Self::from_cookie_jar(cookie_jar);
+    /// 带代理从 cookie jar 创建客户端
+    pub fn from_cookie_jar_with_proxy(
+        cookie_jar: Arc<CookieJar>,
+        cookie_store: CookieStore,
+        csrf_token: String,
+        proxy_url: Option<String>,
+    ) -> Self {
+        let mut client = Self::from_cookie_jar(cookie_jar, cookie_store, csrf_token);
         if let Some(url) = proxy_url {
             if let Err(e) = client.set_proxy(url) {
                 tracing::warn!("Failed to set proxy: {}", e);
@@ -97,14 +108,7 @@ impl NcmClient {
         self.client.set_proxy(&proxy)
     }
 
-    /// Set the music quality for downloads
-    ///
-    /// Quality values:
-    /// - 0: 128kbps (Standard)
-    /// - 1: 192kbps (Higher)
-    /// - 2: 320kbps (High) - default
-    /// - 3: SQ/FLAC (Lossless)
-    /// - 4: Hi-Res
+    /// 设置音质
     pub fn set_quality(&self, quality: u32) {
         self.quality.store(quality, Ordering::Relaxed);
         tracing::info!(
@@ -114,12 +118,12 @@ impl NcmClient {
         );
     }
 
-    /// Get current quality setting
+    /// 获取当前音质
     pub fn quality(&self) -> u32 {
         self.quality.load(Ordering::Relaxed)
     }
 
-    /// Convert quality index to API bitrate value
+    /// 音质索引转比特率
     fn quality_to_bitrate(quality: u32) -> u32 {
         match quality {
             0 => 128000,
@@ -131,7 +135,7 @@ impl NcmClient {
         }
     }
 
-    /// Get API bitrate string for current quality setting
+    /// 获取当前比特率字符串
     fn current_bitrate(&self) -> String {
         Self::quality_to_bitrate(self.quality()).to_string()
     }
@@ -154,7 +158,8 @@ impl NcmClient {
         data_dir.join(COOKIE_FILE)
     }
 
-    pub fn load_cookie_jar_from_file() -> Option<CookieJar> {
+    /// 从文件加载 cookie
+    pub fn load_cookie_jar_from_file() -> Option<(Arc<CookieJar>, CookieStore, String)> {
         match fs::File::open(Self::cookie_file_path()) {
             Err(err) => match err.kind() {
                 io::ErrorKind::NotFound => (),
@@ -163,19 +168,35 @@ impl NcmClient {
             Ok(file) => match cookie_store::serde::json::load(io::BufReader::new(file)) {
                 Err(err) => error!("{:?}", err),
                 Ok(cookie_store) => {
-                    let cookie_jar = CookieJar::default();
+                    let cookie_jar = Arc::new(CookieJar::default());
+                    let mut csrf_token = String::new();
+
+                    // Add required cookies first
+                    let base_url: reqwest::Url = "https://music.163.com/".parse().unwrap();
+                    cookie_jar.add_cookie_str("os=pc; Domain=music.163.com; Path=/", &base_url);
+                    cookie_jar.add_cookie_str(
+                        "appver=2.7.1.198277; Domain=music.163.com; Path=/",
+                        &base_url,
+                    );
+
+                    // Add cookies to reqwest jar
                     for base_url in BASE_URL_LIST {
-                        let url = base_url.parse().unwrap();
+                        let url: reqwest::Url = base_url.parse().unwrap();
                         for c in cookie_store.matches(&url) {
-                            let cookie = CookieBuilder::new(c.name(), c.value())
-                                .domain("music.163.com")
-                                .path(c.path().unwrap_or("/"))
-                                .build()
-                                .unwrap();
-                            cookie_jar.set(cookie, &base_url.parse().unwrap()).unwrap();
+                            // Extract CSRF token
+                            if c.name() == "__csrf" {
+                                csrf_token = c.value().to_string();
+                            }
+                            let cookie_str = format!(
+                                "{}={}; Domain=music.163.com; Path={}",
+                                c.name(),
+                                c.value(),
+                                c.path().unwrap_or("/")
+                            );
+                            cookie_jar.add_cookie_str(&cookie_str, &url);
                         }
                     }
-                    return Some(cookie_jar);
+                    return Some((cookie_jar, cookie_store, csrf_token));
                 }
             },
         };
@@ -183,29 +204,12 @@ impl NcmClient {
     }
 
     pub fn save_cookie_jar_to_file(&self) {
-        if let Some(cookie_jar) = self.client.cookie_jar() {
-            match fs::File::create(Self::cookie_file_path()) {
-                Err(err) => error!("{:?}", err),
-                Ok(mut file) => {
-                    let mut cookie_store = CookieStore::default();
-                    for base_url in BASE_URL_LIST {
-                        let uri = &base_url.parse().unwrap();
-                        let url = &base_url.parse().unwrap();
-                        for c in cookie_jar.get_for_uri(url) {
-                            let cookie = cookie_store::Cookie::parse(
-                                format!(
-                                    "{}={}; Path={}; Domain=music.163.com; Max-Age=31536000",
-                                    c.name(),
-                                    c.value(),
-                                    url.path()
-                                ),
-                                uri,
-                            )
-                            .unwrap();
-                            cookie_store.insert(cookie, uri).unwrap();
-                        }
-                    }
-                    cookie_store::serde::json::save(&cookie_store, &mut file).unwrap();
+        match fs::File::create(Self::cookie_file_path()) {
+            Err(err) => error!("{:?}", err),
+            Ok(mut file) => {
+                let cookie_store = self.cookie_store.read();
+                if let Err(e) = cookie_store::serde::json::save(&*cookie_store, &mut file) {
+                    error!("Failed to save cookies: {:?}", e);
                 }
             }
         }
@@ -246,10 +250,7 @@ impl NcmClient {
         Ok((path, unikey))
     }
 
-    /// Get song URLs using the client's quality setting
-    ///
-    /// The quality is automatically determined by the client's internal setting.
-    /// Use `set_quality()` to change the quality before calling this method.
+    /// 获取歌曲 URL
     pub async fn songs_url(&self, ids: &[u64]) -> Result<Vec<SongUrl>> {
         self.client.songs_url(ids, &self.current_bitrate()).await
     }

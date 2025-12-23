@@ -76,9 +76,9 @@ impl ScrollPhysics {
         }
     }
 
-    /// Update physics simulation
+    /// 更新物理模拟
     ///
-    /// @param dt Time since last update in SECONDS
+    /// @param dt 距上次更新的时间（秒）
     pub fn update(&mut self, dt: f32, _is_hovering: bool) {
         // Apple Music-style: Always update spring first
         self.snap_spring.update(dt as f64);
@@ -241,7 +241,7 @@ impl ScrollPhysics {
         self.state
     }
 
-    /// Get time since last interaction
+    /// 获取距上次交互的时间
     pub fn time_since_interaction(&self) -> f32 {
         self.last_interaction_time.elapsed().as_secs_f32()
     }

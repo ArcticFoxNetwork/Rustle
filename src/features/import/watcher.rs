@@ -185,10 +185,9 @@ pub fn watch_channel() -> (mpsc::UnboundedSender<WatchEvent>, WatchEventReceiver
     mpsc::unbounded_channel()
 }
 
-/// Debounced folder watcher that batches rapid changes
+/// 防抖文件夹监视器，批量处理快速变化
 ///
-/// This is useful to avoid processing the same file multiple times
-/// when it's being written to in chunks.
+/// 避免文件分块写入时重复处理
 pub struct DebouncedWatcher {
     inner: FolderWatcher,
     debounce_duration: Duration,

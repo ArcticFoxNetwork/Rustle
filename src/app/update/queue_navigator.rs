@@ -46,9 +46,9 @@ impl ShuffleCache {
     }
 }
 
-/// Queue navigator - calculates next/prev indices based on play mode
+/// 队列导航器 - 根据播放模式计算 next/prev 索引
 ///
-/// This is the SINGLE SOURCE OF TRUTH for index calculations.
+/// 索引计算的唯一数据源
 /// All code paths (playback, preloading, UI) should use this.
 pub struct QueueNavigator<'a> {
     queue_len: usize,

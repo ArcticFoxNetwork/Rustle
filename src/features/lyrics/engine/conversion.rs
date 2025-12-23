@@ -82,7 +82,7 @@ fn apply_chunk_emphasis(words: &mut [WordData]) {
     let chunks = chunk_and_split_words(words);
 
     // Build emphasis map based on chunks
-    // Note: chunk_and_split_words may resplit words, so we need to map back
+    // chunk_and_split_words may resplit words, so we need to map back
     // For simplicity, we'll iterate through original words and check each one
     for word in words.iter_mut() {
         // Find which chunk this word belongs to

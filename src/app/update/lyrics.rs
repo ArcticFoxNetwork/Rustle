@@ -315,8 +315,8 @@ impl App {
                         return Some(Task::none());
                     };
 
-                    // Trigger async text shaping in background thread
-                    // This is the key optimization: text shaping is CPU-intensive and should not block the main thread
+                    // 在后台线程触发异步文本 shaping
+                    // 关键优化：文本 shaping 是 CPU 密集型操作，不应阻塞主线程
                     let lines_for_shaping = engine_lines.clone();
                     let song_id = *song_id;
                     let viewport_width = self.ui.lyrics.viewport_width;
@@ -786,8 +786,8 @@ impl App {
 
     // ============ ASYNC LOADING METHODS ============
 
-    /// Load lyrics asynchronously (local, cached, or online)
-    /// This is the main entry point for lyrics loading
+    /// 异步加载歌词（本地、缓存或在线）
+    /// 歌词加载的主入口
     pub fn load_lyrics_async(&mut self, song: &crate::database::DbSong) -> Task<Message> {
         tracing::info!(
             "load_lyrics_async called for song: {} (id={})",

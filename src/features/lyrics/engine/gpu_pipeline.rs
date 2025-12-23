@@ -122,8 +122,8 @@ pub struct CompositeUniform {
     pub font_size: f32,
 }
 
-/// Shared font system for both text shaping and glyph caching
-/// This is critical - CacheKey contains font_id which must match!
+/// 文本 shaping 和字形缓存的共享字体系统
+/// 关键：CacheKey 包含 font_id，必须匹配
 pub type SharedFontSystem = Arc<Mutex<FontSystem>>;
 
 /// Maximum number of glyphs per frame
@@ -887,10 +887,10 @@ impl LyricsGpuPipeline {
             .set_viewport_size(bounds_width as u32, bounds_height as u32);
     }
 
-    /// Prepare rendering data using pre-shaped lines (Single Source of Truth)
+    /// 使用预 shaped lines 准备渲染数据
     ///
-    /// This is the preferred method that uses CachedShapedLine from LyricsEngine,
-    /// ensuring consistent text layout between CPU and GPU.
+    /// 首选方法，使用 LyricsEngine 的 CachedShapedLine
+    /// 确保 CPU 和 GPU 之间文本布局一致
     ///
     /// The shaped_lines contain all glyph positions calculated by LyricsEngine,
     /// so we don't need to call shape_line again here.
@@ -998,7 +998,7 @@ impl LyricsGpuPipeline {
     /// IMPORTANT: To ensure consistent text wrapping with LyricsEngine:
     /// - shape_line is called with LOGICAL pixels (viewport_width/scale, font_size/scale)
     /// - Glyph positions are then scaled back to physical pixels for rendering
-    /// This ensures the same wrap points as LyricsEngine's calculate_line_heights.
+    /// 确保与 LyricsEngine 的 calculate_line_heights 使用相同的换行点
     ///
     /// 返回值包含所有顶点和索引，同时更新 line_index_ranges 和 cached_line_render_info
     fn build_geometry_per_line(
@@ -1339,7 +1339,7 @@ impl LyricsGpuPipeline {
     /// Build geometry from pre-shaped lines (Single Source of Truth)
     ///
     /// This method uses CachedShapedLine from LyricsEngine instead of calling shape_line.
-    /// This ensures consistent text layout between CPU layout and GPU rendering.
+    /// 确保 CPU 布局和 GPU 渲染之间文本布局一致
     ///
     /// Key differences from build_geometry_per_line:
     /// - No shape_line calls - uses pre-computed glyph positions

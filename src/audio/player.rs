@@ -374,7 +374,7 @@ impl AudioPlayer {
         }
 
         // Move current to prev preload slot (if we want to keep it)
-        // For now, just clear prev since we're moving forward
+        // 清除 prev preload
         self.clear_prev_preload();
 
         // Reset analysis data before starting new track
@@ -413,7 +413,7 @@ impl AudioPlayer {
             sink.stop();
         }
 
-        // Clear next preload since we're moving backward
+        // 清除 next preload
         self.clear_next_preload();
 
         // Reset analysis data before starting new track

@@ -197,8 +197,8 @@ impl TextShaper {
         let char_to_word = self.build_char_word_map(text, words);
 
         // === Calculate visual line count from layout_runs ===
-        // layout_runs() returns an iterator over all visual lines (LayoutRun)
-        // This is the same approach iced uses in measure()
+        // layout_runs() 返回所有视觉行的迭代器
+        // 与 iced 的 measure() 方法相同
         let visual_line_count_from_buffer = buffer.layout_runs().count().max(1) as u32;
 
         // Extract glyphs from layout runs
@@ -249,7 +249,7 @@ impl TextShaper {
                 shaped_glyphs.push(ShapedGlyph {
                     cache_key,
                     x: glyph.x,
-                    y: run.line_y, // This is the baseline Y for this line
+                    y: run.line_y, // 该行的基线 Y
                     advance: glyph.w,
                     word_index: word_idx,
                     pos_in_word,
@@ -275,7 +275,7 @@ impl TextShaper {
 
         // === Calculate visual line information for wrap highlight fix ===
         // Group glyphs by visual line (based on Y position)
-        // Note: visual_line_count_from_buffer is the authoritative count from cosmic-text
+        // visual_line_count_from_buffer is the authoritative count from cosmic-text
         let visual_line_count = visual_line_count_from_buffer;
 
         if !shaped_glyphs.is_empty() {
@@ -333,7 +333,7 @@ impl TextShaper {
         }
 
         // Calculate height based on VISUAL line count from buffer
-        // This is the authoritative count from cosmic-text's layout
+        // 使用 cosmic-text 布局的权威行数
         let final_height = single_line_height * visual_line_count as f32;
 
         ShapedLine {

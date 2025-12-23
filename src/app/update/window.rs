@@ -145,6 +145,17 @@ impl App {
                 Some(Task::none())
             }
 
+            // Sidebar resize
+            Message::SidebarResizeStart => {
+                self.ui.sidebar_dragging = true;
+                Some(Task::none())
+            }
+
+            Message::SidebarResizeEnd => {
+                self.ui.sidebar_dragging = false;
+                Some(Task::none())
+            }
+
             _ => None,
         }
     }

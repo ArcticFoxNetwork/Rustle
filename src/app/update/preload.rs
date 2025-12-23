@@ -27,8 +27,8 @@ impl App {
         )
     }
 
-    /// Trigger preloading of adjacent tracks
-    /// This is the main entry point - call after song starts playing
+    /// 触发相邻曲目预加载
+    /// 歌曲开始播放后调用
     pub fn preload_adjacent_tracks_with_ncm(&mut self) -> Task<Message> {
         let nav = self.queue_navigator();
         let adjacent = nav.adjacent_indices();

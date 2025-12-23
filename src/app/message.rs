@@ -57,6 +57,8 @@ pub enum Message {
     WindowMaximize,
     /// Mouse pressed (for window drag detection)
     MousePressed,
+    /// Mouse released (for sidebar resize end)
+    MouseReleased,
     /// Mouse moved (track cursor position for drag area)
     MouseMoved(iced::Point),
     /// Open settings
@@ -254,9 +256,9 @@ pub enum Message {
         i64,
         std::sync::Arc<Vec<crate::features::lyrics::engine::LyricLineData>>,
     ),
-    /// Shaped lines pre-computed asynchronously (song_id, shaped_lines, pre_generated_sdf_bitmaps)
-    /// This is the Single Source of Truth for text layout, computed in background thread
-    /// Also includes pre-generated SDF bitmaps to avoid blocking main thread during first render
+    /// 异步预计算的 shaped lines (song_id, shaped_lines, pre_generated_sdf_bitmaps)
+    /// 文本布局的唯一数据源，在后台线程计算
+    /// 包含预生成的 SDF 位图，避免首次渲染时阻塞主线程
     LyricsShapedLinesReady(
         i64,
         std::sync::Arc<Vec<crate::features::lyrics::engine::CachedShapedLine>>,
@@ -468,6 +470,12 @@ pub enum Message {
     SeeAllRecommended,
     /// See all hot playlists
     SeeAllHot,
+
+    // ============ Sidebar Resize ============
+    /// Start dragging sidebar resize handle
+    SidebarResizeStart,
+    /// Stop dragging sidebar resize handle
+    SidebarResizeEnd,
 }
 
 /// Icon identifiers for hover tracking
@@ -594,6 +602,7 @@ impl std::fmt::Debug for Message {
             Self::WindowMinimize => simple!("WindowMinimize"),
             Self::WindowMaximize => simple!("WindowMaximize"),
             Self::MousePressed => simple!("MousePressed"),
+            Self::MouseReleased => simple!("MouseReleased"),
             Self::MouseMoved(_) => simple!("MouseMoved"),
             Self::OpenSettings => simple!("OpenSettings"),
             Self::OpenSettingsWithCloseLyrics => simple!("OpenSettingsWithCloseLyrics"),
@@ -740,9 +749,10 @@ impl std::fmt::Debug for Message {
             Self::CancelExit => simple!("CancelExit"),
             Self::ExitDialogRememberChanged(b) => simple!("ExitDialogRememberChanged", "{}", b),
 
-            // Tray & MPRIS (Linux only)
-            #[cfg(target_os = "linux")]
+            // Tray
             Self::TrayCommand(c) => simple!("TrayCommand", "{:?}", c),
+
+            // MPRIS (Linux only)
             #[cfg(target_os = "linux")]
             Self::MprisCommand(c) => simple!("MprisCommand", "{:?}", c),
             #[cfg(target_os = "linux")]
@@ -798,7 +808,10 @@ impl std::fmt::Debug for Message {
             Self::LoadMoreHotPlaylists => simple!("LoadMoreHotPlaylists"),
             Self::SeeAllRecommended => simple!("SeeAllRecommended"),
             Self::SeeAllHot => simple!("SeeAllHot"),
-            Self::TrayCommand(_) => simple!("TrayCommand"),
+
+            // Sidebar resize
+            Self::SidebarResizeStart => simple!("SidebarResizeStart"),
+            Self::SidebarResizeEnd => simple!("SidebarResizeEnd"),
         }
     }
 }

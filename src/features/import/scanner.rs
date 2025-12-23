@@ -92,8 +92,8 @@ pub fn discover_audio_files(root: &Path, config: &ScanConfig) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Compute partial file hash (first 64KB + last 64KB + file size)
-/// This is faster for large files while still being reasonably unique
+/// 计算部分文件哈希（前 64KB + 后 64KB + 文件大小）
+/// 对大文件更快，同时保持合理的唯一性
 pub fn compute_partial_hash(path: &Path) -> Result<String> {
     use std::io::{Read, Seek, SeekFrom};
 
@@ -201,9 +201,9 @@ fn process_file(
     })
 }
 
-/// Scan a directory and import songs to database
+/// 扫描目录并导入歌曲到数据库
 ///
-/// This is the main entry point for folder scanning.
+/// 文件夹扫描的主入口
 /// It runs in a background task and reports progress via the channel.
 pub async fn scan_and_import(
     db: Arc<Database>,

@@ -323,6 +323,10 @@ pub struct UiState {
     // Sidebar
     pub importing_playlist: Option<ImportingPlaylist>,
     pub sidebar_animations: HoverAnimations<crate::app::message::SidebarId>,
+    /// Sidebar width in pixels (draggable)
+    pub sidebar_width: f32,
+    /// Whether the sidebar resize handle is being dragged
+    pub sidebar_dragging: bool,
 
     // Cache statistics
     pub cache_stats: Option<crate::cache::CacheStats>,
@@ -348,6 +352,8 @@ impl UiState {
             save_position_counter: 0,
             importing_playlist: None,
             sidebar_animations: Default::default(),
+            sidebar_width: 240.0,
+            sidebar_dragging: false,
             cache_stats: None,
 
             playlist_page: PlaylistPageState {
@@ -494,8 +500,7 @@ pub struct LyricsState {
     pub bg_colors: crate::utils::DominantColors,
     pub bg_shader: LyricsBackgroundProgram,
     pub textured_bg_shader: TexturedBackgroundProgram,
-    /// Lyrics engine wrapped in RefCell for interior mutability
-    /// (needed because view() takes &self but engine needs &mut for animation positions)
+    /// 歌词引擎 (RefCell 用于 view() 中的内部可变性)
     pub engine: Option<std::cell::RefCell<crate::features::lyrics::engine::LyricsEngine>>,
     pub shader_start_time: Option<Instant>,
     /// Cached engine lines to avoid recreating every frame
@@ -503,7 +508,7 @@ pub struct LyricsState {
     pub cached_engine_lines:
         Option<std::sync::Arc<Vec<crate::features::lyrics::engine::LyricLineData>>>,
     /// Cached shaped lines (pre-computed in background thread)
-    /// This is the Single Source of Truth for text layout
+    /// 文本布局的唯一数据源
     pub cached_shaped_lines:
         Option<std::sync::Arc<Vec<crate::features::lyrics::engine::CachedShapedLine>>>,
     /// Shared font system for async text shaping (created asynchronously at app startup)

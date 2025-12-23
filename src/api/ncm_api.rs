@@ -7,15 +7,17 @@ pub mod model;
 
 use anyhow::{Result, anyhow};
 use encrypt::Crypto;
-pub use isahc::cookies::{CookieBuilder, CookieJar};
-use isahc::{prelude::*, *};
 use lazy_static::lazy_static;
 pub use model::*;
 use parking_lot::RwLock;
 use regex::Regex;
+use reqwest::{Client, header};
 use std::fmt;
 use std::sync::Arc;
 use std::{collections::HashMap, path::PathBuf, time::Duration};
+
+// Re-export cookie jar for compatibility
+pub use reqwest::cookie::Jar as CookieJar;
 
 lazy_static! {
     static ref _CSRF: Regex = Regex::new(r"_csrf=(?P<csrf>[^(;|$)]+)").unwrap();
@@ -46,7 +48,8 @@ const USER_AGENT_LIST: [&str; 14] = [
 
 #[derive(Clone)]
 pub struct MusicApi {
-    client: HttpClient,
+    client: Client,
+    cookie_jar: Arc<CookieJar>,
     csrf: Arc<RwLock<String>>,
 }
 
@@ -61,8 +64,14 @@ impl fmt::Debug for MusicApi {
 
 enum CryptoApi {
     Weapi,
+    #[allow(dead_code)]
     LinuxApi,
     Eapi,
+}
+
+enum Method {
+    Post,
+    Get,
 }
 
 impl Default for MusicApi {
@@ -72,57 +81,77 @@ impl Default for MusicApi {
 }
 
 impl MusicApi {
-    pub fn new(max_cons: usize) -> Self {
-        let client = HttpClient::builder()
+    pub fn new(_max_cons: usize) -> Self {
+        let cookie_jar = Arc::new(CookieJar::default());
+        // Add required cookies
+        let base_url: reqwest::Url = "https://music.163.com/".parse().unwrap();
+        cookie_jar.add_cookie_str("os=pc; Domain=music.163.com; Path=/", &base_url);
+        cookie_jar.add_cookie_str(
+            "appver=2.7.1.198277; Domain=music.163.com; Path=/",
+            &base_url,
+        );
+
+        let client = Client::builder()
             .timeout(Duration::from_secs(TIMEOUT))
-            .max_connections(max_cons)
-            .cookies()
+            .cookie_provider(cookie_jar.clone())
             .build()
             .expect("初始化网络请求失败!");
         Self {
             client,
+            cookie_jar,
             csrf: Arc::new(RwLock::new(String::new())),
         }
     }
 
-    pub fn from_cookie_jar(cookie_jar: CookieJar, max_cons: usize) -> Self {
-        let client = HttpClient::builder()
+    pub fn from_cookie_jar(cookie_jar: Arc<CookieJar>, _max_cons: usize) -> Self {
+        // Add required cookies if not present
+        let base_url: reqwest::Url = "https://music.163.com/".parse().unwrap();
+        cookie_jar.add_cookie_str("os=pc; Domain=music.163.com; Path=/", &base_url);
+        cookie_jar.add_cookie_str(
+            "appver=2.7.1.198277; Domain=music.163.com; Path=/",
+            &base_url,
+        );
+
+        let client = Client::builder()
             .timeout(Duration::from_secs(TIMEOUT))
-            .max_connections(max_cons)
-            .cookies()
-            .cookie_jar(cookie_jar.to_owned())
+            .cookie_provider(cookie_jar.clone())
             .build()
             .expect("初始化网络请求失败!");
         Self {
             client,
+            cookie_jar,
             csrf: Arc::new(RwLock::new(String::new())),
         }
     }
 
-    pub fn cookie_jar(&self) -> Option<&CookieJar> {
-        self.client.cookie_jar()
+    pub fn cookie_jar(&self) -> Option<&Arc<CookieJar>> {
+        Some(&self.cookie_jar)
     }
 
     pub fn set_proxy(&mut self, proxy: &str) -> Result<()> {
-        if let Some(cookie_jar) = self.client.cookie_jar() {
-            let client = HttpClient::builder()
-                .timeout(Duration::from_secs(TIMEOUT))
-                .proxy(Some(proxy.parse()?))
-                .cookies()
-                .cookie_jar(cookie_jar.to_owned())
-                .build()
-                .expect("初始化网络请求失败!");
-            self.client = client;
-        } else {
-            let client = HttpClient::builder()
-                .timeout(Duration::from_secs(TIMEOUT))
-                .proxy(Some(proxy.parse()?))
-                .cookies()
-                .build()
-                .expect("初始化网络请求失败!");
-            self.client = client;
-        }
+        let proxy = reqwest::Proxy::all(proxy)?;
+        let client = Client::builder()
+            .timeout(Duration::from_secs(TIMEOUT))
+            .proxy(proxy)
+            .cookie_provider(self.cookie_jar.clone())
+            .build()
+            .expect("初始化网络请求失败!");
+        self.client = client;
         Ok(())
+    }
+
+    /// 设置 CSRF token
+    pub fn set_csrf(&self, csrf: String) {
+        *self.csrf.write() = csrf;
+    }
+
+    /// 从 cookie 字符串提取 CSRF token
+    pub fn set_csrf_from_cookies(&self, cookies_str: &str) {
+        if let Some(caps) = _CSRF.captures(cookies_str) {
+            if let Some(csrf) = caps.name("csrf") {
+                *self.csrf.write() = csrf.as_str().to_string();
+            }
+        }
     }
 
     async fn request(
@@ -134,17 +163,7 @@ impl MusicApi {
         ua: &str,
         append_csrf: bool,
     ) -> Result<String> {
-        let mut csrf = self.csrf.read().clone();
-        if csrf.is_empty() {
-            if let Some(cookies) = self.cookie_jar() {
-                let uri = BASE_URL.parse().unwrap();
-                if let Some(cookie) = cookies.get_by_name(&uri, "__csrf") {
-                    let __csrf = cookie.value().to_string();
-                    *self.csrf.write() = __csrf.clone();
-                    csrf = __csrf;
-                }
-            }
-        }
+        let csrf = self.csrf.read().clone();
         let mut url = format!("{}{}?csrf_token={}", BASE_URL, path, csrf);
         if !append_csrf {
             url = format!("{}{}", BASE_URL, path);
@@ -181,32 +200,37 @@ impl MusicApi {
                     }
                 };
 
-                let request = Request::post(&url)
-                    .header("Cookie", "os=pc; appver=2.7.1.198277")
-                    .header("Accept", "*/*")
-                    .header("Accept-Language", "en-US,en;q=0.5")
-                    .header("Connection", "keep-alive")
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("Host", "music.163.com")
-                    .header("Referer", "https://music.163.com")
-                    .header("User-Agent", user_agent)
-                    .body(body)
-                    .unwrap();
-                let mut response = self
+                let response = self
                     .client
-                    .send_async(request)
+                    .post(&url)
+                    .header(header::ACCEPT, "*/*")
+                    .header(header::ACCEPT_LANGUAGE, "en-US,en;q=0.5")
+                    .header(header::CONNECTION, "keep-alive")
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .header(header::HOST, "music.163.com")
+                    .header(header::REFERER, "https://music.163.com")
+                    .header(header::USER_AGENT, user_agent)
+                    .body(body)
+                    .send()
                     .await
-                    .map_err(|_| anyhow!("none"))?;
-                response.text().await.map_err(|_| anyhow!("none"))
+                    .map_err(|e| anyhow!("Request failed: {}", e))?;
+                response
+                    .text()
+                    .await
+                    .map_err(|e| anyhow!("Failed to read response: {}", e))
             }
-            Method::Get => self
-                .client
-                .get_async(&url)
-                .await
-                .map_err(|_| anyhow!("none"))?
-                .text()
-                .await
-                .map_err(|_| anyhow!("none")),
+            Method::Get => {
+                let response = self
+                    .client
+                    .get(&url)
+                    .send()
+                    .await
+                    .map_err(|e| anyhow!("Request failed: {}", e))?;
+                response
+                    .text()
+                    .await
+                    .map_err(|e| anyhow!("Failed to read response: {}", e))
+            }
         }
     }
 
@@ -290,6 +314,7 @@ impl MusicApi {
         to_song_list(result, Parse::Usl)
     }
 
+    #[allow(dead_code)]
     pub async fn user_cloud_disk(&self) -> Result<Vec<SongInfo>> {
         let path = "/weapi/v1/cloud/get";
         let mut params = HashMap::new();
@@ -319,10 +344,7 @@ impl MusicApi {
 
         // If there are more songs than we got, fetch the rest using song_detail
         if detail.track_count > detail.songs.len() as u64 {
-            // Get all track IDs from the playlist
             let track_ids = self.playlist_track_ids(songlist_id).await?;
-
-            // We already have the first batch, get the remaining song IDs
             let existing_ids: std::collections::HashSet<u64> =
                 detail.songs.iter().map(|s| s.id).collect();
             let remaining_ids: Vec<u64> = track_ids
@@ -330,7 +352,6 @@ impl MusicApi {
                 .filter(|id| !existing_ids.contains(id))
                 .collect();
 
-            // Fetch remaining songs in batches of 500
             for chunk in remaining_ids.chunks(500) {
                 if let Ok(songs) = self.song_detail(chunk).await {
                     detail.songs.extend(songs);
@@ -341,15 +362,14 @@ impl MusicApi {
         Ok(detail)
     }
 
-    /// Get all track IDs from a playlist
     async fn playlist_track_ids(&self, playlist_id: u64) -> Result<Vec<u64>> {
         let csrf_token = self.csrf.read().clone();
         let path = "/weapi/v6/playlist/detail";
         let mut params = HashMap::new();
         let playlist_id_str = playlist_id.to_string();
         params.insert("id", playlist_id_str.as_str());
-        params.insert("n", "0"); // Don't fetch song details, just metadata
-        params.insert("s", "0"); // Don't fetch subscribers
+        params.insert("n", "0");
+        params.insert("s", "0");
         params.insert("csrf_token", &csrf_token);
         let result = self
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
@@ -361,7 +381,6 @@ impl MusicApi {
             return Err(anyhow!("Failed to get playlist track IDs"));
         }
 
-        // Extract trackIds from playlist
         let track_ids: Vec<u64> = value
             .get("playlist")
             .and_then(|p| p.get("trackIds"))
@@ -403,6 +422,7 @@ impl MusicApi {
         to_song_list(result, Parse::Rmd)
     }
 
+    #[allow(dead_code)]
     pub async fn recommend_songs(&self) -> Result<Vec<SongInfo>> {
         let path = "/weapi/v2/discovery/recommend/songs";
         let mut params = HashMap::new();
@@ -435,6 +455,7 @@ impl MusicApi {
         to_song_list(result, Parse::Top)
     }
 
+    #[allow(dead_code)]
     pub async fn toplist(&self) -> Result<Vec<TopList>> {
         let path = "/api/toplist";
         let params = HashMap::new();
@@ -478,7 +499,7 @@ impl MusicApi {
         to_lyric(result)
     }
 
-    /// Like or unlike a song
+    /// 红心/取消红心歌曲
     pub async fn like_song(&self, track_id: u64, like: bool) -> Result<()> {
         let csrf_token = self.csrf.read().clone();
         let path = "/weapi/radio/like";
@@ -510,21 +531,19 @@ impl MusicApi {
         &self,
         url: I,
         path: PathBuf,
-        _width: u16,
-        _high: u16,
+        width: u16,
+        height: u16,
     ) -> Result<()>
     where
         I: Into<String>,
     {
         if !path.exists() {
             let url = url.into();
-            let image_url = format!("{}?param={}y{}", url, _width, _high);
-
-            let mut response = self.client.get_async(image_url).await?;
+            let image_url = format!("{}?param={}y{}", url, width, height);
+            let response = self.client.get(&image_url).send().await?;
             if response.status().is_success() {
-                let mut buf = vec![];
-                response.copy_to(&mut buf).await?;
-                std::fs::write(&path, buf)?;
+                let bytes = response.bytes().await?;
+                std::fs::write(&path, bytes)?;
             }
         }
         Ok(())
@@ -536,19 +555,16 @@ impl MusicApi {
     {
         if !path.exists() {
             let url = url.into();
-            let mut response = self.client.get_async(url).await?;
+            let response = self.client.get(&url).send().await?;
             if response.status().is_success() {
-                let mut buf = vec![];
-                response.copy_to(&mut buf).await?;
-                std::fs::write(&path, buf)?;
+                let bytes = response.bytes().await?;
+                std::fs::write(&path, bytes)?;
             }
         }
         Ok(())
     }
 
-    /// Subscribe or unsubscribe from a playlist
-    /// subscribe: true to subscribe, false to unsubscribe
-    /// playlist_id: playlist ID
+    /// 收藏/取消收藏歌单
     pub async fn playlist_subscribe(&self, subscribe: bool, playlist_id: u64) -> Result<()> {
         let path = if subscribe {
             "/weapi/playlist/subscribe"

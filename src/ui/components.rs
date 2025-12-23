@@ -27,6 +27,7 @@ pub mod playlist_view;
 pub mod queue_panel;
 pub mod search_bar;
 pub mod sidebar;
+pub mod sidebar_resize_handle;
 pub mod trending_list;
 pub mod window_controls;
 

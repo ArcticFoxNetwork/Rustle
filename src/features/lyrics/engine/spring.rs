@@ -258,9 +258,9 @@ impl Spring {
         self.get_v2 = Arc::new(|_| 0.0);
     }
 
-    /// Update spring state - call every frame
+    /// 更新弹簧状态 - 每帧调用
     ///
-    /// @param delta Time since last update in seconds
+    /// @param delta 距上次更新的时间（秒）
     pub fn update(&mut self, delta: Num) {
         self.current_time += delta;
         self.current_position = (self.current_solver)(self.current_time);

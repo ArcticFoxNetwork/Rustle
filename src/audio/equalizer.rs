@@ -166,8 +166,8 @@ impl EqualizerParams {
         }
     }
 
-    /// Mark coefficients as dirty, forcing recalculation on next sample
-    /// This is useful when switching tracks to ensure the EQ is properly initialized
+    /// 标记系数为脏，强制下次采样时重新计算
+    /// 切换曲目时使用，确保 EQ 正确初始化
     pub fn mark_dirty(&self) {
         if let Ok(mut inner) = self.inner.write() {
             inner.coeffs_dirty = true;
@@ -203,9 +203,7 @@ where
         // Update params with actual sample rate
         params.set_sample_rate(sample_rate);
 
-        // Force coefficients to be recalculated for this new instance
-        // This is critical because coeffs_dirty might be false from a previous instance
-        // but this new instance has default (zero) coefficients
+        // 强制重新计算系数，新实例的系数是默认值
         params.mark_dirty();
 
         let mut eq = Self {

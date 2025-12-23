@@ -313,7 +313,7 @@ pub fn process_words_with_chunking(words: &mut [WordData]) {
     }
 
     // Apply emphasis to original words
-    // Note: The resplit may have changed word count, so we need to be careful
+    // The resplit may have changed word count, so we need to be careful
     // For now, we'll just mark emphasis on the original words based on their own criteria
     // plus the group logic
     for (i, word) in words.iter_mut().enumerate() {

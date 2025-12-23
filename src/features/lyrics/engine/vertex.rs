@@ -5,9 +5,9 @@
 
 use bytemuck::{Pod, Zeroable};
 
-/// Vertex for a single glyph with timing information
+/// 单个字形的顶点数据，包含时间信息
 ///
-/// This is the core data structure that enables Apple Music-style word highlighting.
+/// 核心数据结构，支持 Apple Music 风格的逐字高亮
 /// Each glyph knows its timing, allowing the shader to calculate highlight progress.
 ///
 /// ## Apple Music-style Features
@@ -439,8 +439,8 @@ pub fn quad_indices(base_vertex: u32) -> [GlyphIndex; 6] {
 
 /// Interlude dots rendering data
 ///
-/// Used to render the three animated dots during instrumental interludes.
-/// This is passed to the GPU for rendering.
+/// 用于渲染间奏时的三个动画点
+/// 传递给 GPU 渲染
 #[repr(C)]
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct InterludeDotsUniform {

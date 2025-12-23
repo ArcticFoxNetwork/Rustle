@@ -250,8 +250,8 @@ impl Default for LyricsEngineConfig {
 /// Shared font system type
 pub type SharedFontSystem = Arc<Mutex<FontSystem>>;
 
-/// Cached shaped line data for a single lyric line
-/// This is the Single Source of Truth for text layout
+/// 缓存的 shaped line 数据
+/// 文本布局的唯一数据源
 #[derive(Debug, Clone)]
 pub struct CachedShapedLine {
     /// Main text shaped result
@@ -437,10 +437,9 @@ impl LyricsEngine {
     }
 
     /// Get current scroll position (legacy, for compatibility)
-    /// Note: With per-line animations, this returns 0 as scroll is handled per-line
+    /// 使用逐行动画，滚动位置由 line_animations 管理
     pub fn scroll_position(&self) -> f32 {
-        // Return 0 since we now use per-line animations
-        // The actual positions are in line_animations
+        // 返回 0，实际位置在 line_animations 中
         0.0
     }
 
@@ -498,10 +497,10 @@ impl LyricsEngine {
         self.current_time_ms
     }
 
-    /// Set current playback time and update line states
-    /// This is the main entry point for syncing with playback
+    /// 设置当前播放时间并更新行状态
+    /// 与播放同步的主入口
     ///
-    /// Note: For accurate scroll positioning with text wrapping, call
+    /// For accurate scroll positioning with text wrapping, call
     /// `set_viewport_info` first to update line height calculations.
     pub fn set_current_time(&mut self, time_ms: f64, lines: &[LyricLineData], is_seek: bool) {
         self.current_time_ms = time_ms;
@@ -604,7 +603,7 @@ impl LyricsEngine {
     /// Calculate and cache line heights using text shaper
     /// Call this when lyrics change or viewport width changes
     ///
-    /// This is the SINGLE SOURCE OF TRUTH for text layout.
+    /// 文本布局的唯一数据源
     /// All shaped line data (glyphs, positions, heights) is cached here
     /// and passed to GPU pipeline for rendering.
     ///
@@ -707,8 +706,8 @@ impl LyricsEngine {
         &self.cached_shaped_lines
     }
 
-    /// Set pre-computed shaped lines from async task
-    /// This allows text shaping to be done in a background thread
+    /// 设置异步任务预计算的 shaped lines
+    /// 允许在后台线程进行文本 shaping
     pub fn set_cached_shaped_lines(&mut self, shaped_lines: Vec<CachedShapedLine>) {
         // Update cached line heights from shaped lines
         self.cached_line_heights = shaped_lines.iter().map(|s| s.total_height).collect();
@@ -716,9 +715,8 @@ impl LyricsEngine {
         self.cached_shaped_lines = shaped_lines;
 
         // Mark that we have valid shaped data
-        // Note: last_content_width and last_font_size are not updated here
-        // because the async task used the viewport dimensions at the time of shaping
-        // If viewport changes, calculate_line_heights will be called again
+        // last_content_width/last_font_size 不在这里更新，异步任务使用的是当时的视口尺寸
+        // 视口变化时会重新调用 calculate_line_heights
     }
 
     /// Update hot lines based on current time

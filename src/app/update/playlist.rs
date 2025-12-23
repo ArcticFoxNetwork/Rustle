@@ -28,8 +28,7 @@ impl App {
                 self.ui.playlist_page.search_query.clear();
                 self.ui.playlist_page.viewing_recently_played = false;
 
-                // Clear old animation states to prevent memory growth
-                // This is important when switching between playlists with 1500+ songs
+                // 清除旧动画状态，防止内存增长
                 self.ui.clear_playlist_animations();
 
                 // Set loading state
@@ -159,8 +158,7 @@ impl App {
                     let _ = self.update_lyrics_animations();
                 }
 
-                // Clean up completed fade-out animations to prevent memory growth
-                // This is O(1) now since we only track active + fading states
+                // 清理已完成的淡出动画
                 self.ui.cleanup_animations(now);
 
                 // Lazy load covers for visible songs in playlist

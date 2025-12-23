@@ -74,9 +74,9 @@ pub fn view(
     current_playlist_id: Option<i64>, // Local playlist ID
     sidebar_animations: &HoverAnimations<SidebarId>,
     viewing_recently_played: bool,
+    sidebar_width: f32,
 ) -> Element<'static, Message> {
     let now = iced::time::Instant::now();
-    let sidebar_width = 240;
 
     // Logo section
     let logo = row![
@@ -562,7 +562,7 @@ fn sidebar_button_animated(
         .on_press(on_press.clone());
 
     // Add hover events if not active
-    // Note: We only use on_enter here, on_exit is handled by the sidebar container
+    // We only use on_enter here, on_exit is handled by the sidebar container
     // This prevents hover state from being cleared when moving between buttons
     if is_active {
         btn.into()

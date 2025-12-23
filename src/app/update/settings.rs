@@ -394,8 +394,14 @@ impl App {
                         // When proxy is disabled, recreate client without proxy
                         // and sync quality setting
                         let quality = self.core.settings.playback.music_quality.to_api_rate();
-                        if let Some(cookie_jar) = client.client.cookie_jar().cloned() {
-                            *client = crate::api::NcmClient::from_cookie_jar(cookie_jar);
+                        if let Some((cookie_jar, cookie_store, csrf_token)) =
+                            crate::api::NcmClient::load_cookie_jar_from_file()
+                        {
+                            *client = crate::api::NcmClient::from_cookie_jar(
+                                cookie_jar,
+                                cookie_store,
+                                csrf_token,
+                            );
                         } else {
                             *client = crate::api::NcmClient::new();
                         }

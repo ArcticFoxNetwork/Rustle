@@ -1,8 +1,8 @@
-//! ASS subtitle export
+//! ASS 字幕导出
 //!
-//! Note: Export loses precision under 10ms
+//! 导出精度 10ms 以下会丢失
 //!
-//! Main vocal name becomes `v1`, duet becomes `v2`
+//! 主唱名称为 `v1`，对唱为 `v2`
 //! Background lyrics get `-bg` suffix
 //! Translation gets `-trans` suffix
 //! Romanization gets `-roman` suffix

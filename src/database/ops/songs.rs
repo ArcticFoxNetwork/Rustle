@@ -110,7 +110,7 @@ pub async fn update_song_path(pool: &Pool<Sqlite>, old_path: &str, new_path: &st
 /// Upsert NCM song (insert if not exists, update if exists)
 /// Returns the database ID of the song
 ///
-/// Note: cover_path should be a local file path, not a URL.
+/// cover_path should be a local file path, not a URL.
 /// If cover_path starts with "http", it will be set to None.
 pub async fn upsert_ncm_song(pool: &Pool<Sqlite>, song: &DbSong) -> Result<i64> {
     let now = super::current_timestamp();

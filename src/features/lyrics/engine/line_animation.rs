@@ -277,9 +277,9 @@ impl LineAnimation {
         self.scale.update_params(params);
     }
 
-    /// Update springs and smooth transitions - MUST be called every frame (Apple Music-style)
+    /// 更新弹簧和平滑过渡 - 每帧调用
     ///
-    /// @param delta Time since last update in SECONDS
+    /// @param delta 距上次更新的时间（秒）
     pub fn update(&mut self, delta: f32) {
         self.pos_y.update(delta as f64);
         self.scale.update(delta as f64);
@@ -460,9 +460,9 @@ impl LineAnimationManager {
         self.animations.iter().map(|a| a.current_scale()).collect()
     }
 
-    /// Update all springs - MUST be called every frame (Apple Music-style)
+    /// 更新所有弹簧 - 每帧调用
     ///
-    /// @param delta Time since last update in SECONDS
+    /// @param delta 距上次更新的时间（秒）
     pub fn update(&mut self, delta: f32) {
         for anim in &mut self.animations {
             anim.update(delta);
@@ -524,9 +524,9 @@ impl LineAnimationManager {
         )
     }
 
-    /// Calculate layout with custom stagger parameters
+    /// 使用自定义 stagger 参数计算布局
     ///
-    /// This is the full implementation with configurable stagger animation.
+    /// 完整实现，支持可配置的 stagger 动画
     ///
     /// Apple Music-style features:
     /// - isNonDynamic: Different opacity for non-dynamic lyrics (all lines have only 1 word)
@@ -563,9 +563,9 @@ impl LineAnimationManager {
         )
     }
 
-    /// Full layout calculation with all parameters
+    /// 完整布局计算
     ///
-    /// This is a 1:1 port of the `calcLayout` from `lyric-player/base.ts`.
+    /// 移植自 `lyric-player/base.ts` 的 `calcLayout`
     ///
     /// Additional parameters:
     /// - is_non_dynamic: True if all lines have only 1 word (affects opacity)
@@ -617,7 +617,7 @@ impl LineAnimationManager {
         }
 
         // default: curPos = -scrollOffset + size[1] * alignPosition
-        // Note: Also has -this.scrollOffset at the start, but that's for manual scroll offset
+        // Also has -this.scrollOffset at the start, but that's for manual scroll offset
         let mut cur_pos = -scroll_offset + self.viewport_height * self.align_position;
 
         // default: Apply alignAnchor adjustment to curPos
@@ -945,7 +945,7 @@ mod tests {
     }
 
     // ========== Property 4: Blur level maximum cap ==========
-    // Note: The cap is applied in pipeline.rs, not in line_animation.rs
+    // The cap is applied in pipeline.rs, not in line_animation.rs
     // This test verifies the blur calculation can produce values > 32
     // The actual cap is tested in pipeline tests
 

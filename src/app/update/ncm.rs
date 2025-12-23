@@ -28,8 +28,15 @@ impl App {
             Message::TryAutoLogin(retry_count) => {
                 let retry = *retry_count;
                 let proxy_url = self.core.settings.network.proxy_url();
-                if let Some(cookie_jar) = NcmClient::load_cookie_jar_from_file() {
-                    let client = NcmClient::from_cookie_jar_with_proxy(cookie_jar, proxy_url);
+                if let Some((cookie_jar, cookie_store, csrf_token)) =
+                    NcmClient::load_cookie_jar_from_file()
+                {
+                    let client = NcmClient::from_cookie_jar_with_proxy(
+                        cookie_jar,
+                        cookie_store,
+                        csrf_token,
+                        proxy_url,
+                    );
                     self.set_ncm_client(client.clone());
 
                     Some(Task::perform(
@@ -247,28 +254,22 @@ impl App {
                     self.ui.home.qr_status = Some("登录成功！".to_string());
 
                     if let Some(client) = &self.core.ncm_client {
-                        if let Some(cookie_jar) = client.client.cookie_jar().cloned() {
-                            let proxy_url = self.core.settings.network.proxy_url();
-                            let new_client =
-                                NcmClient::from_cookie_jar_with_proxy(cookie_jar, proxy_url);
-                            self.set_ncm_client(new_client.clone());
-
-                            return Some(Task::perform(
-                                async move {
-                                    match new_client.client.login_status().await {
-                                        Ok(login_info) => {
-                                            new_client.save_cookie_jar_to_file();
-                                            login_info
-                                        }
-                                        Err(e) => {
-                                            error!("Failed to get login status: {:?}", e);
-                                            LoginInfo::default()
-                                        }
+                        let client = client.clone();
+                        return Some(Task::perform(
+                            async move {
+                                match client.client.login_status().await {
+                                    Ok(login_info) => {
+                                        client.save_cookie_jar_to_file();
+                                        login_info
                                     }
-                                },
-                                Message::LoginSuccess,
-                            ));
-                        }
+                                    Err(e) => {
+                                        error!("Failed to get login status: {:?}", e);
+                                        LoginInfo::default()
+                                    }
+                                }
+                            },
+                            Message::LoginSuccess,
+                        ));
                     }
                     Some(Task::none())
                 }
@@ -1253,7 +1254,7 @@ impl App {
 
                         if let Some(song) = playlist.songs.iter_mut().find(|s| s.id == *song_id) {
                             song.cover_path = Some(path.clone());
-                            // Clear pic_url since cover is now downloaded
+                            // 封面已下载，清除远程 URL
                             song.pic_url = None;
                             // Update the cover_handle for immediate display
                             if std::path::Path::new(path).exists() {

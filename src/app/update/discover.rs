@@ -16,7 +16,7 @@ fn get_daily_seed() -> u64 {
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default();
-    // Use days since epoch as seed (changes daily)
+    // 使用天数作为种子（每天变化）
     now.as_secs() / 86400
 }
 
