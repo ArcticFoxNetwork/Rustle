@@ -6,7 +6,7 @@ use iced::{Alignment, Color, Element, Fill};
 
 use crate::app::Message;
 use crate::i18n::{Key, Locale};
-use crate::ui::theme;
+use crate::ui::theme::{self, BOLD_WEIGHT};
 
 /// Build the delete playlist confirmation dialog
 pub fn view(playlist_name: &str, animation_progress: f32, locale: Locale) -> Element<'_, Message> {
@@ -24,7 +24,7 @@ pub fn view(playlist_name: &str, animation_progress: f32, locale: Locale) -> Ele
             color: Some(theme::text_primary(theme)),
         })
         .font(iced::Font {
-            weight: iced::font::Weight::Bold,
+            weight: BOLD_WEIGHT,
             ..Default::default()
         });
 

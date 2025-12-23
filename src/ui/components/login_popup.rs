@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use crate::app::Message;
 use crate::app::UserInfo;
 use crate::i18n::{Key, Locale};
-use crate::ui::theme;
+use crate::ui::theme::{self, BOLD_WEIGHT};
 
 const POPUP_WIDTH: f32 = 320.0;
 const POPUP_HEIGHT: f32 = 400.0;
@@ -83,8 +83,8 @@ fn view_qr_login<'a>(
     let title = text(locale.get(Key::LoginScanQr).to_string())
         .size(24)
         .font(iced::Font {
-            weight: iced::font::Weight::Bold,
-            ..iced::Font::with_name("Inter")
+            weight: BOLD_WEIGHT,
+            ..Default::default()
         })
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
@@ -174,8 +174,8 @@ fn view_logged_in(user: &UserInfo, locale: Locale) -> Element<'_, Message> {
     let title = text(locale.get(Key::LoginLoggedIn).to_string())
         .size(24)
         .font(iced::Font {
-            weight: iced::font::Weight::Bold,
-            ..iced::Font::with_name("Inter")
+            weight: BOLD_WEIGHT,
+            ..Default::default()
         })
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),

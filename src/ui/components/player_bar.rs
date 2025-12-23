@@ -6,6 +6,7 @@ use iced::{Alignment, Color, Element, Fill, Length, Padding};
 use crate::app::Message;
 use crate::database::DbSong;
 use crate::features::PlayMode;
+use crate::ui::theme::MEDIUM_WEIGHT;
 use crate::ui::widgets::{self, ControlSize, PlayModeButtonSize, SliderSize};
 use crate::ui::{icons, theme};
 
@@ -128,7 +129,7 @@ pub fn view(
                         color: Some(theme::text_primary(theme)),
                     })
                     .font(iced::Font {
-                        weight: iced::font::Weight::Medium,
+                        weight: MEDIUM_WEIGHT,
                         ..Default::default()
                     })
                     .wrapping(iced::widget::text::Wrapping::WordOrGlyph),

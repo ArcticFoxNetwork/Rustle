@@ -8,6 +8,7 @@ use iced::{Alignment, Color, Element, Fill, Padding};
 
 use crate::app::Message;
 use crate::i18n::{Key, Locale};
+use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{icons, theme};
 
 /// Build the edit playlist dialog with animation
@@ -39,7 +40,7 @@ pub fn view<'a>(
         .size(24)
         .color(theme::TEXT_PRIMARY)
         .font(iced::Font {
-            weight: iced::font::Weight::Bold,
+            weight: BOLD_WEIGHT,
             ..Default::default()
         });
 

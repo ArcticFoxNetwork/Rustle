@@ -12,7 +12,7 @@ use iced::widget::{Space, button, column, container, image, mouse_area, svg, tex
 use iced::{Alignment, Color, Element, Fill};
 
 use crate::ui::icons;
-use crate::ui::theme;
+use crate::ui::theme::{self, MEDIUM_WEIGHT};
 
 /// Card size configuration
 const COVER_SIZE: f32 = 160.0;
@@ -109,8 +109,8 @@ pub fn view<'a, Message: Clone + 'a>(
             color: Some(theme::text_primary(theme)),
         })
         .font(iced::Font {
-            weight: iced::font::Weight::Medium,
-            ..iced::Font::with_name("Inter")
+            weight: MEDIUM_WEIGHT,
+            ..Default::default()
         });
 
     // Author name

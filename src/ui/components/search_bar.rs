@@ -23,7 +23,6 @@ pub fn view(search_query: &str, locale: Locale) -> Element<'_, Message> {
         .on_input(Message::SearchChanged)
         .padding(Padding::new(12.0).left(0.0))
         .size(14)
-        .font(iced::Font::with_name("Inter"))
         .style(|theme, _status| iced::widget::text_input::Style {
             background: iced::Background::Color(iced::Color::TRANSPARENT),
             border: iced::Border::default(),

@@ -8,7 +8,7 @@ use crate::app::{Message, SidebarId};
 use crate::i18n::{Key, Locale};
 use crate::ui::animation::HoverAnimations;
 use crate::ui::components::importing_card::{self, ImportingPlaylist};
-use crate::ui::theme;
+use crate::ui::theme::{self, MEDIUM_WEIGHT};
 
 /// Navigation menu items
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -94,7 +94,6 @@ pub fn view(
         Space::new().width(10),
         text(locale.get(Key::AppName))
             .size(22)
-            .font(iced::Font::with_name("Inter"))
             .style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
             })
@@ -122,7 +121,6 @@ pub fn view(
     let library_header = text(locale.get(Key::LibraryTitle))
         .size(12)
         .color(theme::TEXT_MUTED)
-        .font(iced::Font::with_name("Inter"))
         .width(Fill);
 
     // Recently played button - use same animated style as nav buttons
@@ -215,8 +213,8 @@ pub fn view(
                                 color: Some(theme::text_primary(theme))
                             })
                             .font(iced::Font {
-                                weight: iced::font::Weight::Medium,
-                                ..iced::Font::with_name("Inter")
+                                weight: MEDIUM_WEIGHT,
+                                ..Default::default()
                             }),
                         Space::new().height(2),
                         vip_text,
@@ -268,14 +266,13 @@ pub fn view(
                                 color: Some(theme::text_primary(theme))
                             })
                             .font(iced::Font {
-                                weight: iced::font::Weight::Medium,
-                                ..iced::Font::with_name("Inter")
+                                weight: MEDIUM_WEIGHT,
+                                ..Default::default()
                             }),
                         Space::new().height(2),
                         text(click_to_login)
                             .size(12)
-                            .color(theme::ACCENT_PINK)
-                            .font(iced::Font::with_name("Inter")),
+                            .color(theme::ACCENT_PINK),
                     ],
                     Space::new().width(Fill),
                     // Arrow indicator with animated color
@@ -324,14 +321,13 @@ pub fn view(
                             color: Some(theme::text_primary(theme))
                         })
                         .font(iced::Font {
-                            weight: iced::font::Weight::Medium,
-                            ..iced::Font::with_name("Inter")
+                            weight: MEDIUM_WEIGHT,
+                            ..Default::default()
                         }),
                     Space::new().height(2),
                     text(click_to_login)
                         .size(12)
-                        .color(theme::ACCENT_PINK)
-                        .font(iced::Font::with_name("Inter")),
+                        .color(theme::ACCENT_PINK),
                 ],
                 Space::new().width(Fill),
                 // Arrow indicator with animated color
@@ -413,7 +409,6 @@ pub fn view(
         let cloud_header = text(locale.get(Key::CloudPlaylistsTitle))
             .size(12)
             .color(theme::TEXT_MUTED)
-            .font(iced::Font::with_name("Inter"))
             .width(Fill);
 
         scrollable_items.push(Space::new().height(20).into());
@@ -530,8 +525,7 @@ fn sidebar_button_animated(
             } else {
                 theme::animated_brightness(theme, hover_progress)
             }),
-        })
-        .font(iced::Font::with_name("Inter"));
+        });
 
     let content = row![icon, Space::new().width(12), label_text]
         .align_y(Alignment::Center)

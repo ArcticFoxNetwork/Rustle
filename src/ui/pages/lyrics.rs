@@ -15,7 +15,7 @@ use crate::features::PlayMode;
 use crate::features::lyrics::engine::{LyricLineData, LyricsEngine};
 use crate::ui::effects::textured_background::TexturedBackgroundProgram;
 use crate::ui::icons;
-use crate::ui::theme;
+use crate::ui::theme::{self, BOLD_WEIGHT};
 use crate::ui::widgets::{self, ControlSize, PlayModeButtonSize, SliderSize};
 
 /// Build the lyrics page view
@@ -283,7 +283,7 @@ fn build_left_panel<'a>(
         .size(28)
         .color(theme::TEXT_PRIMARY)
         .font(iced::Font {
-            weight: iced::font::Weight::Bold,
+            weight: BOLD_WEIGHT,
             ..Default::default()
         });
 
@@ -574,7 +574,7 @@ fn build_simple_lyrics_panel(
                 let opacity = if is_active { 1.0 } else { 0.35 };
                 let size = if is_active { 36 } else { 28 };
                 let weight = if is_active {
-                    iced::font::Weight::Bold
+                    BOLD_WEIGHT
                 } else {
                     iced::font::Weight::Normal
                 };

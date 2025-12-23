@@ -17,6 +17,7 @@ use iced::{Alignment, Color, Element, Fill, Padding};
 use crate::app::Message;
 use crate::i18n::{Key, Locale};
 use crate::ui::components::playlist_view::{self, PlaylistColumns, SongItem};
+use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::widgets::VirtualListState;
 use crate::ui::{icons, theme};
 use crate::utils::ColorPalette;
@@ -212,7 +213,7 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
         })
         .font(iced::Font {
             family: iced::font::Family::SansSerif,
-            weight: iced::font::Weight::Black, // Heavier weight for tighter appearance
+            weight: BOLD_WEIGHT,
             ..Default::default()
         });
 
@@ -279,7 +280,7 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
                 color: Some(theme::text_primary(theme)),
             })
             .font(iced::Font {
-                weight: iced::font::Weight::Bold,
+                weight: BOLD_WEIGHT,
                 ..Default::default()
             })
             .into(),
@@ -729,7 +730,7 @@ fn build_owner_avatar_placeholder(owner_name: &str) -> Element<'static, Message>
             .size(10)
             .color(theme::BLACK)
             .font(iced::Font {
-                weight: iced::font::Weight::Bold,
+                weight: BOLD_WEIGHT,
                 ..Default::default()
             }),
     )

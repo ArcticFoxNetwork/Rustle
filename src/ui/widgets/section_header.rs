@@ -11,7 +11,7 @@ use iced::widget::{Space, button, row, svg, text};
 use iced::{Alignment, Element, Fill};
 
 use crate::ui::icons;
-use crate::ui::theme;
+use crate::ui::theme::{self, BOLD_WEIGHT};
 
 /// Create a section header element
 ///
@@ -30,8 +30,8 @@ pub fn view<'a, Message: Clone + 'a>(
             color: Some(theme::text_primary(theme)),
         })
         .font(iced::Font {
-            weight: iced::font::Weight::Bold,
-            ..iced::Font::with_name("Inter")
+            weight: BOLD_WEIGHT,
+            ..Default::default()
         });
 
     let see_all_btn: Element<'a, Message> = if let Some(msg) = on_see_all {

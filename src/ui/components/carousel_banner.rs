@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use crate::api::BannersInfo;
 use crate::app::Message;
 use crate::i18n::{Key, Locale};
-use crate::ui::theme;
+use crate::ui::theme::{self, BOLD_WEIGHT};
 
 const BANNER_HEIGHT: f32 = 280.0;
 const INDICATOR_SIZE: f32 = 8.0;
@@ -188,8 +188,8 @@ pub fn view<'a>(
                     color: Some(Color::BLACK),
                 }),
             text("Play").size(14).color(Color::BLACK).font(iced::Font {
-                weight: iced::font::Weight::Bold,
-                ..iced::Font::with_name("Inter")
+                weight: BOLD_WEIGHT,
+                ..Default::default()
             }),
         ]
         .spacing(8)
@@ -327,16 +327,15 @@ fn view_placeholder(locale: Locale) -> Element<'static, Message> {
         text(hero_title)
             .size(36)
             .font(iced::Font {
-                weight: iced::font::Weight::Bold,
-                ..iced::Font::with_name("Inter")
+                weight: BOLD_WEIGHT,
+                ..Default::default()
             })
             .style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
             }),
         text(hero_subtitle)
             .size(14)
-            .color(theme::TEXT_SECONDARY)
-            .font(iced::Font::with_name("Inter")),
+            .color(theme::TEXT_SECONDARY),
         Space::new().height(20),
         text(locale.get(Key::Loading).to_string())
             .size(14)

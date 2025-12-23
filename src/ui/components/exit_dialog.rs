@@ -6,7 +6,7 @@ use iced::{Alignment, Color, Element, Fill};
 
 use crate::app::Message;
 use crate::i18n::{Key, Locale};
-use crate::ui::theme;
+use crate::ui::theme::{self, BOLD_WEIGHT};
 
 /// Build the exit confirmation dialog
 pub fn view(
@@ -26,7 +26,7 @@ pub fn view(
         .size(18)
         .color(theme::TEXT_PRIMARY)
         .font(iced::Font {
-            weight: iced::font::Weight::Bold,
+            weight: BOLD_WEIGHT,
             ..Default::default()
         });
 

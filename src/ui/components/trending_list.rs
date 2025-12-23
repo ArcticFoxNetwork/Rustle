@@ -10,7 +10,7 @@ use crate::api::SongInfo;
 use crate::app::Message;
 use crate::i18n::{Key, Locale};
 use crate::ui::animation::HoverAnimations;
-use crate::ui::theme;
+use crate::ui::theme::{self, BOLD_WEIGHT, MEDIUM_WEIGHT};
 
 const ITEM_HEIGHT: f32 = 64.0;
 const COVER_SIZE: f32 = 48.0;
@@ -30,8 +30,8 @@ pub fn view<'a>(
         text(title)
             .size(20)
             .font(iced::Font {
-                weight: iced::font::Weight::Semibold,
-                ..iced::Font::with_name("Inter")
+                weight: BOLD_WEIGHT,
+                ..Default::default()
             })
             .style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
@@ -98,8 +98,8 @@ fn view_song_item<'a>(
     let song_name = text(&song.name)
         .size(14)
         .font(iced::Font {
-            weight: iced::font::Weight::Medium,
-            ..iced::Font::with_name("Inter")
+            weight: MEDIUM_WEIGHT,
+            ..Default::default()
         })
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
@@ -196,8 +196,8 @@ fn view_song_item<'a>(
                     color: Some(theme::rank_color(rank, theme)),
                 })
                 .font(iced::Font {
-                    weight: iced::font::Weight::Semibold,
-                    ..iced::Font::default()
+                    weight: BOLD_WEIGHT,
+                    ..Default::default()
                 }),
         )
         .width(48)

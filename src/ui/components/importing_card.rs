@@ -134,8 +134,7 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
                 } else {
                     theme::TEXT_SECONDARY
                 })
-            })
-            .font(iced::Font::with_name("Inter")),
+            }),
         text(status_text).size(11).color(theme::TEXT_MUTED)
     ]
     .spacing(2);
