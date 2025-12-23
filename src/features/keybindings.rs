@@ -49,9 +49,15 @@ impl KeyBinding {
         }
     }
 
-    /// Add Ctrl modifier
+    /// Add Ctrl modifier 
     pub fn ctrl(mut self) -> Self {
         self.modifiers.ctrl = true;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn cmd(mut self) -> Self {
+        self.modifiers.cmd = true;
         self
     }
 
@@ -78,9 +84,12 @@ impl KeyBinding {
     pub fn display(&self) -> String {
         let mut parts = Vec::new();
 
+        if self.modifiers.cmd {
+            parts.push("⌘");
+        }
         if self.modifiers.ctrl {
             #[cfg(target_os = "macos")]
-            parts.push("⌘");
+            parts.push("⌃");
             #[cfg(not(target_os = "macos"))]
             parts.push("Ctrl");
         }
@@ -106,6 +115,8 @@ impl KeyBinding {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize)]
 pub struct ModifierSet {
     pub ctrl: bool,
+    #[serde(default)]
+    pub cmd: bool,
     pub alt: bool,
     pub shift: bool,
 }
@@ -113,12 +124,14 @@ pub struct ModifierSet {
 impl ModifierSet {
     /// Check if modifiers match
     pub fn matches(&self, modifiers: &Modifiers) -> bool {
-        #[cfg(target_os = "macos")]
-        let ctrl_match = self.ctrl == modifiers.logo();
-        #[cfg(not(target_os = "macos"))]
         let ctrl_match = self.ctrl == modifiers.control();
 
-        ctrl_match && self.alt == modifiers.alt() && self.shift == modifiers.shift()
+        #[cfg(target_os = "macos")]
+        let cmd_match = self.cmd == modifiers.logo();
+        #[cfg(not(target_os = "macos"))]
+        let cmd_match = !self.cmd;
+
+        ctrl_match && cmd_match && self.alt == modifiers.alt() && self.shift == modifiers.shift()
     }
 }
 

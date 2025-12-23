@@ -459,6 +459,7 @@ impl App {
                         let binding = KeyBinding {
                             modifiers: ModifierSet {
                                 ctrl: modifiers.control(),
+                                cmd: modifiers.logo(),
                                 alt: modifiers.alt(),
                                 shift: modifiers.shift(),
                             },
