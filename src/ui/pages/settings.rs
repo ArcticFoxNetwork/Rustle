@@ -880,9 +880,14 @@ fn format_size_bytes(bytes: u64) -> String {
 }
 
 fn about_section(_locale: Locale) -> Element<'static, Message> {
+    use once_cell::sync::Lazy;
+
     static ICON_DATA: &[u8] = include_bytes!("../../../assets/icons/icon_256.png");
+    static ICON_HANDLE: Lazy<iced::widget::image::Handle> =
+        Lazy::new(|| iced::widget::image::Handle::from_bytes(ICON_DATA));
+
     let icon = container(
-        iced::widget::image(iced::widget::image::Handle::from_bytes(ICON_DATA))
+        iced::widget::image(ICON_HANDLE.clone())
             .width(240)
             .height(240),
     )

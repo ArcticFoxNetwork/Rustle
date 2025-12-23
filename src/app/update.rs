@@ -19,7 +19,6 @@ mod queue;
 pub mod queue_navigator;
 mod settings;
 pub mod song_resolver;
-#[cfg(target_os = "linux")]
 mod tray;
 mod window;
 
@@ -55,7 +54,6 @@ impl App {
         if let Some(task) = self.handle_window(&message) {
             return task;
         }
-        #[cfg(target_os = "linux")]
         if let Some(task) = self.handle_tray(&message) {
             return task;
         }

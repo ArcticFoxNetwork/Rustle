@@ -70,6 +70,15 @@ impl App {
                 Ok(cache) => Message::CoverCacheReady(Arc::new(cache)),
                 Err(e) => Message::DatabaseError(format!("Cover cache error: {}", e)),
             }),
+            // Initialize tray
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            Task::done(match helpers::init_tray_sync() {
+                Ok(rx) => Message::TrayStarted(rx),
+                Err(e) => {
+                    tracing::warn!("Failed to start system tray: {}", e);
+                    Message::Noop
+                }
+            }),
             #[cfg(target_os = "linux")]
             Task::perform(helpers::init_tray(), |result| match result {
                 Ok(rx) => Message::TrayStarted(rx),

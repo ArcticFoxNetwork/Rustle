@@ -326,15 +326,13 @@ pub enum Message {
     /// Toggle "remember my choice" checkbox
     ExitDialogRememberChanged(bool),
 
-    // ============ System Tray (Linux only) ============
-    #[cfg(target_os = "linux")]
+    // ============ System Tray ============
     /// Tray service started
     TrayStarted(
         std::sync::Arc<
             tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<crate::features::TrayCommand>>,
         >,
     ),
-    #[cfg(target_os = "linux")]
     /// Tray command received
     TrayCommand(crate::features::TrayCommand),
 
@@ -559,7 +557,6 @@ impl std::fmt::Debug for Message {
             // Arc-wrapped types - just show variant name
             Self::DatabaseReady(_) => simple!("DatabaseReady"),
             Self::CoverCacheReady(_) => simple!("CoverCacheReady"),
-            #[cfg(target_os = "linux")]
             Self::TrayStarted(_) => simple!("TrayStarted"),
 
             // Complex types - show key identifier only
@@ -801,6 +798,7 @@ impl std::fmt::Debug for Message {
             Self::LoadMoreHotPlaylists => simple!("LoadMoreHotPlaylists"),
             Self::SeeAllRecommended => simple!("SeeAllRecommended"),
             Self::SeeAllHot => simple!("SeeAllHot"),
+            Self::TrayCommand(_) => simple!("TrayCommand"),
         }
     }
 }

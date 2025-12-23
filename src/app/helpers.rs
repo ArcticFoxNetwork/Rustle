@@ -4,12 +4,11 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong, NewPlaylist};
+use crate::features::PlayMode;
 use crate::features::import::{CoverCache, default_cache_dir};
 #[cfg(target_os = "linux")]
 use crate::features::{MprisCommand, MprisHandle, mpris};
-#[cfg(target_os = "linux")]
 use crate::features::{TrayCommand, TrayHandle, TrayState, tray};
-use crate::features::PlayMode;
 use crate::ui::pages;
 use crate::utils::format_relative_time;
 
@@ -146,7 +145,23 @@ fn warm_up_font_cache(font_system: &crate::features::lyrics::engine::SharedFontS
     tracing::info!("Font cache warmed up in {:?}", start.elapsed());
 }
 
-/// Initialize system tray (Linux only)
+/// Initialize system tray synchronously (Windows/macOS only)
+/// Returns the command receiver wrapped in Arc<Mutex>; the handle is stored globally for updates
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+pub fn init_tray_sync() -> anyhow::Result<
+    std::sync::Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<TrayCommand>>>,
+> {
+    let (handle, rx) =
+        tray::start_tray_sync().map_err(|e| anyhow::anyhow!("Failed to start tray: {}", e))?;
+
+    // Store handle globally for later updates
+    TRAY_HANDLE.set(handle).ok();
+
+    tracing::info!("System tray started");
+    Ok(std::sync::Arc::new(tokio::sync::Mutex::new(rx)))
+}
+
+/// Initialize system tray (async version, Linux only)
 /// Returns the command receiver wrapped in Arc<Mutex>; the handle is stored globally for updates
 #[cfg(target_os = "linux")]
 pub async fn init_tray() -> anyhow::Result<
@@ -163,12 +178,10 @@ pub async fn init_tray() -> anyhow::Result<
     Ok(std::sync::Arc::new(tokio::sync::Mutex::new(rx)))
 }
 
-/// Global tray handle for updates (Linux only)
-#[cfg(target_os = "linux")]
+/// Global tray handle for updates
 static TRAY_HANDLE: once_cell::sync::OnceCell<TrayHandle> = once_cell::sync::OnceCell::new();
 
-/// Get the global tray handle (Linux only)
-#[cfg(target_os = "linux")]
+/// Get the global tray handle
 pub fn get_tray_handle() -> Option<&'static TrayHandle> {
     TRAY_HANDLE.get()
 }
@@ -196,8 +209,7 @@ pub fn set_mpris_handle(handle: MprisHandle) {
     MPRIS_HANDLE.set(handle).ok();
 }
 
-/// Update tray state with full info including play mode (Linux only)
-#[cfg(target_os = "linux")]
+/// Update tray state with full info including play mode
 pub fn update_tray_state_full(
     is_playing: bool,
     title: Option<String>,
@@ -207,18 +219,7 @@ pub fn update_tray_state_full(
     update_tray_state_with_favorite(is_playing, title, artist, play_mode, None, false);
 }
 
-/// Update tray state with full info including play mode (no-op on non-Linux)
-#[cfg(not(target_os = "linux"))]
-pub fn update_tray_state_full(
-    _is_playing: bool,
-    _title: Option<String>,
-    _artist: Option<String>,
-    _play_mode: PlayMode,
-) {
-}
-
-/// Update tray state with full info including favorite status (Linux only)
-#[cfg(target_os = "linux")]
+/// Update tray state with full info including favorite status
 pub fn update_tray_state_with_favorite(
     is_playing: bool,
     title: Option<String>,
@@ -241,18 +242,6 @@ pub fn update_tray_state_with_favorite(
             handle.update(state).await;
         });
     }
-}
-
-/// Update tray state with full info including favorite status (no-op on non-Linux)
-#[cfg(not(target_os = "linux"))]
-pub fn update_tray_state_with_favorite(
-    _is_playing: bool,
-    _title: Option<String>,
-    _artist: Option<String>,
-    _play_mode: PlayMode,
-    _ncm_song_id: Option<u64>,
-    _is_favorited: bool,
-) {
 }
 
 /// Open folder dialog

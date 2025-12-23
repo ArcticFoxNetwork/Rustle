@@ -55,7 +55,11 @@ cookie_store = "0.21"
 isahc = { version = "1.7", features = ["cookies"] }
 lazy_static = "1.5"
 urlqstring = "0.2"
-openssl = { version = "0.10", features = ["vendored"] }
+md5 = "0.7"
+aes = "0.8"
+cbc = "0.1"
+ecb = "0.1"
+rsa = "0.9"
 hex = "0.4"
 base64 = "0.22"
 regex = "1.10"
@@ -65,6 +69,9 @@ dirs = "6.0.0"
 [target.'cfg(target_os = "linux")'.dependencies]
 mpris-server = "0.9"
 ksni = { version = "0.3", default-features = false, features = ["tokio"] }
+
+[target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
+tray-icon = "0.19"
 
 [target.'cfg(windows)'.build-dependencies]
 winresource = "0.1"
