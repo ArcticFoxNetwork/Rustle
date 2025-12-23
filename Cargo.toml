@@ -1,6 +1,6 @@
 [package]
 name = "rustle"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "A modern music player built with Rust and iced, supporting NetEase Cloud Music"
 license = "AGPL-3.0-or-later"
