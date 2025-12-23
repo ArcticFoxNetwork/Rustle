@@ -118,7 +118,7 @@ impl App {
 
                 #[cfg(target_os = "windows")]
                 {
-                    // On Windows, restore from minimized state and bring to front
+                    // Windows needs to restore from minimized state
                     Some(iced::window::latest().and_then(|id| {
                         Task::batch([
                             iced::window::set_visible(id, true),
@@ -129,14 +129,12 @@ impl App {
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
-                    if self.core.window_hidden {
-                        Some(
-                            iced::window::latest()
-                                .and_then(|id| iced::window::set_visible(id, true)),
-                        )
-                    } else {
-                        Some(iced::window::latest().and_then(|id| iced::window::gain_focus(id)))
-                    }
+                    Some(iced::window::latest().and_then(|id| {
+                        Task::batch([
+                            iced::window::set_visible(id, true),
+                            iced::window::gain_focus(id),
+                        ])
+                    }))
                 }
             }
 

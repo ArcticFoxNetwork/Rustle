@@ -21,7 +21,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            libssl-dev \
             libdbus-1-dev \
             libasound2-dev \
             libfuse2 \
@@ -204,10 +203,9 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install OpenSSL and ImageMagick
+      - name: Install ImageMagick
         run: |
-          choco install openssl imagemagick -y
-          echo "OPENSSL_DIR=C:\Program Files\OpenSSL-Win64" >> $env:GITHUB_ENV
+          choco install imagemagick -y
 
       - name: Generate ICO icon
         shell: pwsh
@@ -220,10 +218,6 @@ jobs:
           key: windows-msvc
 
       - name: Build release
-        env:
-          OPENSSL_DIR: C:\Program Files\OpenSSL-Win64
-          OPENSSL_LIB_DIR: C:\Program Files\OpenSSL-Win64\lib\VC\x64\MT
-          OPENSSL_INCLUDE_DIR: C:\Program Files\OpenSSL-Win64\include
         run: cargo build --release
 
       - name: Rename exe

@@ -13,7 +13,9 @@ use tokio::sync::mpsc;
 /// Commands that can be sent from the tray to the application
 #[derive(Debug, Clone)]
 pub enum TrayCommand {
-    /// Toggle show/hide window
+    /// Show window and bring to front (left click behavior for Windows/macOS)
+    ShowOrFocusWindow,
+    /// Toggle show/hide window (Linux behavior)
     ToggleWindow,
     /// Toggle play/pause
     PlayPause,
@@ -537,7 +539,7 @@ mod native {
                 ..
             } => {
                 if button == MouseButton::Left && button_state == MouseButtonState::Up {
-                    let _ = cmd_tx.send(TrayCommand::ToggleWindow);
+                    let _ = cmd_tx.send(TrayCommand::ShowOrFocusWindow);
                 }
             }
             _ => {}
@@ -630,9 +632,9 @@ mod native {
             } => {
                 tracing::info!("Tray icon clicked: {:?} {:?}", button, button_state);
                 if button == MouseButton::Left && button_state == MouseButtonState::Up {
-                    tracing::info!("Sending ToggleWindow command");
-                    if let Err(e) = cmd_tx.send(TrayCommand::ToggleWindow) {
-                        tracing::error!("Failed to send ToggleWindow command: {}", e);
+                    tracing::info!("Sending ShowOrFocusWindow command");
+                    if let Err(e) = cmd_tx.send(TrayCommand::ShowOrFocusWindow) {
+                        tracing::error!("Failed to send ShowOrFocusWindow command: {}", e);
                     }
                 }
             }

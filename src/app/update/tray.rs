@@ -32,6 +32,9 @@ impl App {
 
             Message::TrayCommand(cmd) => {
                 match cmd {
+                    TrayCommand::ShowOrFocusWindow => {
+                        return Some(self.update(Message::ShowWindow));
+                    }
                     TrayCommand::ToggleWindow => {
                         return Some(self.update(Message::ToggleWindow));
                     }
