@@ -7,7 +7,6 @@ arch=('x86_64')
 url="https://github.com/ArcticFoxNetwork/Rustle"
 license=('AGPL-3.0-or-later')
 depends=(
-    'openssl'
     'dbus'
     'alsa-lib'
     'libayatana-appindicator'
