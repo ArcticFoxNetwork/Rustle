@@ -25,14 +25,14 @@
 ---
 
 <p align="center">
-  <img src="assets/screenshots/playlist.png" width="90%" alt="播放列表">
+  <img src="assets/screenshots/lyrics_page.png" width="90%" alt="播放列表">
 </p>
 
 <details>
 <summary><b>📸 更多截图</b></summary>
 <br>
 <p align="center">
-  <img src="assets/screenshots/lyrics_page.png" width="90%" alt="歌词页面">
+  <img src="assets/screenshots/playlist.png" width="90%" alt="歌词页面">
 </p>
 <p align="center">
   <img src="assets/screenshots/settings_page.png" width="90%" alt="设置页面">
