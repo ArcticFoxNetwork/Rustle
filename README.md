@@ -5,7 +5,7 @@
 <h1 align="center">Rustle</h1>
 
 <p align="center">
-  <b>一个使用 Rust + iced 构建的现代音乐播放器</b><br>
+  <b>纯 Rust 构建的高性能音乐播放器</b><br>
   支持网易云音乐和本地音乐库
 </p>
 
@@ -18,26 +18,57 @@
 <p align="center">
   <a href="#-安装">安装</a> •
   <a href="#-特性">特性</a> •
-  <a href="#-快捷键">快捷键</a> •
-  <a href="#-技术栈">技术栈</a>
+  <a href="#-快捷键">快捷键</a>
 </p>
 
 ---
 
 <p align="center">
-  <img src="assets/screenshots/lyrics_page.png" width="90%" alt="播放列表">
+  <img src="assets/screenshots/lyrics_page.png" width="90%" alt="歌词页面">
 </p>
 
 <details>
 <summary><b>📸 更多截图</b></summary>
 <br>
 <p align="center">
-  <img src="assets/screenshots/playlist.png" width="90%" alt="歌词页面">
+  <img src="assets/screenshots/playlist.png" width="90%" alt="播放列表">
 </p>
 <p align="center">
   <img src="assets/screenshots/settings_page.png" width="90%" alt="设置页面">
 </p>
 </details>
+
+---
+
+## 🚀 为什么选择 Rustle
+
+### 对比 Electron 应用
+
+| | Rustle | Electron 播放器 |
+|:--|:--:|:--:|
+| **内存占用** | ~250MB | 500MB+ |
+| **磁盘占用** | ~15MB | 150MB+ |
+| **CPU 空闲时** | <1% | 3-5% |
+| **启动速度** | 10ms | 2-5秒 |
+
+### 真正的跨平台体验
+
+| 平台 | 系统托盘 | 媒体控制 |
+|:--|:--:|:--:|
+| **Linux** | freedesktop 标准 | MPRIS D-Bus |
+| **Windows** | 原生托盘 | 系统媒体控制 |
+| **macOS** | 菜单栏图标 | 控制中心集成 |
+
+### 更懂你的使用习惯
+
+- **播放状态持久化** - 关闭应用后，下次打开自动恢复播放列表和进度
+- **无缝预加载** - 提前加载下一首，切歌零等待
+
+### GPU 加速歌词渲染
+
+- **Apple Music 风格** - 逐字高亮、弹簧物理动画
+- **SDF 文字渲染** - GPU 加速，任意缩放不模糊
+- **多格式支持** - LRC / YRC / QRC / TTML / ESLrc
 
 ---
 
