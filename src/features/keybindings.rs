@@ -50,14 +50,7 @@ impl KeyBinding {
     }
 
     pub fn primary(mut self) -> Self {
-        #[cfg(target_os = "macos")]
-        {
-            self.modifiers.cmd = true;
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            self.modifiers.ctrl = true;
-        }
+        crate::platform::keybindings::apply_primary_modifier(&mut self.modifiers);
         self
     }
 
@@ -94,28 +87,20 @@ impl KeyBinding {
 
     /// Format as human-readable string
     pub fn display(&self) -> String {
+        use crate::platform::keybindings::MODIFIER_SYMBOLS;
         let mut parts = Vec::new();
 
         if self.modifiers.cmd {
-            parts.push("⌘");
+            parts.push(MODIFIER_SYMBOLS.cmd);
         }
         if self.modifiers.ctrl {
-            #[cfg(target_os = "macos")]
-            parts.push("⌃");
-            #[cfg(not(target_os = "macos"))]
-            parts.push("Ctrl");
+            parts.push(MODIFIER_SYMBOLS.ctrl);
         }
         if self.modifiers.alt {
-            #[cfg(target_os = "macos")]
-            parts.push("⌥");
-            #[cfg(not(target_os = "macos"))]
-            parts.push("Alt");
+            parts.push(MODIFIER_SYMBOLS.alt);
         }
         if self.modifiers.shift {
-            #[cfg(target_os = "macos")]
-            parts.push("⇧");
-            #[cfg(not(target_os = "macos"))]
-            parts.push("Shift");
+            parts.push(MODIFIER_SYMBOLS.shift);
         }
 
         parts.push(self.key.display());
@@ -137,11 +122,7 @@ impl ModifierSet {
     /// Check if modifiers match
     pub fn matches(&self, modifiers: &Modifiers) -> bool {
         let ctrl_match = self.ctrl == modifiers.control();
-
-        #[cfg(target_os = "macos")]
-        let cmd_match = self.cmd == modifiers.logo();
-        #[cfg(not(target_os = "macos"))]
-        let cmd_match = !self.cmd;
+        let cmd_match = crate::platform::keybindings::matches_cmd_modifier(self.cmd, modifiers);
 
         ctrl_match && cmd_match && self.alt == modifiers.alt() && self.shift == modifiers.shift()
     }

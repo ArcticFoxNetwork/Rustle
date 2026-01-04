@@ -406,8 +406,4 @@ impl App {
 
         lyrics_scroll_task
     }
-
-    /// Update MPRIS state (no-op on non-Linux platforms)
-    #[cfg(not(target_os = "linux"))]
-    pub fn update_mpris_state(&mut self) {}
 }

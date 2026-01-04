@@ -146,8 +146,6 @@ pub enum Message {
     QueueLoaded(Vec<DbSong>),
     /// Recently played loaded
     RecentlyPlayedLoaded(Vec<DbSong>),
-    /// Save current playback position
-    SavePlaybackPosition(f64),
 
     // ============ Import ============
     /// Cover cache ready
@@ -338,18 +336,16 @@ pub enum Message {
     /// Tray command received
     TrayCommand(crate::features::TrayCommand),
 
-    // ============ MPRIS (Linux only) ============
-    #[cfg(target_os = "linux")]
-    /// MPRIS service started
+    // ============ Media Controls ============
+    /// Media controls service started
     MprisStartedWithHandle(
-        crate::features::MprisHandle,
+        crate::platform::media_controls::MediaHandle,
         std::sync::Arc<
-            tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<crate::features::MprisCommand>>,
+            tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<crate::platform::media_controls::MediaCommand>>,
         >,
     ),
-    #[cfg(target_os = "linux")]
-    /// MPRIS command received
-    MprisCommand(crate::features::MprisCommand),
+    /// Media controls command received
+    MprisCommand(crate::platform::media_controls::MediaCommand),
     /// Show window from tray
     ShowWindow,
     /// Toggle window visibility
@@ -645,7 +641,6 @@ impl std::fmt::Debug for Message {
             // Database
             Self::DatabaseError(e) => simple!("DatabaseError", "{}", e),
             Self::SongsValidated(n) => simple!("SongsValidated", "{}", n),
-            Self::SavePlaybackPosition(p) => simple!("SavePlaybackPosition", "{:.1}", p),
 
             // Import
             Self::StartScan(_) => simple!("StartScan"),
@@ -752,10 +747,8 @@ impl std::fmt::Debug for Message {
             // Tray
             Self::TrayCommand(c) => simple!("TrayCommand", "{:?}", c),
 
-            // MPRIS (Linux only)
-            #[cfg(target_os = "linux")]
+            // Media Controls
             Self::MprisCommand(c) => simple!("MprisCommand", "{:?}", c),
-            #[cfg(target_os = "linux")]
             Self::MprisStartedWithHandle(_, _) => simple!("MprisStartedWithHandle"),
             Self::ShowWindow => simple!("ShowWindow"),
             Self::ToggleWindow => simple!("ToggleWindow"),

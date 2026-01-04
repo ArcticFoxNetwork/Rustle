@@ -38,25 +38,7 @@ impl App {
         let app = Self { core, library, ui };
 
         // 3. Open main window
-        let (window_id, open_window) = iced::window::open(iced::window::Settings {
-            size: iced::Size::new(1400.0, 900.0),
-            exit_on_close_request: false,
-            decorations: false,
-            #[cfg(target_os = "linux")]
-            platform_specific: iced::window::settings::PlatformSpecific {
-                application_id: "rustle".to_string(),
-                ..Default::default()
-            },
-            #[cfg(target_os = "macos")]
-            platform_specific: iced::window::settings::PlatformSpecific {
-                title_hidden: true,
-                titlebar_transparent: true,
-                fullsize_content_view: true,
-            },
-            #[cfg(target_os = "windows")]
-            platform_specific: Default::default(),
-            ..Default::default()
-        });
+        let (window_id, open_window) = iced::window::open(crate::platform::window::window_settings());
         tracing::info!("Opening main window with id: {:?}", window_id);
 
         // 4. Initialize async tasks
@@ -71,27 +53,11 @@ impl App {
                 Err(e) => Message::DatabaseError(format!("Cover cache error: {}", e)),
             }),
             // Initialize tray
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
-            Task::done(match helpers::init_tray_sync() {
-                Ok(rx) => Message::TrayStarted(rx),
-                Err(e) => {
-                    tracing::warn!("Failed to start system tray: {}", e);
-                    Message::Noop
-                }
-            }),
-            #[cfg(target_os = "linux")]
-            Task::perform(helpers::init_tray(), |result| match result {
-                Ok(rx) => Message::TrayStarted(rx),
-                Err(e) => {
-                    tracing::warn!("Failed to start system tray: {}", e);
-                    Message::Noop
-                }
-            }),
-            #[cfg(target_os = "linux")]
+            crate::platform::tray::init_task(Message::TrayStarted),
             Task::perform(helpers::init_mpris(), |result| match result {
                 Ok((handle, rx)) => Message::MprisStartedWithHandle(handle, rx),
                 Err(e) => {
-                    tracing::warn!("Failed to start MPRIS: {}", e);
+                    tracing::warn!("Failed to start media controls: {}", e);
                     Message::Noop
                 }
             }),
@@ -246,7 +212,7 @@ impl Default for App {
     }
 }
 
-/// Subscription decision logic for testability
+#[cfg(test)]
 pub mod subscription_logic {
     pub fn needs_animation_subscription(
         has_animations: bool,

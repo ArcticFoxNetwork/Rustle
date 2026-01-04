@@ -5,7 +5,6 @@ mod discover;
 mod import;
 mod keyboard;
 mod lyrics;
-#[cfg(target_os = "linux")]
 mod mpris;
 mod navigation;
 mod ncm;
@@ -57,7 +56,6 @@ impl App {
         if let Some(task) = self.handle_tray(&message) {
             return task;
         }
-        #[cfg(target_os = "linux")]
         if let Some(task) = self.handle_mpris(&message) {
             return task;
         }

@@ -5,17 +5,7 @@ use iced::color;
 use iced::widget::{button, container, pick_list, scrollable};
 use iced::{Background, Border, Color, Shadow, Theme, Vector};
 
-/// Bold font - uses Semibold on macOS (SF Pro looks better), Bold on others
-#[cfg(target_os = "macos")]
-pub const BOLD_WEIGHT: iced::font::Weight = iced::font::Weight::Semibold;
-#[cfg(not(target_os = "macos"))]
-pub const BOLD_WEIGHT: iced::font::Weight = iced::font::Weight::Bold;
-
-/// Medium font weight
-#[cfg(target_os = "macos")]
-pub const MEDIUM_WEIGHT: iced::font::Weight = iced::font::Weight::Medium;
-#[cfg(not(target_os = "macos"))]
-pub const MEDIUM_WEIGHT: iced::font::Weight = iced::font::Weight::Normal;
+pub use crate::platform::theme::{BOLD_WEIGHT, MEDIUM_WEIGHT};
 
 // ============================================================================
 // Color Palette - Dynamic based on theme

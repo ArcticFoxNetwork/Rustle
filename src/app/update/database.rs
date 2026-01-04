@@ -283,24 +283,6 @@ impl App {
                 Some(Task::none())
             }
 
-            Message::SavePlaybackPosition(position_secs) => {
-                if let (Some(db), Some(state)) = (&self.core.db, &self.library.playback_state) {
-                    let db = db.clone();
-                    let song_id = state.current_song_id;
-                    let queue_pos = state.queue_position;
-                    let pos = *position_secs;
-                    return Some(Task::perform(
-                        async move {
-                            db.update_playback_position(song_id, queue_pos, pos)
-                                .await
-                                .ok();
-                        },
-                        |_| Message::PlayHero,
-                    ));
-                }
-                Some(Task::none())
-            }
-
             _ => None,
         }
     }

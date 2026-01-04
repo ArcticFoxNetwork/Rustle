@@ -7,6 +7,7 @@ use iced::time::Instant;
 use crate::app::message::Message;
 use crate::app::state::App;
 use crate::features::CloseBehavior;
+use crate::platform::window;
 
 impl App {
     /// Handle window-related messages
@@ -24,10 +25,7 @@ impl App {
                     CloseBehavior::MinimizeToTray => {
                         tracing::info!("Hiding window to tray");
                         self.core.window_hidden = true;
-                        return Some(
-                            iced::window::latest()
-                                .and_then(|id| iced::window::set_visible(id, false)),
-                        );
+                        return Some(window::hide_window());
                     }
                 }
                 Some(Task::none())
@@ -50,7 +48,7 @@ impl App {
                 self.ui.dialogs.exit_animation.stop(Instant::now());
                 tracing::info!("Hiding window to tray");
                 self.core.window_hidden = true;
-                Some(iced::window::latest().and_then(|id| iced::window::set_visible(id, false)))
+                Some(window::hide_window())
             }
 
             Message::CancelExit => {
@@ -70,72 +68,16 @@ impl App {
                 tracing::info!("Setting window visible: {}", visible);
 
                 if visible {
-                    // When showing window, bring it to front and focus it
-                    #[cfg(target_os = "windows")]
-                    {
-                        Some(iced::window::latest().and_then(move |id| {
-                            Task::batch([
-                                iced::window::set_visible(id, true),
-                                iced::window::minimize(id, false),
-                                iced::window::gain_focus(id),
-                            ])
-                        }))
-                    }
-                    #[cfg(not(target_os = "windows"))]
-                    {
-                        Some(iced::window::latest().and_then(move |id| {
-                            Task::batch([
-                                iced::window::set_visible(id, true),
-                                iced::window::gain_focus(id),
-                            ])
-                        }))
-                    }
+                    Some(window::show_window())
                 } else {
-                    // Hide window
-                    #[cfg(target_os = "windows")]
-                    {
-                        // On Windows, minimize to hide
-                        Some(iced::window::latest().and_then(move |id| {
-                            Task::batch([
-                                iced::window::minimize(id, true),
-                                iced::window::set_visible(id, false),
-                            ])
-                        }))
-                    }
-                    #[cfg(not(target_os = "windows"))]
-                    {
-                        Some(
-                            iced::window::latest()
-                                .and_then(move |id| iced::window::set_visible(id, visible)),
-                        )
-                    }
+                    Some(window::hide_window())
                 }
             }
 
             Message::ShowWindow => {
                 self.core.window_hidden = false;
                 tracing::info!("Showing window");
-
-                #[cfg(target_os = "windows")]
-                {
-                    // Windows needs to restore from minimized state
-                    Some(iced::window::latest().and_then(|id| {
-                        Task::batch([
-                            iced::window::set_visible(id, true),
-                            iced::window::minimize(id, false),
-                            iced::window::gain_focus(id),
-                        ])
-                    }))
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    Some(iced::window::latest().and_then(|id| {
-                        Task::batch([
-                            iced::window::set_visible(id, true),
-                            iced::window::gain_focus(id),
-                        ])
-                    }))
-                }
+                Some(window::show_window())
             }
 
             Message::WindowOperationComplete => {

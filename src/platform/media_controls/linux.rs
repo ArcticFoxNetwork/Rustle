@@ -1,4 +1,4 @@
-//! MPRIS D-Bus integration using LocalPlayerInterface trait
+//! Linux MPRIS D-Bus integration using LocalPlayerInterface trait
 
 use mpris_server::{
     LocalPlayerInterface, LocalRootInterface, LocalServer, LoopStatus, Metadata, PlaybackRate,
@@ -8,134 +8,68 @@ use mpris_server::{
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
-// Track metadata for MPRIS
-#[derive(Debug, Clone, Default)]
-pub struct MprisMetadata {
-    /// Track ID (unique identifier)
-    pub track_id: Option<String>,
-    /// Track title
-    pub title: Option<String>,
-    /// Artist(s)
-    pub artists: Vec<String>,
-    /// Album name
-    pub album: Option<String>,
-    /// Album artist(s)
-    pub album_artists: Vec<String>,
-    /// Track length in microseconds
-    pub length_us: Option<i64>,
-    /// Cover art URL (file:// or http://)
-    pub art_url: Option<String>,
-}
+use super::{MediaCommand, MediaMetadata, MediaPlaybackStatus, MediaState};
 
-impl MprisMetadata {
-    /// Convert to mpris-server Metadata
-    pub fn to_metadata(&self) -> Metadata {
-        let mut builder = Metadata::builder();
+/// Convert MediaMetadata to mpris-server Metadata
+fn to_mpris_metadata(meta: &MediaMetadata) -> Metadata {
+    let mut builder = Metadata::builder();
 
-        if let Some(ref track_id) = self.track_id {
-            builder = builder.trackid(
-                TrackId::try_from(format!("/org/rustle/track/{}", track_id))
-                    .unwrap_or_else(|_| TrackId::NO_TRACK),
-            );
-        }
-
-        if let Some(ref title) = self.title {
-            builder = builder.title(title);
-        }
-
-        if !self.artists.is_empty() {
-            builder = builder.artist(self.artists.clone());
-        }
-
-        if let Some(ref album) = self.album {
-            builder = builder.album(album);
-        }
-
-        if !self.album_artists.is_empty() {
-            builder = builder.album_artist(self.album_artists.clone());
-        }
-
-        if let Some(length) = self.length_us {
-            builder = builder.length(Time::from_micros(length));
-        }
-
-        if let Some(ref art_url) = self.art_url {
-            builder = builder.art_url(art_url);
-        }
-
-        builder.build()
+    if let Some(ref track_id) = meta.track_id {
+        builder = builder.trackid(
+            TrackId::try_from(format!("/org/rustle/track/{}", track_id))
+                .unwrap_or_else(|_| TrackId::NO_TRACK),
+        );
     }
+
+    if let Some(ref title) = meta.title {
+        builder = builder.title(title);
+    }
+
+    if !meta.artists.is_empty() {
+        builder = builder.artist(meta.artists.clone());
+    }
+
+    if let Some(ref album) = meta.album {
+        builder = builder.album(album);
+    }
+
+    if !meta.album_artists.is_empty() {
+        builder = builder.album_artist(meta.album_artists.clone());
+    }
+
+    if let Some(length) = meta.length_us {
+        builder = builder.length(Time::from_micros(length));
+    }
+
+    if let Some(ref art_url) = meta.art_url {
+        builder = builder.art_url(art_url);
+    }
+
+    builder.build()
 }
 
-/// Playback status for MPRIS
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum MprisPlaybackStatus {
-    Playing,
-    Paused,
-    Stopped,
-}
-
-impl From<MprisPlaybackStatus> for PlaybackStatus {
-    fn from(status: MprisPlaybackStatus) -> Self {
+impl From<MediaPlaybackStatus> for PlaybackStatus {
+    fn from(status: MediaPlaybackStatus) -> Self {
         match status {
-            MprisPlaybackStatus::Playing => PlaybackStatus::Playing,
-            MprisPlaybackStatus::Paused => PlaybackStatus::Paused,
-            MprisPlaybackStatus::Stopped => PlaybackStatus::Stopped,
-        }
-    }
-}
-
-/// MPRIS state
-#[derive(Debug, Clone)]
-pub struct MprisState {
-    /// Current playback status
-    pub status: MprisPlaybackStatus,
-    /// Track metadata
-    pub metadata: MprisMetadata,
-    /// Current position in microseconds
-    pub position_us: i64,
-    /// Volume (0.0 to 1.0)
-    pub volume: f64,
-    /// Can go to next track
-    pub can_go_next: bool,
-    /// Can go to previous track
-    pub can_go_previous: bool,
-    /// Can play
-    pub can_play: bool,
-    /// Can pause
-    pub can_pause: bool,
-    /// Can seek
-    pub can_seek: bool,
-}
-
-impl Default for MprisState {
-    fn default() -> Self {
-        Self {
-            status: MprisPlaybackStatus::Stopped,
-            metadata: MprisMetadata::default(),
-            position_us: 0,
-            volume: 1.0,
-            can_go_next: false,
-            can_go_previous: false,
-            can_play: false,
-            can_pause: false,
-            can_seek: false,
+            MediaPlaybackStatus::Playing => PlaybackStatus::Playing,
+            MediaPlaybackStatus::Paused => PlaybackStatus::Paused,
+            MediaPlaybackStatus::Stopped => PlaybackStatus::Stopped,
         }
     }
 }
 
 // Shared state between the app and MPRIS
 #[derive(Debug, Clone)]
-pub struct MprisSharedState {
-    pub status: Arc<Mutex<PlaybackStatus>>,
-    pub metadata: Arc<Mutex<Metadata>>,
-    pub volume: Arc<Mutex<f64>>,
-    pub position: Arc<Mutex<Time>>,
-    pub can_go_next: Arc<Mutex<bool>>,
-    pub can_go_previous: Arc<Mutex<bool>>,
-    pub can_play: Arc<Mutex<bool>>,
-    pub can_pause: Arc<Mutex<bool>>,
-    pub can_seek: Arc<Mutex<bool>>,
+struct MprisSharedState {
+    status: Arc<Mutex<PlaybackStatus>>,
+    metadata: Arc<Mutex<Metadata>>,
+    volume: Arc<Mutex<f64>>,
+    position: Arc<Mutex<Time>>,
+    can_go_next: Arc<Mutex<bool>>,
+    can_go_previous: Arc<Mutex<bool>>,
+    can_play: Arc<Mutex<bool>>,
+    can_pause: Arc<Mutex<bool>>,
+    can_seek: Arc<Mutex<bool>>,
 }
 
 impl Default for MprisSharedState {
@@ -154,46 +88,19 @@ impl Default for MprisSharedState {
     }
 }
 
-pub struct MprisPlayer {
+struct MprisPlayer {
     state: MprisSharedState,
-    cmd_tx: mpsc::UnboundedSender<MprisCommand>,
-}
-
-/// Commands that can be sent from MPRIS to the application
-#[derive(Debug, Clone)]
-pub enum MprisCommand {
-    /// Play
-    Play,
-    /// Pause
-    Pause,
-    /// Toggle play/pause
-    PlayPause,
-    /// Stop
-    Stop,
-    /// Next track
-    Next,
-    /// Previous track
-    Previous,
-    /// Seek by offset (in microseconds)
-    Seek(i64),
-    /// Set absolute position (track_id, position_us)
-    SetPosition(String, i64),
-    /// Set volume (0.0 to 1.0)
-    SetVolume(f64),
-    /// Raise/show window
-    Raise,
-    /// Quit application
-    Quit,
+    cmd_tx: mpsc::UnboundedSender<MediaCommand>,
 }
 
 impl LocalRootInterface for MprisPlayer {
     async fn raise(&self) -> fdo::Result<()> {
-        let _ = self.cmd_tx.send(MprisCommand::Raise);
+        let _ = self.cmd_tx.send(MediaCommand::Raise);
         Ok(())
     }
 
     async fn quit(&self) -> fdo::Result<()> {
-        let _ = self.cmd_tx.send(MprisCommand::Quit);
+        let _ = self.cmd_tx.send(MediaCommand::Quit);
         Ok(())
     }
 
@@ -244,42 +151,42 @@ impl LocalRootInterface for MprisPlayer {
 
 impl LocalPlayerInterface for MprisPlayer {
     async fn next(&self) -> fdo::Result<()> {
-        let _ = self.cmd_tx.send(MprisCommand::Next);
+        let _ = self.cmd_tx.send(MediaCommand::Next);
         Ok(())
     }
 
     async fn previous(&self) -> fdo::Result<()> {
-        let _ = self.cmd_tx.send(MprisCommand::Previous);
+        let _ = self.cmd_tx.send(MediaCommand::Previous);
         Ok(())
     }
 
     async fn pause(&self) -> fdo::Result<()> {
-        let _ = self.cmd_tx.send(MprisCommand::Pause);
+        let _ = self.cmd_tx.send(MediaCommand::Pause);
         Ok(())
     }
 
     async fn play(&self) -> fdo::Result<()> {
-        let _ = self.cmd_tx.send(MprisCommand::Play);
+        let _ = self.cmd_tx.send(MediaCommand::Play);
         Ok(())
     }
 
     async fn play_pause(&self) -> fdo::Result<()> {
-        let _ = self.cmd_tx.send(MprisCommand::PlayPause);
+        let _ = self.cmd_tx.send(MediaCommand::PlayPause);
         Ok(())
     }
 
     async fn stop(&self) -> fdo::Result<()> {
-        let _ = self.cmd_tx.send(MprisCommand::Stop);
+        let _ = self.cmd_tx.send(MediaCommand::Stop);
         Ok(())
     }
 
     async fn seek(&self, offset: Time) -> fdo::Result<()> {
-        let _ = self.cmd_tx.send(MprisCommand::Seek(offset.as_micros()));
+        let _ = self.cmd_tx.send(MediaCommand::Seek(offset.as_micros()));
         Ok(())
     }
 
     async fn set_position(&self, track_id: TrackId, position: Time) -> fdo::Result<()> {
-        let _ = self.cmd_tx.send(MprisCommand::SetPosition(
+        let _ = self.cmd_tx.send(MediaCommand::SetPosition(
             track_id.to_string(),
             position.as_micros(),
         ));
@@ -331,7 +238,7 @@ impl LocalPlayerInterface for MprisPlayer {
     }
 
     async fn set_volume(&self, volume: Volume) -> Result<()> {
-        let _ = self.cmd_tx.send(MprisCommand::SetVolume(volume));
+        let _ = self.cmd_tx.send(MediaCommand::SetVolume(volume));
         Ok(())
     }
 
@@ -378,18 +285,19 @@ impl LocalPlayerInterface for MprisPlayer {
     }
 }
 
+/// Handle to control media controls from the application (Linux implementation)
 #[derive(Debug, Clone)]
-pub struct MprisHandle {
+pub struct LinuxMediaHandle {
     state: MprisSharedState,
-    state_tx: mpsc::UnboundedSender<MprisState>,
+    state_tx: mpsc::UnboundedSender<MediaState>,
 }
 
-impl MprisHandle {
+impl LinuxMediaHandle {
     /// Update MPRIS state and notify D-Bus clients
-    pub fn update(&self, state: MprisState) {
+    pub fn update(&self, state: MediaState) {
         // Update shared state for on-demand queries
         *self.state.status.lock().unwrap() = state.status.into();
-        *self.state.metadata.lock().unwrap() = state.metadata.to_metadata();
+        *self.state.metadata.lock().unwrap() = to_mpris_metadata(&state.metadata);
         *self.state.volume.lock().unwrap() = state.volume;
         *self.state.position.lock().unwrap() = Time::from_micros(state.position_us);
         *self.state.can_go_next.lock().unwrap() = state.can_go_next;
@@ -404,9 +312,9 @@ impl MprisHandle {
 }
 
 /// Start MPRIS service
-pub fn start_mpris() -> (MprisHandle, mpsc::UnboundedReceiver<MprisCommand>) {
+pub fn start() -> (LinuxMediaHandle, mpsc::UnboundedReceiver<MediaCommand>) {
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-    let (state_tx, mut state_rx) = mpsc::unbounded_channel::<MprisState>();
+    let (state_tx, mut state_rx) = mpsc::unbounded_channel::<MediaState>();
     let state = MprisSharedState::default();
     let player = MprisPlayer {
         state: state.clone(),
@@ -435,7 +343,7 @@ pub fn start_mpris() -> (MprisHandle, mpsc::UnboundedReceiver<MprisCommand>) {
                         // Send PropertiesChanged signal to notify clients like Waybar
                         let _ = server.properties_changed([
                             Property::PlaybackStatus(state.status.into()),
-                            Property::Metadata(state.metadata.to_metadata()),
+                            Property::Metadata(to_mpris_metadata(&state.metadata)),
                             Property::CanGoNext(state.can_go_next),
                             Property::CanGoPrevious(state.can_go_previous),
                             Property::CanPlay(state.can_play),
@@ -448,5 +356,5 @@ pub fn start_mpris() -> (MprisHandle, mpsc::UnboundedReceiver<MprisCommand>) {
         });
     });
 
-    (MprisHandle { state, state_tx }, cmd_rx)
+    (LinuxMediaHandle { state, state_tx }, cmd_rx)
 }

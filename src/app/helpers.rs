@@ -6,9 +6,8 @@ use std::sync::Arc;
 use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong, NewPlaylist};
 use crate::features::PlayMode;
 use crate::features::import::{CoverCache, default_cache_dir};
-#[cfg(target_os = "linux")]
-use crate::features::{MprisCommand, MprisHandle, mpris};
-use crate::features::{TrayCommand, TrayHandle, TrayState, tray};
+use crate::platform::media_controls::{MediaCommand, MediaHandle, start_media_controls};
+use crate::platform::tray::{TrayHandle, TrayState};
 use crate::ui::pages;
 use crate::utils::format_relative_time;
 
@@ -145,67 +144,28 @@ fn warm_up_font_cache(font_system: &crate::features::lyrics::engine::SharedFontS
     tracing::info!("Font cache warmed up in {:?}", start.elapsed());
 }
 
-/// Initialize system tray synchronously (Windows/macOS only)
-/// Returns the command receiver wrapped in Arc<Mutex>; the handle is stored globally for updates
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-pub fn init_tray_sync() -> anyhow::Result<
-    std::sync::Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<TrayCommand>>>,
-> {
-    let (handle, rx) =
-        tray::start_tray_sync().map_err(|e| anyhow::anyhow!("Failed to start tray: {}", e))?;
-
-    // Store handle globally for later updates
-    TRAY_HANDLE.set(handle).ok();
-
-    tracing::info!("System tray started");
-    Ok(std::sync::Arc::new(tokio::sync::Mutex::new(rx)))
-}
-
-/// Initialize system tray (async version, Linux only)
-/// Returns the command receiver wrapped in Arc<Mutex>; the handle is stored globally for updates
-#[cfg(target_os = "linux")]
-pub async fn init_tray() -> anyhow::Result<
-    std::sync::Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<TrayCommand>>>,
-> {
-    let (handle, rx) = tray::start_tray()
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to start tray: {}", e))?;
-
-    // Store handle globally for later updates
-    TRAY_HANDLE.set(handle).ok();
-
-    tracing::info!("System tray started");
-    Ok(std::sync::Arc::new(tokio::sync::Mutex::new(rx)))
-}
-
-/// Global tray handle for updates
-static TRAY_HANDLE: once_cell::sync::OnceCell<TrayHandle> = once_cell::sync::OnceCell::new();
-
 /// Get the global tray handle
 pub fn get_tray_handle() -> Option<&'static TrayHandle> {
-    TRAY_HANDLE.get()
+    crate::platform::tray::get_handle()
 }
 
-/// Initialize MPRIS (Linux only)
+/// Initialize MPRIS/Media Controls
 /// Returns the command receiver wrapped in Arc<Mutex>
-#[cfg(target_os = "linux")]
 pub async fn init_mpris() -> anyhow::Result<(
-    MprisHandle,
-    std::sync::Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<MprisCommand>>>,
+    MediaHandle,
+    std::sync::Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<MediaCommand>>>,
 )> {
-    let (handle, rx) = mpris::start_mpris();
+    let (handle, rx) = start_media_controls();
 
-    tracing::info!("MPRIS service started");
+    tracing::info!("Media controls service started");
     Ok((handle, std::sync::Arc::new(tokio::sync::Mutex::new(rx))))
 }
 
-/// Global MPRIS handle for updates (Linux only)
-#[cfg(target_os = "linux")]
-static MPRIS_HANDLE: once_cell::sync::OnceCell<MprisHandle> = once_cell::sync::OnceCell::new();
+/// Global MPRIS handle for updates
+static MPRIS_HANDLE: once_cell::sync::OnceCell<MediaHandle> = once_cell::sync::OnceCell::new();
 
-/// Set the global MPRIS handle (Linux only)
-#[cfg(target_os = "linux")]
-pub fn set_mpris_handle(handle: MprisHandle) {
+/// Set the global MPRIS handle
+pub fn set_mpris_handle(handle: MediaHandle) {
     MPRIS_HANDLE.set(handle).ok();
 }
 

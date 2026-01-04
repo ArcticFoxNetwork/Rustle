@@ -10,6 +10,7 @@ mod cache;
 mod database;
 mod features;
 mod i18n;
+mod platform;
 mod ui;
 mod utils;
 

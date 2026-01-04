@@ -1,19 +1,26 @@
 // src/app/update/mpris.rs
-//! MPRIS message handlers
+//! Media controls message handlers
 
 use iced::Task;
 use std::time::Duration;
 
 use crate::app::message::Message;
 use crate::app::state::App;
-use crate::features::{MprisCommand, MprisMetadata, MprisPlaybackStatus, MprisState};
+use crate::platform::media_controls::{
+    MediaCommand, MediaMetadata, MediaPlaybackStatus, MediaState, is_available,
+};
 
 impl App {
-    /// Handle MPRIS-related messages
+    /// Handle media controls related messages
     pub fn handle_mpris(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
             Message::MprisStartedWithHandle(handle, rx) => {
-                tracing::info!("MPRIS service started");
+                // Only process if media controls are available on this platform
+                if !is_available() {
+                    return Some(Task::none());
+                }
+
+                tracing::info!("Media controls service started");
                 self.core.mpris_rx = Some(rx.clone());
 
                 // Store the handle globally for updates
@@ -21,7 +28,7 @@ impl App {
                 crate::app::helpers::set_mpris_handle(handle.clone());
                 self.core.mpris_handle = Some(handle_clone);
 
-                // Start listening for MPRIS commands
+                // Start listening for media control commands
                 let rx = rx.clone();
                 Some(Task::run(
                     async_stream::stream! {
@@ -44,10 +51,10 @@ impl App {
         }
     }
 
-    /// Handle a specific MPRIS command
-    fn handle_mpris_command(&mut self, cmd: &MprisCommand) -> Option<Task<Message>> {
+    /// Handle a specific media control command
+    fn handle_mpris_command(&mut self, cmd: &MediaCommand) -> Option<Task<Message>> {
         match cmd {
-            MprisCommand::Play => {
+            MediaCommand::Play => {
                 if let Some(player) = &mut self.core.audio {
                     if !player.is_playing() {
                         Some(self.update(Message::TogglePlayback))
@@ -59,7 +66,7 @@ impl App {
                 }
             }
 
-            MprisCommand::Pause => {
+            MediaCommand::Pause => {
                 if let Some(player) = &mut self.core.audio {
                     if player.is_playing() {
                         Some(self.update(Message::TogglePlayback))
@@ -71,9 +78,9 @@ impl App {
                 }
             }
 
-            MprisCommand::PlayPause => Some(self.update(Message::TogglePlayback)),
+            MediaCommand::PlayPause => Some(self.update(Message::TogglePlayback)),
 
-            MprisCommand::Stop => {
+            MediaCommand::Stop => {
                 if let Some(player) = &mut self.core.audio {
                     player.stop();
                     self.library.current_song = None;
@@ -82,11 +89,11 @@ impl App {
                 Some(Task::none())
             }
 
-            MprisCommand::Next => Some(self.update(Message::NextSong)),
+            MediaCommand::Next => Some(self.update(Message::NextSong)),
 
-            MprisCommand::Previous => Some(self.update(Message::PrevSong)),
+            MediaCommand::Previous => Some(self.update(Message::PrevSong)),
 
-            MprisCommand::Seek(offset_us) => {
+            MediaCommand::Seek(offset_us) => {
                 if let Some(player) = &mut self.core.audio {
                     let current_pos = player.get_info().position;
                     let new_pos = current_pos + Duration::from_micros(*offset_us as u64);
@@ -95,7 +102,7 @@ impl App {
                 Some(Task::none())
             }
 
-            MprisCommand::SetPosition(_track_id, position_us) => {
+            MediaCommand::SetPosition(_track_id, position_us) => {
                 if let Some(player) = &mut self.core.audio {
                     let new_pos = Duration::from_micros(*position_us as u64);
                     let _ = player.seek(new_pos);
@@ -103,11 +110,11 @@ impl App {
                 Some(Task::none())
             }
 
-            MprisCommand::SetVolume(volume) => {
+            MediaCommand::SetVolume(volume) => {
                 Some(self.update(Message::SetVolume(*volume as f32)))
             }
 
-            MprisCommand::Raise => {
+            MediaCommand::Raise => {
                 // Show window if hidden
                 if self.core.window_hidden {
                     Some(self.update(Message::ShowWindow))
@@ -116,23 +123,23 @@ impl App {
                 }
             }
 
-            MprisCommand::Quit => Some(iced::exit()),
+            MediaCommand::Quit => Some(iced::exit()),
         }
     }
 
-    /// Update MPRIS state when playback changes
+    /// Update media controls state when playback changes
     pub fn update_mpris_state(&mut self) {
         if let Some(handle) = &self.core.mpris_handle {
             let status = if let Some(player) = &self.core.audio {
                 if player.is_empty() {
-                    MprisPlaybackStatus::Stopped
+                    MediaPlaybackStatus::Stopped
                 } else if player.is_playing() {
-                    MprisPlaybackStatus::Playing
+                    MediaPlaybackStatus::Playing
                 } else {
-                    MprisPlaybackStatus::Paused
+                    MediaPlaybackStatus::Paused
                 }
             } else {
-                MprisPlaybackStatus::Stopped
+                MediaPlaybackStatus::Stopped
             };
 
             let metadata = if let Some(song) = &self.library.current_song {
@@ -144,7 +151,7 @@ impl App {
                     }
                 });
 
-                MprisMetadata {
+                MediaMetadata {
                     track_id: Some(song.id.to_string()),
                     title: Some(song.title.clone()),
                     artists: vec![song.artist.clone()],
@@ -154,7 +161,7 @@ impl App {
                     art_url,
                 }
             } else {
-                MprisMetadata::default()
+                MediaMetadata::default()
             };
 
             let position = if let Some(player) = &self.core.audio {
@@ -186,7 +193,7 @@ impl App {
                 .map(|p| !p.is_playing())
                 .unwrap_or(true);
             tracing::debug!(
-                "MPRIS state update: queue_len={}, queue_index={:?}, can_go_next={}, position_us={}, is_paused={}",
+                "Media controls state update: queue_len={}, queue_index={:?}, can_go_next={}, position_us={}, is_paused={}",
                 self.library.queue.len(),
                 self.library.queue_index,
                 can_go_next,
@@ -194,7 +201,7 @@ impl App {
                 is_paused
             );
 
-            let state = MprisState {
+            let state = MediaState {
                 status,
                 metadata,
                 position_us: position,
@@ -206,7 +213,7 @@ impl App {
                 can_seek,
             };
 
-            // Update MPRIS state directly via handle
+            // Update media controls state directly via handle
             handle.update(state);
         }
     }

@@ -10,8 +10,7 @@ use crate::api::{BannersInfo, NcmClient, SongInfo, SongList, TopList};
 use crate::app::SettingsSection;
 use crate::audio::AudioProcessingChain;
 use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong};
-#[cfg(target_os = "linux")]
-use crate::features::MprisHandle;
+use crate::platform::media_controls::{MediaCommand, MediaHandle};
 use crate::features::import::{CoverCache, FolderWatcher, ScanHandle, ScanProgress, ScanState};
 use crate::i18n::Locale;
 use crate::ui::animation::{HoverAnimations, SingleHoverAnimation};
@@ -49,12 +48,10 @@ pub struct CoreState {
 
     // System Integrations
     pub cover_cache: Option<Arc<CoverCache>>,
-    #[cfg(target_os = "linux")]
-    pub mpris_handle: Option<MprisHandle>,
-    #[cfg(target_os = "linux")]
+    pub mpris_handle: Option<MediaHandle>,
     pub mpris_rx: Option<
         Arc<
-            tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<crate::features::MprisCommand>>,
+            tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<MediaCommand>>,
         >,
     >,
     pub window_hidden: bool,
@@ -90,9 +87,7 @@ impl CoreState {
             ncm_client: None,
             user_info: None,
             cover_cache: None,
-            #[cfg(target_os = "linux")]
             mpris_handle: None,
-            #[cfg(target_os = "linux")]
             mpris_rx: None,
             window_hidden: false,
             window_operation_pending: false,
