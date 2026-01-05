@@ -1099,6 +1099,54 @@ impl App {
                 // Store NCM songs for playback
                 self.ui.home.current_ncm_playlist_songs = detail.songs.clone();
 
+                // Check if creator avatar already exists in cache
+                let avatars_cache_dir = crate::utils::avatars_cache_dir();
+                let avatar_stem = format!("playlist_creator_{}", detail.id);
+                let existing_avatar =
+                    crate::utils::find_cached_image(&avatars_cache_dir, &avatar_stem);
+
+                // Start creator avatar download task only if not cached
+                let avatar_task = if existing_avatar.is_some() {
+                    // Avatar already cached, send message directly
+                    if let Some(path) = existing_avatar {
+                        Task::done(Message::NcmPlaylistCreatorAvatarLoaded(
+                            playlist_id,
+                            path.to_string_lossy().to_string(),
+                        ))
+                    } else {
+                        Task::none()
+                    }
+                } else if !detail.creator_avatar_url.is_empty() {
+                    if let Some(client) = &self.core.ncm_client {
+                        let client = client.clone();
+                        let avatar_url = detail.creator_avatar_url.clone();
+                        let ncm_id = detail.id;
+                        let internal_id = playlist_id;
+                        Task::perform(
+                            async move {
+                                crate::utils::download_playlist_creator_avatar(
+                                    &client,
+                                    ncm_id,
+                                    &avatar_url,
+                                )
+                                .await
+                                .map(|p| (internal_id, p.to_string_lossy().to_string()))
+                            },
+                            |result| {
+                                if let Some((id, path)) = result {
+                                    Message::NcmPlaylistCreatorAvatarLoaded(id, path)
+                                } else {
+                                    Message::NoOp
+                                }
+                            },
+                        )
+                    } else {
+                        Task::none()
+                    }
+                } else {
+                    Task::none()
+                };
+
                 // Spawn async task to convert songs (cover download already started in OpenNcmPlaylist)
                 let songs = detail.songs.clone();
                 let cover_cache_dir = crate::utils::covers_cache_dir();
@@ -1115,13 +1163,9 @@ impl App {
                                 .iter()
                                 .map(|song| {
                                     let stem = format!("cover_{}", song.id);
-                                    let cover_path = ["jpg", "png", "gif", "webp"]
-                                        .iter()
-                                        .map(|ext| {
-                                            cover_cache_dir.join(format!("{}.{}", stem, ext))
-                                        })
-                                        .find(|p| p.exists())
-                                        .map(|p| p.to_string_lossy().to_string());
+                                    let cover_path =
+                                        crate::utils::find_cached_image(&cover_cache_dir, &stem)
+                                            .map(|p| p.to_string_lossy().to_string());
                                     (song.id, cover_path)
                                 })
                                 .collect();
@@ -1135,13 +1179,9 @@ impl App {
 
                             // Check creator avatar
                             let avatar_stem = format!("playlist_creator_{}", ncm_playlist_id);
-                            let avatar_path = ["jpg", "png", "gif", "webp"]
-                                .iter()
-                                .map(|ext| {
-                                    avatars_cache_dir.join(format!("{}.{}", avatar_stem, ext))
-                                })
-                                .find(|p| p.exists())
-                                .map(|p| p.to_string_lossy().to_string());
+                            let avatar_path =
+                                crate::utils::find_cached_image(&avatars_cache_dir, &avatar_stem)
+                                    .map(|p| p.to_string_lossy().to_string());
 
                             (playlist_id, song_views, avatar_path)
                         })
@@ -1159,7 +1199,7 @@ impl App {
                     },
                 );
 
-                return Some(songs_task);
+                return Some(Task::batch([songs_task, avatar_task]));
             }
 
             Message::NcmPlaylistSongsReady(
@@ -1292,13 +1332,7 @@ impl App {
                             *song_id as u64
                         };
                         let stem = format!("cover_{}", ncm_id);
-                        for ext in &["jpg", "png", "gif", "webp"] {
-                            let path = cover_cache_dir.join(format!("{}.{}", stem, ext));
-                            if path.exists() {
-                                return false;
-                            }
-                        }
-                        true
+                        crate::utils::find_cached_image(&cover_cache_dir, &stem).is_none()
                     })
                     .cloned()
                     .collect();
@@ -1361,6 +1395,21 @@ impl App {
                             palette.primary.b
                         );
                         playlist.palette = palette;
+                    }
+                }
+                Some(Task::none())
+            }
+
+            Message::NcmPlaylistCreatorAvatarLoaded(playlist_id, path) => {
+                tracing::info!(
+                    "Playlist creator avatar loaded: id={}, path={}",
+                    playlist_id,
+                    path
+                );
+                // Update the playlist owner avatar path
+                if let Some(playlist) = &mut self.ui.playlist_page.current {
+                    if playlist.id == *playlist_id {
+                        playlist.owner_avatar_path = Some(path.clone());
                     }
                 }
                 Some(Task::none())

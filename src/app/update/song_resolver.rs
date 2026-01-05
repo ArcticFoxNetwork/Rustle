@@ -140,11 +140,8 @@ async fn resolve_cover(
     // First, check if cover already exists in local cache
     let cover_cache_dir = crate::utils::covers_cache_dir();
     let stem = format!("cover_{}", ncm_id);
-    for ext in &["jpg", "png", "gif", "webp", "bmp"] {
-        let existing_path = cover_cache_dir.join(format!("{}.{}", stem, ext));
-        if existing_path.exists() {
-            return Some(existing_path.to_string_lossy().to_string());
-        }
+    if let Some(existing_path) = crate::utils::find_cached_image(&cover_cache_dir, &stem) {
+        return Some(existing_path.to_string_lossy().to_string());
     }
 
     // If not cached, try to download from URL

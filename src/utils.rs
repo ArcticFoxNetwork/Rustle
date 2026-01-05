@@ -6,6 +6,28 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::error;
 
 // ============================================================================
+// Image Extensions
+// ============================================================================
+
+/// Common image file extensions for cache lookup
+pub const IMAGE_EXTENSIONS: &[&str] = &["jpg", "png", "gif", "webp", "bmp"];
+
+/// Find an existing cached image file with any common extension
+///
+/// # Arguments
+/// * `dir` - The directory to search in
+/// * `stem` - The filename without extension (e.g., "cover_123")
+///
+/// # Returns
+/// The path to the existing file if found, None otherwise
+pub fn find_cached_image(dir: &Path, stem: &str) -> Option<PathBuf> {
+    IMAGE_EXTENSIONS
+        .iter()
+        .map(|ext| dir.join(format!("{}.{}", stem, ext)))
+        .find(|p| p.exists())
+}
+
+// ============================================================================
 // Color Extraction
 // ============================================================================
 
@@ -333,11 +355,8 @@ pub async fn download_img(
     let parent = base_path.parent()?;
 
     // Check if file already exists with any common image extension
-    for ext in &["jpg", "png", "gif", "webp", "bmp"] {
-        let existing_path = parent.join(format!("{}.{}", stem, ext));
-        if existing_path.exists() {
-            return Some(existing_path);
-        }
+    if let Some(existing) = find_cached_image(parent, stem) {
+        return Some(existing);
     }
 
     // Download to a temporary path first to detect format

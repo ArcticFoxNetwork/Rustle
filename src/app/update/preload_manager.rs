@@ -215,11 +215,8 @@ pub fn spawn_cover_download(client: Arc<NcmClient>, song: DbSong) {
 
         // Check if already cached
         let stem = format!("cover_{}", ncm_id);
-        for ext in &["jpg", "png", "gif", "webp", "bmp"] {
-            let existing = cover_cache_dir.join(format!("{}.{}", stem, ext));
-            if existing.exists() {
-                return;
-            }
+        if crate::utils::find_cached_image(&cover_cache_dir, &stem).is_some() {
+            return;
         }
 
         // Download cover in background

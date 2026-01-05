@@ -182,23 +182,20 @@ impl App {
         );
 
         // Check if cover already exists locally
-        for ext in &["jpg", "png", "gif", "webp", "bmp"] {
-            let local_path = cover_cache_dir.join(format!("{}.{}", stem, ext));
-            if local_path.exists() {
-                let local_path_str = local_path.to_string_lossy().to_string();
-                tracing::info!("Found local cover at: {}", local_path_str);
+        if let Some(local_path) = crate::utils::find_cached_image(&cover_cache_dir, &stem) {
+            let local_path_str = local_path.to_string_lossy().to_string();
+            tracing::info!("Found local cover at: {}", local_path_str);
 
-                // Update song's cover_path if it's different (was URL or different path)
-                if song.cover_path.as_ref() != Some(&local_path_str) {
-                    song.cover_path = Some(local_path_str.clone());
+            // Update song's cover_path if it's different (was URL or different path)
+            if song.cover_path.as_ref() != Some(&local_path_str) {
+                song.cover_path = Some(local_path_str.clone());
 
-                    // Also update in queue
-                    if let Some(queue_song) = self.library.queue.get_mut(idx) {
-                        queue_song.cover_path = Some(local_path_str);
-                    }
+                // Also update in queue
+                if let Some(queue_song) = self.library.queue.get_mut(idx) {
+                    queue_song.cover_path = Some(local_path_str);
                 }
-                return (song, None);
             }
+            return (song, None);
         }
 
         // Cover not found locally - check if we have a URL to download

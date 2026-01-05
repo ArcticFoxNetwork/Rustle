@@ -436,6 +436,8 @@ pub enum Message {
     RequestSongCoversLazy(Vec<(i64, String)>),
     /// NCM playlist cover loaded (playlist_id, local_path)
     NcmPlaylistCoverLoaded(i64, String),
+    /// NCM playlist creator avatar loaded (playlist_id, local_path)
+    NcmPlaylistCreatorAvatarLoaded(i64, String),
     /// Toggle playlist subscription (subscribe/unsubscribe)
     TogglePlaylistSubscribe(i64),
     /// Playlist subscription status changed
@@ -779,6 +781,9 @@ impl std::fmt::Debug for Message {
             // Cloud Playlist
             Self::CurrentSongCoverReady(id, _) => simple!("CurrentSongCoverReady", "{}", id),
             Self::NcmPlaylistCoverLoaded(id, _) => simple!("NcmPlaylistCoverLoaded", "{}", id),
+            Self::NcmPlaylistCreatorAvatarLoaded(id, _) => {
+                simple!("NcmPlaylistCreatorAvatarLoaded", "{}", id)
+            }
             Self::TogglePlaylistSubscribe(id) => simple!("TogglePlaylistSubscribe", "{}", id),
             Self::PlaylistSubscribeChanged(id, s) => {
                 simple!("PlaylistSubscribeChanged", "{}, {}", id, s)
