@@ -111,17 +111,16 @@ impl App {
             }
 
             Message::HoverDiscoverPlaylist(playlist_id) => {
-                let now = iced::time::Instant::now();
                 if let Some(id) = playlist_id {
                     self.ui
                         .discover
                         .card_animations
-                        .set_hovered_exclusive(Some(*id), now);
+                        .set_hovered_exclusive(Some(*id));
                 } else {
                     self.ui
                         .discover
                         .card_animations
-                        .set_hovered_exclusive(None, now);
+                        .set_hovered_exclusive(None);
                 }
                 Some(Task::none())
             }

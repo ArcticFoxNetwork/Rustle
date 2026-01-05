@@ -436,29 +436,43 @@ impl UiState {
 
     /// Check if any global or submodule animation is currently active
     /// Optimized: O(1) check for hover animations, only checks active/fading states
-    pub fn has_active_animations(&self, now: Instant) -> bool {
+    pub fn has_active_animations(&self, _now: Instant) -> bool {
         // Hover animations are now O(1) - they only track active + fading
-        self.sidebar_animations.is_animating(now)
-            || self.playlist_page.song_animations.is_animating(now)
-            || self.playlist_page.icon_animations.is_animating(now)
-            || self.playlist_page.search_animation.is_animating(now)
-            || self.lyrics.animation.is_animating(now)
-            || self.dialogs.edit_animation.is_animating(now)
-            || self.dialogs.exit_animation.is_animating(now)
-            || self.dialogs.delete_animation.is_animating(now)
-            || self.home.carousel_animation.is_animating(now)
-            || self.home.song_hover_animations.is_animating(now)
-            || self.discover.card_animations.is_animating(now)
+        // iced_anim doesn't need Instant - it uses internal timing
+        self.sidebar_animations.is_animating()
+            || self.playlist_page.song_animations.is_animating()
+            || self.playlist_page.icon_animations.is_animating()
+            || self.playlist_page.search_animation.is_animating()
+            || self.lyrics.animation.is_animating()
+            || self.dialogs.edit_animation.is_animating()
+            || self.dialogs.exit_animation.is_animating()
+            || self.dialogs.delete_animation.is_animating()
+            || self.home.carousel_animation.is_animating(_now)
+            || self.home.song_hover_animations.is_animating()
+            || self.discover.card_animations.is_animating()
     }
 
     /// Clean up completed animations to prevent memory leaks
     /// Call this periodically (e.g., on AnimationTick)
     pub fn cleanup_animations(&mut self, now: Instant) {
-        self.sidebar_animations.cleanup_completed(now);
-        self.playlist_page.song_animations.cleanup_completed(now);
-        self.playlist_page.icon_animations.cleanup_completed(now);
-        self.home.song_hover_animations.cleanup_completed(now);
-        self.discover.card_animations.cleanup_completed(now);
+        // Tick all animations to advance time
+        self.sidebar_animations.tick(now);
+        self.playlist_page.song_animations.tick(now);
+        self.playlist_page.icon_animations.tick(now);
+        self.playlist_page.search_animation.tick(now);
+        self.lyrics.animation.tick(now);
+        self.dialogs.edit_animation.tick(now);
+        self.dialogs.exit_animation.tick(now);
+        self.dialogs.delete_animation.tick(now);
+        self.home.song_hover_animations.tick(now);
+        self.discover.card_animations.tick(now);
+
+        // Clean up completed fade-out animations
+        self.sidebar_animations.cleanup_completed();
+        self.playlist_page.song_animations.cleanup_completed();
+        self.playlist_page.icon_animations.cleanup_completed();
+        self.home.song_hover_animations.cleanup_completed();
+        self.discover.card_animations.cleanup_completed();
     }
 
     /// Clear all playlist-related animations when navigating away

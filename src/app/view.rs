@@ -1,7 +1,6 @@
 // src/app/view.rs
 //! Application view rendering
 
-use iced::time::Instant;
 use iced::widget::{Space, column, container, row, stack};
 use iced::{Alignment, Element, Fill};
 
@@ -13,11 +12,9 @@ use crate::ui::{components, pages, theme, widgets};
 impl App {
     /// Build the view for a specific window
     pub fn view(&self, _window_id: iced::window::Id) -> Element<'_, Message> {
-        let now = Instant::now();
-
         // Check if lyrics page is open or animating
-        let lyrics_progress = self.ui.lyrics.animation.progress(now);
-        let lyrics_animating = self.ui.lyrics.animation.is_animating(now);
+        let lyrics_progress = self.ui.lyrics.animation.progress();
+        let lyrics_animating = self.ui.lyrics.animation.is_animating();
         let lyrics_overlay: Element<'_, Message> =
             if self.ui.lyrics.is_open || lyrics_animating || lyrics_progress > 0.01 {
                 if let Some(song) = &self.library.current_song {
@@ -319,7 +316,6 @@ impl App {
             .into();
 
         // Build overlays - always use consistent stack structure to preserve scroll
-        let now = iced::time::Instant::now();
 
         // Toast overlay (empty space if not visible)
         let toast_overlay: Element<'_, Message> = if self.ui.toast_visible {
@@ -338,7 +334,7 @@ impl App {
         };
 
         // Edit dialog overlay (empty space if not visible)
-        let dialog_progress = self.ui.dialogs.edit_animation.progress(now);
+        let dialog_progress = self.ui.dialogs.edit_animation.progress();
         let edit_dialog_overlay: Element<'_, Message> =
             if self.ui.dialogs.edit_open || dialog_progress > 0.01 {
                 components::edit_dialog::view(
@@ -353,7 +349,7 @@ impl App {
             };
 
         // Exit dialog overlay (empty space if not visible)
-        let exit_dialog_progress = self.ui.dialogs.exit_animation.progress(now);
+        let exit_dialog_progress = self.ui.dialogs.exit_animation.progress();
         let exit_dialog_overlay: Element<'_, Message> =
             if self.ui.dialogs.exit_open || exit_dialog_progress > 0.01 {
                 components::exit_dialog::view(
@@ -366,7 +362,7 @@ impl App {
             };
 
         // Delete playlist dialog overlay
-        let delete_dialog_progress = self.ui.dialogs.delete_animation.progress(now);
+        let delete_dialog_progress = self.ui.dialogs.delete_animation.progress();
         let delete_dialog_overlay: Element<'_, Message> =
             if self.ui.dialogs.delete_pending_id.is_some() || delete_dialog_progress > 0.01 {
                 let playlist_name = self

@@ -388,13 +388,11 @@ fn build_controls<'a>(
     let is_own_playlist = current_user_id.map_or(false, |uid| uid == playlist.creator_id);
     let is_subscribed = playlist.is_subscribed;
 
-    let now = iced::time::Instant::now();
-
     // Helper to get icon color based on animation (using gray levels instead of opacity)
     let get_icon_color = |icon_id: IconId| -> Color {
         let base = 0.5_f32; // Default dimmed (gray)
         let bright = 1.0_f32; // Hover bright (white)
-        let value = icon_animations.interpolate_f32(&icon_id, base, bright, now);
+        let value = icon_animations.interpolate_f32(&icon_id, base, bright);
         Color::from_rgb(value, value, value)
     };
 
@@ -405,13 +403,13 @@ fn build_controls<'a>(
     let container_size = 56.0_f32; // Fixed outer container, slightly larger than max button size
 
     // Scale factor: 1.0 -> 1.06 on hover (3px growth: 52 -> 55)
-    let scale = icon_animations.interpolate_f32(&IconId::PlayButton, 1.0, 1.06, now);
+    let scale = icon_animations.interpolate_f32(&IconId::PlayButton, 1.0, 1.06);
     let btn_size = base_btn_size * scale;
     let icon_size = base_icon_size * scale;
     let btn_radius = btn_size / 2.0;
 
     // Color: lighter pink -> slightly lighter on hover
-    let progress = icon_animations.get_progress(&IconId::PlayButton, now);
+    let progress = icon_animations.get_progress(&IconId::PlayButton);
     let play_bg = Color::from_rgb(
         1.0,
         0.412 + (0.494 - 0.412) * progress,
@@ -587,7 +585,7 @@ fn build_controls<'a>(
     control_items.push(Space::new().width(Fill).into());
 
     // Animated search component - expands from right to left
-    let search_progress = search_animation.progress(now);
+    let search_progress = search_animation.progress();
     let search_color = get_icon_color(IconId::Search);
 
     // Animation: width goes from 36 (just icon) to 250 (full input)

@@ -2,7 +2,6 @@
 //! Window and exit dialog message handlers
 
 use iced::Task;
-use iced::time::Instant;
 
 use crate::app::message::Message;
 use crate::app::state::App;
@@ -17,7 +16,7 @@ impl App {
                 match self.core.settings.close_behavior {
                     CloseBehavior::Ask => {
                         self.ui.dialogs.exit_open = true;
-                        self.ui.dialogs.exit_animation.start(Instant::now());
+                        self.ui.dialogs.exit_animation.start();
                     }
                     CloseBehavior::Exit => {
                         return Some(iced::exit());
@@ -45,7 +44,7 @@ impl App {
                     let _ = self.core.settings.save();
                 }
                 self.ui.dialogs.exit_open = false;
-                self.ui.dialogs.exit_animation.stop(Instant::now());
+                self.ui.dialogs.exit_animation.stop();
                 tracing::info!("Hiding window to tray");
                 self.core.window_hidden = true;
                 Some(window::hide_window())
@@ -53,7 +52,7 @@ impl App {
 
             Message::CancelExit => {
                 self.ui.dialogs.exit_open = false;
-                self.ui.dialogs.exit_animation.stop(Instant::now());
+                self.ui.dialogs.exit_animation.stop();
                 Some(Task::none())
             }
 

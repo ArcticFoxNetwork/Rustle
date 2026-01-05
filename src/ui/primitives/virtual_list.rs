@@ -127,6 +127,10 @@ where
     height: Length,
     /// Whether to show scrollbar
     show_scrollbar: bool,
+    /// Message to send when mouse moves over empty area (not over any item)
+    on_empty_area: Option<Message>,
+    /// Function to create hover message for an item index
+    on_item_hover: Option<Box<dyn Fn(usize) -> Message + 'a>>,
 }
 
 impl<'a, Message, Theme, Renderer> VirtualList<'a, Message, Theme, Renderer>
@@ -147,6 +151,8 @@ where
             width: Length::Fill,
             height: Length::Fill,
             show_scrollbar: true,
+            on_empty_area: None,
+            on_item_hover: None,
         }
     }
 
@@ -176,6 +182,24 @@ where
     /// Show or hide the scrollbar
     pub fn scrollbar(mut self, show: bool) -> Self {
         self.show_scrollbar = show;
+        self
+    }
+
+    /// Set a message to send when mouse moves over empty area (not over any item)
+    /// This is useful for clearing hover states when mouse leaves all items
+    pub fn on_empty_area(mut self, message: Message) -> Self {
+        self.on_empty_area = Some(message);
+        self
+    }
+
+    /// Set a callback to create hover message for each item
+    /// This is called on every mouse move to update hover state reliably
+    /// even when mouse moves fast between items
+    pub fn on_item_hover<F>(mut self, f: F) -> Self
+    where
+        F: Fn(usize) -> Message + 'a,
+    {
+        self.on_item_hover = Some(Box::new(f));
         self
     }
 }
@@ -466,6 +490,34 @@ where
                     shell.capture_event();
                     return;
                 }
+
+                // Handle hover state directly on CursorMoved for reliable tracking
+                if bounds.contains(*position) {
+                    if let Some(on_hover) = &self.on_item_hover {
+                        let state = self.state.borrow();
+                        let scroll_offset = state.scroll_offset;
+                        let item_count = state.item_count;
+                        drop(state);
+
+                        let relative_y = position.y - bounds.y + scroll_offset;
+                        let target_item_idx = (relative_y / self.item_height).floor() as usize;
+
+                        if target_item_idx < item_count {
+                            // Mouse is over an item - send hover message
+                            shell.publish((on_hover)(target_item_idx));
+                        } else {
+                            // Mouse is in empty area below items
+                            if let Some(msg) = &self.on_empty_area {
+                                shell.publish(msg.clone());
+                            }
+                        }
+                    }
+                } else {
+                    // Mouse left the list bounds
+                    if let Some(msg) = &self.on_empty_area {
+                        shell.publish(msg.clone());
+                    }
+                }
             }
             _ => {}
         }
@@ -507,12 +559,23 @@ where
                 if let Some(pos) = cursor_pos {
                     let state = self.state.borrow();
                     let scroll_offset = state.scroll_offset;
+                    let item_count = state.item_count;
                     drop(state);
 
                     let relative_y = pos.y - bounds.y + scroll_offset;
                     let target_item_idx = (relative_y / self.item_height).floor() as usize;
 
+                    // Check if mouse is over empty area (beyond the last item)
+                    if target_item_idx >= item_count {
+                        // Mouse is in empty area below all items
+                        if let Some(msg) = &self.on_empty_area {
+                            shell.publish(msg.clone());
+                        }
+                        return;
+                    }
+
                     let children: Vec<_> = layout.children().collect();
+                    let mut found_item = false;
                     for (slot_idx, &item_idx) in
                         internal_state.cached_item_indices.iter().enumerate()
                     {
@@ -520,6 +583,7 @@ where
                             && slot_idx < internal_state.visible_trees.len()
                             && slot_idx < children.len()
                         {
+                            found_item = true;
                             let mut element = (self.item_builder)(item_idx);
                             let child_tree = &mut internal_state.visible_trees[slot_idx];
                             let child_layout = children[slot_idx];
@@ -535,6 +599,13 @@ where
                                 viewport,
                             );
                             break;
+                        }
+                    }
+
+                    // If no item was found (shouldn't happen normally, but handle edge cases)
+                    if !found_item {
+                        if let Some(msg) = &self.on_empty_area {
+                            shell.publish(msg.clone());
                         }
                     }
                 }

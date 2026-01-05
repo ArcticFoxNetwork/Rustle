@@ -76,8 +76,6 @@ pub fn view(
     viewing_recently_played: bool,
     sidebar_width: f32,
 ) -> Element<'static, Message> {
-    let now = iced::time::Instant::now();
-
     // Logo section
     let logo = row![
         // Pink music icon
@@ -105,7 +103,7 @@ pub fn view(
     let nav_items = [NavItem::Home, NavItem::Discover, NavItem::Radio];
     let nav_menu = column(nav_items.into_iter().enumerate().map(|(idx, item)| {
         let is_active = item == active_nav && current_playlist_id.is_none();
-        let hover_progress = sidebar_animations.get_progress(&SidebarId::Nav(idx), now);
+        let hover_progress = sidebar_animations.get_progress(&SidebarId::Nav(idx));
         sidebar_button_animated(
             item.icon_svg(),
             locale.get(item.i18n_key()).to_string(),
@@ -124,7 +122,7 @@ pub fn view(
         .width(Fill);
 
     // Recently played button - use same animated style as nav buttons
-    let recently_played_progress = sidebar_animations.get_progress(&SidebarId::Library(0), now);
+    let recently_played_progress = sidebar_animations.get_progress(&SidebarId::Library(0));
     let recently_played = sidebar_button_animated(
         crate::ui::icons::CLOCK,
         locale.get(Key::LibraryRecentlyPlayed).to_string(),
@@ -135,7 +133,7 @@ pub fn view(
     );
 
     // Import local playlist button - use same animated style as nav buttons
-    let import_progress = sidebar_animations.get_progress(&SidebarId::Library(1), now);
+    let import_progress = sidebar_animations.get_progress(&SidebarId::Library(1));
     let import_playlist_btn = sidebar_button_animated(
         crate::ui::icons::PLUS,
         locale.get(Key::ImportLocalPlaylist).to_string(),
@@ -146,7 +144,7 @@ pub fn view(
     );
 
     // User profile card at bottom - clickable login prompt with hover animation
-    let user_hover_progress = sidebar_animations.get_progress(&SidebarId::UserCard, now);
+    let user_hover_progress = sidebar_animations.get_progress(&SidebarId::UserCard);
 
     let not_logged_in = locale.get(Key::NotLoggedIn).to_string();
     let click_to_login = locale.get(Key::ClickToLogin).to_string();
@@ -365,6 +363,7 @@ pub fn view(
 
     let user_card: Element<'static, Message> = mouse_area(user_card_content)
         .on_enter(Message::HoverSidebar(Some(SidebarId::UserCard)))
+        .on_exit(Message::HoverSidebar(None))
         .into();
 
     // Build library section with proper spacing (same as nav_menu)
@@ -380,7 +379,7 @@ pub fn view(
         let name = playlist.name.clone();
         let id = playlist.id;
         let is_active = current_playlist_id == Some(id);
-        let hover_progress = sidebar_animations.get_progress(&SidebarId::Playlist(id), now);
+        let hover_progress = sidebar_animations.get_progress(&SidebarId::Playlist(id));
         library_items.push(sidebar_button_animated(
             crate::ui::icons::MUSIC,
             name,
@@ -426,7 +425,7 @@ pub fn view(
             // NCM playlist IDs are stored as negative in PlaylistView
             // So we compare current_playlist_id with -(id as i64)
             let is_active = current_playlist_id == Some(-(id as i64));
-            let hover_progress = sidebar_animations.get_progress(&SidebarId::UserPlaylist(id), now);
+            let hover_progress = sidebar_animations.get_progress(&SidebarId::UserPlaylist(id));
 
             cloud_playlist_items.push(sidebar_button_animated(
                 crate::ui::icons::MUSIC,
@@ -556,13 +555,13 @@ fn sidebar_button_animated(
         .on_press(on_press.clone());
 
     // Add hover events if not active
-    // We only use on_enter here, on_exit is handled by the sidebar container
-    // This prevents hover state from being cleared when moving between buttons
+    // Each button needs on_exit to clear hover when mouse leaves
     if is_active {
         btn.into()
     } else {
         mouse_area(btn)
             .on_enter(Message::HoverSidebar(Some(sidebar_id)))
+            .on_exit(Message::HoverSidebar(None))
             .into()
     }
 }

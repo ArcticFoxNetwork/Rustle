@@ -2,7 +2,6 @@
 //!
 //! Displays the NCM trending chart (飙升榜) with hover effects.
 
-use iced::time::Instant;
 use iced::widget::{Space, button, column, container, image, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Padding};
 
@@ -23,7 +22,6 @@ pub fn view<'a>(
     locale: Locale,
     is_logged_in: bool,
 ) -> Element<'a, Message> {
-    let now = Instant::now();
     let title = locale.get(Key::TrendingSongs);
 
     let header = row![
@@ -66,7 +64,7 @@ pub fn view<'a>(
     let song_items: Vec<Element<'_, Message>> = visible_songs
         .into_iter()
         .map(|(index, song)| {
-            let hover_progress = hover_animations.get_progress(&song.id, now);
+            let hover_progress = hover_animations.get_progress(&song.id);
             let cover_handle = song_covers.get(&song.id);
             let is_hovered = hover_progress > 0.01; // Lower threshold to fix timing issue
             view_song_item(

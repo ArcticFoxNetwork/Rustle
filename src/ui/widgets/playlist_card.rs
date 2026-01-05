@@ -28,6 +28,7 @@ const COVER_RADIUS: f32 = 8.0;
 /// * `on_click` - Message to send when card is clicked
 /// * `on_play` - Message to send when play button is clicked
 /// * `on_hover` - Message to send when card is hovered
+/// * `on_unhover` - Message to send when mouse leaves the card
 pub fn view<'a, Message: Clone + 'a>(
     name: &'a str,
     author: &'a str,
@@ -36,6 +37,7 @@ pub fn view<'a, Message: Clone + 'a>(
     on_click: Message,
     on_play: Message,
     on_hover: Message,
+    on_unhover: Message,
 ) -> Element<'a, Message> {
     // Cover image or placeholder
     let cover: Element<'a, Message> = if let Some(handle) = cover_handle {
@@ -139,7 +141,10 @@ pub fn view<'a, Message: Clone + 'a>(
         .on_press(on_click);
 
     // Add hover detection
-    mouse_area(card).on_enter(on_hover.clone()).into()
+    mouse_area(card)
+        .on_enter(on_hover.clone())
+        .on_exit(on_unhover)
+        .into()
 }
 
 /// Truncate text with ellipsis if too long

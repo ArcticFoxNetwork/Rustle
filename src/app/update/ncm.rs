@@ -913,11 +913,10 @@ impl App {
             }
 
             Message::HoverTrendingSong(song_id_opt) => {
-                let now = iced::time::Instant::now();
                 self.ui
                     .home
                     .song_hover_animations
-                    .set_hovered_exclusive(*song_id_opt, now);
+                    .set_hovered_exclusive(*song_id_opt);
                 Some(Task::none())
             }
 
@@ -991,7 +990,7 @@ impl App {
                 // Close lyrics page if open
                 if self.ui.lyrics.is_open {
                     self.ui.lyrics.is_open = false;
-                    self.ui.lyrics.animation.stop(iced::time::Instant::now());
+                    self.ui.lyrics.animation.stop();
                 }
 
                 // Push to navigation history

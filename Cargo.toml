@@ -13,6 +13,7 @@ categories = ["multimedia::audio"]
 [dependencies]
 iced = { version = "0.14", features = ["tokio", "advanced", "canvas", "image", "svg", "debug"] }
 iced_aw = { version = "0.13.0", features = ["full"] }
+iced_anim = "0.3"
 wgpu = "27.0.1"
 bytemuck = { version = "1.24", features = ["derive"] }
 tokio = { version = "1.48", features = ["full"] }

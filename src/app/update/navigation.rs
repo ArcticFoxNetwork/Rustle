@@ -14,15 +14,14 @@ impl App {
         // Close lyrics page if open
         if self.ui.lyrics.is_open {
             self.ui.lyrics.is_open = false;
-            self.ui.lyrics.animation.stop(iced::time::Instant::now());
+            self.ui.lyrics.animation.stop();
         }
         // Reset playlist search state
         self.ui.playlist_page.search_expanded = false;
         self.ui.playlist_page.search_query.clear();
 
         // Clean up completed animations to prevent memory growth
-        let now = iced::time::Instant::now();
-        self.ui.playlist_page.song_animations.cleanup_completed(now);
+        self.ui.playlist_page.song_animations.cleanup_completed();
 
         match entry {
             NavigationEntry::Nav(nav) => {
@@ -103,7 +102,7 @@ impl App {
                 // Close lyrics page if open
                 if self.ui.lyrics.is_open {
                     self.ui.lyrics.is_open = false;
-                    self.ui.lyrics.animation.stop(iced::time::Instant::now());
+                    self.ui.lyrics.animation.stop();
                 }
                 // Reset discover view mode when navigating to Discover
                 if *nav == NavItem::Discover {
@@ -242,7 +241,7 @@ impl App {
                 // Close lyrics page if open
                 if self.ui.lyrics.is_open {
                     self.ui.lyrics.is_open = false;
-                    self.ui.lyrics.animation.stop(iced::time::Instant::now());
+                    self.ui.lyrics.animation.stop();
                 }
                 self.ui.active_nav = NavItem::Settings;
                 self.ui.playlist_page.current = None;
@@ -265,7 +264,7 @@ impl App {
                 // Close lyrics page if open
                 if self.ui.lyrics.is_open {
                     self.ui.lyrics.is_open = false;
-                    self.ui.lyrics.animation.stop(iced::time::Instant::now());
+                    self.ui.lyrics.animation.stop();
                 }
                 self.ui.active_nav = NavItem::AudioEngine;
                 self.ui.playlist_page.current = None;

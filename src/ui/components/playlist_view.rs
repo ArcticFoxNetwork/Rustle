@@ -13,7 +13,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::LazyLock;
 
-use iced::widget::{Space, button, column, container, image, mouse_area, row, svg, text};
+use iced::widget::{Space, button, column, container, image, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
 use crate::app::Message;
@@ -318,7 +318,9 @@ pub fn build_list<'a>(
 
     let songs = Rc::new(songs);
     let liked_songs = Rc::new(liked_songs);
-    let now = iced::time::Instant::now();
+
+    // Clone for on_item_hover callback
+    let songs_for_hover = songs.clone();
 
     let songs_clone = songs.clone();
     let liked_songs_clone = liked_songs.clone();
@@ -328,7 +330,7 @@ pub fn build_list<'a>(
         }
 
         let song = &songs_clone[index];
-        let animation_progress = song_animations.get_progress(&song.id, now);
+        let animation_progress = song_animations.get_progress(&song.id);
         let is_hovered = animation_progress > 0.5;
 
         container(build_song_row(
@@ -347,6 +349,11 @@ pub fn build_list<'a>(
         .width(Length::Fill)
         .height(Length::Fill)
         .spacing(0.0)
+        .on_empty_area(Message::HoverSong(None))
+        .on_item_hover(move |index| {
+            let song_id = songs_for_hover.get(index).map(|s| s.id);
+            Message::HoverSong(song_id)
+        })
         .into()
 }
 
@@ -528,10 +535,8 @@ fn build_song_row(
         })
         .on_press(Message::PlaySong(song_id));
 
-    mouse_area(btn)
-        .on_enter(Message::HoverSong(Some(song_id)))
-        .on_exit(Message::HoverSong(None))
-        .into()
+    // Hover is now handled by VirtualList's on_item_hover for reliable tracking
+    btn.into()
 }
 
 /// Build song cover image or placeholder

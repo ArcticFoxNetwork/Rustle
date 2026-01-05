@@ -4,7 +4,6 @@
 
 use std::collections::HashMap;
 
-use iced::time::Instant;
 use iced::widget::{Space, column, image, row};
 use iced::{Element, Fill};
 
@@ -33,8 +32,6 @@ pub fn view<'a>(
     max_items: Option<usize>,
     container_width: f32,
 ) -> Element<'a, Message> {
-    let now = Instant::now();
-
     // Limit items if max_items is specified
     let items: Vec<_> = if let Some(max) = max_items {
         playlists.iter().take(max).collect()
@@ -57,7 +54,7 @@ pub fn view<'a>(
 
         for playlist in chunk {
             let cover_handle = covers.get(&playlist.id);
-            let hover_progress = animations.get_progress(&playlist.id, now);
+            let hover_progress = animations.get_progress(&playlist.id);
 
             let card = playlist_card::view(
                 &playlist.name,
@@ -67,6 +64,7 @@ pub fn view<'a>(
                 Message::OpenNcmPlaylist(playlist.id),
                 Message::PlayDiscoverPlaylist(playlist.id),
                 Message::HoverDiscoverPlaylist(Some(playlist.id)),
+                Message::HoverDiscoverPlaylist(None),
             );
 
             row_items.push(card);

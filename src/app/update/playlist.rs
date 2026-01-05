@@ -38,7 +38,7 @@ impl App {
                 // Close lyrics page if open
                 if self.ui.lyrics.is_open {
                     self.ui.lyrics.is_open = false;
-                    self.ui.lyrics.animation.stop(Instant::now());
+                    self.ui.lyrics.animation.stop();
                 }
                 // Push to navigation history
                 self.ui
@@ -60,14 +60,14 @@ impl App {
             Message::RequestDeletePlaylist(id) => {
                 tracing::info!("Requesting delete for playlist: {}", id);
                 self.ui.dialogs.delete_pending_id = Some(*id);
-                self.ui.dialogs.delete_animation.start(Instant::now());
+                self.ui.dialogs.delete_animation.start();
                 Some(Task::none())
             }
 
             Message::ConfirmDeletePlaylist => {
                 if let Some(playlist_id) = self.ui.dialogs.delete_pending_id.take() {
                     tracing::info!("Confirming delete for playlist: {}", playlist_id);
-                    self.ui.dialogs.delete_animation.stop(Instant::now());
+                    self.ui.dialogs.delete_animation.stop();
                     if let Some(db) = &self.core.db {
                         let db = db.clone();
                         return Some(Task::perform(
@@ -85,7 +85,7 @@ impl App {
             Message::CancelDeletePlaylist => {
                 tracing::info!("Cancelled playlist deletion");
                 self.ui.dialogs.delete_pending_id = None;
-                self.ui.dialogs.delete_animation.stop(Instant::now());
+                self.ui.dialogs.delete_animation.stop();
                 Some(Task::none())
             }
 
@@ -121,26 +121,23 @@ impl App {
             }
 
             Message::HoverSong(id) => {
-                let now = Instant::now();
                 self.ui
                     .playlist_page
                     .song_animations
-                    .set_hovered_exclusive(*id, now);
+                    .set_hovered_exclusive(*id);
                 Some(Task::none())
             }
 
             Message::HoverIcon(id) => {
-                let now = Instant::now();
                 self.ui
                     .playlist_page
                     .icon_animations
-                    .set_hovered_exclusive(*id, now);
+                    .set_hovered_exclusive(*id);
                 Some(Task::none())
             }
 
             Message::HoverSidebar(id) => {
-                let now = Instant::now();
-                self.ui.sidebar_animations.set_hovered_exclusive(*id, now);
+                self.ui.sidebar_animations.set_hovered_exclusive(*id);
                 Some(Task::none())
             }
 
@@ -178,13 +175,13 @@ impl App {
                     self.ui.dialogs.edit_description =
                         playlist.description.clone().unwrap_or_default();
                     self.ui.dialogs.edit_cover = playlist.cover_path.clone();
-                    self.ui.dialogs.edit_animation.start(Instant::now());
+                    self.ui.dialogs.edit_animation.start();
                 }
                 Some(Task::none())
             }
 
             Message::CloseEditDialog => {
-                self.ui.dialogs.edit_animation.stop(Instant::now());
+                self.ui.dialogs.edit_animation.stop();
                 self.ui.dialogs.edit_open = false;
                 self.ui.dialogs.editing_playlist_id = None;
                 Some(Task::none())
@@ -231,7 +228,7 @@ impl App {
                     };
                     let cover = self.ui.dialogs.edit_cover.clone();
 
-                    self.ui.dialogs.edit_animation.stop(Instant::now());
+                    self.ui.dialogs.edit_animation.stop();
                     self.ui.dialogs.edit_open = false;
                     self.ui.dialogs.editing_playlist_id = None;
 
@@ -297,16 +294,15 @@ impl App {
             }
 
             Message::TogglePlaylistSearch => {
-                let now = Instant::now();
                 self.ui.playlist_page.search_expanded = !self.ui.playlist_page.search_expanded;
                 if self.ui.playlist_page.search_expanded {
-                    self.ui.playlist_page.search_animation.start(now);
+                    self.ui.playlist_page.search_animation.start();
                     // Focus the search input
                     Some(iced::widget::operation::focus(iced::widget::Id::new(
                         "playlist_search_input",
                     )))
                 } else {
-                    self.ui.playlist_page.search_animation.stop(now);
+                    self.ui.playlist_page.search_animation.stop();
                     self.ui.playlist_page.search_query.clear();
                     Some(Task::none())
                 }
@@ -328,9 +324,8 @@ impl App {
                 if self.ui.playlist_page.search_query.is_empty()
                     && self.ui.playlist_page.search_expanded
                 {
-                    let now = Instant::now();
                     self.ui.playlist_page.search_expanded = false;
-                    self.ui.playlist_page.search_animation.stop(now);
+                    self.ui.playlist_page.search_animation.stop();
                 }
                 Some(Task::none())
             }

@@ -7,7 +7,6 @@
 //! - Online lyrics: fetched asynchronously (already was)
 
 use iced::Task;
-use iced::time::Instant;
 
 use crate::app::message::Message;
 use crate::app::state::App;
@@ -21,7 +20,7 @@ impl App {
                 // Only open if there's a song playing
                 if let Some(song) = self.library.current_song.clone() {
                     self.ui.lyrics.is_open = true;
-                    self.ui.lyrics.animation.start(Instant::now());
+                    self.ui.lyrics.animation.start();
 
                     // 智能加载歌词：
                     // 检查当前歌词是否属于当前歌曲
@@ -48,7 +47,7 @@ impl App {
 
             Message::CloseLyricsPage => {
                 // Start close animation, actual close happens when animation completes
-                self.ui.lyrics.animation.stop(Instant::now());
+                self.ui.lyrics.animation.stop();
                 Some(Task::none())
             }
 
@@ -569,9 +568,8 @@ impl App {
 
     /// Check if lyrics page should be fully closed (animation complete)
     pub fn check_lyrics_page_close(&mut self) {
-        let now = Instant::now();
-        let progress = self.ui.lyrics.animation.progress(now);
-        if progress < 0.01 && !self.ui.lyrics.animation.is_animating(now) && self.ui.lyrics.is_open
+        let progress = self.ui.lyrics.animation.progress();
+        if progress < 0.01 && !self.ui.lyrics.animation.is_animating() && self.ui.lyrics.is_open
         {
             self.ui.lyrics.is_open = false;
         }
