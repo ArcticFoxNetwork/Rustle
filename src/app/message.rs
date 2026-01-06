@@ -289,9 +289,22 @@ pub enum Message {
     ToggleQueue,
     /// Cycle to next play mode
     CyclePlayMode,
-    /// Audio preload ready (new architecture) - (queue_index, file_path, is_next)
-    PreloadAudioReady(usize, String, bool),
-    /// Audio preload failed (new architecture) - (queue_index, is_next)
+    /// Audio preload ready (local file cached) - (queue_index, file_path, is_next)
+    PreloadReady(
+        usize,
+        String,
+        bool,
+    ),
+    /// Audio preload ready with SharedBuffer for streaming playback
+    /// (queue_index, file_path, is_next, shared_buffer, duration_secs)
+    PreloadBufferReady(
+        usize,
+        String,
+        bool,
+        crate::audio::SharedBuffer,
+        u64,
+    ),
+    /// Audio preload failed - (queue_index, is_next)
     PreloadAudioFailed(usize, bool),
 
     // ============ Queue management ============
@@ -299,8 +312,14 @@ pub enum Message {
     PlayPlaylist(i64),
     /// Play a song from queue by index
     PlayQueueIndex(usize),
-    /// Song resolved successfully (index, file_path, cover_path)
-    SongResolved(usize, String, Option<String>),
+    /// Song resolved with streaming support (index, file_path, cover_path, shared_buffer, duration_secs)
+    SongResolvedStreaming(
+        usize,
+        String,
+        Option<String>,
+        Option<crate::audio::SharedBuffer>,
+        Option<u64>,
+    ),
     /// Song resolution failed
     SongResolveFailed,
     /// Remove song from queue by index
@@ -474,6 +493,13 @@ pub enum Message {
     SidebarResizeStart,
     /// Stop dragging sidebar resize handle
     SidebarResizeEnd,
+    // ============ Player Events (Event-Driven Architecture) ============
+    /// Streaming download event (song_id, event)
+    StreamingEvent(i64, crate::audio::streaming::StreamingEvent),
+    /// Player event from AudioPlayer (replaces polling is_finished)
+    PlayerEvent(crate::audio::PlayerEvent),
+    /// Start listening to player events (called once at startup)
+    StartPlayerEventListener,
 }
 
 /// Icon identifiers for hover tracking
@@ -720,8 +746,11 @@ impl std::fmt::Debug for Message {
             Self::SetVolume(v) => simple!("SetVolume", "{:.2}", v),
             Self::ToggleQueue => simple!("ToggleQueue"),
             Self::CyclePlayMode => simple!("CyclePlayMode"),
-            Self::PreloadAudioReady(idx, _, is_next) => {
-                simple!("PreloadAudioReady", "idx={}, next={}", idx, is_next)
+            Self::PreloadReady(idx, _, is_next) => {
+                simple!("PreloadReady", "idx={}, next={}", idx, is_next)
+            }
+            Self::PreloadBufferReady(idx, _, is_next, buffer, duration) => {
+                simple!("PreloadBufferReady", "idx={}, next={}, downloaded={}, duration={}s", idx, is_next, buffer.downloaded(), duration)
             }
             Self::PreloadAudioFailed(idx, is_next) => {
                 simple!("PreloadAudioFailed", "idx={}, next={}", idx, is_next)
@@ -730,7 +759,9 @@ impl std::fmt::Debug for Message {
             // Queue management
             Self::PlayPlaylist(id) => simple!("PlayPlaylist", "{}", id),
             Self::PlayQueueIndex(i) => simple!("PlayQueueIndex", "{}", i),
-            Self::SongResolved(i, _, _) => simple!("SongResolved", "idx={}", i),
+            Self::SongResolvedStreaming(i, _, _, buffer, _) => {
+                simple!("SongResolvedStreaming", "idx={}, buffer={}", i, buffer.is_some())
+            }
             Self::SongResolveFailed => simple!("SongResolveFailed"),
             Self::RemoveFromQueue(i) => simple!("RemoveFromQueue", "{}", i),
             Self::ClearQueue => simple!("ClearQueue"),
@@ -810,6 +841,13 @@ impl std::fmt::Debug for Message {
             // Sidebar resize
             Self::SidebarResizeStart => simple!("SidebarResizeStart"),
             Self::SidebarResizeEnd => simple!("SidebarResizeEnd"),
+
+            // Streaming
+            Self::StreamingEvent(id, _) => simple!("StreamingEvent", "id={}", id),
+
+            // Player events (event-driven architecture)
+            Self::PlayerEvent(event) => simple!("PlayerEvent", "{:?}", event),
+            Self::StartPlayerEventListener => simple!("StartPlayerEventListener"),
         }
     }
 }

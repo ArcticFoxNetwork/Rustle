@@ -88,6 +88,7 @@ impl App {
                         } else {
                             false
                         },
+                        self.library.download_progress(),
                     )
                 } else {
                     Space::new().width(0).height(0).into()
@@ -268,6 +269,8 @@ impl App {
                 volume,
                 self.ui.is_seeking,
                 self.core.settings.play_mode,
+                self.library.is_buffering,
+                self.library.download_progress(),
             );
 
             // Build content with player bar - always use stack to keep layout consistent

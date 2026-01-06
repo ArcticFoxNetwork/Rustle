@@ -24,6 +24,7 @@ use crate::ui::widgets::{self, ControlSize, PlayModeButtonSize, SliderSize};
 /// `cached_engine_lines`: Pre-computed engine lines (Arc for O(1) clone, thread-safe)
 /// `power_saving_mode`: When true, use simple text rendering instead of SDF engine
 /// `is_liked`: Whether the current song is in user's favorites
+/// `download_progress`: Download progress for streaming songs (0.0 to 1.0)
 pub fn view<'a>(
     song: &'a DbSong,
     is_playing: bool,
@@ -39,6 +40,7 @@ pub fn view<'a>(
     lyrics_engine: Option<&'a std::cell::RefCell<LyricsEngine>>,
     power_saving_mode: bool,
     is_liked: bool,
+    download_progress: Option<f32>,
 ) -> Element<'a, Message> {
     let left_panel = build_left_panel(
         song,
@@ -47,6 +49,7 @@ pub fn view<'a>(
         duration_secs,
         play_mode,
         is_liked,
+        download_progress,
     );
     let right_panel = if power_saving_mode {
         // Power saving mode: use simple text rendering
@@ -264,6 +267,7 @@ fn build_left_panel<'a>(
     duration_secs: f32,
     play_mode: PlayMode,
     is_liked: bool,
+    download_progress: Option<f32>,
 ) -> Element<'a, Message> {
     // Format time as mm:ss
     let format_time = |secs: f32| -> String {
@@ -290,8 +294,8 @@ fn build_left_panel<'a>(
     // Artist name
     let artist = text(&song.artist).size(18).color(theme::TEXT_SECONDARY);
 
-    // Progress bar - using unified widget
-    let progress_slider = widgets::progress_slider::view(position, SliderSize::Full);
+    // Progress bar - using unified widget with download progress
+    let progress_slider = widgets::progress_slider::view_with_download(position, download_progress, SliderSize::Full);
 
     let time_row = row![
         text(current_time).size(12).color(theme::TEXT_MUTED),

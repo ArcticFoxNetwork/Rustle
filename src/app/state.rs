@@ -54,6 +54,11 @@ pub struct CoreState {
             tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<MediaCommand>>,
         >,
     >,
+    /// Player event receiver for event-driven playback detection
+    /// Wrapped in Arc<Mutex> so it can be taken once for Task::run
+    pub player_event_rx: Option<
+        Arc<tokio::sync::Mutex<crate::audio::PlayerEventReceiver>>,
+    >,
     pub window_hidden: bool,
     pub window_operation_pending: bool,
     pub is_fullscreen: bool,
@@ -72,8 +77,11 @@ impl CoreState {
         audio_chain.set_equalizer_gains(settings.playback.equalizer_values);
         audio_chain.set_preamp(settings.playback.equalizer_preamp);
 
+        // Create player event channel
+        let (event_tx, event_rx) = crate::audio::player_event_channel();
+
         // Create audio player with configured device and shared chain
-        let audio = Self::create_audio_player(&settings, audio_chain.clone());
+        let audio = Self::create_audio_player(&settings, audio_chain.clone(), event_tx);
 
         Self {
             db: None,
@@ -89,6 +97,7 @@ impl CoreState {
             cover_cache: None,
             mpris_handle: None,
             mpris_rx: None,
+            player_event_rx: Some(Arc::new(tokio::sync::Mutex::new(event_rx))),
             window_hidden: false,
             window_operation_pending: false,
             is_fullscreen: false,
@@ -100,9 +109,10 @@ impl CoreState {
     fn create_audio_player(
         settings: &crate::features::Settings,
         audio_chain: AudioProcessingChain,
+        event_tx: crate::audio::PlayerEventSender,
     ) -> Option<crate::audio::AudioPlayer> {
         // Try to create player with configured device, fallback to default
-        let player = if let Some(ref device_name) = settings.system.audio_output_device {
+        let mut player = if let Some(ref device_name) = settings.system.audio_output_device {
             match crate::audio::AudioPlayer::with_device(Some(device_name), audio_chain.clone()) {
                 Ok(p) => {
                     tracing::info!("Audio player created with device: {}", device_name);
@@ -132,6 +142,9 @@ impl CoreState {
                 }
             }
         };
+
+        // Set event sender for event-driven playback detection
+        player.set_event_sender(event_tx);
 
         Some(player)
     }
@@ -186,6 +199,17 @@ pub struct LibraryState {
     // Only the resolution result matching this index should trigger playback
     pub pending_resolution_idx: Option<usize>,
 
+    // Streaming playback state (SharedBuffer architecture)
+    /// Whether playback is paused due to buffering
+    pub is_buffering: bool,
+    /// Shared buffer for streaming playback (no file I/O)
+    /// This is the ONLY streaming state - no file-based streaming
+    pub streaming_buffer: Option<crate::audio::SharedBuffer>,
+
+    // Error handling
+    /// Consecutive playback failures counter (reset on successful play)
+    pub consecutive_failures: u8,
+
     // Import State
     pub scan_state: Option<Arc<ScanState>>,
     pub scan_handle: Option<ScanHandle>,
@@ -207,12 +231,55 @@ impl Default for LibraryState {
             shuffle_cache: Default::default(),
             preload_manager: Default::default(),
             pending_resolution_idx: None,
+            is_buffering: false,
+            streaming_buffer: None,
+            consecutive_failures: 0,
             scan_state: None,
             scan_handle: None,
             scan_progress: None,
             folder_watcher: None,
             watched_folders: Vec::new(),
         }
+    }
+}
+
+impl LibraryState {
+    /// Get download progress for streaming songs (0.0 to 1.0)
+    /// Returns None for local songs, Some(1.0) for completed downloads
+    pub fn download_progress(&self) -> Option<f32> {
+        // Check if current song is an NCM song (negative ID)
+        let is_ncm_song = self.current_song.as_ref().map(|s| s.id < 0).unwrap_or(false);
+        
+        if !is_ncm_song {
+            // Local song - no download progress needed
+            return None;
+        }
+        
+        // Check SharedBuffer (the only streaming architecture)
+        if let Some(buffer) = &self.streaming_buffer {
+            if !buffer.is_complete() {
+                return Some(buffer.progress());
+            }
+            // Buffer complete
+            return Some(1.0);
+        }
+        
+        // NCM song but no streaming buffer - check if file exists (cached)
+        if let Some(song) = &self.current_song {
+            if song.id < 0 {
+                let ncm_id = (-song.id) as u64;
+                let cache_dir = directories::ProjectDirs::from("com", "rustle", "Rustle")
+                    .map(|dirs| dirs.cache_dir().to_path_buf())
+                    .unwrap_or_else(|| std::path::PathBuf::from(".cache"));
+                let cache_path = cache_dir.join("songs").join(format!("{}.mp3", ncm_id));
+                if cache_path.exists() {
+                    // File exists - download complete
+                    return Some(1.0);
+                }
+            }
+        }
+        
+        None
     }
 }
 

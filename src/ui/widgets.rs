@@ -16,6 +16,7 @@
 //! - **Widgets** (this module): Composable UI patterns
 //! - **Components** (`crate::ui::components`): Business-specific UI with Message handling
 
+pub mod multi_track_slider;
 pub mod play_mode_button;
 pub mod playback_controls;
 pub mod playlist_card;

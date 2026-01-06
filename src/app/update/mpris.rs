@@ -185,22 +185,6 @@ impl App {
             let can_pause = can_play;
             let can_seek = self.core.audio.is_some();
 
-            // Debug logging
-            let is_paused = self
-                .core
-                .audio
-                .as_ref()
-                .map(|p| !p.is_playing())
-                .unwrap_or(true);
-            tracing::debug!(
-                "Media controls state update: queue_len={}, queue_index={:?}, can_go_next={}, position_us={}, is_paused={}",
-                self.library.queue.len(),
-                self.library.queue_index,
-                can_go_next,
-                position,
-                is_paused
-            );
-
             let state = MediaState {
                 status,
                 metadata,

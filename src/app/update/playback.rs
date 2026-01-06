@@ -11,6 +11,28 @@ impl App {
     /// Handle playback-related messages
     pub fn handle_playback(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
+            Message::StartPlayerEventListener => {
+                // Take the receiver and start listening (only happens once)
+                if let Some(rx) = self.core.player_event_rx.take() {
+                    tracing::info!("Starting player event listener");
+                    return Some(Task::run(
+                        async_stream::stream! {
+                            loop {
+                                let event = rx.lock().await.recv().await;
+                                if let Some(event) = event {
+                                    yield event;
+                                } else {
+                                    tracing::info!("Player event channel closed");
+                                    break;
+                                }
+                            }
+                        },
+                        Message::PlayerEvent,
+                    ));
+                }
+                Some(Task::none())
+            }
+
             Message::PlaySong(id) => {
                 tracing::info!("Playing song id: {}", id);
                 // Find song in queue or add it
@@ -130,6 +152,11 @@ impl App {
                 self.cache_shuffle_indices();
                 let _ = self.preload_adjacent_tracks_with_ncm();
                 Some(Task::none())
+            }
+
+            // Streaming playback messages
+            Message::StreamingEvent(song_id, event) => {
+                Some(self.handle_streaming_event(*song_id, event.clone()))
             }
 
             _ => None,
@@ -288,10 +315,16 @@ impl App {
             if let Some(player) = &mut self.core.audio {
                 let info = player.get_info();
                 if info.duration.as_secs_f32() > 0.0 {
-                    // Audio is loaded, seek directly
                     let seek_pos = std::time::Duration::from_secs_f32(
                         self.ui.seek_preview_position * info.duration.as_secs_f32(),
                     );
+
+                    // For streaming playback, check if we're seeking to unbuffered position
+                    let is_streaming_seek = self.library.streaming_buffer.as_ref()
+                        .map(|b| !b.is_complete())
+                        .unwrap_or(false);
+
+                    // Normal seek
                     match player.seek(seek_pos) {
                         Ok(_) => {
                             if !player.is_playing() {
@@ -300,9 +333,18 @@ impl App {
                         }
                         Err(e) => {
                             tracing::warn!("Seek failed: {}", e);
-                            // For formats that don't support seeking (like AAC),
-                            // show a toast and continue playing from current position
+                            // For streaming playback, show a more helpful message
+                            if is_streaming_seek && (e.contains("end of stream") || e.contains("No current path")) {
+                                self.ui.is_seeking = false;
+                                let progress = self.library.streaming_buffer.as_ref()
+                                    .map(|b| (b.progress() * 100.0) as u32)
+                                    .unwrap_or(0);
+                                return Task::done(Message::ShowToast(
+                                    format!("正在缓冲中 ({}%)，请稍候再拖动进度", progress),
+                                ));
+                            }
                             if e.contains("not supported") {
+                                self.ui.is_seeking = false;
                                 return Task::done(Message::ShowToast(
                                     "该格式不支持拖动进度条".to_string(),
                                 ));
@@ -349,7 +391,7 @@ impl App {
         }
     }
 
-    /// Handle playback tick for auto-save and auto-next
+    /// Handle playback tick for auto-save, streaming buffer check, and finish detection
     fn handle_playback_tick(&mut self) -> Task<Message> {
         self.update_audio_fade();
 
@@ -362,6 +404,91 @@ impl App {
         };
 
         self.check_lyrics_page_close();
+
+        // Check for buffering needs during streaming playback FIRST
+        // This must happen before is_finished() check because sink.empty() can be true
+        // when streaming data runs out but download is not complete
+        if let Some(buffer) = &self.library.streaming_buffer {
+            if !buffer.is_complete() {
+                // Get playback info
+                let (position_secs, duration_secs) = self.core.audio
+                    .as_ref()
+                    .map(|p| {
+                        let info = p.get_info();
+                        (info.position.as_secs_f64(), info.duration.as_secs_f64())
+                    })
+                    .unwrap_or((0.0, 0.0));
+                
+                let total_size = buffer.total_size();
+                
+                // Estimate current byte position
+                let byte_pos = crate::audio::streaming::estimate_byte_position(
+                    position_secs,
+                    total_size,
+                    duration_secs,
+                );
+                
+                const BUFFER_AHEAD_BYTES: u64 = 128 * 1024; // 128KB
+                let has_enough_buffer = buffer.has_buffer_ahead(byte_pos, BUFFER_AHEAD_BYTES);
+                
+                // Sync buffering state directly (no Message needed)
+                // Note: We don't check is_playing here because when seeking to unbuffered position,
+                // the decoder thread blocks on read_at() and playback appears stopped
+                if !self.library.is_buffering && !has_enough_buffer {
+                    // Start buffering: set state (playback may already be blocked)
+                    self.library.is_buffering = true;
+                    tracing::info!(
+                        "Buffering started at position {:.1}s (byte {}, downloaded {})",
+                        position_secs,
+                        byte_pos,
+                        buffer.downloaded()
+                    );
+                } else if self.library.is_buffering && has_enough_buffer {
+                    // Buffer ready: resume playback
+                    self.library.is_buffering = false;
+                    if let Some(player) = &mut self.core.audio {
+                        // Only resume if not already playing
+                        if !player.is_playing() {
+                            player.resume();
+                            tracing::info!(
+                                "Buffer ready, resuming playback at {:.1}s",
+                                position_secs
+                            );
+                        }
+                    }
+                }
+            } else if self.library.is_buffering {
+                // Download complete, clear buffering state and ensure playback
+                self.library.is_buffering = false;
+                if let Some(player) = &mut self.core.audio {
+                    if !player.is_playing() {
+                        player.resume();
+                        tracing::info!("Download complete, resuming playback");
+                    }
+                }
+            }
+        }
+
+        // Check if song finished playing
+        // For streaming songs, only consider finished if download is complete
+        if let Some(player) = &self.core.audio {
+            let is_streaming_incomplete = self
+                .library
+                .streaming_buffer
+                .as_ref()
+                .map(|b| !b.is_complete())
+                .unwrap_or(false);
+
+            // If streaming is incomplete, don't use is_finished() which relies on sink.empty()
+            // Instead, wait for download to complete
+            if !is_streaming_incomplete && player.is_finished() {
+                // Don't trigger if we're waiting for a song to be resolved
+                if self.library.pending_resolution_idx.is_none() && self.library.current_song.is_some() {
+                    tracing::info!("Song finished (detected in PlaybackTick), triggering next song");
+                    return self.handle_song_finished();
+                }
+            }
+        }
 
         // Auto-save position every 5 seconds
         self.ui.save_position_counter += 1;
@@ -385,25 +512,75 @@ impl App {
             }
         }
 
-        // Check if song finished
-        // Don't trigger next song if we're waiting for a song to be resolved
-        if let Some(player) = &self.core.audio {
-            let is_resolving = self.library.pending_resolution_idx.is_some();
-            let info = player.get_info();
+        lyrics_scroll_task
+    }
 
-            // Check for song completion:
-            // 1. Sink is empty (normal completion)
-            // 2. Status changed to Stopped (detected in get_info)
-            // 3. Position reached duration (for formats where empty() doesn't work)
-            let is_finished =
-                player.is_finished() || info.status == crate::audio::PlaybackStatus::Stopped;
+    /// Handle player events (event-driven architecture)
+    /// Note: Streaming events are handled separately via Message::StreamingEvent
+    /// Note: Finish detection is done via polling, not events
+    pub fn handle_player_event(&mut self, event: crate::audio::PlayerEvent) -> Task<Message> {
+        use crate::audio::PlayerEvent;
 
-            if is_finished && self.library.current_song.is_some() && !is_resolving {
-                tracing::info!("Song finished, triggering next song");
-                return self.handle_song_finished();
+        match event {
+            PlayerEvent::Started { path } => {
+                tracing::debug!("PlayerEvent::Started: {:?}", path);
+                Task::none()
+            }
+            PlayerEvent::StreamingStarted => {
+                tracing::debug!("PlayerEvent::StreamingStarted");
+                Task::none()
+            }
+        }
+    }
+
+    /// Handle streaming download events
+    fn handle_streaming_event(
+        &mut self,
+        song_id: i64,
+        event: crate::audio::streaming::StreamingEvent,
+    ) -> Task<Message> {
+        use crate::audio::streaming::StreamingEvent;
+
+        // Only handle events for the current song
+        let is_current = self
+            .library
+            .current_song
+            .as_ref()
+            .map(|s| s.id == song_id)
+            .unwrap_or(false);
+
+        if !is_current {
+            return Task::none();
+        }
+
+        match event {
+            StreamingEvent::Playable => {
+                tracing::info!("Streaming: song {} is now playable", song_id);
+            }
+            StreamingEvent::Progress(downloaded, total) => {
+                tracing::trace!(
+                    "Streaming progress: {}/{} bytes ({:.1}%)",
+                    downloaded,
+                    total,
+                    if total > 0 {
+                        downloaded as f64 / total as f64 * 100.0
+                    } else {
+                        0.0
+                    }
+                );
+            }
+            StreamingEvent::Complete => {
+                tracing::info!("Streaming: song {} download complete", song_id);
+                self.library.is_buffering = false;
+            }
+            StreamingEvent::Error(err) => {
+                tracing::error!("Streaming error for song {}: {}", song_id, err);
+                self.library.streaming_buffer = None;
+                self.library.is_buffering = false;
+                return Task::done(Message::ShowErrorToast(format!("下载失败: {}", err)));
             }
         }
 
-        lyrics_scroll_task
+        Task::none()
     }
 }

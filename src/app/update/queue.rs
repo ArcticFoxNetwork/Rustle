@@ -126,14 +126,21 @@ impl App {
 
             Message::PlayQueueIndex(idx) => Some(self.play_song_at_index(*idx)),
 
-            Message::SongResolved(idx, file_path, cover_path) => {
-                Some(self.handle_song_resolved(*idx, file_path.clone(), cover_path.clone()))
+            Message::SongResolvedStreaming(idx, file_path, cover_path, shared_buffer, duration_secs) => {
+                Some(self.handle_song_resolved_streaming(
+                    *idx,
+                    file_path.clone(),
+                    cover_path.clone(),
+                    shared_buffer.clone(),
+                    *duration_secs,
+                ))
             }
 
             Message::SongResolveFailed => {
                 tracing::error!("Failed to resolve song");
+                // Use handle_playback_failure for consistent failure tracking
                 if let Some(idx) = self.library.queue_index {
-                    return Some(self.skip_to_next_playable(idx));
+                    return Some(self.handle_playback_failure(idx, "Song resolution failed"));
                 }
                 Some(Task::done(Message::ShowToast("无法加载歌曲".to_string())))
             }

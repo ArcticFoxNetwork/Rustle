@@ -62,9 +62,13 @@ impl ControlSize {
     }
 }
 
-/// Build the play/pause button
-pub fn play_button(is_playing: bool, size: ControlSize) -> Element<'static, Message> {
-    let play_icon = if is_playing {
+/// Build the play/pause button with buffering state
+pub fn play_button_with_buffering(is_playing: bool, is_buffering: bool, size: ControlSize) -> Element<'static, Message> {
+    // Only show loading icon when playing AND buffering
+    let show_loading = is_playing && is_buffering;
+    let play_icon = if show_loading {
+        icons::LOADING
+    } else if is_playing {
         icons::PAUSE
     } else {
         icons::PLAY
@@ -74,22 +78,24 @@ pub fn play_button(is_playing: bool, size: ControlSize) -> Element<'static, Mess
     let icon_size = size.play_icon_size();
     let inner_padding = (btn_size - icon_size) / 2.0;
     // Offset to visually center the triangle (play icon is not symmetric)
-    let offset = if is_playing {
+    let offset = if is_playing || show_loading {
         0.0
     } else {
         if size == ControlSize::Small { 2.0 } else { 3.0 }
     };
 
-    button(
+    let btn = button(
         container(
             svg(svg::Handle::from_memory(play_icon.as_bytes()))
                 .width(icon_size)
                 .height(icon_size)
-                .style(|theme, _status| svg::Style {
-                    // Icon color should contrast with button background (text_primary)
-                    // In dark mode: background is white, icon should be black
-                    // In light mode: background is dark, icon should be white
-                    color: Some(theme::background(theme)),
+                .style(move |theme, _status| svg::Style {
+                    // Icon color should contrast with button background
+                    color: Some(if show_loading {
+                        theme::icon_muted(theme)
+                    } else {
+                        theme::background(theme)
+                    }),
                 }),
         )
         .padding(Padding {
@@ -103,9 +109,13 @@ pub fn play_button(is_playing: bool, size: ControlSize) -> Element<'static, Mess
     .width(btn_size)
     .height(btn_size)
     .style(move |theme, status| {
-        let bg = match status {
-            button::Status::Hovered => theme::play_button_hover(theme),
-            _ => theme::text_primary(theme),
+        let bg = if show_loading {
+            theme::surface_container(theme)
+        } else {
+            match status {
+                button::Status::Hovered => theme::play_button_hover(theme),
+                _ => theme::text_primary(theme),
+            }
         };
         button::Style {
             background: Some(iced::Background::Color(bg)),
@@ -115,9 +125,10 @@ pub fn play_button(is_playing: bool, size: ControlSize) -> Element<'static, Mess
             },
             ..Default::default()
         }
-    })
-    .on_press(Message::TogglePlayback)
-    .into()
+    });
+
+    // Always enable button - user can pause even during buffering
+    btn.on_press(Message::TogglePlayback).into()
 }
 
 /// Build the previous song button
@@ -188,12 +199,17 @@ pub fn next_button(size: ControlSize) -> Element<'static, Message> {
 
 /// Build the complete playback controls row (prev, play, next)
 pub fn view(is_playing: bool, size: ControlSize) -> Element<'static, Message> {
+    view_with_buffering(is_playing, false, size)
+}
+
+/// Build the complete playback controls row with buffering state
+pub fn view_with_buffering(is_playing: bool, is_buffering: bool, size: ControlSize) -> Element<'static, Message> {
     let spacing = size.spacing();
 
     row![
         prev_button(size),
         Space::new().width(spacing),
-        play_button(is_playing, size),
+        play_button_with_buffering(is_playing, is_buffering, size),
         Space::new().width(spacing),
         next_button(size),
     ]

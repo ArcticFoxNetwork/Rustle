@@ -192,3 +192,15 @@ pub const EQUALIZER: &str = r#"<svg viewBox="0 0 24 24" fill="currentColor">
 pub const CHEVRON_DOWN: &str = r#"<svg viewBox="0 0 24 24" fill="currentColor">
     <path d="M7.41 8.59L12 13.17l4.59-4.58L18 10l-6 6-6-6 1.41-1.41z"/>
 </svg>"#;
+
+/// Loading/spinner icon (circular dots)
+pub const LOADING: &str = r#"<svg viewBox="0 0 24 24" fill="currentColor">
+    <circle cx="12" cy="4" r="2"/>
+    <circle cx="12" cy="20" r="2" opacity="0.3"/>
+    <circle cx="4" cy="12" r="2" opacity="0.5"/>
+    <circle cx="20" cy="12" r="2" opacity="0.7"/>
+    <circle cx="6.34" cy="6.34" r="2" opacity="0.9"/>
+    <circle cx="17.66" cy="17.66" r="2" opacity="0.2"/>
+    <circle cx="6.34" cy="17.66" r="2" opacity="0.4"/>
+    <circle cx="17.66" cy="6.34" r="2" opacity="0.8"/>
+</svg>"#;

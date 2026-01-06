@@ -22,6 +22,8 @@ pub fn view(
     volume: f32,       // 0.0 to 1.0
     _is_seeking: bool, // Whether user is dragging the slider (reserved for future use)
     play_mode: PlayMode,
+    is_buffering: bool, // Whether streaming is buffering
+    download_progress: Option<f32>, // Download progress 0.0 to 1.0 (None if not streaming)
 ) -> Element<'static, Message> {
     // Format time as mm:ss
     let format_time = |secs: f32| -> String {
@@ -210,9 +212,9 @@ pub fn view(
         .align_y(Alignment::Center);
 
     // Center section: Playback controls + progress (using unified widgets)
-    let controls = widgets::playback_controls::view(is_playing, ControlSize::Small);
+    let controls = widgets::playback_controls::view_with_buffering(is_playing, is_buffering, ControlSize::Small);
 
-    let progress_slider = widgets::progress_slider::view(position, SliderSize::Standard);
+    let progress_slider = widgets::progress_slider::view_with_download(position, download_progress, SliderSize::Standard);
 
     let progress_row = row![
         text(current_time).size(12).color(theme::TEXT_MUTED),

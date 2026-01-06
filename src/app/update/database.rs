@@ -110,9 +110,12 @@ impl App {
 
                                     return Some(Task::perform(
                                         async move {
+                                            // Create a dummy channel for restore
+                                            let (event_tx, _event_rx) = tokio::sync::mpsc::channel(1);
                                             crate::app::update::song_resolver::resolve_song(
                                                 client,
                                                 &song_clone,
+                                                event_tx,
                                             )
                                             .await
                                         },

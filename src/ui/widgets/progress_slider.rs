@@ -6,6 +6,7 @@
 use iced::widget::slider;
 use iced::{Color, Element, Length};
 
+use super::multi_track_slider::{self, MultiTrackSlider};
 use crate::app::Message;
 use crate::ui::theme;
 
@@ -18,12 +19,13 @@ pub enum SliderSize {
     Full,
 }
 
-/// Build the progress slider
+/// Build the progress slider with optional download progress indicator
 ///
 /// # Arguments
-/// * `position` - Current position (0.0 to 1.0)
+/// * `position` - Current playback position (0.0 to 1.0)
+/// * `download_progress` - Download progress (0.0 to 1.0), None if not streaming
 /// * `size` - Size variant
-pub fn view(position: f32, size: SliderSize) -> Element<'static, Message> {
+pub fn view_with_download(position: f32, download_progress: Option<f32>, size: SliderSize) -> Element<'static, Message> {
     let clamped_position = position.clamp(0.0, 1.0);
 
     let width = match size {
@@ -31,22 +33,28 @@ pub fn view(position: f32, size: SliderSize) -> Element<'static, Message> {
         SliderSize::Full => Length::Fill,
     };
 
-    slider(0.0..=1.0, clamped_position, Message::SeekPreview)
+    // Use multi-track slider for download progress display
+    MultiTrackSlider::new(0.0..=1.0, clamped_position, Message::SeekPreview)
+        .secondary(download_progress)
         .on_release(Message::SeekRelease)
         .width(width)
-        .height(4)
+        .height(16)
         .step(0.001)
-        .style(|iced_theme, status| {
+        .style(move |iced_theme, status| {
             let handle_radius = match status {
-                slider::Status::Hovered | slider::Status::Dragged => 6.0,
+                multi_track_slider::Status::Hovered | multi_track_slider::Status::Dragged => 6.0,
                 _ => 0.0, // Hide handle when not interacting
             };
-            slider::Style {
-                rail: slider::Rail {
+            multi_track_slider::Style {
+                rail: multi_track_slider::Rail {
                     backgrounds: (
                         iced::Background::Color(theme::ACCENT_PINK),
                         iced::Background::Color(theme::divider(iced_theme)),
                     ),
+                    // Downloaded but not played - slightly brighter than background
+                    secondary_background: Some(iced::Background::Color(
+                        Color::from_rgba(0.6, 0.6, 0.6, 0.5)
+                    )),
                     width: 4.0,
                     border: iced::Border {
                         radius: 2.0.into(),
@@ -54,8 +62,8 @@ pub fn view(position: f32, size: SliderSize) -> Element<'static, Message> {
                         color: Color::TRANSPARENT,
                     },
                 },
-                handle: slider::Handle {
-                    shape: slider::HandleShape::Circle {
+                handle: multi_track_slider::Handle {
+                    shape: multi_track_slider::HandleShape::Circle {
                         radius: handle_radius,
                     },
                     background: iced::Background::Color(theme::ACCENT_PINK),

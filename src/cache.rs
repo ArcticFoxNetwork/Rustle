@@ -230,6 +230,60 @@ impl ClearResult {
     }
 }
 
+/// Clean up orphan .tmp files from incomplete downloads
+/// 
+/// This should be called at application startup to remove any temp files
+/// left behind from interrupted downloads.
+pub fn cleanup_temp_files() -> ClearResult {
+    let mut result = ClearResult::default();
+
+    for dir in cache_directories() {
+        if !dir.exists() {
+            continue;
+        }
+
+        let read_dir = match fs::read_dir(&dir) {
+            Ok(rd) => rd,
+            Err(e) => {
+                warn!("Failed to read cache directory {:?}: {}", dir, e);
+                continue;
+            }
+        };
+
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+
+            // Check if it's a .tmp file
+            if path.extension().map(|e| e == "tmp").unwrap_or(false) {
+                let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                match fs::remove_file(&path) {
+                    Ok(_) => {
+                        info!("Cleaned up orphan temp file: {:?} ({} bytes)", path, size);
+                        result.files_deleted += 1;
+                        result.bytes_freed += size;
+                    }
+                    Err(e) => {
+                        warn!("Failed to delete temp file {:?}: {}", path, e);
+                        result.errors += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    if result.files_deleted > 0 {
+        info!(
+            "Temp file cleanup: {} files deleted, {} bytes freed",
+            result.files_deleted, result.bytes_freed
+        );
+    }
+
+    result
+}
+
 /// Cache operation errors
 #[derive(Debug, Clone)]
 pub enum CacheError {

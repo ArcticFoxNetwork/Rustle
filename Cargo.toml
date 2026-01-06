@@ -49,11 +49,12 @@ ttf-parser = "0.25"
 sdf_glyph_renderer = "1.0"
 ab_glyph = "0.2"
 quick-xml = "0.37"
+futures-util = "0.3"
 
 # Netease Cloud Music API
 qrcode-generator = "5.0"
 cookie_store = "0.21"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "cookies", "json", "gzip"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "cookies", "json", "gzip", "stream"] }
 lazy_static = "1.5"
 urlqstring = "0.2"
 md5 = "0.7"

@@ -287,6 +287,76 @@ pub fn avatars_cache_dir() -> PathBuf {
     cache_dir().join("avatars")
 }
 
+// ============================================================================
+// Audio Format Detection
+// ============================================================================
+
+/// Common audio file extensions for cache lookup
+pub const AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "m4a", "aac", "ogg", "wav"];
+
+/// Find an existing cached audio file with any common extension
+///
+/// # Arguments
+/// * `dir` - The directory to search in
+/// * `stem` - The filename without extension (e.g., "12345")
+///
+/// # Returns
+/// The path to the existing file if found, None otherwise
+pub fn find_cached_audio(dir: &Path, stem: &str) -> Option<PathBuf> {
+    AUDIO_EXTENSIONS
+        .iter()
+        .map(|ext| dir.join(format!("{}.{}", stem, ext)))
+        .find(|p| p.exists())
+}
+
+/// Detect audio format from magic bytes
+/// Returns the correct file extension (without dot)
+pub fn detect_audio_format(bytes: &[u8]) -> &'static str {
+    if bytes.len() < 12 {
+        return "mp3"; // Default fallback
+    }
+
+    // FLAC: 66 4C 61 43 (fLaC)
+    if bytes.starts_with(&[0x66, 0x4C, 0x61, 0x43]) {
+        return "flac";
+    }
+
+    // MP3: FF FB, FF FA, FF F3, FF F2 (MPEG audio frame sync)
+    // or ID3 tag: 49 44 33 (ID3)
+    if bytes.starts_with(&[0xFF, 0xFB])
+        || bytes.starts_with(&[0xFF, 0xFA])
+        || bytes.starts_with(&[0xFF, 0xF3])
+        || bytes.starts_with(&[0xFF, 0xF2])
+        || bytes.starts_with(&[0x49, 0x44, 0x33])
+    {
+        return "mp3";
+    }
+
+    // M4A/AAC: 00 00 00 xx 66 74 79 70 (ftyp)
+    if bytes.len() >= 8 && &bytes[4..8] == b"ftyp" {
+        return "m4a";
+    }
+
+    // OGG: 4F 67 67 53 (OggS)
+    if bytes.starts_with(&[0x4F, 0x67, 0x67, 0x53]) {
+        return "ogg";
+    }
+
+    // WAV: 52 49 46 46 ... 57 41 56 45 (RIFF...WAVE)
+    if bytes.len() >= 12
+        && bytes.starts_with(&[0x52, 0x49, 0x46, 0x46])
+        && &bytes[8..12] == b"WAVE"
+    {
+        return "wav";
+    }
+
+    "mp3" // Default fallback
+}
+
+// ============================================================================
+// Image Format Detection
+// ============================================================================
+
 /// Detect image format from magic bytes
 /// Returns the correct file extension (without dot)
 fn detect_image_format(bytes: &[u8]) -> &'static str {

@@ -19,6 +19,9 @@ pub use state::{
 impl App {
     /// Create new application instance
     pub fn new() -> (Self, Task<Message>) {
+        // 0. Clean up orphan temp files from interrupted downloads
+        crate::cache::cleanup_temp_files();
+
         // 1. Load settings first to initialize locale correctly
         let settings = crate::features::Settings::load();
         let locale = {
@@ -66,6 +69,7 @@ impl App {
             }),
             Task::done(Message::TryAutoLogin(0)),
             Task::done(Message::EnforceCacheLimit),
+            Task::done(Message::StartPlayerEventListener),
         ]);
 
         (app, init_task)
@@ -191,6 +195,9 @@ impl App {
         } else {
             iced::Subscription::none()
         };
+
+        // 12. Player events - handled via Task::run in initialization, not subscription
+        // (see handle_player_event_receiver_ready message)
 
         // Batch all subscriptions
         iced::Subscription::batch([

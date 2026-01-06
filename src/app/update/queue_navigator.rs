@@ -172,8 +172,40 @@ pub fn needs_ncm_download(song: &DbSong) -> bool {
         return false;
     };
 
-    let cached_path = crate::utils::songs_cache_dir().join(format!("{}.mp3", ncm_id));
-    !cached_path.exists()
+    let song_cache_dir = crate::utils::songs_cache_dir();
+    let stem = ncm_id.to_string();
+    crate::utils::find_cached_audio(&song_cache_dir, &stem).is_none()
+}
+
+/// Skip to next playable track, handling failures
+/// Returns the next index to try, skipping the failed index
+/// IMPORTANT: This always moves to a DIFFERENT song, never returns failed_idx
+pub fn skip_to_next_playable(
+    queue_len: usize,
+    failed_idx: usize,
+    _play_mode: PlayMode,
+    _shuffle_cache: &ShuffleCache,
+) -> Option<usize> {
+    if queue_len == 0 {
+        return None;
+    }
+    
+    // If only one song in queue, can't skip to another
+    if queue_len == 1 {
+        return None;
+    }
+
+    // Always skip to next sequential song when a song fails
+    // This ensures we don't get stuck on the same failed song
+    // regardless of play mode
+    let next = (failed_idx + 1) % queue_len;
+    
+    // Make sure we're not returning the same index
+    if next == failed_idx {
+        return None;
+    }
+    
+    Some(next)
 }
 
 /// Helper to get local file path for a song (if available)
@@ -182,7 +214,7 @@ pub fn get_local_path(song: &DbSong) -> Option<std::path::PathBuf> {
     let is_ncm = song.id < 0 || song.file_path.is_empty() || song.file_path.starts_with("ncm://");
 
     if is_ncm {
-        // For NCM songs, check cache
+        // For NCM songs, check cache with any audio extension
         let ncm_id = if song.id < 0 {
             (-song.id) as u64
         } else if song.file_path.starts_with("ncm://") {
@@ -191,11 +223,9 @@ pub fn get_local_path(song: &DbSong) -> Option<std::path::PathBuf> {
             return None;
         };
 
-        let cached_path = crate::utils::songs_cache_dir().join(format!("{}.mp3", ncm_id));
-        if cached_path.exists() {
-            return Some(cached_path);
-        }
-        return None;
+        let song_cache_dir = crate::utils::songs_cache_dir();
+        let stem = ncm_id.to_string();
+        return crate::utils::find_cached_audio(&song_cache_dir, &stem);
     }
 
     // For local songs, check if file exists

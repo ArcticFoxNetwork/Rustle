@@ -1,21 +1,25 @@
-//! Audio player using rodio with preloading support
+//! Audio player - playback control and audio output
 //!
-//! This player supports preloading up to 3 tracks (previous, current, next)
-//! for seamless track switching without loading delays.
-//!
-//! The player is decoupled from audio processing - it receives an
-//! `AudioProcessingChain` reference and applies it to all audio sources.
+//! Provides:
+//! - Play/pause/seek/volume control
+//! - Fade in/out transitions
+//! - Streaming buffer playback
+//! - Audio processing chain integration
+//! - Pre-decoded Sink creation for seamless track switching
 
 use std::fs::File;
 use std::io::BufReader;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
-use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink, Source, mixer::Mixer};
+use rodio::mixer::Mixer;
+use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
 
 use super::chain::AudioProcessingChain;
+use super::events::{PlayerEvent, PlayerEventSender};
+use super::streaming::StreamingBuffer;
 
 /// Cached audio devices to avoid repeated enumeration (which triggers Jack/ALSA warnings)
 static AUDIO_DEVICES_CACHE: OnceLock<Vec<AudioDevice>> = OnceLock::new();
@@ -76,7 +80,6 @@ struct PlayerState {
     original_volume: f32,
     track_gain: f32,
     fade_state: FadeState,
-    // Current device name (None = default)
     device_name: Option<String>,
 }
 
@@ -95,66 +98,15 @@ impl Default for PlayerState {
     }
 }
 
-/// A preloaded track ready for instant playback
-struct PreloadedTrack {
-    sink: Sink,
-    path: PathBuf,
-    duration: Duration,
-}
-
-impl PreloadedTrack {
-    /// Create a new preloaded track (sink starts paused)
-    fn new(
-        mixer: &Mixer,
-        path: PathBuf,
-        volume: f32,
-        chain: &AudioProcessingChain,
-    ) -> Result<Self, String> {
-        let file = File::open(&path).map_err(|e| format!("Failed to open file: {}", e))?;
-        let reader = BufReader::new(file);
-        let source = Decoder::new(reader).map_err(|e| format!("Failed to decode audio: {}", e))?;
-        let duration = source.total_duration().unwrap_or(Duration::ZERO);
-
-        // Apply the processing chain (preamp -> EQ -> analyzer)
-        let processed = chain.apply(source);
-
-        let sink = Sink::connect_new(mixer);
-        sink.append(processed);
-        sink.set_volume(volume);
-        sink.pause(); // Start paused, ready for instant playback
-
-        Ok(Self {
-            sink,
-            path,
-            duration,
-        })
-    }
-
-    /// Start playing this track
-    fn play(&self) {
-        self.sink.play();
-    }
-
-    /// Stop and consume this track
-    fn stop(self) {
-        self.sink.stop();
-    }
-}
-
-/// Audio player with preloading support for seamless track switching
+/// Audio player - simplified, focused on playback control
+/// Preloading is managed externally by PreloadManager
 pub struct AudioPlayer {
     _stream: OutputStream,
-    mixer: Arc<Mixer>,
-    // Current playing track
     current_sink: Option<Sink>,
     current_path: Option<PathBuf>,
-    // Preloaded tracks for instant switching
-    preloaded_prev: Option<PreloadedTrack>,
-    preloaded_next: Option<PreloadedTrack>,
-    // Shared state
     state: Arc<Mutex<PlayerState>>,
-    // Audio processing chain (preamp, EQ, analyzer)
     chain: AudioProcessingChain,
+    event_tx: Option<PlayerEventSender>,
 }
 
 impl AudioPlayer {
@@ -174,40 +126,39 @@ impl AudioPlayer {
             OutputStreamBuilder::open_default_stream()
                 .map_err(|e| format!("Failed to create audio output: {}", e))?
         };
-        let mixer = stream.mixer().clone();
 
         let mut state = PlayerState::default();
         state.device_name = device_name.map(|s| s.to_string());
 
         Ok(Self {
             _stream: stream,
-            mixer: Arc::new(mixer),
             current_sink: None,
             current_path: None,
-            preloaded_prev: None,
-            preloaded_next: None,
             state: Arc::new(Mutex::new(state)),
             chain,
+            event_tx: None,
         })
+    }
+
+    /// Set the event sender for receiving playback events
+    pub fn set_event_sender(&mut self, tx: PlayerEventSender) {
+        self.event_tx = Some(tx);
     }
 
     /// Create output stream for a specific device by name
     fn create_stream_for_device(device_name: &str) -> Result<OutputStream, String> {
         let host = rodio::cpal::default_host();
 
-        // Find the device by name
         let device = host
             .output_devices()
             .map_err(|e| format!("Failed to enumerate devices: {}", e))?
             .find(|d| d.name().map(|n| n == device_name).unwrap_or(false))
             .ok_or_else(|| format!("Device not found: {}", device_name))?;
 
-        // Get default config for the device
         let config = device
             .default_output_config()
             .map_err(|e| format!("Failed to get device config: {}", e))?;
 
-        // Build stream with the device
         OutputStreamBuilder::from_device(device)
             .map_err(|e| format!("Failed to create stream builder: {}", e))?
             .with_sample_rate(config.sample_rate().0)
@@ -216,12 +167,10 @@ impl AudioPlayer {
     }
 
     /// Switch to a different audio output device
-    /// Returns the path of the track that was playing (if any) so it can be resumed
     pub fn switch_device(
         &mut self,
         device_name: Option<&str>,
     ) -> Result<Option<(PathBuf, Duration, bool)>, String> {
-        // Save current playback state
         let playback_state = self.current_path.clone().map(|path| {
             let info = self.get_info();
             let was_playing = info.status == PlaybackStatus::Playing;
@@ -229,11 +178,8 @@ impl AudioPlayer {
             (path, position, was_playing)
         });
 
-        // Stop everything
         self.stop();
-        self.clear_preloads();
 
-        // Create new stream with the specified device
         let stream = if let Some(name) = device_name {
             Self::create_stream_for_device(name)?
         } else {
@@ -241,16 +187,12 @@ impl AudioPlayer {
                 .map_err(|e| format!("Failed to create audio output: {}", e))?
         };
 
-        let mixer = stream.mixer().clone();
-
-        // Update state
         {
             let mut state = self.state.lock().unwrap();
             state.device_name = device_name.map(|s| s.to_string());
         }
 
         self._stream = stream;
-        self.mixer = Arc::new(mixer);
 
         tracing::info!("Switched audio device to: {:?}", device_name);
         Ok(playback_state)
@@ -262,34 +204,36 @@ impl AudioPlayer {
         state.volume * state.track_gain
     }
 
-    /// Play a file (clears preloaded tracks)
+    /// Prepare for playing a new track (reset analysis, refresh EQ)
+    /// Call this before starting any new track playback
+    pub fn prepare_for_new_track(&mut self) {
+        self.chain.reset_analysis();
+        self.chain.refresh_eq_coefficients();
+    }
+
+    /// Play a file
     pub fn play(&mut self, path: PathBuf) -> Result<(), String> {
         self.play_with_fade(path, false)
     }
 
     /// Play a file with fade in option
     pub fn play_with_fade(&mut self, path: PathBuf, fade_in: bool) -> Result<(), String> {
-        // Stop current playback and clear preloads
         self.stop();
-        self.clear_preloads();
+        self.prepare_for_new_track();
 
-        // Open file and decode
         let file = File::open(&path).map_err(|e| format!("Failed to open file: {}", e))?;
         let reader = BufReader::new(file);
         let source = Decoder::new(reader).map_err(|e| format!("Failed to decode audio: {}", e))?;
         let duration = source.total_duration().unwrap_or(Duration::ZERO);
 
-        // Apply the processing chain (preamp -> EQ -> analyzer)
         let processed = self.chain.apply(source);
 
-        // Create sink and start playing
-        let sink = Sink::connect_new(&self.mixer);
+        let sink = Sink::connect_new(self._stream.mixer());
         sink.append(processed);
 
         let volume = self.get_effective_volume();
         sink.set_volume(if fade_in { 0.0 } else { volume });
 
-        // Update state
         {
             let mut state = self.state.lock().unwrap();
             state.status = PlaybackStatus::Playing;
@@ -299,7 +243,11 @@ impl AudioPlayer {
         }
 
         self.current_sink = Some(sink);
-        self.current_path = Some(path);
+        self.current_path = Some(path.clone());
+
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(PlayerEvent::Started { path });
+        }
 
         if fade_in {
             self.start_fade_in(300);
@@ -309,178 +257,198 @@ impl AudioPlayer {
         Ok(())
     }
 
-    /// Preload the previous track for instant backward switching
-    pub fn preload_prev(&mut self, path: PathBuf) {
-        // Don't preload if it's the same as current
-        if self.current_path.as_ref() == Some(&path) {
-            return;
-        }
-        // Don't preload if already preloaded
-        if self.preloaded_prev.as_ref().map(|t| &t.path) == Some(&path) {
-            return;
-        }
+    /// Create a preload sink for external use (by PreloadManager)
+    /// Returns (Sink, Duration) - sink is paused and ready for playback
+    pub fn create_preload_sink(&self, path: &Path) -> Result<(Sink, Duration), String> {
+        let file = File::open(path).map_err(|e| format!("Failed to open file: {}", e))?;
+        let reader = BufReader::new(file);
+        let source = Decoder::new(reader).map_err(|e| format!("Failed to decode audio: {}", e))?;
+        let duration = source.total_duration().unwrap_or(Duration::ZERO);
 
-        let volume = self.get_effective_volume();
-        match PreloadedTrack::new(&self.mixer, path.clone(), volume, &self.chain) {
-            Ok(track) => {
-                // Stop old preloaded track if exists
-                if let Some(old) = self.preloaded_prev.take() {
-                    old.stop();
-                }
-                tracing::debug!("Preloaded prev track: {:?}", path);
-                self.preloaded_prev = Some(track);
-            }
-            Err(e) => {
-                tracing::warn!("Failed to preload prev track: {}", e);
-            }
-        }
+        let processed = self.chain.apply(source);
+
+        let sink = Sink::connect_new(self._stream.mixer());
+        sink.append(processed);
+        sink.set_volume(self.get_effective_volume());
+        sink.pause(); // Start paused
+
+        Ok((sink, duration))
     }
 
-    /// Preload the next track for instant forward switching
-    pub fn preload_next(&mut self, path: PathBuf) {
-        // Don't preload if it's the same as current
-        if self.current_path.as_ref() == Some(&path) {
-            return;
-        }
-        // Don't preload if already preloaded
-        if self.preloaded_next.as_ref().map(|t| &t.path) == Some(&path) {
-            return;
-        }
+    /// Create a preload sink from StreamingBuffer for NCM songs
+    /// 
+    /// This allows streaming playback where the buffer continues downloading
+    /// in the background while playback proceeds. The StreamingBuffer's read()
+    /// method blocks when data is not yet available.
+    /// 
+    /// Returns (Sink, Duration) - sink is paused and ready for playback
+    pub fn create_preload_sink_streaming(
+        &self,
+        buffer: StreamingBuffer,
+        duration: Duration,
+    ) -> Result<(Sink, Duration), String> {
+        // Wait for total_size to be set (from Content-Length header)
+        // This is critical for FLAC and other formats that need byte_len for seeking
+        let start = std::time::Instant::now();
+        let byte_len = loop {
+            let size = buffer.shared().total_size();
+            if size > 0 {
+                break size;
+            }
+            // If download is already complete, use downloaded size
+            if buffer.shared().is_complete() {
+                let downloaded = buffer.shared().downloaded();
+                tracing::info!("Preload: download complete before total_size set, using downloaded: {}", downloaded);
+                break downloaded;
+            }
+            // Timeout after 5 seconds
+            if start.elapsed() > Duration::from_secs(5) {
+                tracing::warn!("Preload: timeout waiting for content-length, seek may not work properly");
+                break 0;
+            }
+            // Wait a bit before checking again
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        
+        tracing::debug!(
+            "create_preload_sink_streaming: byte_len={} (waited {:?})",
+            byte_len, start.elapsed()
+        );
+        
+        // Use Decoder::builder() to properly set byte_len and seekable
+        // This is required for FLAC and other formats that need byte_len for seeking
+        let source = Decoder::builder()
+            .with_data(buffer)
+            .with_byte_len(byte_len)
+            .with_seekable(byte_len > 0)
+            .build()
+            .map_err(|e| format!("Failed to decode streaming audio: {}", e))?;
+        
+        // Use provided duration since streaming buffer may not know total duration
+        let actual_duration = source.total_duration().unwrap_or(duration);
 
-        let volume = self.get_effective_volume();
-        match PreloadedTrack::new(&self.mixer, path.clone(), volume, &self.chain) {
-            Ok(track) => {
-                // Stop old preloaded track if exists
-                if let Some(old) = self.preloaded_next.take() {
-                    old.stop();
-                }
-                tracing::debug!("Preloaded next track: {:?}", path);
-                self.preloaded_next = Some(track);
-            }
-            Err(e) => {
-                tracing::warn!("Failed to preload next track: {}", e);
-            }
-        }
+        let processed = self.chain.apply(source);
+
+        let sink = Sink::connect_new(self._stream.mixer());
+        sink.append(processed);
+        sink.set_volume(self.get_effective_volume());
+        sink.pause(); // Start paused
+
+        Ok((sink, actual_duration))
     }
 
-    /// Switch to the preloaded next track instantly
-    /// Returns the path of the new current track, or None if no preload available
-    pub fn switch_to_next(&mut self) -> Option<PathBuf> {
-        let preloaded = self.preloaded_next.take()?;
+    /// Play a preloaded sink (from PreloadManager)
+    /// 
+    /// Note: We do NOT call prepare_for_new_track() here because the sink was already
+    /// created with the audio processing chain applied in create_preload_sink().
+    /// Calling prepare_for_new_track() would reset the chain state (analysis data, EQ coefficients)
+    /// which could interfere with the already-processed audio source in the sink.
+    pub fn play_preloaded_sink(&mut self, sink: Sink, duration: Duration, path: PathBuf) -> Result<(), String> {
+        self.stop();
+        // Don't call prepare_for_new_track() - the sink was already prepared during preload
 
-        // Stop current playback
-        if let Some(sink) = self.current_sink.take() {
-            sink.stop();
-        }
+        sink.set_volume(self.get_effective_volume());
+        sink.play();
 
-        // Move current to prev preload slot (if we want to keep it)
-        // 清除 prev preload
-        self.clear_prev_preload();
-
-        // Reset analysis data before starting new track
-        self.chain.reset_analysis();
-
-        // Force EQ coefficients refresh to ensure audio processing is active
-        self.chain.refresh_eq_coefficients();
-
-        // Start playing preloaded track
-        preloaded.play();
-        let path = preloaded.path.clone();
-        let duration = preloaded.duration;
-
-        // Update state
         {
             let mut state = self.state.lock().unwrap();
             state.status = PlaybackStatus::Playing;
             state.duration = duration;
             state.paused_position = None;
+            state.original_volume = state.volume;
         }
 
-        self.current_sink = Some(preloaded.sink);
+        self.current_sink = Some(sink);
         self.current_path = Some(path.clone());
 
-        tracing::info!("Switched to preloaded next track: {:?}", path);
-        Some(path)
-    }
-
-    /// Switch to the preloaded previous track instantly
-    /// Returns the path of the new current track, or None if no preload available
-    pub fn switch_to_prev(&mut self) -> Option<PathBuf> {
-        let preloaded = self.preloaded_prev.take()?;
-
-        // Stop current playback
-        if let Some(sink) = self.current_sink.take() {
-            sink.stop();
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(PlayerEvent::Started { path });
         }
 
-        // 清除 next preload
-        self.clear_next_preload();
+        tracing::info!("Playing preloaded audio, duration: {:?}", duration);
+        Ok(())
+    }
 
-        // Reset analysis data before starting new track
-        self.chain.reset_analysis();
+    /// Play from a streaming buffer (for network streaming without file I/O)
+    ///
+    /// The StreamingBuffer blocks on read() when data is not yet available,
+    /// allowing seamless playback while downloading continues in background.
+    pub fn play_streaming(
+        &mut self,
+        buffer: StreamingBuffer,
+        duration: Duration,
+        cache_path: Option<PathBuf>,
+    ) -> Result<(), String> {
+        self.stop();
+        self.prepare_for_new_track();
 
-        // Force EQ coefficients refresh to ensure audio processing is active
-        self.chain.refresh_eq_coefficients();
+        // Wait for total_size to be set (from Content-Length header)
+        // This is critical for FLAC and other formats that need byte_len for seeking
+        let start = std::time::Instant::now();
+        let byte_len = loop {
+            let size = buffer.shared().total_size();
+            if size > 0 {
+                break size;
+            }
+            // If download is already complete, use downloaded size
+            if buffer.shared().is_complete() {
+                let downloaded = buffer.shared().downloaded();
+                tracing::info!("Download complete before total_size set, using downloaded: {}", downloaded);
+                break downloaded;
+            }
+            // Timeout after 5 seconds
+            if start.elapsed() > Duration::from_secs(5) {
+                tracing::warn!("Timeout waiting for content-length, seek may not work properly");
+                break 0;
+            }
+            // Wait a bit before checking again
+            std::thread::sleep(Duration::from_millis(50));
+        };
+        
+        tracing::info!(
+            "play_streaming: byte_len={} (waited {:?}), downloaded={}, complete={}, cache_path={:?}",
+            byte_len,
+            start.elapsed(),
+            buffer.shared().downloaded(),
+            buffer.shared().is_complete(),
+            cache_path
+        );
+        
+        // Use Decoder::builder() to properly set byte_len and seekable
+        // This is required for FLAC and other formats that need byte_len for seeking
+        let source = Decoder::builder()
+            .with_data(buffer)
+            .with_byte_len(byte_len)
+            .with_seekable(byte_len > 0)
+            .build()
+            .map_err(|e| format!("Failed to decode streaming audio: {}", e))?;
 
-        // Start playing preloaded track
-        preloaded.play();
-        let path = preloaded.path.clone();
-        let duration = preloaded.duration;
+        let processed = self.chain.apply(source);
 
-        // Update state
+        let sink = Sink::connect_new(self._stream.mixer());
+        sink.append(processed);
+
+        let volume = self.get_effective_volume();
+        sink.set_volume(volume);
+
         {
             let mut state = self.state.lock().unwrap();
             state.status = PlaybackStatus::Playing;
             state.duration = duration;
             state.paused_position = None;
+            state.original_volume = state.volume;
         }
 
-        self.current_sink = Some(preloaded.sink);
-        self.current_path = Some(path.clone());
+        self.current_sink = Some(sink);
+        // Store cache path for seek fallback (when streaming seek fails, we can reload from file)
+        self.current_path = cache_path;
 
-        tracing::info!("Switched to preloaded prev track: {:?}", path);
-        Some(path)
-    }
-
-    /// Get the path of preloaded next track
-    pub fn preloaded_next_path(&self) -> Option<&PathBuf> {
-        self.preloaded_next.as_ref().map(|t| &t.path)
-    }
-
-    /// Get the path of preloaded prev track
-    pub fn preloaded_prev_path(&self) -> Option<&PathBuf> {
-        self.preloaded_prev.as_ref().map(|t| &t.path)
-    }
-
-    /// Clear all preloaded tracks
-    fn clear_preloads(&mut self) {
-        self.clear_prev_preload();
-        self.clear_next_preload();
-    }
-
-    /// Clear preloaded previous track
-    fn clear_prev_preload(&mut self) {
-        if let Some(track) = self.preloaded_prev.take() {
-            track.stop();
+        if let Some(tx) = &self.event_tx {
+            let _ = tx.send(PlayerEvent::StreamingStarted);
         }
-    }
 
-    /// Clear preloaded next track
-    fn clear_next_preload(&mut self) {
-        if let Some(track) = self.preloaded_next.take() {
-            track.stop();
-        }
-    }
-
-    /// Update volume on preloaded tracks when volume changes
-    fn update_preload_volumes(&self) {
-        let volume = self.get_effective_volume();
-        if let Some(ref track) = self.preloaded_prev {
-            track.sink.set_volume(volume);
-        }
-        if let Some(ref track) = self.preloaded_next {
-            track.sink.set_volume(volume);
-        }
+        tracing::info!("Playing streaming audio, duration: {:?}", duration);
+        Ok(())
     }
 
     /// Pause playback
@@ -537,12 +505,11 @@ impl AudioPlayer {
         }
     }
 
-    /// Stop playback (keeps preloaded tracks)
+    /// Stop playback
     pub fn stop(&mut self) {
         if let Some(sink) = self.current_sink.take() {
             sink.stop();
         }
-        // Reset analysis data when stopping
         self.chain.reset_analysis();
         let mut state = self.state.lock().unwrap();
         state.status = PlaybackStatus::Stopped;
@@ -557,19 +524,14 @@ impl AudioPlayer {
             state.volume = volume;
         }
 
-        // Apply volume to current sink
         if let Some(sink) = &self.current_sink {
             let effective_volume = self.get_effective_volume();
             sink.set_volume(effective_volume);
         }
-
-        // Also update preloaded tracks
-        self.update_preload_volumes();
     }
 
     /// Seek to position
     pub fn seek(&mut self, position: Duration) -> Result<(), String> {
-        // First try direct seek
         if let Some(sink) = &mut self.current_sink {
             match sink.try_seek(position) {
                 Ok(_) => {
@@ -585,45 +547,52 @@ impl AudioPlayer {
         }
 
         // Direct seek failed, try reloading the file
-        tracing::info!("Attempting reload workaround for seek");
-
-        let path = self.current_path.clone().ok_or("No current path")?;
+        // Note: This only works for file-based playback, not streaming
+        let path = match self.current_path.clone() {
+            Some(p) => p,
+            None => {
+                // No file path means streaming playback - can't reload
+                return Err("Seek failed: end of stream (streaming playback)".to_string());
+            }
+        };
+        
+        tracing::info!("Attempting reload workaround for seek to {:?}", position);
         let volume = self.get_effective_volume();
         let was_playing = {
             let state = self.state.lock().unwrap();
             state.status == PlaybackStatus::Playing
         };
 
-        // Stop and remove old sink
         if let Some(old_sink) = self.current_sink.take() {
             old_sink.stop();
         }
 
-        // Open and decode file
         let file = File::open(&path).map_err(|e| format!("Failed to open file: {}", e))?;
+        let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
         let reader = BufReader::new(file);
-        let source = Decoder::new(reader).map_err(|e| format!("Failed to decode: {}", e))?;
+        
+        // Use Decoder::builder() with byte_len and seekable for proper FLAC seek support
+        let source = Decoder::builder()
+            .with_data(reader)
+            .with_byte_len(file_len)
+            .with_seekable(true)
+            .build()
+            .map_err(|e| format!("Failed to decode: {}", e))?;
         let duration = source.total_duration();
 
-        // Apply the processing chain
         let processed = self.chain.apply(source);
 
-        // Create new sink
-        let new_sink = Sink::connect_new(&self.mixer);
+        let new_sink = Sink::connect_new(self._stream.mixer());
         new_sink.append(processed);
         new_sink.set_volume(volume);
 
-        // Try to seek in the new sink
         let seek_failed = if let Err(seek_err) = new_sink.try_seek(position) {
             tracing::warn!("Seek after reload also failed: {:?}", seek_err);
-            // For AAC and some other formats, seeking may not be supported
-            // In this case, we need to handle it gracefully
             true
         } else {
             false
         };
 
-        // Ensure playback state is correct
         if !was_playing {
             new_sink.pause();
         }
@@ -631,7 +600,6 @@ impl AudioPlayer {
         {
             let mut state = self.state.lock().unwrap();
             state.duration = duration.unwrap_or(Duration::ZERO);
-            // Ensure status is correct after reload
             state.status = if was_playing {
                 PlaybackStatus::Playing
             } else {
@@ -642,8 +610,6 @@ impl AudioPlayer {
 
         self.current_sink = Some(new_sink);
 
-        // Return error if seek failed so caller can handle it
-        // (e.g., show a message to user or skip to next song)
         if seek_failed {
             Err("Seek not supported for this format".to_string())
         } else {
@@ -757,7 +723,6 @@ impl AudioPlayer {
             let effective_volume = self.get_effective_volume();
             sink.set_volume(effective_volume);
         }
-        self.update_preload_volumes();
     }
 
     /// Get current playback info
@@ -774,15 +739,9 @@ impl AudioPlayer {
             Duration::ZERO
         };
 
-        let status = if let Some(sink) = &self.current_sink {
-            if sink.empty() && state.status == PlaybackStatus::Playing {
-                PlaybackStatus::Stopped
-            } else {
-                state.status
-            }
-        } else {
-            state.status
-        };
+        // Don't change status based on sink.empty() - it's unreliable
+        // The is_finished() method handles proper finish detection
+        let status = state.status;
 
         PlaybackInfo {
             status,
@@ -799,34 +758,55 @@ impl AudioPlayer {
     }
 
     /// Check if playback finished
-    ///
-    /// Returns true if:
-    /// 1. Sink is empty (normal completion)
-    /// 2. Position >= duration (for formats where sink.empty() may not work correctly)
-    /// 3. No sink loaded
+    /// Note: For streaming playback, the caller should check streaming_state.is_complete()
+    /// before relying on this method, as sink.empty() can be true when streaming data runs out
     pub fn is_finished(&self) -> bool {
         if let Some(sink) = &self.current_sink {
-            // Check if sink is empty (normal completion)
-            if sink.empty() {
+            let state = self.state.lock().unwrap();
+            let position = sink.get_pos();
+            let duration = state.duration;
+
+            // Don't consider finished if we just started or if paused/stopped
+            if state.status != PlaybackStatus::Playing {
+                return false;
+            }
+
+            // Need valid duration to determine if finished
+            if duration.as_secs_f32() <= 0.0 {
+                return false;
+            }
+
+            // Don't consider finished if position is very early
+            if position.as_secs_f32() < 5.0 {
+                return false;
+            }
+
+            // Check if we've reached near the end of the track
+            // Use a small tolerance (0.5s) to account for timing variations
+            if position.as_secs_f32() >= duration.as_secs_f32() - 0.5 {
+                tracing::debug!(
+                    "is_finished: reached end at {:.1}s / {:.1}s",
+                    position.as_secs_f32(),
+                    duration.as_secs_f32()
+                );
                 return true;
             }
 
-            // Additional check: position >= duration
-            // This handles cases where sink.empty() doesn't work correctly
-            // (e.g., after failed seek in AAC files)
-            let state = self.state.lock().unwrap();
-            if state.status == PlaybackStatus::Playing && state.duration.as_secs_f32() > 0.0 {
-                let position = sink.get_pos();
-                // Consider finished if position is within 500ms of duration
-                // This accounts for timing inaccuracies
-                if position.as_secs_f32() >= state.duration.as_secs_f32() - 0.5 {
-                    return true;
-                }
+            // Also check if sink is empty AND we're very close to the end (95%)
+            // This handles cases where duration might be slightly inaccurate
+            // Note: For streaming, caller should verify download is complete first
+            if sink.empty() && position.as_secs_f32() > duration.as_secs_f32() * 0.95 {
+                tracing::debug!(
+                    "is_finished: sink empty near end at {:.1}s / {:.1}s",
+                    position.as_secs_f32(),
+                    duration.as_secs_f32()
+                );
+                return true;
             }
 
             false
         } else {
-            true
+            false
         }
     }
 
@@ -834,40 +814,48 @@ impl AudioPlayer {
     pub fn is_empty(&self) -> bool {
         self.current_sink.is_none()
     }
+
+    /// Get reference to the mixer (for external preloading)
+    #[allow(dead_code)]
+    pub fn mixer(&self) -> &Mixer {
+        self._stream.mixer()
+    }
+
+    /// Get reference to the audio processing chain
+    #[allow(dead_code)]
+    pub fn chain(&self) -> &AudioProcessingChain {
+        &self.chain
+    }
 }
+
+// ============ Audio Device Discovery ============
 
 /// Audio device info with internal name and display name
 #[derive(Debug, Clone)]
 pub struct AudioDevice {
-    pub name: String,        // Internal name for selection
-    pub description: String, // User-friendly display name
+    pub name: String,
+    pub description: String,
 }
 
 /// Get list of available audio output devices
-/// Uses cpal directly for consistent device names with AudioPlayer
-/// Results are cached to avoid repeated enumeration (which triggers Jack/ALSA warnings)
 pub fn get_audio_devices() -> Vec<AudioDevice> {
     AUDIO_DEVICES_CACHE
         .get_or_init(|| {
-            // Use cpal directly - this ensures device names match what AudioPlayer expects
             let devices = get_cpal_devices();
             if !devices.is_empty() {
                 return devices;
             }
 
-            // Fallback to PulseAudio device listing (for display purposes)
             let pa_devices = get_pulseaudio_devices();
             if !pa_devices.is_empty() {
                 return pa_devices;
             }
 
-            // Last resort: ALSA devices
             get_alsa_devices()
         })
         .clone()
 }
 
-/// Get devices from PulseAudio/PipeWire using pactl command
 fn get_pulseaudio_devices() -> Vec<AudioDevice> {
     let mut devices = Vec::new();
 
@@ -898,20 +886,16 @@ fn get_pulseaudio_devices() -> Vec<AudioDevice> {
     devices
 }
 
-/// Get devices from ALSA using aplay command
 fn get_alsa_devices() -> Vec<AudioDevice> {
     let mut devices = Vec::new();
 
-    // Try aplay -l to list ALSA devices
     if let Ok(output) = std::process::Command::new("aplay").args(["-l"]).output() {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
 
-            // Parse output like: "card 0: PCH [HDA Intel PCH], device 0: ALC892 Analog [ALC892 Analog]"
             for line in stdout.lines() {
                 if line.starts_with("card ") {
                     if let Some((card_info, device_info)) = line.split_once(", device ") {
-                        // Extract card number
                         let card_num = card_info
                             .trim_start_matches("card ")
                             .split(':')
@@ -919,10 +903,8 @@ fn get_alsa_devices() -> Vec<AudioDevice> {
                             .unwrap_or("0")
                             .trim();
 
-                        // Extract device number
                         let device_num = device_info.split(':').next().unwrap_or("0").trim();
 
-                        // Extract description from brackets
                         let description = if let Some(start) = line.find('[') {
                             if let Some(end) = line.rfind(']') {
                                 line[start + 1..end].to_string()
@@ -933,7 +915,6 @@ fn get_alsa_devices() -> Vec<AudioDevice> {
                             line.to_string()
                         };
 
-                        // ALSA device name format: hw:CARD,DEVICE
                         let name = format!("hw:{},{}", card_num, device_num);
 
                         devices.push(AudioDevice { name, description });
@@ -943,7 +924,6 @@ fn get_alsa_devices() -> Vec<AudioDevice> {
         }
     }
 
-    // If aplay failed, try using cpal directly
     if devices.is_empty() {
         devices = get_cpal_devices();
     }
@@ -951,7 +931,6 @@ fn get_alsa_devices() -> Vec<AudioDevice> {
     devices
 }
 
-/// Get devices directly from cpal (last resort fallback)
 fn get_cpal_devices() -> Vec<AudioDevice> {
     use rodio::cpal::traits::{DeviceTrait, HostTrait};
 
@@ -963,7 +942,6 @@ fn get_cpal_devices() -> Vec<AudioDevice> {
             if let Ok(name) = device.name() {
                 let name_lower = name.to_lowercase();
 
-                // Skip problematic backends
                 if name_lower.contains("jack")
                     || name_lower.contains("oss")
                     || name_lower.contains("/dev/dsp")
@@ -974,11 +952,10 @@ fn get_cpal_devices() -> Vec<AudioDevice> {
                     continue;
                 }
 
-                // Check if device has valid output config
                 if device.default_output_config().is_ok() {
                     devices.push(AudioDevice {
                         name: name.clone(),
-                        description: name, // Use name as description for cpal devices
+                        description: name,
                     });
                 }
             }

@@ -663,8 +663,8 @@ impl App {
                             }
                             std::fs::create_dir_all(&cover_cache_dir).ok();
 
-                            let song_file_path =
-                                song_cache_dir.join(format!("{}.mp3", song_info_clone.id));
+                            // Use stem for cache lookup - actual extension determined by format
+                            let song_stem = song_info_clone.id.to_string();
 
                             // Handle Cover Image - use download_cover which handles format detection
                             let cover_path_str = crate::utils::download_cover(
@@ -675,15 +675,18 @@ impl App {
                             .await
                             .map(|p| p.to_string_lossy().to_string());
 
-                            // Handle Song File
-                            if song_file_path.exists() {
-                                debug!("Song found in cache: {:?}", song_file_path);
+                            // Handle Song File - check cache with any audio extension
+                            if let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &song_stem) {
+                                debug!("Song found in cache: {:?}", cached_path);
                                 return Some((
                                     song_info_clone,
-                                    song_file_path.to_string_lossy().to_string(),
+                                    cached_path.to_string_lossy().to_string(),
                                     cover_path_str,
                                 ));
                             }
+
+                            // Download to temp file, then rename with correct extension
+                            let temp_path = song_cache_dir.join(format!("{}.tmp", song_stem));
 
                             match client.songs_url(&[song_info_clone.id]).await {
                                 Ok(urls) => {
@@ -691,15 +694,28 @@ impl App {
                                         debug!("Got song URL: {}", song_url.url);
                                         if client
                                             .client
-                                            .download_file(&song_url.url, song_file_path.clone())
+                                            .download_file(&song_url.url, temp_path.clone())
                                             .await
                                             .is_ok()
                                         {
-                                            Some((
-                                                song_info_clone,
-                                                song_file_path.to_string_lossy().to_string(),
-                                                cover_path_str,
-                                            ))
+                                            // Detect format and rename
+                                            let ext = if let Ok(bytes) = std::fs::read(&temp_path) {
+                                                crate::utils::detect_audio_format(&bytes)
+                                            } else {
+                                                "mp3"
+                                            };
+                                            let final_path = song_cache_dir.join(format!("{}.{}", song_stem, ext));
+                                            if std::fs::rename(&temp_path, &final_path).is_ok() {
+                                                Some((
+                                                    song_info_clone,
+                                                    final_path.to_string_lossy().to_string(),
+                                                    cover_path_str,
+                                                ))
+                                            } else {
+                                                let _ = std::fs::remove_file(&temp_path);
+                                                error!("Failed to rename downloaded song");
+                                                None
+                                            }
                                         } else {
                                             error!("Failed to download song");
                                             None
