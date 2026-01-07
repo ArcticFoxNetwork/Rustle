@@ -343,9 +343,7 @@ pub fn detect_audio_format(bytes: &[u8]) -> &'static str {
     }
 
     // WAV: 52 49 46 46 ... 57 41 56 45 (RIFF...WAVE)
-    if bytes.len() >= 12
-        && bytes.starts_with(&[0x52, 0x49, 0x46, 0x46])
-        && &bytes[8..12] == b"WAVE"
+    if bytes.len() >= 12 && bytes.starts_with(&[0x52, 0x49, 0x46, 0x46]) && &bytes[8..12] == b"WAVE"
     {
         return "wav";
     }

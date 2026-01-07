@@ -1,21 +1,35 @@
 //! Audio playback module
 //!
 //! This module provides audio playback with real-time processing:
-//! - `AudioPlayer`: Playback control with preloading support
+//! - `AudioHandle`: Non-blocking audio control from UI thread
+//! - `AudioPlayer`: Playback control
 //! - `AudioProcessingChain`: Unified audio processing (preamp, EQ, analyzer)
 //! - `AudioAnalysisData`: Real-time visualization data
 //! - `streaming`: Streaming buffer and download utilities
-//! - `events`: Event-driven playback state (replaces polling)
+//! - `events`: Commands and events for audio thread communication
+//! - `thread`: Audio thread spawning and management
+//!
+//! ## Architecture
+//! ```text
+//! UI Thread (AudioHandle) --[AudioCommand]--> Audio Thread (AudioPlayer)
+//! UI Thread              <--[AudioEvent]---- Audio Thread
+//! UI Thread              <--[SharedState]--- Audio Thread (non-blocking reads)
+//! ```
 
 pub mod analyzer;
-mod chain;
+pub mod chain;
 mod equalizer;
 pub mod events;
+mod fade;
+mod handle;
 mod player;
 pub mod streaming;
+pub mod thread;
 
 pub use analyzer::AudioAnalysisData;
 pub use chain::AudioProcessingChain;
-pub use events::{PlayerEvent, PlayerEventReceiver, PlayerEventSender, player_event_channel};
-pub use player::{AudioPlayer, PlaybackStatus, get_audio_devices};
+pub use events::AudioEvent;
+pub use handle::AudioHandle;
+pub use player::{PlaybackInfo, PlaybackStatus, get_audio_devices};
 pub use streaming::{SharedBuffer, StreamingBuffer};
+pub use thread::spawn_audio_thread;

@@ -144,8 +144,8 @@ impl App {
             Message::AnimationTick => {
                 let now = Instant::now();
 
-                // Update audio fade state for smooth pause/resume transitions
-                self.update_audio_fade();
+                // Update audio state
+                self.update_audio_tick();
 
                 // Check if lyrics page close animation is complete
                 self.check_lyrics_page_close();

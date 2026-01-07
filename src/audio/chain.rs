@@ -3,16 +3,16 @@
 //! Unified audio processing pipeline that combines:
 //! - Preamp (gain control before EQ)
 //! - 10-band parametric equalizer
+//! - Fade envelope
 //! - Real-time audio analyzer for visualization
 //!
-//! This module is designed to be shared between AudioPlayer and UI,
-//! allowing real-time parameter updates without tight coupling.
 
 use rodio::Source;
 use std::sync::{Arc, RwLock};
 
 use super::analyzer::{AnalyzingSource, AudioAnalysisData};
 use super::equalizer::{Equalizer, EqualizerParams};
+use super::fade::{FadeControl, FadeEnvelope};
 
 /// Shared audio processing chain parameters
 ///
@@ -24,6 +24,8 @@ pub struct AudioProcessingChain {
     inner: Arc<RwLock<ChainInner>>,
     /// Equalizer parameters (has its own Arc<RwLock>)
     eq_params: EqualizerParams,
+    /// Fade control for smooth volume transitions
+    fade_control: FadeControl,
     /// Audio analysis data for visualization
     analysis: AudioAnalysisData,
 }
@@ -50,8 +52,17 @@ impl AudioProcessingChain {
         Self {
             inner: Arc::new(RwLock::new(ChainInner::default())),
             eq_params: EqualizerParams::new(44100),
+            fade_control: FadeControl::new(1.0),
             analysis: AudioAnalysisData::new(),
         }
+    }
+    pub fn fade_to(&self, volume: f32, duration: std::time::Duration) {
+        self.fade_control.fade_to(volume, duration);
+    }
+
+    /// Set volume instantly
+    pub fn set_fade_volume(&self, volume: f32) {
+        self.fade_control.set_volume(volume);
     }
 
     // ========================================================================
@@ -142,13 +153,13 @@ impl Default for AudioProcessingChain {
 
 /// Audio source with processing chain applied
 ///
-/// This wraps the source and applies preamp, EQ, and analysis in sequence.
+/// This wraps the source and applies preamp, EQ, fade, and analysis in sequence.
 pub struct ProcessedSource<S>
 where
     S: Source<Item = f32>,
 {
-    /// Inner source with EQ and analyzer applied
-    inner: AnalyzingSource<Equalizer<PreampSource<S>>>,
+    /// Inner source with full processing chain applied
+    inner: AnalyzingSource<FadeEnvelope<Equalizer<PreampSource<S>>>>,
 }
 
 impl<S> ProcessedSource<S>
@@ -156,10 +167,11 @@ where
     S: Source<Item = f32>,
 {
     fn new(source: S, chain: AudioProcessingChain) -> Self {
-        // Build processing chain: Source -> Preamp -> EQ -> Analyzer
+        // Build processing chain: Source -> Preamp -> EQ -> Fade -> Analyzer
         let preamp_source = PreampSource::new(source, chain.inner.clone());
         let eq_source = Equalizer::new(preamp_source, chain.eq_params.clone());
-        let analyzed = AnalyzingSource::new(eq_source, chain.analysis.clone());
+        let fade_source = FadeEnvelope::new(eq_source, chain.fade_control.clone());
+        let analyzed = AnalyzingSource::new(fade_source, chain.analysis.clone());
 
         Self { inner: analyzed }
     }

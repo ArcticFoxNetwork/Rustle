@@ -295,7 +295,8 @@ fn build_left_panel<'a>(
     let artist = text(&song.artist).size(18).color(theme::TEXT_SECONDARY);
 
     // Progress bar - using unified widget with download progress
-    let progress_slider = widgets::progress_slider::view_with_download(position, download_progress, SliderSize::Full);
+    let progress_slider =
+        widgets::progress_slider::view_with_download(position, download_progress, SliderSize::Full);
 
     let time_row = row![
         text(current_time).size(12).color(theme::TEXT_MUTED),

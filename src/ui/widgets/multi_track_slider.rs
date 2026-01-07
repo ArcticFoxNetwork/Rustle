@@ -93,7 +93,6 @@ where
     }
 }
 
-
 impl<Message, Renderer> Widget<Message, Theme, Renderer> for MultiTrackSlider<'_, Message>
 where
     Message: Clone,
@@ -147,8 +146,7 @@ where
                 let end = *self.range.end() as f64;
                 let step = self.step as f64;
 
-                let percent =
-                    f64::from(cursor_position.x - bounds.x) / f64::from(bounds.width);
+                let percent = f64::from(cursor_position.x - bounds.x) / f64::from(bounds.width);
 
                 let steps = (percent * (end - start) / step).round();
                 let value = steps * step + start;
@@ -238,7 +236,6 @@ where
         }
     }
 
-
     fn draw(
         &self,
         _tree: &Tree,
@@ -254,9 +251,10 @@ where
 
         let (handle_width, handle_height, handle_border_radius) = match style.handle.shape {
             HandleShape::Circle { radius } => (radius * 2.0, radius * 2.0, radius.into()),
-            HandleShape::Rectangle { width, border_radius } => {
-                (f32::from(width), bounds.height, border_radius)
-            }
+            HandleShape::Rectangle {
+                width,
+                border_radius,
+            } => (f32::from(width), bounds.height, border_radius),
         };
 
         let value = self.value;
@@ -319,7 +317,10 @@ where
                         border: style.rail.border,
                         ..renderer::Quad::default()
                     },
-                    style.rail.secondary_background.unwrap_or(style.rail.backgrounds.1),
+                    style
+                        .rail
+                        .secondary_background
+                        .unwrap_or(style.rail.backgrounds.1),
                 );
             }
 
@@ -406,8 +407,8 @@ where
     }
 }
 
-
-impl<'a, Message, Renderer> From<MultiTrackSlider<'a, Message>> for Element<'a, Message, Theme, Renderer>
+impl<'a, Message, Renderer> From<MultiTrackSlider<'a, Message>>
+    for Element<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
     Renderer: iced::advanced::Renderer + 'a,
@@ -460,8 +461,13 @@ pub struct Handle {
 /// Handle shape
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum HandleShape {
-    Circle { radius: f32 },
-    Rectangle { width: u16, border_radius: iced::border::Radius },
+    Circle {
+        radius: f32,
+    },
+    Rectangle {
+        width: u16,
+        border_radius: iced::border::Radius,
+    },
 }
 
 fn default_style(_theme: &Theme, _status: Status) -> Style {

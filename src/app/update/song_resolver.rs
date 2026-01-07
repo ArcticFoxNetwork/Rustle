@@ -8,10 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::api::NcmClient;
-use crate::audio::streaming::{
-    StreamingEvent, SharedBuffer, 
-    start_buffer_download,
-};
+use crate::audio::streaming::{SharedBuffer, StreamingEvent, start_buffer_download};
 use crate::database::DbSong;
 
 /// Result of resolving a song with streaming support
@@ -60,7 +57,7 @@ pub fn get_ncm_id(song: &DbSong) -> u64 {
 }
 
 /// Resolve a song with streaming support
-/// 
+///
 /// This function:
 /// 1. Checks if the song is already cached locally (with any audio extension)
 /// 2. If not, downloads using SharedBuffer for streaming playback
@@ -93,14 +90,21 @@ pub async fn resolve_song(
 
     // Check if song is already fully cached (with any audio extension)
     if let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &song_stem) {
-        let file_size = std::fs::metadata(&cached_path).map(|m| m.len()).unwrap_or(0);
+        let file_size = std::fs::metadata(&cached_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
         // Use duration-based heuristic: 40KB/s at 320kbps
         let expected_min_size = (song.duration_secs as u64) * 40 * 1024;
-        let is_complete = file_size > 0 
-            && (expected_min_size == 0 || file_size >= expected_min_size * 8 / 10);
-        
+        let is_complete =
+            file_size > 0 && (expected_min_size == 0 || file_size >= expected_min_size * 8 / 10);
+
         if is_complete {
-            tracing::debug!("Song {} found in cache: {:?} ({} bytes)", ncm_id, cached_path, file_size);
+            tracing::debug!(
+                "Song {} found in cache: {:?} ({} bytes)",
+                ncm_id,
+                cached_path,
+                file_size
+            );
             let _ = event_tx.send(StreamingEvent::Playable).await;
             let _ = event_tx.send(StreamingEvent::Complete).await;
             return Some(ResolvedSong {
@@ -110,8 +114,12 @@ pub async fn resolve_song(
                 duration_secs: None,
             });
         }
-        
-        tracing::info!("Song {} cache incomplete ({} bytes), using streaming buffer", ncm_id, file_size);
+
+        tracing::info!(
+            "Song {} cache incomplete ({} bytes), using streaming buffer",
+            ncm_id,
+            file_size
+        );
         // Remove incomplete cache file
         let _ = std::fs::remove_file(&cached_path);
     }
@@ -131,7 +139,9 @@ pub async fn resolve_song(
         Some(u) if !u.url.is_empty() => u.url.clone(),
         _ => {
             tracing::error!("No valid URL returned for song {}", ncm_id);
-            let _ = event_tx.send(StreamingEvent::Error("No URL available".to_string())).await;
+            let _ = event_tx
+                .send(StreamingEvent::Error("No URL available".to_string()))
+                .await;
             return None;
         }
     };
@@ -141,11 +151,7 @@ pub async fn resolve_song(
     let cache_path = song_cache_dir.join(&song_stem);
 
     // Use unified download function - content_length will be obtained from GET response
-    let shared_buffer = start_buffer_download(
-        song_url,
-        cache_path.clone(),
-        Some(event_tx),
-    );
+    let shared_buffer = start_buffer_download(song_url, cache_path.clone(), Some(event_tx));
 
     // Return immediately with the buffer
     // Note: file_path uses stem only - actual cached file will have correct extension

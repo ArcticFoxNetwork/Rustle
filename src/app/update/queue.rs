@@ -126,15 +126,19 @@ impl App {
 
             Message::PlayQueueIndex(idx) => Some(self.play_song_at_index(*idx)),
 
-            Message::SongResolvedStreaming(idx, file_path, cover_path, shared_buffer, duration_secs) => {
-                Some(self.handle_song_resolved_streaming(
-                    *idx,
-                    file_path.clone(),
-                    cover_path.clone(),
-                    shared_buffer.clone(),
-                    *duration_secs,
-                ))
-            }
+            Message::SongResolvedStreaming(
+                idx,
+                file_path,
+                cover_path,
+                shared_buffer,
+                duration_secs,
+            ) => Some(self.handle_song_resolved_streaming(
+                *idx,
+                file_path.clone(),
+                cover_path.clone(),
+                shared_buffer.clone(),
+                *duration_secs,
+            )),
 
             Message::SongResolveFailed => {
                 tracing::error!("Failed to resolve song");

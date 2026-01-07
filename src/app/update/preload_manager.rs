@@ -2,26 +2,25 @@
 //!
 //! This module provides:
 //! - State tracking for preload operations (prevents duplicate requests)
-//! - Pre-decoded Sink storage for seamless playback
+//! - Request ID tracking for audio thread preloaded sinks
 //! - Streaming download support for NCM songs
 //! - Retry logic for failed downloads
 //!
 //! ## Architecture
 //! PreloadManager is the SINGLE SOURCE OF TRUTH for all preload state.
-//! AudioPlayer no longer tracks preload paths - it only handles playback.
-//! PreloadSlot contains pre-decoded Sink for zero-delay track switching.
+//! Sinks are created and stored in the audio thread
+//! PreloadSlot contains request_id to reference the preloaded sink.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use iced::Task;
-use rodio::Sink;
 
 use crate::api::NcmClient;
 use crate::app::message::Message;
 use crate::audio::streaming::{
-    SharedBuffer, start_buffer_download, wait_for_playable, estimate_size_from_duration,
+    SharedBuffer, estimate_size_from_duration, start_buffer_download, wait_for_playable,
 };
 use crate::database::DbSong;
 
@@ -31,7 +30,7 @@ const MAX_RETRIES: u8 = 2;
 // ============ Core Types ============
 
 /// State of a preload slot
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub enum SlotState {
     /// No preload in progress
     #[default]
@@ -44,10 +43,10 @@ pub enum SlotState {
     Failed { retry_count: u8 },
 }
 
-/// A preload slot containing all state for a preloaded track
-/// 
-/// Key design: Contains pre-decoded Sink for zero-delay playback.
-/// When switching tracks, we just call sink.play() instead of re-decoding.
+/// A preload slot containing state for a preloaded track
+///
+/// Key design: Contains request_id to reference sink stored in audio thread.
+/// When switching tracks, we send PlayPreloaded command with the request_id.
 pub struct PreloadSlot {
     /// Queue index of the preloaded track
     pub idx: usize,
@@ -55,8 +54,10 @@ pub struct PreloadSlot {
     pub path: PathBuf,
     /// Current state
     pub state: SlotState,
-    /// Pre-decoded Sink (paused, ready to play)
-    pub sink: Option<Sink>,
+    /// Request ID for the preloaded sink in audio thread
+    pub request_id: Option<u64>,
+    /// Pending request ID
+    pub pending_request_id: Option<u64>,
     /// Track duration
     pub duration: Duration,
     /// Streaming buffer for NCM songs (continues downloading in background)
@@ -69,7 +70,8 @@ impl std::fmt::Debug for PreloadSlot {
             .field("idx", &self.idx)
             .field("path", &self.path)
             .field("state", &self.state)
-            .field("has_sink", &self.sink.is_some())
+            .field("request_id", &self.request_id)
+            .field("pending_request_id", &self.pending_request_id)
             .field("duration", &self.duration)
             .field("has_buffer", &self.buffer.is_some())
             .finish()
@@ -83,30 +85,19 @@ impl PreloadSlot {
             idx,
             path: PathBuf::new(),
             state: SlotState::Pending,
-            sink: None,
+            request_id: None,
+            pending_request_id: None,
             duration: Duration::ZERO,
             buffer: None,
         }
     }
 
-    /// Create a slot for local song (with pre-decoded Sink)
-    pub fn from_local(idx: usize, path: PathBuf, sink: Sink, duration: Duration) -> Self {
-        Self {
-            idx,
-            path,
-            state: SlotState::Ready,
-            sink: Some(sink),
-            duration,
-            buffer: None,
-        }
-    }
-
-    /// Create a slot for NCM streaming song (with pre-decoded Sink and buffer)
+    /// Create a slot for NCM streaming song (with request_id and buffer)
     #[allow(dead_code)]
     pub fn from_streaming(
         idx: usize,
         path: PathBuf,
-        sink: Sink,
+        request_id: u64,
         duration: Duration,
         buffer: SharedBuffer,
     ) -> Self {
@@ -114,7 +105,8 @@ impl PreloadSlot {
             idx,
             path,
             state: SlotState::Ready,
-            sink: Some(sink),
+            request_id: Some(request_id),
+            pending_request_id: None,
             duration,
             buffer: Some(buffer),
         }
@@ -126,7 +118,8 @@ impl PreloadSlot {
             idx,
             path: PathBuf::new(),
             state: SlotState::Failed { retry_count },
-            sink: None,
+            request_id: None,
+            pending_request_id: None,
             duration: Duration::ZERO,
             buffer: None,
         }
@@ -139,7 +132,7 @@ impl PreloadSlot {
 
     /// Check if ready for playback
     pub fn is_ready(&self) -> bool {
-        matches!(self.state, SlotState::Ready) && self.sink.is_some()
+        matches!(self.state, SlotState::Ready) && self.request_id.is_some()
     }
 
     /// Check if pending
@@ -148,9 +141,19 @@ impl PreloadSlot {
         matches!(self.state, SlotState::Pending)
     }
 
-    /// Take the Sink (consumes it from the slot)
-    pub fn take_sink(&mut self) -> Option<Sink> {
-        self.sink.take()
+    /// Check if this slot has a pending request with the given ID
+    pub fn has_pending_request(&self, request_id: u64) -> bool {
+        self.pending_request_id == Some(request_id)
+    }
+
+    /// Set the pending request ID
+    pub fn set_pending_request_id(&mut self, request_id: u64) {
+        self.pending_request_id = Some(request_id);
+    }
+
+    /// Take the request_id (consumes it from the slot)
+    pub fn take_request_id(&mut self) -> Option<u64> {
+        self.request_id.take()
     }
 
     /// Take the buffer (consumes it from the slot)
@@ -205,30 +208,31 @@ impl PreloadManager {
     /// Check if we should preload for the given index
     pub fn should_preload(&self, idx: usize, is_next: bool) -> bool {
         let slot = if is_next { &self.next } else { &self.prev };
-        
+
         match slot {
             None => true,
             Some(s) if !s.is_for_index(idx) => true,
             Some(s) => match &s.state {
                 SlotState::Failed { retry_count } => *retry_count < MAX_RETRIES,
                 SlotState::Idle => true,
-                _ => false,
+                SlotState::Pending => false,
+                SlotState::Ready => false,
             },
         }
     }
 
     /// Mark as pending (download started)
     pub fn mark_pending(&mut self, idx: usize, is_next: bool) {
-        let slot = PreloadSlot::pending(idx);
-        if is_next {
-            self.next = Some(slot);
-        } else {
-            self.prev = Some(slot);
+        let existing_slot = if is_next { &self.next } else { &self.prev };
+        if let Some(slot) = existing_slot {
+            if !slot.is_for_index(idx) {
+                if let Some(buffer) = &slot.buffer {
+                    buffer.cancel();
+                }
+            }
         }
-    }
 
-    /// Mark as ready with a complete PreloadSlot
-    pub fn mark_ready(&mut self, slot: PreloadSlot, is_next: bool) {
+        let slot = PreloadSlot::pending(idx);
         if is_next {
             self.next = Some(slot);
         } else {
@@ -243,7 +247,7 @@ impl PreloadManager {
         } else {
             self.prev.as_ref().map(|s| s.retry_count()).unwrap_or(0) + 1
         };
-        
+
         let slot = PreloadSlot::failed(idx, retry_count);
         if is_next {
             self.next = Some(slot);
@@ -255,12 +259,14 @@ impl PreloadManager {
     /// Take ready preload slot (consumes it)
     /// Returns the full PreloadSlot if ready for the given index
     pub fn take_ready(&mut self, idx: usize, is_next: bool) -> Option<PreloadSlot> {
-        let slot_ref = if is_next { &mut self.next } else { &mut self.prev };
-        
+        let slot_ref = if is_next {
+            &mut self.next
+        } else {
+            &mut self.prev
+        };
+
         match slot_ref {
-            Some(slot) if slot.is_for_index(idx) && slot.is_ready() => {
-                slot_ref.take()
-            }
+            Some(slot) if slot.is_for_index(idx) && slot.is_ready() => slot_ref.take(),
             _ => None,
         }
     }
@@ -269,7 +275,9 @@ impl PreloadManager {
     #[allow(dead_code)]
     pub fn is_ready_for(&self, idx: usize, is_next: bool) -> bool {
         let slot = if is_next { &self.next } else { &self.prev };
-        slot.as_ref().map(|s| s.is_for_index(idx) && s.is_ready()).unwrap_or(false)
+        slot.as_ref()
+            .map(|s| s.is_for_index(idx) && s.is_ready())
+            .unwrap_or(false)
     }
 
     /// Invalidate preloads that are no longer relevant
@@ -305,12 +313,32 @@ impl PreloadManager {
         let slot = if is_next { &self.next } else { &self.prev };
         slot.as_ref().map(|s| &s.state)
     }
+
+    /// Get reference to next slot
+    pub fn next_slot(&self) -> Option<&PreloadSlot> {
+        self.next.as_ref()
+    }
+
+    /// Get reference to prev slot
+    pub fn prev_slot(&self) -> Option<&PreloadSlot> {
+        self.prev.as_ref()
+    }
+
+    /// Get mutable reference to next slot
+    pub fn next_slot_mut(&mut self) -> Option<&mut PreloadSlot> {
+        self.next.as_mut()
+    }
+
+    /// Get mutable reference to prev slot
+    pub fn prev_slot_mut(&mut self) -> Option<&mut PreloadSlot> {
+        self.prev.as_mut()
+    }
 }
 
 // ============ Preload Task Creation ============
 
 /// Create a preload task for an NCM song with streaming support
-/// 
+///
 /// This downloads the audio file and returns a message when ready.
 /// The Sink is created in the main thread (since Sink is not Send).
 pub fn create_preload_task(
@@ -326,7 +354,7 @@ pub fn create_preload_task(
 }
 
 /// Download audio with streaming support for preload
-/// 
+///
 /// For NCM songs, we use SharedBuffer for streaming playback:
 /// 1. Get content length via HEAD request (or estimate from duration)
 /// 2. Use unified start_buffer_download() function
@@ -344,7 +372,10 @@ async fn download_audio_streaming(
         song.id as u64
     };
 
-    tracing::info!("Preload: downloading audio for song {} (streaming buffer)", ncm_id);
+    tracing::info!(
+        "Preload: downloading audio for song {} (streaming buffer)",
+        ncm_id
+    );
 
     let song_cache_dir = crate::utils::songs_cache_dir();
     if std::fs::create_dir_all(&song_cache_dir).is_err() {
@@ -356,19 +387,25 @@ async fn download_audio_streaming(
 
     // Check if already fully cached (with any audio extension)
     if let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &song_stem) {
-        let file_size = std::fs::metadata(&cached_path).map(|m| m.len()).unwrap_or(0);
+        let file_size = std::fs::metadata(&cached_path)
+            .map(|m| m.len())
+            .unwrap_or(0);
         let expected_min_size = estimate_size_from_duration(song.duration_secs as u64);
         let is_complete = file_size > 0 && file_size >= expected_min_size * 8 / 10;
-        
+
         if is_complete {
-            tracing::debug!("Preload: song {} fully cached ({} bytes)", ncm_id, file_size);
-            return Message::PreloadReady(
-                idx,
-                cached_path.to_string_lossy().to_string(),
-                is_next,
+            tracing::debug!(
+                "Preload: song {} fully cached ({} bytes)",
+                ncm_id,
+                file_size
             );
+            return Message::PreloadReady(idx, cached_path.to_string_lossy().to_string(), is_next);
         }
-        tracing::info!("Preload: song {} cache incomplete ({} bytes), using streaming buffer", ncm_id, file_size);
+        tracing::info!(
+            "Preload: song {} cache incomplete ({} bytes), using streaming buffer",
+            ncm_id,
+            file_size
+        );
         // Remove incomplete cache file
         let _ = std::fs::remove_file(&cached_path);
     }
@@ -395,16 +432,15 @@ async fn download_audio_streaming(
 
     // Use unified download function - content_length will be obtained from GET response
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(32);
-    let shared_buffer = start_buffer_download(
-        song_url,
-        cache_path.clone(),
-        Some(event_tx),
-    );
+    let shared_buffer = start_buffer_download(song_url, cache_path.clone(), Some(event_tx));
 
     // Wait for playable
     if wait_for_playable(&mut event_rx, 30).await {
-        tracing::info!("Preload: returning SharedBuffer for song {} (downloaded: {} bytes)", 
-            ncm_id, shared_buffer.downloaded());
+        tracing::info!(
+            "Preload: returning SharedBuffer for song {} (downloaded: {} bytes)",
+            ncm_id,
+            shared_buffer.downloaded()
+        );
         Message::PreloadBufferReady(
             idx,
             cache_path.to_string_lossy().to_string(),

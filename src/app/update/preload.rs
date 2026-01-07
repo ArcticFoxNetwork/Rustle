@@ -3,18 +3,19 @@
 //! This module uses the new architecture:
 //! - QueueNavigator for consistent index calculations (Single Source of Truth)
 //! - PreloadManager for state tracking (prevents duplicate requests)
-//! - PreloadSlot contains pre-decoded Sink for zero-delay playback
-//! - AudioPlayer no longer manages preloading internally
+//! - PreloadSlot contains request_id to reference sink in audio thread
+//! - Sinks are created and stored in the audio thread via AudioHandle commands
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use iced::Task;
 
 use crate::app::message::Message;
 use crate::app::state::App;
 
-use super::preload_manager::{self, PreloadSlot};
+use super::preload_manager::{self};
 use super::queue_navigator::{self, QueueNavigator};
 
 impl App {
@@ -79,19 +80,18 @@ impl App {
 
         // Check if it's a local song with existing file
         if let Some(local_path) = queue_navigator::get_local_path(song) {
-            // Local song - create Sink immediately and mark as ready
-            if let Some(player) = &self.core.audio {
-                match player.create_preload_sink(&local_path) {
-                    Ok((sink, duration)) => {
-                        let slot = PreloadSlot::from_local(idx, local_path, sink, duration);
-                        self.library.preload_manager.mark_ready(slot, is_next);
-                        tracing::info!("Preloaded local track at index {} ({})", idx, if is_next { "next" } else { "prev" });
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to create preload sink for local track {}: {}", idx, e);
-                        self.library.preload_manager.mark_failed(idx, is_next);
-                    }
-                }
+            if let Some(audio) = &self.core.audio {
+                let request_id = audio.create_preload_sink(local_path.clone());
+                tracing::debug!(
+                    "Requesting preload for local track at index {}, request_id={}",
+                    idx,
+                    request_id
+                );
+
+                self.library.preload_manager.mark_pending(idx, is_next);
+                return Some(Task::done(Message::PreloadRequestSent(
+                    idx, is_next, request_id, local_path,
+                )));
             }
             return None;
         }
@@ -119,15 +119,43 @@ impl App {
     /// Handle preload-related messages
     pub fn handle_preload(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
-            // Preload ready message (file downloaded, need to create Sink in main thread)
+            // Preload request sent to audio thread
+            Message::PreloadRequestSent(idx, is_next, request_id, path) => {
+                let slot = if *is_next {
+                    self.library.preload_manager.next_slot_mut()
+                } else {
+                    self.library.preload_manager.prev_slot_mut()
+                };
+
+                if let Some(slot) = slot {
+                    if slot.is_for_index(*idx) {
+                        slot.set_pending_request_id(*request_id);
+                        tracing::debug!(
+                            "Preload request sent: idx={}, is_next={}, request_id={}, path={:?}",
+                            idx,
+                            is_next,
+                            request_id,
+                            path
+                        );
+                    }
+                }
+                Some(Task::none())
+            }
+
+            // Preload ready message
             Message::PreloadReady(idx, file_path, is_next) => {
                 self.handle_preload_complete(*idx, file_path.clone(), *is_next)
             }
 
             // Preload ready with SharedBuffer for streaming playback
-            Message::PreloadBufferReady(idx, file_path, is_next, buffer, duration_secs) => {
-                self.handle_preload_buffer_ready(*idx, file_path.clone(), *is_next, buffer.clone(), *duration_secs)
-            }
+            Message::PreloadBufferReady(idx, file_path, is_next, buffer, duration_secs) => self
+                .handle_preload_buffer_ready(
+                    *idx,
+                    file_path.clone(),
+                    *is_next,
+                    buffer.clone(),
+                    *duration_secs,
+                ),
 
             Message::PreloadAudioFailed(idx, is_next) => {
                 self.library.preload_manager.mark_failed(*idx, *is_next);
@@ -138,8 +166,61 @@ impl App {
         }
     }
 
-    /// Handle successful preload completion (file-based)
-    /// Creates Sink in main thread (since Sink is not Send)
+    /// Handle AudioEvent::PreloadReady from audio thread
+    pub fn handle_audio_preload_ready(
+        &mut self,
+        request_id: u64,
+        duration: Duration,
+        path: PathBuf,
+    ) {
+        let next_matches = self
+            .library
+            .preload_manager
+            .next_slot()
+            .map(|s| s.has_pending_request(request_id))
+            .unwrap_or(false);
+        let prev_matches = self
+            .library
+            .preload_manager
+            .prev_slot()
+            .map(|s| s.has_pending_request(request_id))
+            .unwrap_or(false);
+
+        if next_matches {
+            if let Some(slot) = self.library.preload_manager.next_slot_mut() {
+                slot.request_id = Some(request_id);
+                slot.pending_request_id = None; // Clear pending
+                slot.path = path.clone();
+                slot.duration = duration;
+                slot.state = preload_manager::SlotState::Ready;
+                tracing::info!(
+                    "Preload ready (next): request_id={}, path={:?}",
+                    request_id,
+                    path
+                );
+            }
+        } else if prev_matches {
+            if let Some(slot) = self.library.preload_manager.prev_slot_mut() {
+                slot.request_id = Some(request_id);
+                slot.pending_request_id = None; // Clear pending
+                slot.path = path.clone();
+                slot.duration = duration;
+                slot.state = preload_manager::SlotState::Ready;
+                tracing::info!(
+                    "Preload ready (prev): request_id={}, path={:?}",
+                    request_id,
+                    path
+                );
+            }
+        } else {
+            tracing::debug!(
+                "PreloadReady received but no matching pending slot: request_id={} (stale)",
+                request_id
+            );
+        }
+    }
+
+    /// Handle successful preload completion
     fn handle_preload_complete(
         &mut self,
         idx: usize,
@@ -151,33 +232,26 @@ impl App {
             song.file_path = file_path.clone();
         }
 
-        // Create Sink in main thread
-        let path = PathBuf::from(&file_path);
-        if !path.exists() {
-            tracing::warn!("Preload file not found: {}", file_path);
-            self.library.preload_manager.mark_failed(idx, is_next);
-            return Some(Task::none());
+        // Request preload via audio thread
+        if let Some(audio) = &self.core.audio {
+            let path = PathBuf::from(&file_path);
+            let request_id = audio.create_preload_sink(path.clone());
+            tracing::info!(
+                "NCM track downloaded at index {}, requesting preload: request_id={}",
+                idx,
+                request_id
+            );
+
+            return Some(Task::done(Message::PreloadRequestSent(
+                idx, is_next, request_id, path,
+            )));
         }
 
-        if let Some(player) = &self.core.audio {
-            match player.create_preload_sink(&path) {
-                Ok((sink, duration)) => {
-                    let slot = PreloadSlot::from_local(idx, path, sink, duration);
-                    self.library.preload_manager.mark_ready(slot, is_next);
-                    tracing::info!("Preloaded NCM track at index {} ({})", idx, if is_next { "next" } else { "prev" });
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to create preload sink for NCM track {}: {}", idx, e);
-                    self.library.preload_manager.mark_failed(idx, is_next);
-                }
-            }
-        }
-
+        self.library.preload_manager.mark_failed(idx, is_next);
         Some(Task::none())
     }
 
     /// Handle preload ready with SharedBuffer (streaming playback)
-    /// Creates Sink from StreamingBuffer in main thread
     fn handle_preload_buffer_ready(
         &mut self,
         idx: usize,
@@ -191,27 +265,53 @@ impl App {
             song.file_path = file_path.clone();
         }
 
-        if let Some(player) = &self.core.audio {
-            // Create Sink from StreamingBuffer (not file!)
+        if let Some(audio) = &self.core.audio {
+            let duration = Duration::from_secs(duration_secs);
             let streaming_buffer = crate::audio::StreamingBuffer::new(buffer.clone());
-            let duration = std::time::Duration::from_secs(duration_secs);
-            
-            match player.create_preload_sink_streaming(streaming_buffer, duration) {
-                Ok((sink, duration)) => {
-                    let path = PathBuf::from(&file_path);
-                    let downloaded = buffer.downloaded();
-                    let slot = PreloadSlot::from_streaming(idx, path, sink, duration, buffer);
-                    self.library.preload_manager.mark_ready(slot, is_next);
-                    tracing::info!("Preloaded NCM streaming track at index {} ({}) - buffer: {} bytes downloaded", 
-                        idx, if is_next { "next" } else { "prev" }, downloaded);
+            let request_id = audio.create_preload_sink_streaming(streaming_buffer, duration);
+            tracing::info!(
+                "NCM streaming track buffer ready at index {}, requesting preload: request_id={}",
+                idx,
+                request_id
+            );
+
+            if is_next {
+                if let Some(slot) = self.library.preload_manager.next_slot_mut() {
+                    slot.buffer = Some(buffer);
                 }
-                Err(e) => {
-                    tracing::warn!("Failed to create streaming preload sink for NCM track {}: {}", idx, e);
-                    self.library.preload_manager.mark_failed(idx, is_next);
+            } else {
+                if let Some(slot) = self.library.preload_manager.prev_slot_mut() {
+                    slot.buffer = Some(buffer);
                 }
             }
+
+            return Some(Task::done(Message::PreloadRequestSent(
+                idx,
+                is_next,
+                request_id,
+                PathBuf::from(file_path),
+            )));
         }
 
+        // No audio handle - mark as failed
+        self.library.preload_manager.mark_failed(idx, is_next);
         Some(Task::none())
+    }
+
+    pub fn try_play_preloaded(&mut self, idx: usize, is_next: bool) -> bool {
+        if let Some(mut slot) = self.library.preload_manager.take_ready(idx, is_next) {
+            if let (Some(request_id), Some(audio)) = (slot.take_request_id(), &self.core.audio) {
+                let path = slot.path.clone();
+                audio.play_preloaded(request_id, path);
+
+                if let Some(buffer) = slot.take_buffer() {
+                    self.library.streaming_buffer = Some(buffer);
+                }
+
+                tracing::info!("Playing preloaded track at index {}", idx);
+                return true;
+            }
+        }
+        false
     }
 }

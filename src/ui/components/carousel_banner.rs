@@ -333,9 +333,7 @@ fn view_placeholder(locale: Locale) -> Element<'static, Message> {
             .style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
             }),
-        text(hero_subtitle)
-            .size(14)
-            .color(theme::TEXT_SECONDARY),
+        text(hero_subtitle).size(14).color(theme::TEXT_SECONDARY),
         Space::new().height(20),
         text(locale.get(Key::Loading).to_string())
             .size(14)

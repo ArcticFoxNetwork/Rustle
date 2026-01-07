@@ -118,5 +118,9 @@ pub fn start_media_controls() -> (MediaHandle, mpsc::UnboundedReceiver<MediaComm
 
 /// Check if media controls are available on this platform
 pub fn is_available() -> bool {
-    cfg!(any(target_os = "linux", target_os = "windows", target_os = "macos"))
+    cfg!(any(
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "macos"
+    ))
 }

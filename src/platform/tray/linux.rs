@@ -79,8 +79,8 @@ impl KsniTray for LinuxTray {
     }
 }
 
-pub async fn start_linux_tray()
--> anyhow::Result<(TrayHandle, mpsc::UnboundedReceiver<TrayCommand>)> {
+pub async fn start_linux_tray() -> anyhow::Result<(TrayHandle, mpsc::UnboundedReceiver<TrayCommand>)>
+{
     let (tx, rx) = mpsc::unbounded_channel();
     let tray = LinuxTray::new(tx);
 
@@ -127,7 +127,7 @@ fn create_icon() -> Vec<Icon> {
 
             let idx = (y * size + x) * 4;
             if dist < size as f32 / 2.0 - 2.0 {
-                data[idx] = 255;     // A
+                data[idx] = 255; // A
                 data[idx + 1] = 255; // R
                 data[idx + 2] = 105; // G
                 data[idx + 3] = 180; // B

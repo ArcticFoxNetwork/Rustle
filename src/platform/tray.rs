@@ -153,7 +153,7 @@ fn init_tray_internal() -> anyhow::Result<TrayResult> {
 }
 
 /// Create an iced Task that initializes the system tray
-/// 
+///
 /// This is the unified entry point - it handles platform differences internally:
 /// - Linux: Uses Task::perform (async)
 /// - Windows/macOS: Uses Task::done (sync, must run on main thread)
@@ -195,5 +195,9 @@ where
 
 /// Check if system tray is available on this platform
 pub fn is_available() -> bool {
-    cfg!(any(target_os = "linux", target_os = "windows", target_os = "macos"))
+    cfg!(any(
+        target_os = "linux",
+        target_os = "windows",
+        target_os = "macos"
+    ))
 }

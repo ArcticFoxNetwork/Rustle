@@ -11,16 +11,19 @@
 
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use futures_util::StreamExt;
 use parking_lot::{Condvar, Mutex, RwLock};
 
 // ============ Constants ============
 
-/// Minimum bytes needed before playback can start (256KB)
-pub const PLAYABLE_THRESHOLD: u64 = 1024 * 1024;
+/// When remaining buffered data falls below this, enter Buffering state.
+pub const LOW_WATER_MARK_BYTES: u64 = 40 * 1024;
+
+/// When buffered data exceeds this, exit Buffering and resume Playing.
+pub const HIGH_WATER_MARK_BYTES: u64 = 400 * 1024;
 
 /// Valid audio extensions for URL parsing
 const VALID_AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "m4a", "aac", "ogg", "wav"];
@@ -28,7 +31,7 @@ const VALID_AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "m4a", "aac", "ogg", "w
 // ============ Format Detection Helpers ============
 
 /// Extract audio file extension from URL path
-/// 
+///
 /// # Example
 /// ```
 /// let ext = extract_extension_from_url("http://example.com/song.flac?token=xxx");
@@ -38,13 +41,13 @@ pub fn extract_extension_from_url(url: &str) -> Option<String> {
     // Parse URL and get path
     let url_parsed = reqwest::Url::parse(url).ok()?;
     let path = url_parsed.path();
-    
+
     // Get the last segment (filename)
     let filename = path.rsplit('/').next()?;
-    
+
     // Extract extension
     let ext = filename.rsplit('.').next()?.to_lowercase();
-    
+
     // Validate it's a known audio extension
     if VALID_AUDIO_EXTENSIONS.contains(&ext.as_str()) {
         Some(ext)
@@ -54,7 +57,7 @@ pub fn extract_extension_from_url(url: &str) -> Option<String> {
 }
 
 /// Map Content-Type header to file extension
-/// 
+///
 /// # Example
 /// ```
 /// let ext = content_type_to_extension("audio/flac");
@@ -63,7 +66,7 @@ pub fn extract_extension_from_url(url: &str) -> Option<String> {
 pub fn content_type_to_extension(content_type: &str) -> Option<String> {
     // Extract MIME type (ignore parameters like charset)
     let mime = content_type.split(';').next()?.trim().to_lowercase();
-    
+
     match mime.as_str() {
         "audio/mpeg" | "audio/mp3" => Some("mp3".to_string()),
         "audio/flac" | "audio/x-flac" => Some("flac".to_string()),
@@ -89,42 +92,23 @@ pub enum StreamingEvent {
     Error(String),
 }
 
-// ============ Utilities ============
-
-/// Estimate byte position from playback time
-pub fn estimate_byte_position(time_secs: f64, total_size: u64, duration_secs: f64) -> u64 {
-    if duration_secs <= 0.0 {
-        return 0;
-    }
-    let ratio = time_secs / duration_secs;
-    (total_size as f64 * ratio) as u64
+#[derive(Debug, Clone)]
+pub enum BufferEvent {
+    DataAppended { downloaded: u64, total: u64 },
+    Complete,
 }
 
 /// Estimate content size from duration (40KB/s at 320kbps)
 pub fn estimate_size_from_duration(duration_secs: u64) -> u64 {
     let estimated = duration_secs * 40 * 1024;
-    if estimated > 0 { estimated } else { 10 * 1024 * 1024 } // 10MB default
+    if estimated > 0 {
+        estimated
+    } else {
+        10 * 1024 * 1024
+    } // 10MB default
 }
 
 // ============ Buffer State ============
-
-/// Buffer state for UI feedback
-#[derive(Debug, Clone, Copy, PartialEq)]
-#[allow(dead_code)]
-pub enum BufferState {
-    /// Downloading in progress
-    Downloading,
-    /// Playback caught up with download, waiting for data
-    Buffering,
-    /// Normal playback
-    Playing,
-    /// Download complete
-    Complete,
-    /// Download cancelled
-    Cancelled,
-    /// Error occurred
-    Error,
-}
 
 /// Inner shared state
 struct SharedBufferInner {
@@ -144,6 +128,8 @@ struct SharedBufferInner {
     data_available: Condvar,
     /// Mutex for condvar
     wait_mutex: Mutex<()>,
+    /// Buffer event callback
+    buffer_callback: RwLock<Option<Box<dyn Fn(BufferEvent) + Send + Sync>>>,
 }
 
 /// Thread-safe shared buffer for streaming audio
@@ -178,7 +164,25 @@ impl SharedBuffer {
                 error: RwLock::new(None),
                 data_available: Condvar::new(),
                 wait_mutex: Mutex::new(()),
+                buffer_callback: RwLock::new(None),
             }),
+        }
+    }
+
+    pub fn set_buffer_callback<F>(&self, callback: F)
+    where
+        F: Fn(BufferEvent) + Send + Sync + 'static,
+    {
+        *self.inner.buffer_callback.write() = Some(Box::new(callback));
+    }
+
+    pub fn clear_buffer_callback(&self) {
+        *self.inner.buffer_callback.write() = None;
+    }
+
+    fn notify_callback(&self, event: BufferEvent) {
+        if let Some(callback) = self.inner.buffer_callback.read().as_ref() {
+            callback(event);
         }
     }
 
@@ -199,14 +203,17 @@ impl SharedBuffer {
 
         // Notify waiting readers
         self.inner.data_available.notify_all();
+
+        // Notify callback of data appended
+        let downloaded = self.inner.downloaded.load(Ordering::Acquire);
+        let total = self.inner.total_size.load(Ordering::Acquire);
+        self.notify_callback(BufferEvent::DataAppended { downloaded, total });
     }
 
     /// Read data at position, blocking if not available
     ///
-    /// Returns number of bytes read, or error if cancelled/failed
-    /// 
-    /// For streaming playback, this will block and wait for data to be downloaded
-    /// when seeking to positions that haven't been downloaded yet.
+    /// Returns number of bytes read, or error if cancelled/failed.
+    /// Blocks and waits for data when reading positions not yet downloaded.
     pub fn read_at(&self, position: u64, buf: &mut [u8]) -> io::Result<usize> {
         // Check for cancellation/error first
         if self.inner.cancelled.load(Ordering::Acquire) {
@@ -230,11 +237,11 @@ impl SharedBuffer {
             let is_complete = self.inner.complete.load(Ordering::Acquire);
 
             // Only return EOF if download is complete AND position is beyond actual downloaded data
-            // Don't use total_size for EOF check since it might be an estimate
             if is_complete && position >= downloaded {
                 tracing::debug!(
                     "read_at: EOF at position {} (downloaded: {}, complete: true)",
-                    position, downloaded
+                    position,
+                    downloaded
                 );
                 return Ok(0);
             }
@@ -250,8 +257,9 @@ impl SharedBuffer {
                     buf[..to_read].copy_from_slice(&data[start..start + to_read]);
                     if wait_count > 0 {
                         tracing::debug!(
-                            "read_at: read {} bytes at position {} after {} waits",
-                            to_read, position, wait_count
+                            "read_at: resumed at position {} after {} waits",
+                            position,
+                            wait_count
                         );
                     }
                     return Ok(to_read);
@@ -268,38 +276,42 @@ impl SharedBuffer {
             }
 
             if let Some(err) = self.inner.error.read().as_ref() {
-                tracing::debug!("read_at: error while waiting at position {}: {}", position, err);
+                tracing::debug!(
+                    "read_at: error while waiting at position {}: {}",
+                    position,
+                    err
+                );
                 return Err(io::Error::new(io::ErrorKind::Other, err.clone()));
             }
 
             // Data not yet available, wait for download to progress
             // This enables seeking to positions that haven't been downloaded yet
             wait_count += 1;
-            if wait_count == 1 || wait_count % 10 == 0 {
+
+            if wait_count == 1 {
                 tracing::info!(
-                    "read_at: waiting for data at position {} (downloaded: {}/{}, complete: {}, wait #{})",
-                    position, downloaded, total, is_complete, wait_count
+                    "read_at: blocking at position {} (downloaded: {}/{}, complete: {})",
+                    position,
+                    downloaded,
+                    total,
+                    is_complete
+                );
+            } else if wait_count % 10 == 0 {
+                tracing::info!(
+                    "read_at: still waiting for data at position {} (downloaded: {}/{}, complete: {}, wait #{})",
+                    position,
+                    downloaded,
+                    total,
+                    is_complete,
+                    wait_count
                 );
             }
             let mut guard = self.inner.wait_mutex.lock();
-            self.inner.data_available.wait(&mut guard);
+            let _ = self
+                .inner
+                .data_available
+                .wait_for(&mut guard, std::time::Duration::from_millis(100));
         }
-    }
-
-    /// Check if byte range is available (non-blocking)
-    #[allow(dead_code)]
-    pub fn is_available(&self, position: u64, len: usize) -> bool {
-        let downloaded = self.inner.downloaded.load(Ordering::Acquire);
-        position + len as u64 <= downloaded
-    }
-
-    /// Check if position has enough buffer ahead
-    pub fn has_buffer_ahead(&self, position: u64, threshold: u64) -> bool {
-        if self.inner.complete.load(Ordering::Acquire) {
-            return true;
-        }
-        let downloaded = self.inner.downloaded.load(Ordering::Acquire);
-        downloaded >= position + threshold
     }
 
     /// Get downloaded bytes count
@@ -343,20 +355,7 @@ impl SharedBuffer {
     pub fn mark_complete(&self) {
         self.inner.complete.store(true, Ordering::Release);
         self.inner.data_available.notify_all();
-    }
-
-    /// Get current buffer state
-    #[allow(dead_code)]
-    pub fn state(&self) -> BufferState {
-        if self.inner.cancelled.load(Ordering::Acquire) {
-            BufferState::Cancelled
-        } else if self.inner.error.read().is_some() {
-            BufferState::Error
-        } else if self.inner.complete.load(Ordering::Acquire) {
-            BufferState::Complete
-        } else {
-            BufferState::Downloading
-        }
+        self.notify_callback(BufferEvent::Complete);
     }
 
     /// Get download progress as fraction (0.0 to 1.0)
@@ -370,7 +369,6 @@ impl SharedBuffer {
     }
 }
 
-
 /// Streaming buffer that implements Read + Seek for rodio Decoder
 ///
 /// Wraps a SharedBuffer and maintains a read position.
@@ -383,19 +381,15 @@ pub struct StreamingBuffer {
 impl StreamingBuffer {
     /// Create a new streaming buffer
     pub fn new(shared: SharedBuffer) -> Self {
-        Self { shared, position: 0 }
+        Self {
+            shared,
+            position: 0,
+        }
     }
 
     /// Get reference to the shared buffer (for checking state)
-    #[allow(dead_code)]
     pub fn shared(&self) -> &SharedBuffer {
         &self.shared
-    }
-
-    /// Get current read position
-    #[allow(dead_code)]
-    pub fn position(&self) -> u64 {
-        self.position
     }
 }
 
@@ -415,7 +409,11 @@ impl Seek for StreamingBuffer {
 
         tracing::debug!(
             "StreamingBuffer::seek({:?}) - total: {}, downloaded: {}, complete: {}, current_pos: {}",
-            pos, total, downloaded, is_complete, self.position
+            pos,
+            total,
+            downloaded,
+            is_complete,
+            self.position
         );
 
         let new_pos = match pos {
@@ -452,12 +450,15 @@ impl Seek for StreamingBuffer {
         // Allow seeking to any position - read_at() will block and wait for data
         // This enables seeking to positions that haven't been downloaded yet
         self.position = new_pos as u64;
-        
+
         tracing::debug!(
             "StreamingBuffer seek to {} (downloaded: {}, total: {}, complete: {})",
-            self.position, downloaded, total, is_complete
+            self.position,
+            downloaded,
+            total,
+            is_complete
         );
-        
+
         Ok(self.position)
     }
 }
@@ -465,17 +466,17 @@ impl Seek for StreamingBuffer {
 // ============ Unified Download Function ============
 
 /// Start downloading audio to a SharedBuffer
-/// 
+///
 /// This is the unified download function used by both song_resolver and preload_manager.
 /// It spawns a background task that:
 /// 1. Downloads from the URL (gets content_length from response)
 /// 2. Writes to SharedBuffer (for playback)
 /// 3. Writes to temp file during download, then renames with correct extension on completion
 /// 4. Sends events via the provided channel
-/// 
+///
 /// Returns immediately with the SharedBuffer. The download continues in background.
 /// Content length is obtained from the GET response, not from a separate HEAD request.
-/// 
+///
 /// # Atomic Write Strategy
 /// - During download: writes to `{cache_path}.tmp`
 /// - On completion: detects format from magic bytes, renames to `{stem}.{ext}`
@@ -500,7 +501,9 @@ pub fn start_buffer_download(
                 let status = r.status();
                 buffer_clone.set_error(format!("HTTP {}", status));
                 if let Some(tx) = &event_tx {
-                    let _ = tx.send(StreamingEvent::Error(format!("HTTP {}", status))).await;
+                    let _ = tx
+                        .send(StreamingEvent::Error(format!("HTTP {}", status)))
+                        .await;
                 }
                 return;
             }
@@ -559,7 +562,7 @@ pub fn start_buffer_download(
                 Ok(chunk) => {
                     let chunk_len = chunk.len() as u64;
                     buffer_clone.append(&chunk);
-                    
+
                     if let Some(ref mut f) = file {
                         use std::io::Write;
                         if let Err(e) = f.write_all(&chunk) {
@@ -569,10 +572,10 @@ pub fn start_buffer_download(
                             let _ = std::fs::remove_file(&temp_path);
                         }
                     }
-                    
+
                     downloaded += chunk_len;
 
-                    if !playable_sent && downloaded >= PLAYABLE_THRESHOLD {
+                    if !playable_sent && downloaded >= HIGH_WATER_MARK_BYTES {
                         if let Some(tx) = &event_tx {
                             let _ = tx.send(StreamingEvent::Playable).await;
                         }
@@ -581,7 +584,9 @@ pub fn start_buffer_download(
                     }
 
                     if let Some(tx) = &event_tx {
-                        let _ = tx.send(StreamingEvent::Progress(downloaded, total_size)).await;
+                        let _ = tx
+                            .send(StreamingEvent::Progress(downloaded, total_size))
+                            .await;
                     }
                 }
                 Err(e) => {
@@ -640,7 +645,10 @@ pub fn start_buffer_download(
             } else {
                 tracing::info!(
                     "Cache file saved: {:?} (detected: {}, url: {:?}, content-type: {:?})",
-                    final_path, detected_ext, url_extension, content_type_extension
+                    final_path,
+                    detected_ext,
+                    url_extension,
+                    content_type_extension
                 );
             }
         }
@@ -679,5 +687,215 @@ pub async fn wait_for_playable(
             }
         }
         false
-    }).await.unwrap_or(false)
+    })
+    .await
+    .unwrap_or(false)
+}
+
+// ============ Tests ============
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shared_buffer_new() {
+        let buffer = SharedBuffer::new(1000);
+        assert_eq!(buffer.total_size(), 1000);
+        assert_eq!(buffer.downloaded(), 0);
+        assert!(!buffer.is_complete());
+        assert!(!buffer.is_cancelled());
+    }
+
+    #[test]
+    fn test_shared_buffer_append() {
+        let buffer = SharedBuffer::new(100);
+
+        buffer.append(&[1, 2, 3, 4, 5]);
+        assert_eq!(buffer.downloaded(), 5);
+
+        buffer.append(&[6, 7, 8, 9, 10]);
+        assert_eq!(buffer.downloaded(), 10);
+    }
+
+    #[test]
+    fn test_shared_buffer_read_at_available_data() {
+        let buffer = SharedBuffer::new(100);
+        buffer.append(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+
+        let mut buf = [0u8; 5];
+        let bytes_read = buffer.read_at(0, &mut buf).unwrap();
+        assert_eq!(bytes_read, 5);
+        assert_eq!(buf, [1, 2, 3, 4, 5]);
+
+        let bytes_read = buffer.read_at(5, &mut buf).unwrap();
+        assert_eq!(bytes_read, 5);
+        assert_eq!(buf, [6, 7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn test_shared_buffer_read_at_partial() {
+        let buffer = SharedBuffer::new(100);
+        buffer.append(&[1, 2, 3]);
+
+        // Request more than available
+        let mut buf = [0u8; 10];
+        let bytes_read = buffer.read_at(0, &mut buf).unwrap();
+        assert_eq!(bytes_read, 3);
+        assert_eq!(&buf[..3], &[1, 2, 3]);
+    }
+
+    #[test]
+    fn test_shared_buffer_read_at_eof_when_complete() {
+        let buffer = SharedBuffer::new(10);
+        buffer.append(&[1, 2, 3, 4, 5]);
+        buffer.mark_complete();
+
+        // Reading at position beyond downloaded data should return EOF
+        let mut buf = [0u8; 5];
+        let bytes_read = buffer.read_at(5, &mut buf).unwrap();
+        assert_eq!(bytes_read, 0); // EOF
+    }
+
+    #[test]
+    fn test_shared_buffer_cancel() {
+        let buffer = SharedBuffer::new(100);
+        assert!(!buffer.is_cancelled());
+
+        buffer.cancel();
+        assert!(buffer.is_cancelled());
+
+        // Read should return error when cancelled
+        let mut buf = [0u8; 5];
+        let result = buffer.read_at(0, &mut buf);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_shared_buffer_error() {
+        let buffer = SharedBuffer::new(100);
+        buffer.set_error("Test error".to_string());
+
+        // Read should return error
+        let mut buf = [0u8; 5];
+        let result = buffer.read_at(0, &mut buf);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_shared_buffer_progress() {
+        let buffer = SharedBuffer::new(100);
+        assert_eq!(buffer.progress(), 0.0);
+
+        buffer.append(&[0; 25]);
+        assert!((buffer.progress() - 0.25).abs() < 0.001);
+
+        buffer.append(&[0; 25]);
+        assert!((buffer.progress() - 0.50).abs() < 0.001);
+
+        buffer.append(&[0; 50]);
+        assert!((buffer.progress() - 1.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_shared_buffer_set_total_size() {
+        let buffer = SharedBuffer::new(0);
+        assert_eq!(buffer.total_size(), 0);
+
+        buffer.set_total_size(1000);
+        assert_eq!(buffer.total_size(), 1000);
+    }
+
+    #[test]
+    fn test_streaming_buffer_read() {
+        let shared = SharedBuffer::new(100);
+        shared.append(&[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+
+        let mut streaming = StreamingBuffer::new(shared);
+
+        let mut buf = [0u8; 5];
+        let bytes_read = streaming.read(&mut buf).unwrap();
+        assert_eq!(bytes_read, 5);
+        assert_eq!(buf, [1, 2, 3, 4, 5]);
+
+        // Position should advance
+        let bytes_read = streaming.read(&mut buf).unwrap();
+        assert_eq!(bytes_read, 5);
+        assert_eq!(buf, [6, 7, 8, 9, 10]);
+    }
+
+    #[test]
+    fn test_streaming_buffer_seek() {
+        let shared = SharedBuffer::new(100);
+        shared.append(&[0; 50]);
+        shared.set_total_size(100);
+
+        let mut streaming = StreamingBuffer::new(shared);
+
+        // Seek from start
+        let pos = streaming.seek(SeekFrom::Start(10)).unwrap();
+        assert_eq!(pos, 10);
+
+        // Seek from current
+        let pos = streaming.seek(SeekFrom::Current(5)).unwrap();
+        assert_eq!(pos, 15);
+
+        // Seek from current (negative)
+        let pos = streaming.seek(SeekFrom::Current(-5)).unwrap();
+        assert_eq!(pos, 10);
+
+        // Seek from end
+        let pos = streaming.seek(SeekFrom::End(-10)).unwrap();
+        assert_eq!(pos, 90);
+    }
+
+    #[test]
+    fn test_extract_extension_from_url() {
+        assert_eq!(
+            extract_extension_from_url("http://example.com/song.mp3"),
+            Some("mp3".to_string())
+        );
+        assert_eq!(
+            extract_extension_from_url("http://example.com/song.flac?token=xxx"),
+            Some("flac".to_string())
+        );
+        assert_eq!(
+            extract_extension_from_url("http://example.com/song.m4a#section"),
+            Some("m4a".to_string())
+        );
+        assert_eq!(
+            extract_extension_from_url("http://example.com/song.txt"),
+            None
+        );
+        assert_eq!(extract_extension_from_url("http://example.com/song"), None);
+    }
+
+    #[test]
+    fn test_content_type_to_extension() {
+        assert_eq!(
+            content_type_to_extension("audio/mpeg"),
+            Some("mp3".to_string())
+        );
+        assert_eq!(
+            content_type_to_extension("audio/flac"),
+            Some("flac".to_string())
+        );
+        assert_eq!(
+            content_type_to_extension("audio/mp4"),
+            Some("m4a".to_string())
+        );
+        assert_eq!(
+            content_type_to_extension("audio/ogg"),
+            Some("ogg".to_string())
+        );
+        assert_eq!(
+            content_type_to_extension("audio/wav"),
+            Some("wav".to_string())
+        );
+        assert_eq!(content_type_to_extension("text/plain"), None);
+        assert_eq!(
+            content_type_to_extension("audio/mpeg; charset=utf-8"),
+            Some("mp3".to_string())
+        );
+    }
 }

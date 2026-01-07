@@ -676,7 +676,9 @@ impl App {
                             .map(|p| p.to_string_lossy().to_string());
 
                             // Handle Song File - check cache with any audio extension
-                            if let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &song_stem) {
+                            if let Some(cached_path) =
+                                crate::utils::find_cached_audio(&song_cache_dir, &song_stem)
+                            {
                                 debug!("Song found in cache: {:?}", cached_path);
                                 return Some((
                                     song_info_clone,
@@ -704,7 +706,8 @@ impl App {
                                             } else {
                                                 "mp3"
                                             };
-                                            let final_path = song_cache_dir.join(format!("{}.{}", song_stem, ext));
+                                            let final_path = song_cache_dir
+                                                .join(format!("{}.{}", song_stem, ext));
                                             if std::fs::rename(&temp_path, &final_path).is_ok() {
                                                 Some((
                                                     song_info_clone,
@@ -821,32 +824,25 @@ impl App {
             }
 
             Message::PlayResolvedNcmSong(song) => {
-                if let Some(player) = &mut self.core.audio {
+                if let Some(player) = &self.core.audio {
                     let path = std::path::PathBuf::from(&song.file_path);
-                    match player.play(path) {
-                        Ok(_) => {
-                            info!("Started playing resolved NCM song: {}", song.title);
+                    player.play(path);
+                    info!("Started playing resolved NCM song: {}", song.title);
 
-                            self.library.current_song = Some(song.clone());
-                            self.library.queue.clear();
-                            self.library.queue.push(song.clone());
-                            self.library.queue_index = Some(0);
+                    self.library.current_song = Some(song.clone());
+                    self.library.queue.clear();
+                    self.library.queue.push(song.clone());
+                    self.library.queue_index = Some(0);
 
-                            if let Some(db) = &self.core.db {
-                                let db = db.clone();
-                                let song_id = song.id;
-                                tokio::spawn(async move {
-                                    let _ = db.record_play(song_id, 0, false).await;
-                                });
-                            }
-
-                            self.update_mpris_state();
-                        }
-                        Err(e) => {
-                            error!("Failed to play NCM song: {}", e);
-                            return Some(Task::done(Message::ShowToast("播放失败".to_string())));
-                        }
+                    if let Some(db) = &self.core.db {
+                        let db = db.clone();
+                        let song_id = song.id;
+                        tokio::spawn(async move {
+                            let _ = db.record_play(song_id, 0, false).await;
+                        });
                     }
+
+                    self.update_mpris_state();
                     return Some(Task::none());
                 }
 

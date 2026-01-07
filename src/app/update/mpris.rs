@@ -55,7 +55,7 @@ impl App {
     fn handle_mpris_command(&mut self, cmd: &MediaCommand) -> Option<Task<Message>> {
         match cmd {
             MediaCommand::Play => {
-                if let Some(player) = &mut self.core.audio {
+                if let Some(player) = &self.core.audio {
                     if !player.is_playing() {
                         Some(self.update(Message::TogglePlayback))
                     } else {
@@ -67,7 +67,7 @@ impl App {
             }
 
             MediaCommand::Pause => {
-                if let Some(player) = &mut self.core.audio {
+                if let Some(player) = &self.core.audio {
                     if player.is_playing() {
                         Some(self.update(Message::TogglePlayback))
                     } else {
@@ -81,7 +81,7 @@ impl App {
             MediaCommand::PlayPause => Some(self.update(Message::TogglePlayback)),
 
             MediaCommand::Stop => {
-                if let Some(player) = &mut self.core.audio {
+                if let Some(player) = &self.core.audio {
                     player.stop();
                     self.library.current_song = None;
                     self.update_mpris_state();
@@ -94,18 +94,18 @@ impl App {
             MediaCommand::Previous => Some(self.update(Message::PrevSong)),
 
             MediaCommand::Seek(offset_us) => {
-                if let Some(player) = &mut self.core.audio {
+                if let Some(player) = &self.core.audio {
                     let current_pos = player.get_info().position;
                     let new_pos = current_pos + Duration::from_micros(*offset_us as u64);
-                    let _ = player.seek(new_pos);
+                    player.seek(new_pos);
                 }
                 Some(Task::none())
             }
 
             MediaCommand::SetPosition(_track_id, position_us) => {
-                if let Some(player) = &mut self.core.audio {
+                if let Some(player) = &self.core.audio {
                     let new_pos = Duration::from_micros(*position_us as u64);
-                    let _ = player.seek(new_pos);
+                    player.seek(new_pos);
                 }
                 Some(Task::none())
             }

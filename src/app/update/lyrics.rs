@@ -569,8 +569,7 @@ impl App {
     /// Check if lyrics page should be fully closed (animation complete)
     pub fn check_lyrics_page_close(&mut self) {
         let progress = self.ui.lyrics.animation.progress();
-        if progress < 0.01 && !self.ui.lyrics.animation.is_animating() && self.ui.lyrics.is_open
-        {
+        if progress < 0.01 && !self.ui.lyrics.animation.is_animating() && self.ui.lyrics.is_open {
             self.ui.lyrics.is_open = false;
         }
     }

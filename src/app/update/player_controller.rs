@@ -59,28 +59,29 @@ impl App {
     /// Design: Skip failed songs and continue to next, show toast after MAX_CONSECUTIVE_FAILURES
     pub fn handle_playback_failure(&mut self, failed_idx: usize, error: &str) -> Task<Message> {
         self.library.consecutive_failures += 1;
-        
+
         tracing::warn!(
             "Playback failure {} of {}: {}",
             self.library.consecutive_failures,
             MAX_CONSECUTIVE_FAILURES,
             error
         );
-        
+
         // Show warning after too many consecutive failures
         let toast_task = if self.library.consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
             tracing::warn!(
                 "Consecutive failures reached {}, showing warning and stopping retry",
                 self.library.consecutive_failures
             );
-            
-            Task::done(Message::ShowErrorToast(
-                format!("连续 {} 首歌曲播放失败，已停止播放", MAX_CONSECUTIVE_FAILURES)
-            ))
+
+            Task::done(Message::ShowErrorToast(format!(
+                "连续 {} 首歌曲播放失败，已停止播放",
+                MAX_CONSECUTIVE_FAILURES
+            )))
         } else {
             Task::none()
         };
-        
+
         // Only skip to next if we haven't exceeded max failures
         // This prevents infinite loop when all songs fail
         if self.library.consecutive_failures >= MAX_CONSECUTIVE_FAILURES {
@@ -88,7 +89,7 @@ impl App {
             self.library.consecutive_failures = 0;
             return toast_task;
         }
-        
+
         // Skip to next playable song
         Task::batch([toast_task, self.skip_to_next_playable(failed_idx)])
     }
@@ -102,11 +103,9 @@ impl App {
             return PlayResult::Failed(format!("File not found: {}", song.file_path));
         }
 
-        if let Some(player) = &mut self.core.audio {
-            match player.play(path) {
-                Ok(_) => PlayResult::Playing,
-                Err(e) => PlayResult::Failed(e),
-            }
+        if let Some(player) = &self.core.audio {
+            player.play(path);
+            PlayResult::Playing
         } else {
             PlayResult::Failed("No audio player".to_string())
         }
@@ -421,8 +420,12 @@ impl App {
         shared_buffer: Option<crate::audio::SharedBuffer>,
         duration_secs: Option<u64>,
     ) -> Task<Message> {
-        tracing::info!("Song at index {} resolved to {} (buffer: {})", 
-            idx, file_path, shared_buffer.is_some());
+        tracing::info!(
+            "Song at index {} resolved to {} (buffer: {})",
+            idx,
+            file_path,
+            shared_buffer.is_some()
+        );
 
         // Always update the song info in queue (for caching purposes)
         if let Some(song) = self.library.queue.get_mut(idx) {
@@ -467,48 +470,39 @@ impl App {
             old_buffer.cancel();
             tracing::debug!("Cancelled previous streaming buffer");
         }
-        self.library.is_buffering = false;
 
-        // Store streaming buffer for buffering detection
+        // Store streaming buffer for download progress tracking
         self.library.streaming_buffer = shared_buffer.clone();
-        self.library.is_buffering = false;
 
         if let Some(song) = self.library.queue.get(idx).cloned() {
             // Try to play from SharedBuffer first (no file I/O)
             if let Some(buffer) = shared_buffer {
-                if let Some(player) = &mut self.core.audio {
+                if let Some(player) = &self.core.audio {
                     let streaming_buffer = crate::audio::StreamingBuffer::new(buffer);
                     let duration = std::time::Duration::from_secs(
-                        duration_secs.unwrap_or(song.duration_secs as u64)
+                        duration_secs.unwrap_or(song.duration_secs as u64),
                     );
-                    
+
                     // Pass cache path for seek fallback
                     let cache_path = if !file_path.is_empty() {
                         Some(std::path::PathBuf::from(&file_path))
                     } else {
                         None
                     };
-                    
-                    match player.play_streaming(streaming_buffer, duration, cache_path) {
-                        Ok(_) => {
-                            tracing::info!("Playing from streaming buffer");
-                            // Restore position if available (app restart scenario)
-                            if let Some(pos) = restore_position {
-                                let seek_pos = std::time::Duration::from_secs_f64(pos);
-                                let _ = player.seek(seek_pos);
-                                tracing::info!("Restored playback position to {:?}", seek_pos);
-                                // Clear the saved position after restoring
-                                if let Some(state) = &mut self.library.playback_state {
-                                    state.position_secs = 0.0;
-                                }
-                            }
-                            return self.on_song_started(idx, song);
-                        }
-                        Err(e) => {
-                            tracing::warn!("Failed to play from buffer: {}, falling back to file", e);
-                            // Fall through to file-based playback
+
+                    player.play_streaming(streaming_buffer, duration, cache_path);
+                    tracing::info!("Playing from streaming buffer");
+                    // Restore position if available (app restart scenario)
+                    if let Some(pos) = restore_position {
+                        let seek_pos = std::time::Duration::from_secs_f64(pos);
+                        player.seek(seek_pos);
+                        tracing::info!("Restored playback position to {:?}", seek_pos);
+                        // Clear the saved position after restoring
+                        if let Some(state) = &mut self.library.playback_state {
+                            state.position_secs = 0.0;
                         }
                     }
+                    return self.on_song_started(idx, song);
                 }
             }
 
@@ -517,9 +511,9 @@ impl App {
                 PlayResult::Playing => {
                     // Restore position if available (app restart scenario)
                     if let Some(pos) = restore_position {
-                        if let Some(player) = &mut self.core.audio {
+                        if let Some(player) = &self.core.audio {
                             let seek_pos = std::time::Duration::from_secs_f64(pos);
-                            let _ = player.seek(seek_pos);
+                            player.seek(seek_pos);
                             tracing::info!("Restored playback position to {:?}", seek_pos);
                         }
                         // Clear the saved position after restoring
@@ -562,34 +556,17 @@ impl App {
         };
 
         // Try to use preloaded track from PreloadManager (zero-delay playback)
-        if let Some(mut slot) = self.library.preload_manager.take_ready(next_idx, true) {
-            if let Some(sink) = slot.take_sink() {
-                if let Some(player) = &mut self.core.audio {
-                    let path = slot.path.clone();
-                    let duration = slot.duration;
-                    
-                    if player.play_preloaded_sink(sink, duration, path).is_ok() {
-                        tracing::info!("Playing preloaded next (index {}) - zero delay", next_idx);
-                        
-                        // Reset failure counter on successful play
-                        self.library.consecutive_failures = 0;
-                        
-                        // Transfer streaming buffer if any
-                        if let Some(buffer) = slot.take_buffer() {
-                            self.library.streaming_buffer = Some(buffer);
-                        } else {
-                            self.library.streaming_buffer = None;
-                        }
-                        self.library.is_buffering = false;
-                        
-                        self.library.queue_index = Some(next_idx);
-                        if let Some(song) = self.library.queue.get(next_idx).cloned() {
-                            return self.on_song_started(next_idx, song);
-                        }
-                        return Task::none();
-                    }
-                }
+        if self.try_play_preloaded(next_idx, true) {
+            tracing::info!("Playing preloaded next (index {}) - zero delay", next_idx);
+
+            // Reset failure counter on successful play
+            self.library.consecutive_failures = 0;
+
+            self.library.queue_index = Some(next_idx);
+            if let Some(song) = self.library.queue.get(next_idx).cloned() {
+                return self.on_song_started(next_idx, song);
             }
+            return Task::none();
         }
 
         self.play_song_at_index(next_idx)
@@ -601,34 +578,17 @@ impl App {
         };
 
         // Try to use preloaded track from PreloadManager (zero-delay playback)
-        if let Some(mut slot) = self.library.preload_manager.take_ready(prev_idx, false) {
-            if let Some(sink) = slot.take_sink() {
-                if let Some(player) = &mut self.core.audio {
-                    let path = slot.path.clone();
-                    let duration = slot.duration;
-                    
-                    if player.play_preloaded_sink(sink, duration, path).is_ok() {
-                        tracing::info!("Playing preloaded prev (index {}) - zero delay", prev_idx);
-                        
-                        // Reset failure counter on successful play
-                        self.library.consecutive_failures = 0;
-                        
-                        // Transfer streaming buffer if any
-                        if let Some(buffer) = slot.take_buffer() {
-                            self.library.streaming_buffer = Some(buffer);
-                        } else {
-                            self.library.streaming_buffer = None;
-                        }
-                        self.library.is_buffering = false;
-                        
-                        self.library.queue_index = Some(prev_idx);
-                        if let Some(song) = self.library.queue.get(prev_idx).cloned() {
-                            return self.on_song_started(prev_idx, song);
-                        }
-                        return Task::none();
-                    }
-                }
+        if self.try_play_preloaded(prev_idx, false) {
+            tracing::info!("Playing preloaded prev (index {}) - zero delay", prev_idx);
+
+            // Reset failure counter on successful play
+            self.library.consecutive_failures = 0;
+
+            self.library.queue_index = Some(prev_idx);
+            if let Some(song) = self.library.queue.get(prev_idx).cloned() {
+                return self.on_song_started(prev_idx, song);
             }
+            return Task::none();
         }
 
         self.play_song_at_index(prev_idx)
@@ -672,7 +632,7 @@ impl App {
         }
 
         // 清除播放完成状态，防止重复触发
-        if let Some(player) = &mut self.core.audio {
+        if let Some(player) = &self.core.audio {
             player.stop();
         }
 
@@ -719,7 +679,7 @@ impl App {
         let first_song = self.library.queue[0].clone();
         self.library.current_song = Some(first_song.clone());
 
-        if let Some(player) = &mut self.core.audio {
+        if let Some(player) = &self.core.audio {
             player.stop();
         }
 

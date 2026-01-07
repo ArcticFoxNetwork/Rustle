@@ -33,18 +33,22 @@ impl App {
             Locale::new(lang)
         };
 
-        // 2. Initialize sub-states
-        let core = CoreState::new(settings, locale);
+        // 2. Initialize audio system
+        let (audio, audio_chain, audio_listener_task) = helpers::init_audio(&settings);
+
+        // 3. Initialize sub-states
+        let core = CoreState::new(settings, locale, audio, audio_chain);
         let library = LibraryState::default();
         let ui = UiState::new();
 
         let app = Self { core, library, ui };
 
-        // 3. Open main window
-        let (window_id, open_window) = iced::window::open(crate::platform::window::window_settings());
+        // 4. Open main window
+        let (window_id, open_window) =
+            iced::window::open(crate::platform::window::window_settings());
         tracing::info!("Opening main window with id: {:?}", window_id);
 
-        // 4. Initialize async tasks
+        // 5. Initialize async tasks
         let init_task = Task::batch([
             open_window.discard(),
             Task::perform(helpers::init_database(), |result| match result {
@@ -55,7 +59,6 @@ impl App {
                 Ok(cache) => Message::CoverCacheReady(Arc::new(cache)),
                 Err(e) => Message::DatabaseError(format!("Cover cache error: {}", e)),
             }),
-            // Initialize tray
             crate::platform::tray::init_task(Message::TrayStarted),
             Task::perform(helpers::init_mpris(), |result| match result {
                 Ok((handle, rx)) => Message::MprisStartedWithHandle(handle, rx),
@@ -69,7 +72,7 @@ impl App {
             }),
             Task::done(Message::TryAutoLogin(0)),
             Task::done(Message::EnforceCacheLimit),
-            Task::done(Message::StartPlayerEventListener),
+            audio_listener_task,
         ]);
 
         (app, init_task)
@@ -151,9 +154,9 @@ impl App {
         let close_event_sub =
             iced::window::close_events().map(|_id| Message::WindowOperationComplete);
 
-        // 7. Animation subscription (~60fps when needed)
+        // 7. Animation subscription (165fps)
         let animation_sub = if has_animations || lyrics_needs_frames || audio_engine_needs_frames {
-            iced::window::frames().map(|_| Message::AnimationTick)
+            iced::time::every(Duration::from_micros(6060)).map(|_| Message::AnimationTick)
         } else {
             iced::Subscription::none()
         };

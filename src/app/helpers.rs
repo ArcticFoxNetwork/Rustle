@@ -3,6 +3,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use iced::Task;
+
+use crate::app::Message;
+use crate::audio::chain::AudioProcessingChain;
 use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong, NewPlaylist};
 use crate::features::PlayMode;
 use crate::features::import::{CoverCache, default_cache_dir};
@@ -10,6 +14,59 @@ use crate::platform::media_controls::{MediaCommand, MediaHandle, start_media_con
 use crate::platform::tray::{TrayHandle, TrayState};
 use crate::ui::pages;
 use crate::utils::format_relative_time;
+
+/// Initialize audio system
+pub fn init_audio(
+    settings: &crate::features::Settings,
+) -> (
+    Option<crate::audio::AudioHandle>,
+    AudioProcessingChain,
+    Task<Message>,
+) {
+    // Create shared audio processing chain
+    let audio_chain = AudioProcessingChain::new();
+
+    // Apply settings to the chain
+    audio_chain.set_equalizer_enabled(settings.playback.equalizer_enabled);
+    audio_chain.set_equalizer_gains(settings.playback.equalizer_values);
+    audio_chain.set_preamp(settings.playback.equalizer_preamp);
+
+    // Spawn audio thread
+    let device_name = settings.system.audio_output_device.as_deref();
+    match crate::audio::spawn_audio_thread(device_name, audio_chain.clone()) {
+        Ok(mut thread_handle) => {
+            let handle = thread_handle.handle.clone();
+            let event_rx = thread_handle.take_event_rx();
+            tracing::info!("Audio thread spawned successfully");
+
+            // Create event listener task
+            let listener_task = if let Some(rx) = event_rx {
+                Task::run(
+                    async_stream::stream! {
+                        let mut rx = rx;
+                        loop {
+                            if let Some(event) = rx.recv().await {
+                                yield event;
+                            } else {
+                                tracing::info!("Audio event channel closed");
+                                break;
+                            }
+                        }
+                    },
+                    Message::AudioEvent,
+                )
+            } else {
+                Task::none()
+            };
+
+            (Some(handle), audio_chain, listener_task)
+        }
+        Err(e) => {
+            tracing::error!("Failed to spawn audio thread: {}", e);
+            (None, audio_chain, Task::none())
+        }
+    }
+}
 
 /// Initialize database connection
 pub async fn init_database() -> anyhow::Result<Database> {

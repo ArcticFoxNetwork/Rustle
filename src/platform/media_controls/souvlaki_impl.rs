@@ -68,7 +68,10 @@ impl SouvlakiMediaHandle {
             };
             cache.album = state.metadata.album.clone();
             cache.cover_url = state.metadata.art_url.clone();
-            cache.duration = state.metadata.length_us.map(|us| Duration::from_micros(us as u64));
+            cache.duration = state
+                .metadata
+                .length_us
+                .map(|us| Duration::from_micros(us as u64));
         }
 
         // Update controls
@@ -145,9 +148,10 @@ pub fn start() -> (SouvlakiMediaHandle, mpsc::UnboundedReceiver<MediaCommand>) {
                         };
                         Some(MediaCommand::Seek(offset))
                     }
-                    MediaControlEvent::SetPosition(pos) => {
-                        Some(MediaCommand::SetPosition(String::new(), pos.0.as_micros() as i64))
-                    }
+                    MediaControlEvent::SetPosition(pos) => Some(MediaCommand::SetPosition(
+                        String::new(),
+                        pos.0.as_micros() as i64,
+                    )),
                     MediaControlEvent::SetVolume(volume) => Some(MediaCommand::SetVolume(volume)),
                     MediaControlEvent::Raise => Some(MediaCommand::Raise),
                     MediaControlEvent::Quit => Some(MediaCommand::Quit),

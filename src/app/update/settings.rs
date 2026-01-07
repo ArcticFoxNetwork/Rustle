@@ -296,33 +296,8 @@ impl App {
             Message::UpdateAudioOutputDevice(device) => {
                 self.core.settings.system.audio_output_device = device.clone();
                 // Switch audio output device
-                if let Some(player) = &mut self.core.audio {
-                    match player.switch_device(device.as_deref()) {
-                        Ok(Some((path, position, was_playing))) => {
-                            // Resume playback on new device
-                            if let Err(e) = player.play(path) {
-                                tracing::error!(
-                                    "Failed to resume playback after device switch: {}",
-                                    e
-                                );
-                            } else {
-                                // Seek to previous position
-                                if let Err(e) = player.seek(position) {
-                                    tracing::warn!("Failed to seek after device switch: {}", e);
-                                }
-                                // Pause if wasn't playing
-                                if !was_playing {
-                                    player.pause();
-                                }
-                            }
-                        }
-                        Ok(None) => {
-                            tracing::info!("Audio device switched (no track was playing)");
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to switch audio device: {}", e);
-                        }
-                    }
+                if let Some(player) = &self.core.audio {
+                    player.switch_device(device.clone());
                 }
                 Some(Task::perform(async { Message::SaveSettings }, |m| m))
             }

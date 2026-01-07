@@ -231,7 +231,7 @@ impl ClearResult {
 }
 
 /// Clean up orphan .tmp files from incomplete downloads
-/// 
+///
 /// This should be called at application startup to remove any temp files
 /// left behind from interrupted downloads.
 pub fn cleanup_temp_files() -> ClearResult {

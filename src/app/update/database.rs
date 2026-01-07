@@ -68,7 +68,7 @@ impl App {
                     state.position_secs,
                     state.volume
                 );
-                if let Some(player) = &mut self.core.audio {
+                if let Some(player) = &self.core.audio {
                     player.set_volume(state.volume as f32);
                 }
                 self.library.playback_state = Some(state.clone());
@@ -111,7 +111,8 @@ impl App {
                                     return Some(Task::perform(
                                         async move {
                                             // Create a dummy channel for restore
-                                            let (event_tx, _event_rx) = tokio::sync::mpsc::channel(1);
+                                            let (event_tx, _event_rx) =
+                                                tokio::sync::mpsc::channel(1);
                                             crate::app::update::song_resolver::resolve_song(
                                                 client,
                                                 &song_clone,
@@ -132,25 +133,18 @@ impl App {
                                 }
                             } else {
                                 // Local song - load into audio player and trigger preload
-                                if let Some(player) = &mut self.core.audio {
+                                if let Some(player) = &self.core.audio {
                                     let path_buf = std::path::PathBuf::from(&song.file_path);
                                     if path_buf.exists() {
-                                        if let Err(e) = player.play(path_buf) {
-                                            tracing::warn!("Failed to load song on startup: {}", e);
-                                        } else {
-                                            // Pause immediately and seek to saved position
-                                            player.pause();
-                                            let position = std::time::Duration::from_secs_f64(
-                                                state.position_secs,
-                                            );
-                                            let _ = player.seek(position);
-                                            // Update cached position for UI display
-                                            player.update_paused_position(position);
-                                            tracing::info!(
-                                                "Loaded song and seeked to {:?}",
-                                                position
-                                            );
-                                        }
+                                        player.play(path_buf.clone());
+                                        // Pause immediately and seek to saved position
+                                        player.pause();
+                                        let position =
+                                            std::time::Duration::from_secs_f64(state.position_secs);
+                                        player.seek(position);
+                                        // Update cached position for UI display
+                                        player.update_paused_position(position);
+                                        tracing::info!("Loaded song and seeked to {:?}", position);
                                     }
                                 }
 
@@ -184,18 +178,15 @@ impl App {
                         }
 
                         // Load into audio player
-                        if let Some(player) = &mut self.core.audio {
+                        if let Some(player) = &self.core.audio {
                             let path_buf = std::path::PathBuf::from(&resolved.file_path);
-                            if let Err(e) = player.play(path_buf) {
-                                tracing::warn!("Failed to load NCM song on startup: {}", e);
-                            } else {
-                                // Pause immediately and seek to saved position
-                                player.pause();
-                                let position = std::time::Duration::from_secs_f64(*saved_position);
-                                let _ = player.seek(position);
-                                player.update_paused_position(position);
-                                tracing::info!("Loaded NCM song and seeked to {:?}", position);
-                            }
+                            player.play(path_buf);
+                            // Pause immediately and seek to saved position
+                            player.pause();
+                            let position = std::time::Duration::from_secs_f64(*saved_position);
+                            player.seek(position);
+                            player.update_paused_position(position);
+                            tracing::info!("Loaded NCM song and seeked to {:?}", position);
                         }
 
                         // Trigger preload for adjacent tracks after NCM song is restored

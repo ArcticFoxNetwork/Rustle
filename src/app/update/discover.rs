@@ -117,10 +117,7 @@ impl App {
                         .card_animations
                         .set_hovered_exclusive(Some(*id));
                 } else {
-                    self.ui
-                        .discover
-                        .card_animations
-                        .set_hovered_exclusive(None);
+                    self.ui.discover.card_animations.set_hovered_exclusive(None);
                 }
                 Some(Task::none())
             }

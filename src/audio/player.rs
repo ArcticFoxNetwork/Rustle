@@ -2,7 +2,6 @@
 //!
 //! Provides:
 //! - Play/pause/seek/volume control
-//! - Fade in/out transitions
 //! - Streaming buffer playback
 //! - Audio processing chain integration
 //! - Pre-decoded Sink creation for seamless track switching
@@ -11,44 +10,54 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
-use rodio::mixer::Mixer;
 use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
 
 use super::chain::AudioProcessingChain;
-use super::events::{PlayerEvent, PlayerEventSender};
 use super::streaming::StreamingBuffer;
 
 /// Cached audio devices to avoid repeated enumeration (which triggers Jack/ALSA warnings)
 static AUDIO_DEVICES_CACHE: OnceLock<Vec<AudioDevice>> = OnceLock::new();
 
 /// Playback status
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum PlaybackStatus {
     Stopped,
     Playing,
     Paused,
-    Pausing, // Currently fading out before pause
+    /// Buffering - waiting for more data before playback can continue.
+    /// Used when playback catches up with download, or when seeking to unbuffered position.
+    Buffering {
+        position: Duration,
+    },
 }
 
-/// Fade state for smooth transitions
-#[derive(Debug, Clone)]
-enum FadeState {
-    None,
-    FadingIn {
-        start_time: Instant,
-        duration: Duration,
-        start_volume: f32,
-        target_volume: f32,
-    },
-    FadingOut {
-        start_time: Instant,
-        duration: Duration,
-        start_volume: f32,
-        target_volume: f32,
-    },
+impl PlaybackStatus {
+    pub fn is_playing(&self) -> bool {
+        matches!(self, PlaybackStatus::Playing)
+    }
+
+    pub fn is_loading(&self) -> bool {
+        matches!(self, PlaybackStatus::Buffering { .. })
+    }
+
+    pub fn effective_status(&self) -> EffectiveStatus {
+        match self {
+            PlaybackStatus::Stopped => EffectiveStatus::Stopped,
+            PlaybackStatus::Playing => EffectiveStatus::Playing,
+            PlaybackStatus::Paused => EffectiveStatus::Paused,
+            PlaybackStatus::Buffering { .. } => EffectiveStatus::Playing,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectiveStatus {
+    Stopped,
+    Playing,
+    Paused,
 }
 
 /// Current playback info
@@ -77,9 +86,7 @@ struct PlayerState {
     duration: Duration,
     volume: f32,
     paused_position: Option<Duration>,
-    original_volume: f32,
     track_gain: f32,
-    fade_state: FadeState,
     device_name: Option<String>,
 }
 
@@ -90,9 +97,7 @@ impl Default for PlayerState {
             duration: Duration::ZERO,
             volume: 1.0,
             paused_position: None,
-            original_volume: 1.0,
             track_gain: 1.0,
-            fade_state: FadeState::None,
             device_name: None,
         }
     }
@@ -106,7 +111,7 @@ pub struct AudioPlayer {
     current_path: Option<PathBuf>,
     state: Arc<Mutex<PlayerState>>,
     chain: AudioProcessingChain,
-    event_tx: Option<PlayerEventSender>,
+    is_streaming: bool,
 }
 
 impl AudioPlayer {
@@ -136,13 +141,8 @@ impl AudioPlayer {
             current_path: None,
             state: Arc::new(Mutex::new(state)),
             chain,
-            event_tx: None,
+            is_streaming: false,
         })
-    }
-
-    /// Set the event sender for receiving playback events
-    pub fn set_event_sender(&mut self, tx: PlayerEventSender) {
-        self.event_tx = Some(tx);
     }
 
     /// Create output stream for a specific device by name
@@ -204,16 +204,12 @@ impl AudioPlayer {
         state.volume * state.track_gain
     }
 
-    /// Prepare for playing a new track (reset analysis, refresh EQ)
+    /// Prepare for playing a new track (reset analysis, refresh EQ, reset fade)
     /// Call this before starting any new track playback
     pub fn prepare_for_new_track(&mut self) {
         self.chain.reset_analysis();
         self.chain.refresh_eq_coefficients();
-    }
-
-    /// Play a file
-    pub fn play(&mut self, path: PathBuf) -> Result<(), String> {
-        self.play_with_fade(path, false)
+        self.chain.set_fade_volume(1.0);
     }
 
     /// Play a file with fade in option
@@ -232,26 +228,23 @@ impl AudioPlayer {
         sink.append(processed);
 
         let volume = self.get_effective_volume();
-        sink.set_volume(if fade_in { 0.0 } else { volume });
+        sink.set_volume(volume);
+
+        if fade_in {
+            self.chain.set_fade_volume(0.0);
+            self.chain.fade_to(1.0, Duration::from_millis(300));
+        }
 
         {
             let mut state = self.state.lock().unwrap();
             state.status = PlaybackStatus::Playing;
             state.duration = duration;
             state.paused_position = None;
-            state.original_volume = state.volume;
         }
 
         self.current_sink = Some(sink);
         self.current_path = Some(path.clone());
-
-        if let Some(tx) = &self.event_tx {
-            let _ = tx.send(PlayerEvent::Started { path });
-        }
-
-        if fade_in {
-            self.start_fade_in(300);
-        }
+        self.is_streaming = false;
 
         tracing::info!("Playing audio, duration: {:?}", duration);
         Ok(())
@@ -276,11 +269,11 @@ impl AudioPlayer {
     }
 
     /// Create a preload sink from StreamingBuffer for NCM songs
-    /// 
+    ///
     /// This allows streaming playback where the buffer continues downloading
     /// in the background while playback proceeds. The StreamingBuffer's read()
     /// method blocks when data is not yet available.
-    /// 
+    ///
     /// Returns (Sink, Duration) - sink is paused and ready for playback
     pub fn create_preload_sink_streaming(
         &self,
@@ -298,23 +291,29 @@ impl AudioPlayer {
             // If download is already complete, use downloaded size
             if buffer.shared().is_complete() {
                 let downloaded = buffer.shared().downloaded();
-                tracing::info!("Preload: download complete before total_size set, using downloaded: {}", downloaded);
+                tracing::info!(
+                    "Preload: download complete before total_size set, using downloaded: {}",
+                    downloaded
+                );
                 break downloaded;
             }
             // Timeout after 5 seconds
             if start.elapsed() > Duration::from_secs(5) {
-                tracing::warn!("Preload: timeout waiting for content-length, seek may not work properly");
+                tracing::warn!(
+                    "Preload: timeout waiting for content-length, seek may not work properly"
+                );
                 break 0;
             }
             // Wait a bit before checking again
             std::thread::sleep(Duration::from_millis(50));
         };
-        
+
         tracing::debug!(
             "create_preload_sink_streaming: byte_len={} (waited {:?})",
-            byte_len, start.elapsed()
+            byte_len,
+            start.elapsed()
         );
-        
+
         // Use Decoder::builder() to properly set byte_len and seekable
         // This is required for FLAC and other formats that need byte_len for seeking
         let source = Decoder::builder()
@@ -323,7 +322,7 @@ impl AudioPlayer {
             .with_seekable(byte_len > 0)
             .build()
             .map_err(|e| format!("Failed to decode streaming audio: {}", e))?;
-        
+
         // Use provided duration since streaming buffer may not know total duration
         let actual_duration = source.total_duration().unwrap_or(duration);
 
@@ -338,14 +337,16 @@ impl AudioPlayer {
     }
 
     /// Play a preloaded sink (from PreloadManager)
-    /// 
-    /// Note: We do NOT call prepare_for_new_track() here because the sink was already
-    /// created with the audio processing chain applied in create_preload_sink().
-    /// Calling prepare_for_new_track() would reset the chain state (analysis data, EQ coefficients)
-    /// which could interfere with the already-processed audio source in the sink.
-    pub fn play_preloaded_sink(&mut self, sink: Sink, duration: Duration, path: PathBuf) -> Result<(), String> {
+    ///
+    pub fn play_preloaded_sink(
+        &mut self,
+        sink: Sink,
+        duration: Duration,
+        path: PathBuf,
+        is_streaming: bool,
+    ) -> Result<(), String> {
         self.stop();
-        // Don't call prepare_for_new_track() - the sink was already prepared during preload
+        self.chain.set_fade_volume(1.0);
 
         sink.set_volume(self.get_effective_volume());
         sink.play();
@@ -355,17 +356,17 @@ impl AudioPlayer {
             state.status = PlaybackStatus::Playing;
             state.duration = duration;
             state.paused_position = None;
-            state.original_volume = state.volume;
         }
 
         self.current_sink = Some(sink);
         self.current_path = Some(path.clone());
+        self.is_streaming = is_streaming;
 
-        if let Some(tx) = &self.event_tx {
-            let _ = tx.send(PlayerEvent::Started { path });
-        }
-
-        tracing::info!("Playing preloaded audio, duration: {:?}", duration);
+        tracing::info!(
+            "Playing preloaded audio, duration: {:?}, streaming: {}",
+            duration,
+            is_streaming
+        );
         Ok(())
     }
 
@@ -393,7 +394,10 @@ impl AudioPlayer {
             // If download is already complete, use downloaded size
             if buffer.shared().is_complete() {
                 let downloaded = buffer.shared().downloaded();
-                tracing::info!("Download complete before total_size set, using downloaded: {}", downloaded);
+                tracing::info!(
+                    "Download complete before total_size set, using downloaded: {}",
+                    downloaded
+                );
                 break downloaded;
             }
             // Timeout after 5 seconds
@@ -404,7 +408,7 @@ impl AudioPlayer {
             // Wait a bit before checking again
             std::thread::sleep(Duration::from_millis(50));
         };
-        
+
         tracing::info!(
             "play_streaming: byte_len={} (waited {:?}), downloaded={}, complete={}, cache_path={:?}",
             byte_len,
@@ -413,7 +417,7 @@ impl AudioPlayer {
             buffer.shared().is_complete(),
             cache_path
         );
-        
+
         // Use Decoder::builder() to properly set byte_len and seekable
         // This is required for FLAC and other formats that need byte_len for seeking
         let source = Decoder::builder()
@@ -436,16 +440,12 @@ impl AudioPlayer {
             state.status = PlaybackStatus::Playing;
             state.duration = duration;
             state.paused_position = None;
-            state.original_volume = state.volume;
         }
 
         self.current_sink = Some(sink);
         // Store cache path for seek fallback (when streaming seek fails, we can reload from file)
         self.current_path = cache_path;
-
-        if let Some(tx) = &self.event_tx {
-            let _ = tx.send(PlayerEvent::StreamingStarted);
-        }
+        self.is_streaming = true;
 
         tracing::info!("Playing streaming audio, duration: {:?}", duration);
         Ok(())
@@ -457,20 +457,14 @@ impl AudioPlayer {
     }
 
     /// Pause playback with optional fade out
-    pub fn pause_with_fade(&mut self, fade_out: bool) {
+    pub fn pause_with_fade(&mut self, _fade_out: bool) {
         if let Some(sink) = self.current_sink.as_ref() {
-            if fade_out {
-                self.stop_fade();
-                self.start_fade_out(300);
-                let mut state = self.state.lock().unwrap();
-                state.status = PlaybackStatus::Pausing;
-            } else {
-                let current_pos = sink.get_pos();
-                sink.pause();
-                let mut state = self.state.lock().unwrap();
-                state.status = PlaybackStatus::Paused;
-                state.paused_position = Some(current_pos);
-            }
+            let current_pos = sink.get_pos();
+            sink.pause();
+
+            let mut state = self.state.lock().unwrap();
+            state.status = PlaybackStatus::Paused;
+            state.paused_position = Some(current_pos);
         }
     }
 
@@ -482,14 +476,14 @@ impl AudioPlayer {
     /// Resume playback with optional fade in
     pub fn resume_with_fade(&mut self, fade_in: bool) {
         if let Some(sink) = &self.current_sink {
-            self.stop_fade();
-
             let target_volume = self.get_effective_volume();
+            sink.set_volume(target_volume);
 
             if fade_in {
-                sink.set_volume(0.0);
+                self.chain.set_fade_volume(0.0);
+                self.chain.fade_to(1.0, Duration::from_millis(300));
             } else {
-                sink.set_volume(target_volume);
+                self.chain.set_fade_volume(1.0);
             }
 
             sink.play();
@@ -498,10 +492,18 @@ impl AudioPlayer {
                 state.status = PlaybackStatus::Playing;
                 state.paused_position = None;
             }
+        }
+    }
 
-            if fade_in {
-                self.start_fade_in(300);
-            }
+    pub fn pause_sink(&self) {
+        if let Some(sink) = &self.current_sink {
+            sink.pause();
+        }
+    }
+
+    pub fn play_sink(&self) {
+        if let Some(sink) = &self.current_sink {
+            sink.play();
         }
     }
 
@@ -520,7 +522,6 @@ impl AudioPlayer {
         let volume = volume.clamp(0.0, 1.0);
         {
             let mut state = self.state.lock().unwrap();
-            state.original_volume = volume;
             state.volume = volume;
         }
 
@@ -547,15 +548,13 @@ impl AudioPlayer {
         }
 
         // Direct seek failed, try reloading the file
-        // Note: This only works for file-based playback, not streaming
         let path = match self.current_path.clone() {
             Some(p) => p,
             None => {
-                // No file path means streaming playback - can't reload
                 return Err("Seek failed: end of stream (streaming playback)".to_string());
             }
         };
-        
+
         tracing::info!("Attempting reload workaround for seek to {:?}", position);
         let volume = self.get_effective_volume();
         let was_playing = {
@@ -570,7 +569,7 @@ impl AudioPlayer {
         let file = File::open(&path).map_err(|e| format!("Failed to open file: {}", e))?;
         let file_len = file.metadata().map(|m| m.len()).unwrap_or(0);
         let reader = BufReader::new(file);
-        
+
         // Use Decoder::builder() with byte_len and seekable for proper FLAC seek support
         let source = Decoder::builder()
             .with_data(reader)
@@ -625,94 +624,6 @@ impl AudioPlayer {
         }
     }
 
-    /// Start fade in effect
-    pub fn start_fade_in(&self, duration_ms: u32) {
-        if let Some(sink) = self.current_sink.as_ref() {
-            let mut state = self.state.lock().unwrap();
-            let target_volume = state.original_volume * state.track_gain;
-            state.fade_state = FadeState::FadingIn {
-                start_time: Instant::now(),
-                duration: Duration::from_millis(duration_ms as u64),
-                start_volume: 0.0,
-                target_volume,
-            };
-            sink.set_volume(0.0);
-        }
-    }
-
-    /// Start fade out effect
-    pub fn start_fade_out(&self, duration_ms: u32) {
-        if self.current_sink.is_some() {
-            let mut state = self.state.lock().unwrap();
-            let current_volume = state.volume * state.track_gain;
-            state.fade_state = FadeState::FadingOut {
-                start_time: Instant::now(),
-                duration: Duration::from_millis(duration_ms as u64),
-                start_volume: current_volume,
-                target_volume: 0.0,
-            };
-        }
-    }
-
-    /// Update fade state (call regularly from PlaybackTick)
-    pub fn update_fade(&self) {
-        if let Some(sink) = self.current_sink.as_ref() {
-            let mut state = self.state.lock().unwrap();
-            let fade_state = state.fade_state.clone();
-
-            match fade_state {
-                FadeState::FadingIn {
-                    start_time,
-                    duration,
-                    start_volume,
-                    target_volume,
-                } => {
-                    let elapsed = start_time.elapsed();
-                    if elapsed >= duration {
-                        sink.set_volume(target_volume);
-                        state.fade_state = FadeState::None;
-                    } else {
-                        let progress = elapsed.as_secs_f32() / duration.as_secs_f32();
-                        let current_volume =
-                            start_volume + (target_volume - start_volume) * progress;
-                        sink.set_volume(current_volume);
-                    }
-                }
-                FadeState::FadingOut {
-                    start_time,
-                    duration,
-                    start_volume,
-                    target_volume,
-                } => {
-                    let elapsed = start_time.elapsed();
-                    if elapsed >= duration {
-                        sink.set_volume(target_volume);
-                        state.fade_state = FadeState::None;
-
-                        if state.status == PlaybackStatus::Pausing {
-                            let current_pos = sink.get_pos();
-                            sink.pause();
-                            state.status = PlaybackStatus::Paused;
-                            state.paused_position = Some(current_pos);
-                        }
-                    } else {
-                        let progress = elapsed.as_secs_f32() / duration.as_secs_f32();
-                        let current_volume =
-                            start_volume + (target_volume - start_volume) * progress;
-                        sink.set_volume(current_volume);
-                    }
-                }
-                FadeState::None => {}
-            }
-        }
-    }
-
-    /// Stop any ongoing fade
-    pub fn stop_fade(&self) {
-        let mut state = self.state.lock().unwrap();
-        state.fade_state = FadeState::None;
-    }
-
     /// Set track gain for normalization
     pub fn set_track_gain(&self, gain: f32) {
         let mut state = self.state.lock().unwrap();
@@ -730,7 +641,7 @@ impl AudioPlayer {
         let state = self.state.lock().unwrap();
 
         let position = if let Some(sink) = &self.current_sink {
-            if state.status == PlaybackStatus::Paused {
+            if matches!(state.status, PlaybackStatus::Paused) {
                 state.paused_position.unwrap_or_else(|| sink.get_pos())
             } else {
                 sink.get_pos()
@@ -741,7 +652,7 @@ impl AudioPlayer {
 
         // Don't change status based on sink.empty() - it's unreliable
         // The is_finished() method handles proper finish detection
-        let status = state.status;
+        let status = state.status.clone();
 
         PlaybackInfo {
             status,
@@ -754,12 +665,10 @@ impl AudioPlayer {
     /// Check if currently playing
     pub fn is_playing(&self) -> bool {
         let state = self.state.lock().unwrap();
-        state.status == PlaybackStatus::Playing || state.status == PlaybackStatus::Pausing
+        state.status.is_playing()
     }
 
     /// Check if playback finished
-    /// Note: For streaming playback, the caller should check streaming_state.is_complete()
-    /// before relying on this method, as sink.empty() can be true when streaming data runs out
     pub fn is_finished(&self) -> bool {
         if let Some(sink) = &self.current_sink {
             let state = self.state.lock().unwrap();
@@ -793,8 +702,7 @@ impl AudioPlayer {
             }
 
             // Also check if sink is empty AND we're very close to the end (95%)
-            // This handles cases where duration might be slightly inaccurate
-            // Note: For streaming, caller should verify download is complete first
+            // Also check if sink is empty and we're past 95% of duration
             if sink.empty() && position.as_secs_f32() > duration.as_secs_f32() * 0.95 {
                 tracing::debug!(
                     "is_finished: sink empty near end at {:.1}s / {:.1}s",
@@ -810,21 +718,9 @@ impl AudioPlayer {
         }
     }
 
-    /// Check if player has no loaded audio
-    pub fn is_empty(&self) -> bool {
-        self.current_sink.is_none()
-    }
-
-    /// Get reference to the mixer (for external preloading)
-    #[allow(dead_code)]
-    pub fn mixer(&self) -> &Mixer {
-        self._stream.mixer()
-    }
-
-    /// Get reference to the audio processing chain
-    #[allow(dead_code)]
-    pub fn chain(&self) -> &AudioProcessingChain {
-        &self.chain
+    /// Check if current playback is streaming
+    pub fn is_streaming(&self) -> bool {
+        self.is_streaming
     }
 }
 

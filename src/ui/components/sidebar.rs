@@ -268,9 +268,7 @@ pub fn view(
                                 ..Default::default()
                             }),
                         Space::new().height(2),
-                        text(click_to_login)
-                            .size(12)
-                            .color(theme::ACCENT_PINK),
+                        text(click_to_login).size(12).color(theme::ACCENT_PINK),
                     ],
                     Space::new().width(Fill),
                     // Arrow indicator with animated color
@@ -323,9 +321,7 @@ pub fn view(
                             ..Default::default()
                         }),
                     Space::new().height(2),
-                    text(click_to_login)
-                        .size(12)
-                        .color(theme::ACCENT_PINK),
+                    text(click_to_login).size(12).color(theme::ACCENT_PINK),
                 ],
                 Space::new().width(Fill),
                 // Arrow indicator with animated color
@@ -516,15 +512,13 @@ fn sidebar_button_animated(
             }),
         });
 
-    let label_text = text(label)
-        .size(14)
-        .style(move |theme| text::Style {
-            color: Some(if is_active {
-                theme::text_primary(theme)
-            } else {
-                theme::animated_brightness(theme, hover_progress)
-            }),
-        });
+    let label_text = text(label).size(14).style(move |theme| text::Style {
+        color: Some(if is_active {
+            theme::text_primary(theme)
+        } else {
+            theme::animated_brightness(theme, hover_progress)
+        }),
+    });
 
     let content = row![icon, Space::new().width(12), label_text]
         .align_y(Alignment::Center)

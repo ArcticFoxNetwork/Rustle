@@ -25,7 +25,11 @@ pub enum SliderSize {
 /// * `position` - Current playback position (0.0 to 1.0)
 /// * `download_progress` - Download progress (0.0 to 1.0), None if not streaming
 /// * `size` - Size variant
-pub fn view_with_download(position: f32, download_progress: Option<f32>, size: SliderSize) -> Element<'static, Message> {
+pub fn view_with_download(
+    position: f32,
+    download_progress: Option<f32>,
+    size: SliderSize,
+) -> Element<'static, Message> {
     let clamped_position = position.clamp(0.0, 1.0);
 
     let width = match size {
@@ -52,9 +56,9 @@ pub fn view_with_download(position: f32, download_progress: Option<f32>, size: S
                         iced::Background::Color(theme::divider(iced_theme)),
                     ),
                     // Downloaded but not played - slightly brighter than background
-                    secondary_background: Some(iced::Background::Color(
-                        Color::from_rgba(0.6, 0.6, 0.6, 0.5)
-                    )),
+                    secondary_background: Some(iced::Background::Color(Color::from_rgba(
+                        0.6, 0.6, 0.6, 0.5,
+                    ))),
                     width: 4.0,
                     border: iced::Border {
                         radius: 2.0.into(),

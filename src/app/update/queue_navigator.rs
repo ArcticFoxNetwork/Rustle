@@ -189,7 +189,7 @@ pub fn skip_to_next_playable(
     if queue_len == 0 {
         return None;
     }
-    
+
     // If only one song in queue, can't skip to another
     if queue_len == 1 {
         return None;
@@ -199,12 +199,12 @@ pub fn skip_to_next_playable(
     // This ensures we don't get stuck on the same failed song
     // regardless of play mode
     let next = (failed_idx + 1) % queue_len;
-    
+
     // Make sure we're not returning the same index
     if next == failed_idx {
         return None;
     }
-    
+
     Some(next)
 }
 

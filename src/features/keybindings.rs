@@ -442,7 +442,10 @@ impl Default for KeyBindings {
 
         // Navigation
         bindings.insert(Action::GoHome, vec![KeyBinding::new(KeyCode::H).primary()]);
-        bindings.insert(Action::GoSearch, vec![KeyBinding::new(KeyCode::K).primary()]);
+        bindings.insert(
+            Action::GoSearch,
+            vec![KeyBinding::new(KeyCode::K).primary()],
+        );
 
         // UI
         bindings.insert(Action::ToggleQueue, vec![KeyBinding::new(KeyCode::Q)]);
@@ -490,7 +493,14 @@ mod tests {
     #[test]
     fn test_default_bindings() {
         let bindings = KeyBindings::default();
-        assert!(bindings.find_action(&Key::Named(iced::keyboard::key::Named::Space), &Modifiers::default()).is_some());
+        assert!(
+            bindings
+                .find_action(
+                    &Key::Named(iced::keyboard::key::Named::Space),
+                    &Modifiers::default()
+                )
+                .is_some()
+        );
     }
 
     #[test]

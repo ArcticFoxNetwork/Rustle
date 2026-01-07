@@ -142,8 +142,8 @@ pub async fn start_native_tray()
 }
 
 /// Synchronous version for Windows main thread requirement
-pub fn start_native_tray_sync()
--> anyhow::Result<(TrayHandle, mpsc::UnboundedReceiver<TrayCommand>)> {
+pub fn start_native_tray_sync() -> anyhow::Result<(TrayHandle, mpsc::UnboundedReceiver<TrayCommand>)>
+{
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
     let (state_tx, mut state_rx) = mpsc::unbounded_channel::<TrayState>();
 

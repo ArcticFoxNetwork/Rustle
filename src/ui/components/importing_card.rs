@@ -126,15 +126,13 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
 
     let completed = playlist.completed;
     let info = column![
-        text(name)
-            .size(13)
-            .style(move |theme| text::Style {
-                color: Some(if completed {
-                    theme::text_primary(theme)
-                } else {
-                    theme::TEXT_SECONDARY
-                })
-            }),
+        text(name).size(13).style(move |theme| text::Style {
+            color: Some(if completed {
+                theme::text_primary(theme)
+            } else {
+                theme::TEXT_SECONDARY
+            })
+        }),
         text(status_text).size(11).color(theme::TEXT_MUTED)
     ]
     .spacing(2);

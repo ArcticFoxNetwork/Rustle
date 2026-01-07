@@ -41,10 +41,6 @@ impl App {
         if let Some(task) = self.handle_playback(&message) {
             return task;
         }
-        // Handle PlayerEvent directly (event-driven playback detection)
-        if let Message::PlayerEvent(event) = message {
-            return self.handle_player_event(event);
-        }
         if let Some(task) = self.handle_playlist(&message) {
             return task;
         }

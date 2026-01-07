@@ -53,8 +53,8 @@ impl App {
                     };
 
                     // Use preview position while seeking, otherwise use actual position
-                    let display_position = if self.ui.is_seeking {
-                        self.ui.seek_preview_position
+                    let display_position = if self.ui.seek_preview_position.is_some() {
+                        self.ui.seek_preview_position.unwrap()
                     } else {
                         position
                     };
@@ -88,7 +88,7 @@ impl App {
                         } else {
                             false
                         },
-                        self.library.download_progress(),
+                        self.core.audio.as_ref().and_then(|p| p.buffer_progress()),
                     )
                 } else {
                     Space::new().width(0).height(0).into()
@@ -201,9 +201,10 @@ impl App {
                 let info = player.get_info();
                 if info.duration.as_secs_f32() > 0.0 {
                     // Player has loaded a file
+                    let display_pos = player.display_position().as_secs_f32();
                     (
                         player.is_playing(),
-                        info.position.as_secs_f32(),
+                        display_pos,
                         info.duration.as_secs_f32().max(1.0),
                         info.volume,
                     )
@@ -255,11 +256,18 @@ impl App {
             };
 
             // Use preview position while seeking, otherwise use actual position
-            let display_position = if self.ui.is_seeking {
-                self.ui.seek_preview_position
+            let display_position = if let Some(preview) = self.ui.seek_preview_position {
+                preview
             } else {
                 position / duration
             };
+
+            let is_buffering = self
+                .core
+                .audio
+                .as_ref()
+                .map(|p| p.is_loading())
+                .unwrap_or(false);
 
             let player_bar = components::player_bar::view(
                 self.library.current_song.as_ref(),
@@ -267,10 +275,10 @@ impl App {
                 display_position,
                 duration,
                 volume,
-                self.ui.is_seeking,
+                self.ui.seek_preview_position.is_some(),
                 self.core.settings.play_mode,
-                self.library.is_buffering,
-                self.library.download_progress(),
+                is_buffering,
+                self.core.audio.as_ref().and_then(|p| p.buffer_progress()),
             );
 
             // Build content with player bar - always use stack to keep layout consistent

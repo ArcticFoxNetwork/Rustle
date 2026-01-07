@@ -46,19 +46,19 @@ impl App {
                 return self.update(Message::PrevSong);
             }
             Action::VolumeUp => {
-                if let Some(player) = &mut self.core.audio {
+                if let Some(player) = &self.core.audio {
                     let current = player.get_info().volume;
                     player.set_volume((current + 0.05).min(1.0));
                 }
             }
             Action::VolumeDown => {
-                if let Some(player) = &mut self.core.audio {
+                if let Some(player) = &self.core.audio {
                     let current = player.get_info().volume;
                     player.set_volume((current - 0.05).max(0.0));
                 }
             }
             Action::VolumeMute => {
-                if let Some(player) = &mut self.core.audio {
+                if let Some(player) = &self.core.audio {
                     let current = player.get_info().volume;
                     if current > 0.0 {
                         // Save current volume before muting
@@ -73,21 +73,21 @@ impl App {
                 }
             }
             Action::SeekForward => {
-                if let Some(player) = &mut self.core.audio {
+                if let Some(player) = &self.core.audio {
                     let info = player.get_info();
                     let new_pos = info.position + std::time::Duration::from_secs(10);
                     if new_pos < info.duration {
-                        let _ = player.seek(new_pos);
+                        player.seek(new_pos);
                     }
                 }
             }
             Action::SeekBackward => {
-                if let Some(player) = &mut self.core.audio {
+                if let Some(player) = &self.core.audio {
                     let info = player.get_info();
                     let new_pos = info
                         .position
                         .saturating_sub(std::time::Duration::from_secs(10));
-                    let _ = player.seek(new_pos);
+                    player.seek(new_pos);
                 }
             }
             Action::GoHome => {

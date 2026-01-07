@@ -63,7 +63,11 @@ impl ControlSize {
 }
 
 /// Build the play/pause button with buffering state
-pub fn play_button_with_buffering(is_playing: bool, is_buffering: bool, size: ControlSize) -> Element<'static, Message> {
+pub fn play_button_with_buffering(
+    is_playing: bool,
+    is_buffering: bool,
+    size: ControlSize,
+) -> Element<'static, Message> {
     // Only show loading icon when playing AND buffering
     let show_loading = is_playing && is_buffering;
     let play_icon = if show_loading {
@@ -203,7 +207,11 @@ pub fn view(is_playing: bool, size: ControlSize) -> Element<'static, Message> {
 }
 
 /// Build the complete playback controls row with buffering state
-pub fn view_with_buffering(is_playing: bool, is_buffering: bool, size: ControlSize) -> Element<'static, Message> {
+pub fn view_with_buffering(
+    is_playing: bool,
+    is_buffering: bool,
+    size: ControlSize,
+) -> Element<'static, Message> {
     let spacing = size.spacing();
 
     row![

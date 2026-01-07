@@ -290,22 +290,14 @@ pub enum Message {
     /// Cycle to next play mode
     CyclePlayMode,
     /// Audio preload ready (local file cached) - (queue_index, file_path, is_next)
-    PreloadReady(
-        usize,
-        String,
-        bool,
-    ),
+    PreloadReady(usize, String, bool),
     /// Audio preload ready with SharedBuffer for streaming playback
     /// (queue_index, file_path, is_next, shared_buffer, duration_secs)
-    PreloadBufferReady(
-        usize,
-        String,
-        bool,
-        crate::audio::SharedBuffer,
-        u64,
-    ),
+    PreloadBufferReady(usize, String, bool, crate::audio::SharedBuffer, u64),
     /// Audio preload failed - (queue_index, is_next)
     PreloadAudioFailed(usize, bool),
+    /// Preload request sent to audio thread
+    PreloadRequestSent(usize, bool, u64, PathBuf),
 
     // ============ Queue management ============
     /// Play entire playlist (replace queue with playlist songs)
@@ -360,7 +352,9 @@ pub enum Message {
     MprisStartedWithHandle(
         crate::platform::media_controls::MediaHandle,
         std::sync::Arc<
-            tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<crate::platform::media_controls::MediaCommand>>,
+            tokio::sync::Mutex<
+                tokio::sync::mpsc::UnboundedReceiver<crate::platform::media_controls::MediaCommand>,
+            >,
         >,
     ),
     /// Media controls command received
@@ -496,10 +490,8 @@ pub enum Message {
     // ============ Player Events (Event-Driven Architecture) ============
     /// Streaming download event (song_id, event)
     StreamingEvent(i64, crate::audio::streaming::StreamingEvent),
-    /// Player event from AudioPlayer (replaces polling is_finished)
-    PlayerEvent(crate::audio::PlayerEvent),
-    /// Start listening to player events (called once at startup)
-    StartPlayerEventListener,
+    /// Audio thread event
+    AudioEvent(crate::audio::AudioEvent),
 }
 
 /// Icon identifiers for hover tracking
@@ -750,17 +742,38 @@ impl std::fmt::Debug for Message {
                 simple!("PreloadReady", "idx={}, next={}", idx, is_next)
             }
             Self::PreloadBufferReady(idx, _, is_next, buffer, duration) => {
-                simple!("PreloadBufferReady", "idx={}, next={}, downloaded={}, duration={}s", idx, is_next, buffer.downloaded(), duration)
+                simple!(
+                    "PreloadBufferReady",
+                    "idx={}, next={}, downloaded={}, duration={}s",
+                    idx,
+                    is_next,
+                    buffer.downloaded(),
+                    duration
+                )
             }
             Self::PreloadAudioFailed(idx, is_next) => {
                 simple!("PreloadAudioFailed", "idx={}, next={}", idx, is_next)
+            }
+            Self::PreloadRequestSent(idx, is_next, request_id, _) => {
+                simple!(
+                    "PreloadRequestSent",
+                    "idx={}, next={}, req={}",
+                    idx,
+                    is_next,
+                    request_id
+                )
             }
 
             // Queue management
             Self::PlayPlaylist(id) => simple!("PlayPlaylist", "{}", id),
             Self::PlayQueueIndex(i) => simple!("PlayQueueIndex", "{}", i),
             Self::SongResolvedStreaming(i, _, _, buffer, _) => {
-                simple!("SongResolvedStreaming", "idx={}, buffer={}", i, buffer.is_some())
+                simple!(
+                    "SongResolvedStreaming",
+                    "idx={}, buffer={}",
+                    i,
+                    buffer.is_some()
+                )
             }
             Self::SongResolveFailed => simple!("SongResolveFailed"),
             Self::RemoveFromQueue(i) => simple!("RemoveFromQueue", "{}", i),
@@ -845,9 +858,8 @@ impl std::fmt::Debug for Message {
             // Streaming
             Self::StreamingEvent(id, _) => simple!("StreamingEvent", "id={}", id),
 
-            // Player events (event-driven architecture)
-            Self::PlayerEvent(event) => simple!("PlayerEvent", "{:?}", event),
-            Self::StartPlayerEventListener => simple!("StartPlayerEventListener"),
+            // Audio events
+            Self::AudioEvent(event) => simple!("AudioEvent", "{:?}", event),
         }
     }
 }
