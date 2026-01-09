@@ -246,19 +246,11 @@ fn account_section(
                     iced::widget::image(handle.clone())
                         .width(Fill)
                         .height(Fill)
-                        .content_fit(iced::ContentFit::Cover),
+                        .content_fit(iced::ContentFit::Cover)
+                        .border_radius(24.0),
                 )
                 .width(48)
                 .height(48)
-                .clip(true)
-                .style(|_theme| iced::widget::container::Style {
-                    border: iced::Border {
-                        radius: 24.0.into(),
-                        width: 0.0,
-                        color: Color::TRANSPARENT,
-                    },
-                    ..Default::default()
-                })
             } else {
                 container(
                     svg(iced::widget::svg::Handle::from_memory(

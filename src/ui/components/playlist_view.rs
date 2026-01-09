@@ -46,7 +46,6 @@ const MAX_ARTIST_LEN: usize = 25;
 #[derive(Debug, Clone)]
 pub struct SongItem {
     pub id: i64,
-    pub index: usize,
     /// Pre-formatted index string to avoid format! in render loop
     pub index_str: String,
     /// Original title for search/filter
@@ -69,7 +68,6 @@ pub struct SongItem {
     pub pic_url: Option<String>,
     /// Pre-loaded image handle (None = use placeholder)
     pub cover_handle: Option<image::Handle>,
-    pub is_playing: bool,
 }
 
 impl SongItem {
@@ -83,10 +81,9 @@ impl SongItem {
         duration: String,
         added_date: String,
         cover_path: Option<String>,
-        is_playing: bool,
     ) -> Self {
         Self::with_pic_url(
-            id, index, title, artist, album, duration, added_date, cover_path, None, is_playing,
+            id, index, title, artist, album, duration, added_date, cover_path, None,
         )
     }
 
@@ -101,7 +98,6 @@ impl SongItem {
         added_date: String,
         cover_path: Option<String>,
         pic_url: Option<String>,
-        is_playing: bool,
     ) -> Self {
         // Pre-compute display strings
         let display_title = truncate_string(&title, MAX_TITLE_LEN);
@@ -120,7 +116,6 @@ impl SongItem {
 
         Self {
             id,
-            index,
             index_str,
             title,
             artist,
@@ -133,14 +128,7 @@ impl SongItem {
             cover_path,
             pic_url,
             cover_handle,
-            is_playing,
         }
-    }
-
-    /// Update the is_playing state without re-computing other fields
-    pub fn with_playing(mut self, is_playing: bool) -> Self {
-        self.is_playing = is_playing;
-        self
     }
 }
 
@@ -303,6 +291,7 @@ pub fn build_list<'a>(
     liked_songs: HashSet<u64>,
     columns: PlaylistColumns,
     scroll_state: Rc<RefCell<VirtualListState>>,
+    current_playing_id: Option<i64>,
 ) -> Element<'a, Message> {
     let song_count = songs.len();
 
@@ -330,11 +319,13 @@ pub fn build_list<'a>(
         }
 
         let song = &songs_clone[index];
+        let is_playing = current_playing_id == Some(song.id);
         let animation_progress = song_animations.get_progress(&song.id);
         let is_hovered = animation_progress > 0.5;
 
         container(build_song_row(
             song,
+            is_playing,
             is_hovered,
             animation_progress,
             &liked_songs_clone,
@@ -361,15 +352,13 @@ pub fn build_list<'a>(
 /// Optimized: No disk IO, no string allocations, uses pre-cached handles
 fn build_song_row(
     song: &SongItem,
+    is_playing: bool,
     is_hovered: bool,
     animation_progress: f32,
     liked_songs: &HashSet<u64>,
     columns: PlaylistColumns,
 ) -> Element<'static, Message> {
     let song_id = song.id;
-
-    // --- Pre-compute all visual properties (cheap arithmetic) ---
-    let is_playing = song.is_playing;
 
     // Clone strings for 'static lifetime (these are pre-computed, so cheap)
     let index_str = song.index_str.clone();
@@ -378,7 +367,6 @@ fn build_song_row(
     let display_album = song.display_album.clone();
     let duration = song.duration.clone();
     let added_date = song.added_date.clone();
-    let _is_playing = song.is_playing;
 
     // --- Index or play icon (use cached SVG handles) ---
     let index_content: Element<'static, Message> = if is_hovered {
@@ -544,23 +532,12 @@ fn build_song_row(
 fn build_song_cover(cover_handle: &Option<image::Handle>) -> Element<'static, Message> {
     if let Some(handle) = cover_handle {
         // Fast path: just clone the handle (reference count increment)
-        return container(
-            image(handle.clone())
-                .width(44)
-                .height(44)
-                .content_fit(iced::ContentFit::Cover),
-        )
-        .width(44)
-        .height(44)
-        .clip(true)
-        .style(|_theme| iced::widget::container::Style {
-            border: iced::Border {
-                radius: 4.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
-        .into();
+        return image(handle.clone())
+            .width(44)
+            .height(44)
+            .content_fit(iced::ContentFit::Cover)
+            .border_radius(4.0)
+            .into();
     }
 
     // Placeholder - use cached SVG handle

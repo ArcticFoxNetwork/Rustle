@@ -224,12 +224,6 @@ impl App {
                                 .get(crate::i18n::Key::RecentlyPlayedList)
                                 .to_string(),
                             song.cover_path.clone(),
-                            self.library
-                                .current_song
-                                .as_ref()
-                                .map(|s| s.id)
-                                .unwrap_or(0)
-                                == song.id,
                         )
                     })
                     .collect();

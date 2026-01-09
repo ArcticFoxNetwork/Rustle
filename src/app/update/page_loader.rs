@@ -78,7 +78,6 @@ pub fn convert_ncm_songs_to_views(
                 String::new(),
                 cover_path,
                 pic_url,
-                false,
             )
         })
         .collect()

@@ -127,6 +127,8 @@ impl App {
 
         let current_user_id = self.core.user_info.as_ref().map(|u| u.user_id);
 
+        let current_playing_id = self.library.current_song.as_ref().map(|s| s.id);
+
         let main_content = if let Some(playlist) = &self.ui.playlist_page.current {
             pages::playlist::view(
                 playlist,
@@ -139,6 +141,7 @@ impl App {
                 self.core.locale,
                 self.ui.playlist_page.scroll_state.clone(),
                 current_user_id,
+                current_playing_id,
             )
         } else {
             match self.ui.active_nav {

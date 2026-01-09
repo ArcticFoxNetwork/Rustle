@@ -60,6 +60,7 @@ pub fn view<'a>(
     locale: Locale,
     scroll_state: Rc<RefCell<VirtualListState>>,
     current_user_id: Option<u64>,
+    current_playing_id: Option<i64>,
 ) -> Element<'a, Message> {
     let palette = playlist.palette.clone();
     let header = build_header(playlist, locale);
@@ -143,6 +144,7 @@ pub fn view<'a>(
         liked_songs,
         columns,
         scroll_state,
+        current_playing_id,
     );
 
     let content = column![gradient_section, song_list_header, song_list,]
@@ -173,11 +175,11 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
             image(image::Handle::from_path(cover_path))
                 .width(220)
                 .height(220)
-                .content_fit(iced::ContentFit::Cover),
+                .content_fit(iced::ContentFit::Cover)
+                .border_radius(8.0),
         )
         .width(220)
         .height(220)
-        .clip(true)
         .style(|theme| iced::widget::container::Style {
             border: iced::Border {
                 radius: 8.0.into(),
@@ -235,25 +237,12 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
                 // - Use opaque(true) to enable proper clipping with border-radius
                 // - Image fills the container with Cover content_fit
                 let avatar_size: f32 = 24.0;
-                container(
-                    image(image::Handle::from_path(avatar_path))
-                        .width(Fill)
-                        .height(Fill)
-                        .content_fit(iced::ContentFit::Cover),
-                )
-                .width(avatar_size)
-                .height(avatar_size)
-                .clip(true)
-                .style(move |_theme| iced::widget::container::Style {
-                    // Need a background for clip to work with border-radius
-                    background: Some(iced::Background::Color(Color::BLACK)),
-                    border: iced::Border {
-                        radius: (avatar_size / 2.0).into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                })
-                .into()
+                image(image::Handle::from_path(avatar_path))
+                    .width(avatar_size)
+                    .height(avatar_size)
+                    .content_fit(iced::ContentFit::Cover)
+                    .border_radius(avatar_size / 2.0)
+                    .into()
             } else {
                 // Fallback to first letter
                 build_owner_avatar_placeholder(&owner_name)

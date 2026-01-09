@@ -489,8 +489,11 @@ impl MusicApi {
         let mut params = HashMap::new();
         let id = music_id.to_string();
         params.insert("id", &id[..]);
-        params.insert("lv", "-1");
-        params.insert("tv", "-1");
+        params.insert("lv", "-1");  // 普通歌词
+        params.insert("tv", "-1");  // 翻译歌词
+        params.insert("yv", "-1");  // YRC 逐字歌词
+        params.insert("kv", "-1");  // 卡拉OK歌词
+        params.insert("rv", "-1");  // 罗马音歌词
         params.insert("csrf_token", &csrf_token);
         let result = self
             .request(Method::Post, path, params, CryptoApi::Weapi, "", true)

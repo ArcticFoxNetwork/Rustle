@@ -132,23 +132,12 @@ fn view_song_item<'a>(
 
     // Song cover image - use pre-loaded handle for instant rendering
     let song_cover: Element<'_, Message> = if let Some(handle) = cover_handle {
-        container(
-            image(handle.clone())
-                .width(COVER_SIZE)
-                .height(COVER_SIZE)
-                .content_fit(iced::ContentFit::Cover),
-        )
-        .width(COVER_SIZE)
-        .height(COVER_SIZE)
-        .clip(true)
-        .style(|_theme| container::Style {
-            border: iced::Border {
-                radius: 4.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
-        .into()
+        image(handle.clone())
+            .width(COVER_SIZE)
+            .height(COVER_SIZE)
+            .content_fit(iced::ContentFit::Cover)
+            .border_radius(4.0)
+            .into()
     } else {
         // Fallback colored square with music note
         container(

@@ -45,11 +45,11 @@ pub fn view<'a, Message: Clone + 'a>(
             image(handle.clone())
                 .width(Fill)
                 .height(Fill)
-                .content_fit(iced::ContentFit::Cover),
+                .content_fit(iced::ContentFit::Cover)
+                .border_radius(COVER_RADIUS),
         )
         .width(COVER_SIZE)
         .height(COVER_SIZE)
-        .clip(true)
         .style(move |_theme| cover_style(hover_progress))
         .into()
     } else {

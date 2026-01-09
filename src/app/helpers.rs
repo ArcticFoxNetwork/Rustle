@@ -345,7 +345,6 @@ pub async fn load_playlist_view(
                 format!("{}:{:02}", mins, secs),
                 added_date,
                 song.cover_path.clone(),
-                false,
             )
         })
         .collect();

@@ -38,11 +38,11 @@ impl SquareCoverWidget {
                 image(image::Handle::from_path(path))
                     .width(Length::Fill)
                     .height(Length::Fill)
-                    .content_fit(iced::ContentFit::Cover),
+                    .content_fit(iced::ContentFit::Cover)
+                    .border_radius(12.0),
             )
             .width(size)
             .height(size)
-            .clip(true)
             .style(|theme| iced::widget::container::Style {
                 border: iced::Border {
                     radius: 12.0.into(),

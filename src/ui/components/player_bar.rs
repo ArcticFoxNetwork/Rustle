@@ -70,21 +70,12 @@ pub fn view(
                     })
                     .into()
                 } else {
-                    container(
-                        image(image::Handle::from_path(&cover_path))
-                            .width(56)
-                            .height(56)
-                            .content_fit(iced::ContentFit::Cover),
-                    )
-                    .clip(true)
-                    .style(|_theme| iced::widget::container::Style {
-                        border: iced::Border {
-                            radius: 4.0.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    })
-                    .into()
+                    image(image::Handle::from_path(&cover_path))
+                        .width(56)
+                        .height(56)
+                        .content_fit(iced::ContentFit::Cover)
+                        .border_radius(4.0)
+                        .into()
                 }
             } else {
                 container(
