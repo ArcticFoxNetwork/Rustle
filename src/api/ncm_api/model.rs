@@ -236,6 +236,7 @@ pub enum Parse {
     SingerSongs,
     Radio,
     Intelligence,
+    PersonalFm,
 }
 
 pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
@@ -429,6 +430,26 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         album_id: get_val!(v, "songInfo", "al", "id")?,
                         pic_url: get_val!(v, "songInfo", "al", "picUrl").unwrap_or_default(),
                         duration: get_val!(v, "songInfo", "dt")?,
+                        song_url: String::new(),
+                        copyright: SongCopyright::Unknown,
+                    });
+                }
+            }
+            Parse::PersonalFm => {
+                // 私人FM返回格式: { data: [{ id, name, artists: [{name}], album: {name, id, picUrl}, duration }] }
+                let array: &Vec<Value> = get_val!(value, "data")?;
+                for v in array.iter() {
+                    vec.push(SongInfo {
+                        id: get_val!(v, "id")?,
+                        name: get_val!(v, "name")?,
+                        singer: get_val!(@as &Vec<Value>, v, "artists")?
+                            .first()
+                            .map(|v: &Value| get_val!(v, "name").unwrap_or_else(|_| unk.clone()))
+                            .unwrap_or_else(|| unk.clone()),
+                        album: get_val!(v, "album", "name").unwrap_or_else(|_| unk.clone()),
+                        album_id: get_val!(v, "album", "id")?,
+                        pic_url: get_val!(v, "album", "picUrl").unwrap_or_default(),
+                        duration: get_val!(v, "duration")?,
                         song_url: String::new(),
                         copyright: SongCopyright::Unknown,
                     });

@@ -24,6 +24,8 @@ pub fn view(
     play_mode: PlayMode,
     is_buffering: bool,             // Whether streaming is buffering
     download_progress: Option<f32>, // Download progress 0.0 to 1.0 (None if not streaming)
+    is_fm_mode: bool,               // Whether in Personal FM mode
+    is_first_song: bool,            // Whether at first song in queue
 ) -> Element<'static, Message> {
     // Format time as mm:ss
     let format_time = |secs: f32| -> String {
@@ -207,6 +209,8 @@ pub fn view(
         is_playing,
         is_buffering,
         ControlSize::Small,
+        is_fm_mode,
+        is_first_song,
     );
 
     let progress_slider = widgets::progress_slider::view_with_download(
@@ -238,8 +242,9 @@ pub fn view(
 
     let volume_slider = widgets::progress_slider::volume_slider(volume);
 
-    // Play mode button (using unified widget)
-    let play_mode_btn = widgets::play_mode_button::view(play_mode, PlayModeButtonSize::Small);
+    // Play mode button (using unified widget with FM mode support)
+    let play_mode_btn =
+        widgets::play_mode_button::view(play_mode, PlayModeButtonSize::Small, is_fm_mode);
 
     // Queue button
     let queue_btn = button(

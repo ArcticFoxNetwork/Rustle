@@ -384,3 +384,87 @@ pub async fn load_playlist_view(
         is_subscribed: false,
     })
 }
+
+// ============ Personal FM Mode Helpers ============
+
+use crate::app::state::App;
+
+impl App {
+    /// Check if currently in Personal FM mode
+    pub fn is_fm_mode(&self) -> bool {
+        self.library.personal_fm_mode
+    }
+
+    /// Enter Personal FM mode
+    pub fn enter_fm_mode(&mut self) {
+        self.library.personal_fm_mode = true;
+        self.clear_shuffle_cache();
+    }
+
+    /// Exit Personal FM mode
+    pub fn exit_fm_mode(&mut self) {
+        self.library.personal_fm_mode = false;
+    }
+
+    /// Check if more FM songs should be fetched
+    /// Returns true if queue_index is within 3 songs of the end
+    pub fn should_fetch_more_fm(&self) -> bool {
+        if !self.library.personal_fm_mode {
+            return false;
+        }
+        let queue_len = self.library.queue.len();
+        let current_idx = self.library.queue_index.unwrap_or(0);
+        queue_len.saturating_sub(current_idx) <= 3
+    }
+
+    /// Fetch more FM songs (returns Task)
+    pub fn fetch_more_fm_songs(&self) -> Task<Message> {
+        if let Some(client) = &self.core.ncm_client {
+            let client = client.clone();
+            Task::perform(
+                async move {
+                    match client.client.personal_fm().await {
+                        Ok(songs) if !songs.is_empty() => Some(songs),
+                        _ => None,
+                    }
+                },
+                |songs_opt| {
+                    if let Some(songs) = songs_opt {
+                        // FM mode: append songs without starting playback
+                        Message::AddNcmPlaylist(songs, false)
+                    } else {
+                        Message::NoOp
+                    }
+                },
+            )
+        } else {
+            Task::none()
+        }
+    }
+
+    /// Fetch more FM songs and start playing the first new song
+    /// Used when FM queue is exhausted
+    pub fn fetch_more_fm_songs_and_play(&self) -> Task<Message> {
+        if let Some(client) = &self.core.ncm_client {
+            let client = client.clone();
+            Task::perform(
+                async move {
+                    match client.client.personal_fm().await {
+                        Ok(songs) if !songs.is_empty() => Some(songs),
+                        _ => None,
+                    }
+                },
+                |songs_opt| {
+                    if let Some(songs) = songs_opt {
+                        // FM mode: append songs and start playback
+                        Message::AddNcmPlaylist(songs, true)
+                    } else {
+                        Message::ShowToast("获取私人FM歌曲失败".to_string())
+                    }
+                },
+            )
+        } else {
+            Task::done(Message::ShowToast("请先登录".to_string()))
+        }
+    }
+}

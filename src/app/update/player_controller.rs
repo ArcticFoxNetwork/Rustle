@@ -530,29 +530,60 @@ impl App {
         }
     }
 
-    pub fn calculate_next_index(&self) -> Option<usize> {
+    fn calculate_next_index(&self) -> Option<usize> {
+        let play_mode = if self.is_fm_mode() {
+            PlayMode::Sequential
+        } else {
+            self.core.settings.play_mode
+        };
+
         let nav = QueueNavigator::new(
             self.library.queue.len(),
             self.library.queue_index,
-            self.core.settings.play_mode,
+            play_mode,
             &self.library.shuffle_cache,
         );
         nav.next_index()
     }
 
-    pub fn calculate_prev_index(&self) -> Option<usize> {
+    fn calculate_prev_index(&self) -> Option<usize> {
+        let play_mode = if self.is_fm_mode() {
+            PlayMode::Sequential
+        } else {
+            self.core.settings.play_mode
+        };
+
         let nav = QueueNavigator::new(
             self.library.queue.len(),
             self.library.queue_index,
-            self.core.settings.play_mode,
+            play_mode,
             &self.library.shuffle_cache,
         );
         nav.prev_index()
     }
 
     pub fn play_next_song(&mut self) -> Task<Message> {
-        let Some(next_idx) = self.calculate_next_index() else {
+        let next_idx = self.calculate_next_index();
+
+        if next_idx.is_none() {
+            if self.is_fm_mode() {
+                tracing::info!("FM mode: no next song, fetching more songs");
+                return self.fetch_more_fm_songs_and_play();
+            }
+            self.handle_queue_finished();
             return Task::none();
+        }
+
+        let next_idx = next_idx.unwrap();
+        let fetch_task = if self.is_fm_mode() && self.should_fetch_more_fm() {
+            tracing::info!(
+                "FM mode: fetching more songs (current_idx={}, queue_len={})",
+                self.library.queue_index.unwrap_or(0),
+                self.library.queue.len()
+            );
+            self.fetch_more_fm_songs()
+        } else {
+            Task::none()
         };
 
         // Try to use preloaded track from PreloadManager (zero-delay playback)
@@ -564,12 +595,14 @@ impl App {
 
             self.library.queue_index = Some(next_idx);
             if let Some(song) = self.library.queue.get(next_idx).cloned() {
-                return self.on_song_started(next_idx, song);
+                let play_task = self.on_song_started(next_idx, song);
+                return Task::batch([fetch_task, play_task]);
             }
-            return Task::none();
+            return fetch_task;
         }
 
-        self.play_song_at_index(next_idx)
+        let play_task = self.play_song_at_index(next_idx);
+        Task::batch([fetch_task, play_task])
     }
 
     pub fn play_prev_song(&mut self) -> Task<Message> {
@@ -594,7 +627,7 @@ impl App {
         self.play_song_at_index(prev_idx)
     }
 
-    pub fn skip_to_next_playable(&mut self, failed_idx: usize) -> Task<Message> {
+    fn skip_to_next_playable(&mut self, failed_idx: usize) -> Task<Message> {
         // Use QueueNavigator's skip_to_next_playable for consistent behavior
         let next_idx = super::queue_navigator::skip_to_next_playable(
             self.library.queue.len(),
@@ -618,8 +651,9 @@ impl App {
 
     pub fn handle_song_finished(&mut self) -> Task<Message> {
         tracing::info!(
-            "handle_song_finished called, play_mode: {:?}",
-            self.core.settings.play_mode
+            "handle_song_finished called, play_mode: {:?}, fm_mode: {}",
+            self.core.settings.play_mode,
+            self.is_fm_mode()
         );
 
         if let (Some(db), Some(song)) = (&self.core.db, &self.library.current_song) {
@@ -636,37 +670,7 @@ impl App {
             player.stop();
         }
 
-        match self.core.settings.play_mode {
-            PlayMode::LoopOne => {
-                if let Some(idx) = self.library.queue_index {
-                    tracing::info!("LoopOne: replaying song at index {}", idx);
-                    return self.play_song_at_index(idx);
-                }
-            }
-            PlayMode::LoopAll | PlayMode::Shuffle => {
-                if let Some(next_idx) = self.calculate_next_index() {
-                    tracing::info!("LoopAll/Shuffle: playing next song at index {}", next_idx);
-                    return self.play_song_at_index(next_idx);
-                } else {
-                    // This shouldn't happen for LoopAll/Shuffle, but handle it gracefully
-                    tracing::warn!("No next index calculated for LoopAll/Shuffle mode");
-                    if !self.library.queue.is_empty() {
-                        return self.play_song_at_index(0);
-                    }
-                }
-            }
-            PlayMode::Sequential => {
-                if let Some(next_idx) = self.calculate_next_index() {
-                    tracing::info!("Sequential: playing next song at index {}", next_idx);
-                    return self.play_song_at_index(next_idx);
-                } else {
-                    tracing::info!("Sequential: queue finished");
-                    self.handle_queue_finished();
-                }
-            }
-        }
-
-        Task::none()
+        self.play_next_song()
     }
 
     fn handle_queue_finished(&mut self) {

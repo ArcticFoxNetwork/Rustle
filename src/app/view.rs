@@ -89,6 +89,7 @@ impl App {
                             false
                         },
                         self.core.audio.as_ref().and_then(|p| p.buffer_progress()),
+                        self.is_fm_mode(),
                     )
                 } else {
                     Space::new().width(0).height(0).into()
@@ -272,6 +273,9 @@ impl App {
                 .map(|p| p.is_loading())
                 .unwrap_or(false);
 
+            let is_fm_mode = self.is_fm_mode();
+            let is_first_song = self.library.queue_index.map(|idx| idx == 0).unwrap_or(true);
+
             let player_bar = components::player_bar::view(
                 self.library.current_song.as_ref(),
                 is_playing,
@@ -282,6 +286,8 @@ impl App {
                 self.core.settings.play_mode,
                 is_buffering,
                 self.core.audio.as_ref().and_then(|p| p.buffer_progress()),
+                is_fm_mode,
+                is_first_song,
             );
 
             // Build content with player bar - always use stack to keep layout consistent
@@ -290,6 +296,7 @@ impl App {
                     &self.library.queue,
                     self.library.queue_index,
                     self.core.locale,
+                    is_fm_mode,
                 );
 
                 // Position queue popup above player bar, aligned to the right

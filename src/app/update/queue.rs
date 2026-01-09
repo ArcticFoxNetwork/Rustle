@@ -30,6 +30,7 @@ impl App {
             }
 
             Message::PlayPlaylist(playlist_id) => {
+                self.exit_fm_mode();
                 let id = *playlist_id;
 
                 // For recently played (id = -1), use the recently_played list
@@ -109,6 +110,7 @@ impl App {
             }
 
             Message::QueueLoaded(songs) => {
+                self.exit_fm_mode();
                 if !songs.is_empty() {
                     if let Some(db) = &self.core.db {
                         let db = db.clone();

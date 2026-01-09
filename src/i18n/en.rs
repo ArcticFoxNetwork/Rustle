@@ -216,7 +216,10 @@ static TRANSLATIONS: Lazy<HashMap<Key, &'static str>> = Lazy::new(|| {
     m.insert(Key::DiscoverHot, "Hot Playlists");
     m.insert(Key::DiscoverSeeAll, "See All");
     m.insert(Key::DiscoverDailyRecommend, "Daily Recommend");
-    m.insert(Key::DiscoverDailyRecommendDesc, "Personalized for you, updated daily at 6:00");
+    m.insert(
+        Key::DiscoverDailyRecommendDesc,
+        "Personalized for you, updated daily at 6:00",
+    );
     m.insert(Key::DiscoverDailyRecommendCreator, "NetEase Music");
     m.insert(Key::DiscoverLoadFailed, "Failed to load daily recommend");
     m.insert(Key::DiscoverPlaylistLoadFailed, "Failed to load playlist");

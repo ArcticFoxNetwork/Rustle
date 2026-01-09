@@ -93,6 +93,10 @@ impl App {
             }
 
             Message::Navigate(nav) => {
+                if *nav == NavItem::Radio {
+                    return Some(Task::done(Message::StartPersonalFm));
+                }
+
                 self.ui.active_nav = nav.clone();
                 self.ui.playlist_page.current = None;
                 self.ui.playlist_page.viewing_recently_played = false;

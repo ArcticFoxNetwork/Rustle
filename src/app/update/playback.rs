@@ -101,6 +101,12 @@ impl App {
             Message::PlaybackTick => Some(self.handle_playback_tick()),
 
             Message::CyclePlayMode => {
+                if self.is_fm_mode() {
+                    return Some(Task::done(Message::ShowErrorToast(
+                        "私人FM模式下无法更改播放模式".to_string(),
+                    )));
+                }
+
                 self.core.settings.play_mode = self.core.settings.play_mode.next();
                 let _ = self.core.settings.save();
                 tracing::info!(

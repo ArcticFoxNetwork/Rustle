@@ -49,13 +49,18 @@ pub fn view(
     queue: &[DbSong],
     queue_index: Option<usize>,
     locale: Locale,
+    is_fm_mode: bool,
 ) -> Element<'static, Message> {
+    let header_title = if is_fm_mode {
+        "私人FM".to_string()
+    } else {
+        locale.get(Key::QueueTitle).to_string()
+    };
+
     let header = row![
-        text(locale.get(Key::QueueTitle).to_string())
-            .size(16)
-            .style(|theme| text::Style {
-                color: Some(theme::text_primary(theme))
-            }),
+        text(header_title).size(16).style(move |theme| text::Style {
+            color: Some(theme::text_primary(theme))
+        }),
         Space::new().width(Fill),
         text(format!("{}", queue.len()))
             .size(12)

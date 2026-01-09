@@ -127,6 +127,7 @@ pub struct LibraryState {
     pub playback_state: Option<DbPlaybackState>,
     pub queue: Vec<DbSong>,
     pub queue_index: Option<usize>,
+    pub personal_fm_mode: bool,
 
     // Queue navigation - Single Source of Truth for index calculations
     pub shuffle_cache: crate::app::update::queue_navigator::ShuffleCache,
@@ -165,6 +166,7 @@ impl Default for LibraryState {
             playback_state: None,
             queue: Vec::new(),
             queue_index: None,
+            personal_fm_mode: false,
             shuffle_cache: Default::default(),
             preload_manager: Default::default(),
             pending_resolution_idx: None,

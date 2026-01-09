@@ -25,6 +25,7 @@ use crate::ui::widgets::{self, ControlSize, PlayModeButtonSize, SliderSize};
 /// `power_saving_mode`: When true, use simple text rendering instead of SDF engine
 /// `is_liked`: Whether the current song is in user's favorites
 /// `download_progress`: Download progress for streaming songs (0.0 to 1.0)
+/// `is_fm_mode`: Whether in Personal FM mode
 pub fn view<'a>(
     song: &'a DbSong,
     is_playing: bool,
@@ -41,6 +42,7 @@ pub fn view<'a>(
     power_saving_mode: bool,
     is_liked: bool,
     download_progress: Option<f32>,
+    is_fm_mode: bool,
 ) -> Element<'a, Message> {
     let left_panel = build_left_panel(
         song,
@@ -50,6 +52,7 @@ pub fn view<'a>(
         play_mode,
         is_liked,
         download_progress,
+        is_fm_mode,
     );
     let right_panel = if power_saving_mode {
         // Power saving mode: use simple text rendering
@@ -268,6 +271,7 @@ fn build_left_panel<'a>(
     play_mode: PlayMode,
     is_liked: bool,
     download_progress: Option<f32>,
+    is_fm_mode: bool,
 ) -> Element<'a, Message> {
     // Format time as mm:ss
     let format_time = |secs: f32| -> String {
@@ -309,7 +313,8 @@ fn build_left_panel<'a>(
     let playback_controls = widgets::playback_controls::view(is_playing, ControlSize::Large);
 
     // Play mode button - using unified widget
-    let play_mode_btn = widgets::play_mode_button::view(play_mode, PlayModeButtonSize::Large);
+    let play_mode_btn =
+        widgets::play_mode_button::view(play_mode, PlayModeButtonSize::Large, is_fm_mode);
 
     // Like button - only for NCM songs (negative ID)
     let like_btn: Element<'a, Message> = if song.id < 0 {

@@ -34,7 +34,7 @@ impl App {
         match message {
             Message::RecommendedPlaylistsLoaded(playlists) => {
                 debug!("Loaded {} recommended playlists", playlists.len());
-                
+
                 let locale = &self.core.locale;
                 let mut all_playlists = vec![SongList {
                     id: 0, // Special ID for daily recommend
@@ -43,7 +43,7 @@ impl App {
                     author: locale.get(Key::DiscoverDailyRecommendDesc).to_string(),
                 }];
                 all_playlists.extend(playlists.clone());
-                
+
                 self.ui.discover.recommended_playlists = all_playlists;
                 self.ui.discover.recommended_loading = false;
 
@@ -136,11 +136,15 @@ impl App {
             Message::PlayDiscoverPlaylist(playlist_id) => {
                 debug!("Playing discover playlist: {}", playlist_id);
                 let playlist_id = *playlist_id;
-                
+
                 // Load and play the playlist
                 if let Some(client) = &self.core.ncm_client {
                     let client = client.clone();
-                    let error_msg = self.core.locale.get(Key::DiscoverPlaylistLoadFailed).to_string();
+                    let error_msg = self
+                        .core
+                        .locale
+                        .get(Key::DiscoverPlaylistLoadFailed)
+                        .to_string();
 
                     if playlist_id == 0 {
                         return Some(Task::perform(
@@ -241,6 +245,41 @@ impl App {
                     return Some(Task::done(Message::LoadMoreHotPlaylists));
                 }
                 Some(Task::none())
+            }
+
+            Message::StartPersonalFm => {
+                debug!("Starting Personal FM");
+
+                self.enter_fm_mode();
+
+                if let Some(client) = &self.core.ncm_client {
+                    let client = client.clone();
+                    let not_logged_in_msg = self.core.locale.get(Key::NotLoggedIn).to_string();
+
+                    return Some(Task::perform(
+                        async move {
+                            match client.client.personal_fm().await {
+                                Ok(songs) if !songs.is_empty() => Some(songs),
+                                Ok(_) => None,
+                                Err(e) => {
+                                    error!("Failed to get personal FM: {}", e);
+                                    None
+                                }
+                            }
+                        },
+                        move |songs_opt| {
+                            if let Some(songs) = songs_opt {
+                                Message::AddNcmPlaylist(songs, true)
+                            } else {
+                                Message::ShowToast(not_logged_in_msg)
+                            }
+                        },
+                    ));
+                } else {
+                    self.exit_fm_mode();
+                    let msg = self.core.locale.get(Key::NotLoggedIn).to_string();
+                    return Some(Task::done(Message::ShowToast(msg)));
+                }
             }
 
             _ => None,

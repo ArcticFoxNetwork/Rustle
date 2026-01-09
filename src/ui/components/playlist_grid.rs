@@ -26,15 +26,10 @@ fn calculate_columns(container_width: f32) -> usize {
 fn daily_recommend_cover<'a>(hover_progress: f32) -> Element<'a, Message> {
     let day = chrono::Local::now().format("%d").to_string();
 
-    container(
-        text(day)
-            .size(56)
-            .color(Color::WHITE)
-            .font(iced::Font {
-                weight: iced::font::Weight::Bold,
-                ..Default::default()
-            }),
-    )
+    container(text(day).size(56).color(Color::WHITE).font(iced::Font {
+        weight: iced::font::Weight::Bold,
+        ..Default::default()
+    }))
     .width(CARD_WIDTH)
     .height(CARD_WIDTH)
     .center_x(CARD_WIDTH)

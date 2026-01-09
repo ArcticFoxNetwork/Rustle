@@ -43,25 +43,35 @@ impl ButtonSize {
 }
 
 /// Build the play mode button with tooltip
-pub fn view(play_mode: PlayMode, size: ButtonSize) -> Element<'static, Message> {
-    let play_mode_icon = match play_mode {
-        PlayMode::Sequential => icons::PLAY_SEQUENTIAL,
-        PlayMode::LoopAll => icons::LOOP_ALL,
-        PlayMode::LoopOne => icons::LOOP_ONE,
-        PlayMode::Shuffle => icons::SHUFFLE,
+pub fn view(play_mode: PlayMode, size: ButtonSize, is_fm_mode: bool) -> Element<'static, Message> {
+    let (play_mode_icon, play_mode_tooltip) = if is_fm_mode {
+        (icons::RADIO, "私人FM")
+    } else {
+        let icon = match play_mode {
+            PlayMode::Sequential => icons::PLAY_SEQUENTIAL,
+            PlayMode::LoopAll => icons::LOOP_ALL,
+            PlayMode::LoopOne => icons::LOOP_ONE,
+            PlayMode::Shuffle => icons::SHUFFLE,
+        };
+        (icon, play_mode.display_name())
     };
-    let play_mode_tooltip = play_mode.display_name();
 
     let icon_size = size.icon_size();
     let padding = size.padding();
     let radius = size.radius();
+
+    let on_press = if is_fm_mode {
+        Message::ShowToast("私人FM模式下无法更改播放模式".to_string())
+    } else {
+        Message::CyclePlayMode
+    };
 
     tooltip(
         button(
             svg(svg::Handle::from_memory(play_mode_icon.as_bytes()))
                 .width(icon_size)
                 .height(icon_size)
-                .style(|_theme, _status| svg::Style {
+                .style(move |_theme, _status| svg::Style {
                     color: Some(theme::TEXT_SECONDARY),
                 }),
         )
@@ -80,7 +90,7 @@ pub fn view(play_mode: PlayMode, size: ButtonSize) -> Element<'static, Message> 
                 ..Default::default()
             }
         })
-        .on_press(Message::CyclePlayMode),
+        .on_press(on_press),
         text(play_mode_tooltip).size(12),
         tooltip::Position::Top,
     )

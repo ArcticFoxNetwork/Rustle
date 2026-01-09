@@ -471,6 +471,8 @@ pub enum Message {
     SeeAllRecommended,
     /// See all hot playlists
     SeeAllHot,
+    /// Start personal FM playback
+    StartPersonalFm,
 
     // ============ Sidebar Resize ============
     /// Start dragging sidebar resize handle
@@ -835,6 +837,9 @@ impl std::fmt::Debug for Message {
             Self::LoadMoreHotPlaylists => simple!("LoadMoreHotPlaylists"),
             Self::SeeAllRecommended => simple!("SeeAllRecommended"),
             Self::SeeAllHot => simple!("SeeAllHot"),
+
+            // Personal FM
+            Self::StartPersonalFm => simple!("StartPersonalFm"),
 
             // Sidebar resize
             Self::SidebarResizeStart => simple!("SidebarResizeStart"),

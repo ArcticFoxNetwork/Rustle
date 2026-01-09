@@ -873,6 +873,20 @@ impl App {
                     })
                     .collect();
 
+                if self.is_fm_mode() && !*play_now {
+                    debug!("FM mode: appending {} songs to queue", db_songs.len());
+                    self.library.queue.extend(db_songs.clone());
+
+                    if let Some(db) = &self.core.db {
+                        let db = db.clone();
+                        let queue_clone = self.library.queue.clone();
+                        tokio::spawn(async move {
+                            let _ = db.save_queue_with_songs(&queue_clone, None).await;
+                        });
+                    }
+                    return Some(Task::none());
+                }
+
                 if *play_now {
                     self.library.queue = db_songs.clone();
                     self.library.queue_index = Some(0);
@@ -952,8 +966,12 @@ impl App {
                 let (name, owner, cover_url) = if is_daily_recommend {
                     let locale = &self.core.locale;
                     (
-                        locale.get(crate::i18n::Key::DiscoverDailyRecommend).to_string(),
-                        locale.get(crate::i18n::Key::DiscoverDailyRecommendCreator).to_string(),
+                        locale
+                            .get(crate::i18n::Key::DiscoverDailyRecommend)
+                            .to_string(),
+                        locale
+                            .get(crate::i18n::Key::DiscoverDailyRecommendCreator)
+                            .to_string(),
                         String::new(),
                     )
                 } else {
@@ -967,7 +985,11 @@ impl App {
                 };
 
                 // Create skeleton PlaylistView immediately for instant UI response
-                let internal_id = if is_daily_recommend { 0 } else { -(playlist_id as i64) };
+                let internal_id = if is_daily_recommend {
+                    0
+                } else {
+                    -(playlist_id as i64)
+                };
 
                 let skeleton_view = crate::ui::pages::PlaylistView {
                     id: internal_id,
@@ -1036,9 +1058,15 @@ impl App {
                     let client = client.clone();
                     if is_daily_recommend {
                         let locale = &self.core.locale;
-                        let name = locale.get(crate::i18n::Key::DiscoverDailyRecommend).to_string();
-                        let desc = locale.get(crate::i18n::Key::DiscoverDailyRecommendDesc).to_string();
-                        let creator = locale.get(crate::i18n::Key::DiscoverDailyRecommendCreator).to_string();
+                        let name = locale
+                            .get(crate::i18n::Key::DiscoverDailyRecommend)
+                            .to_string();
+                        let desc = locale
+                            .get(crate::i18n::Key::DiscoverDailyRecommendDesc)
+                            .to_string();
+                        let creator = locale
+                            .get(crate::i18n::Key::DiscoverDailyRecommendCreator)
+                            .to_string();
                         Task::perform(
                             async move {
                                 match client.client.recommend_songs().await {

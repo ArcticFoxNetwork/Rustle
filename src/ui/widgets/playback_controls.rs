@@ -136,24 +136,32 @@ pub fn play_button_with_buffering(
 }
 
 /// Build the previous song button
-pub fn prev_button(size: ControlSize) -> Element<'static, Message> {
+pub fn prev_button(size: ControlSize, disabled: bool) -> Element<'static, Message> {
     let icon_size = size.skip_icon_size();
     let padding = size.skip_button_padding();
     let radius = size.skip_button_radius();
 
-    button(
+    let btn = button(
         svg(svg::Handle::from_memory(icons::SKIP_PREV.as_bytes()))
             .width(icon_size)
             .height(icon_size)
-            .style(|_theme, _status| svg::Style {
-                color: Some(theme::TEXT_SECONDARY),
+            .style(move |_theme, _status| svg::Style {
+                color: Some(if disabled {
+                    theme::TEXT_DISABLED
+                } else {
+                    theme::TEXT_SECONDARY
+                }),
             }),
     )
     .padding(padding)
     .style(move |theme, status| {
-        let bg = match status {
-            button::Status::Hovered => crate::ui::theme::hover_bg(theme),
-            _ => Color::TRANSPARENT,
+        let bg = if disabled {
+            Color::TRANSPARENT
+        } else {
+            match status {
+                button::Status::Hovered => crate::ui::theme::hover_bg(theme),
+                _ => Color::TRANSPARENT,
+            }
         };
         button::Style {
             background: Some(iced::Background::Color(bg)),
@@ -163,9 +171,13 @@ pub fn prev_button(size: ControlSize) -> Element<'static, Message> {
             },
             ..Default::default()
         }
-    })
-    .on_press(Message::PrevSong)
-    .into()
+    });
+
+    if disabled {
+        btn.into()
+    } else {
+        btn.on_press(Message::PrevSong).into()
+    }
 }
 
 /// Build the next song button
@@ -203,7 +215,7 @@ pub fn next_button(size: ControlSize) -> Element<'static, Message> {
 
 /// Build the complete playback controls row (prev, play, next)
 pub fn view(is_playing: bool, size: ControlSize) -> Element<'static, Message> {
-    view_with_buffering(is_playing, false, size)
+    view_with_buffering(is_playing, false, size, false, false)
 }
 
 /// Build the complete playback controls row with buffering state
@@ -211,11 +223,14 @@ pub fn view_with_buffering(
     is_playing: bool,
     is_buffering: bool,
     size: ControlSize,
+    is_fm_mode: bool,
+    is_first_song: bool,
 ) -> Element<'static, Message> {
     let spacing = size.spacing();
+    let prev_disabled = is_fm_mode && is_first_song;
 
     row![
-        prev_button(size),
+        prev_button(size, prev_disabled),
         Space::new().width(spacing),
         play_button_with_buffering(is_playing, is_buffering, size),
         Space::new().width(spacing),
