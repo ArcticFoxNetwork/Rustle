@@ -144,14 +144,6 @@ impl App {
                 Some(Task::none())
             }
 
-            Message::PlaylistCreated(id) => {
-                tracing::info!("Playlist created with id: {}", id);
-                if let Some(playlist) = &mut self.ui.importing_playlist {
-                    playlist.playlist_id = Some(*id);
-                }
-                Some(Task::none())
-            }
-
             _ => None,
         }
     }

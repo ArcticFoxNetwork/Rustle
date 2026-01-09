@@ -191,6 +191,11 @@ static TRANSLATIONS: Lazy<HashMap<Key, &'static str>> = Lazy::new(|| {
     m.insert(Key::DiscoverRecommended, "推荐歌单");
     m.insert(Key::DiscoverHot, "热门歌单");
     m.insert(Key::DiscoverSeeAll, "查看全部");
+    m.insert(Key::DiscoverDailyRecommend, "每日推荐");
+    m.insert(Key::DiscoverDailyRecommendDesc, "根据你的口味生成，每天6:00更新");
+    m.insert(Key::DiscoverDailyRecommendCreator, "网易云音乐");
+    m.insert(Key::DiscoverLoadFailed, "无法加载每日推荐");
+    m.insert(Key::DiscoverPlaylistLoadFailed, "无法加载歌单");
 
     // Common UI
     m.insert(Key::Loading, "加载中...");

@@ -422,7 +422,6 @@ impl MusicApi {
         to_song_list(result, Parse::Rmd)
     }
 
-    #[allow(dead_code)]
     pub async fn recommend_songs(&self) -> Result<Vec<SongInfo>> {
         let path = "/weapi/v2/discovery/recommend/songs";
         let mut params = HashMap::new();

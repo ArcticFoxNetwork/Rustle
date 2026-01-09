@@ -147,6 +147,96 @@ pub fn view<'a, Message: Clone + 'a>(
         .into()
 }
 
+/// Create a playlist card with custom cover element
+///
+/// Same as `view` but accepts a custom cover element instead of an image handle.
+pub fn view_with_custom_cover<'a, Message: Clone + 'a>(
+    name: &'a str,
+    author: &'a str,
+    cover: Element<'a, Message>,
+    hover_progress: f32,
+    on_click: Message,
+    on_play: Message,
+    on_hover: Message,
+    on_unhover: Message,
+) -> Element<'a, Message> {
+    // Play button overlay (visible on hover)
+    let play_overlay: Element<'a, Message> = if hover_progress > 0.01 {
+        let opacity = hover_progress;
+        let play_btn = button(
+            container(
+                svg(svg::Handle::from_memory(icons::PLAY.as_bytes()))
+                    .width(24)
+                    .height(24)
+                    .style(move |_theme, _status| svg::Style {
+                        color: Some(Color::from_rgba(1.0, 1.0, 1.0, opacity)),
+                    }),
+            )
+            .width(48)
+            .height(48)
+            .center_x(48)
+            .center_y(48),
+        )
+        .padding(0)
+        .style(move |_theme, status| play_button_style(opacity, status))
+        .on_press(on_play);
+
+        container(play_btn)
+            .width(COVER_SIZE)
+            .height(COVER_SIZE)
+            .center_x(COVER_SIZE)
+            .center_y(COVER_SIZE)
+            .into()
+    } else {
+        Space::new().width(0).height(0).into()
+    };
+
+    // Stack cover and play overlay
+    let cover_with_overlay = iced::widget::stack![cover, play_overlay];
+
+    // Playlist name (truncated)
+    let name_text = text(truncate_text(name, 20))
+        .size(14)
+        .style(|theme| text::Style {
+            color: Some(theme::text_primary(theme)),
+        })
+        .font(iced::Font {
+            weight: MEDIUM_WEIGHT,
+            ..Default::default()
+        });
+
+    // Author name
+    let author_text = text(truncate_text(author, 25))
+        .size(12)
+        .color(theme::TEXT_MUTED);
+
+    // Card content
+    let content = column![
+        cover_with_overlay,
+        Space::new().height(8),
+        name_text,
+        Space::new().height(2),
+        author_text,
+    ]
+    .width(COVER_SIZE)
+    .align_x(Alignment::Start);
+
+    // Wrap in clickable container
+    let card = button(content)
+        .padding(0)
+        .style(|_theme, _status| iced::widget::button::Style {
+            background: None,
+            ..Default::default()
+        })
+        .on_press(on_click);
+
+    // Add hover detection
+    mouse_area(card)
+        .on_enter(on_hover.clone())
+        .on_exit(on_unhover)
+        .into()
+}
+
 /// Truncate text with ellipsis if too long
 fn truncate_text(s: &str, max_chars: usize) -> String {
     if s.chars().count() > max_chars {
@@ -158,7 +248,7 @@ fn truncate_text(s: &str, max_chars: usize) -> String {
 }
 
 /// Cover container style with hover effect
-fn cover_style(hover_progress: f32) -> iced::widget::container::Style {
+pub fn cover_style(hover_progress: f32) -> iced::widget::container::Style {
     let shadow_blur = 16.0 + 8.0 * hover_progress;
     let shadow_alpha = 0.3 + 0.2 * hover_progress;
 
@@ -200,7 +290,7 @@ fn placeholder_style(hover_progress: f32) -> iced::widget::container::Style {
 }
 
 /// Play button style
-fn play_button_style(
+pub fn play_button_style(
     opacity: f32,
     status: iced::widget::button::Status,
 ) -> iced::widget::button::Style {

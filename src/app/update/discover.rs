@@ -9,6 +9,7 @@ use tracing::{debug, error};
 use crate::api::SongList;
 use crate::app::message::Message;
 use crate::app::state::App;
+use crate::i18n::Key;
 
 /// Get a daily seed based on current date
 fn get_daily_seed() -> u64 {
@@ -33,7 +34,17 @@ impl App {
         match message {
             Message::RecommendedPlaylistsLoaded(playlists) => {
                 debug!("Loaded {} recommended playlists", playlists.len());
-                self.ui.discover.recommended_playlists = playlists.clone();
+                
+                let locale = &self.core.locale;
+                let mut all_playlists = vec![SongList {
+                    id: 0, // Special ID for daily recommend
+                    name: locale.get(Key::DiscoverDailyRecommend).to_string(),
+                    cover_img_url: String::new(),
+                    author: locale.get(Key::DiscoverDailyRecommendDesc).to_string(),
+                }];
+                all_playlists.extend(playlists.clone());
+                
+                self.ui.discover.recommended_playlists = all_playlists;
                 self.ui.discover.recommended_loading = false;
 
                 // Pre-populate covers from local cache (sync check) and request GPU allocations
@@ -124,10 +135,34 @@ impl App {
 
             Message::PlayDiscoverPlaylist(playlist_id) => {
                 debug!("Playing discover playlist: {}", playlist_id);
+                let playlist_id = *playlist_id;
+                
                 // Load and play the playlist
                 if let Some(client) = &self.core.ncm_client {
                     let client = client.clone();
-                    let playlist_id = *playlist_id;
+                    let error_msg = self.core.locale.get(Key::DiscoverPlaylistLoadFailed).to_string();
+
+                    if playlist_id == 0 {
+                        return Some(Task::perform(
+                            async move {
+                                match client.client.recommend_songs().await {
+                                    Ok(songs) if !songs.is_empty() => Some(songs),
+                                    Ok(_) => None,
+                                    Err(e) => {
+                                        error!("Failed to get daily recommend: {}", e);
+                                        None
+                                    }
+                                }
+                            },
+                            move |songs_opt| {
+                                if let Some(songs) = songs_opt {
+                                    Message::AddNcmPlaylist(songs, true)
+                                } else {
+                                    Message::ShowToast(error_msg)
+                                }
+                            },
+                        ));
+                    }
 
                     return Some(Task::perform(
                         async move {
@@ -145,11 +180,11 @@ impl App {
                                 }
                             }
                         },
-                        |songs_opt| {
+                        move |songs_opt| {
                             if let Some(songs) = songs_opt {
                                 Message::AddNcmPlaylist(songs, true)
                             } else {
-                                Message::ShowToast("无法加载歌单".to_string())
+                                Message::ShowToast(error_msg)
                             }
                         },
                     ));

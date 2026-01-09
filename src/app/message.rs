@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use iced::keyboard::{Key, Modifiers};
 
-use crate::api::{BannersInfo, LoginInfo, NcmClient, PlayListDetail, SongInfo, SongList, TopList};
+use crate::api::{BannersInfo, LoginInfo, PlayListDetail, SongInfo, SongList};
 use crate::app::state::UserInfo;
 use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong};
 use crate::features::Action;
@@ -168,8 +168,6 @@ pub enum Message {
     HideToast,
     /// Clear importing playlist from sidebar
     ClearImportingPlaylist,
-    /// Playlist created in database
-    PlaylistCreated(i64),
 
     // ============ Playlist page ============
     /// Navigate to playlist detail page
@@ -367,8 +365,6 @@ pub enum Message {
     WindowOperationComplete,
 
     // ============ NCM Login ============
-    /// Initialize NCM client
-    NcmClientReady(NcmClient),
     /// Try to auto-login with saved cookies
     TryAutoLogin(u8),
     /// Auto login result
@@ -407,8 +403,6 @@ pub enum Message {
     CarouselTick,
     /// Top picks (trending playlists) loaded
     TopPicksLoaded(Vec<SongList>),
-    /// Toplist (charts) loaded
-    ToplistLoaded(Vec<TopList>),
     /// Trending songs (飙升榜) loaded
     TrendingSongsLoaded(Vec<SongInfo>),
     /// Navigate to trending songs page
@@ -429,14 +423,10 @@ pub enum Message {
     OpenNcmPlaylist(u64),
     /// Play resolved NCM song (with real DB ID)
     PlayResolvedNcmSong(DbSong),
-    /// Queue song upserted to DB (index, updated_song)
-    QueueSongUpserted(usize, DbSong),
     /// Toggle favorite status for banner item
     ToggleBannerFavorite(usize),
 
     // ============ Cloud Playlist ============
-    /// Cloud playlist songs loaded
-    CloudPlaylistLoaded(Vec<SongInfo>),
     /// User playlists loaded
     UserPlaylistsLoaded(Vec<SongList>),
     /// NCM playlist detail loaded
@@ -566,9 +556,7 @@ impl std::fmt::Debug for Message {
             Self::RecentlyPlayedLoaded(v) => simple!("RecentlyPlayedLoaded", "{} songs", v.len()),
             Self::BannersLoaded(v) => simple!("BannersLoaded", "{} banners", v.len()),
             Self::TopPicksLoaded(v) => simple!("TopPicksLoaded", "{} picks", v.len()),
-            Self::ToplistLoaded(v) => simple!("ToplistLoaded", "{} lists", v.len()),
             Self::TrendingSongsLoaded(v) => simple!("TrendingSongsLoaded", "{} songs", v.len()),
-            Self::CloudPlaylistLoaded(v) => simple!("CloudPlaylistLoaded", "{} songs", v.len()),
             Self::UserPlaylistsLoaded(v) => simple!("UserPlaylistsLoaded", "{} playlists", v.len()),
             Self::NcmPlaylistSongCoversBatchLoaded(v) => {
                 simple!("NcmPlaylistSongCoversBatchLoaded", "{} covers", v.len())
@@ -602,7 +590,6 @@ impl std::fmt::Debug for Message {
             Self::PlayNcmSong(s) => simple!("PlayNcmSong", "id={}", s.id),
             Self::PlayNcmUrl(s, _, _) => simple!("PlayNcmUrl", "id={}", s.id),
             Self::PlayResolvedNcmSong(s) => simple!("PlayResolvedNcmSong", "id={}", s.id),
-            Self::QueueSongUpserted(i, s) => simple!("QueueSongUpserted", "idx={}, id={}", i, s.id),
 
             // Navigation
             Self::Navigate(nav) => simple!("Navigate", "{:?}", nav),
@@ -671,7 +658,6 @@ impl std::fmt::Debug for Message {
             Self::ShowErrorToast(_) => simple!("ShowErrorToast"),
             Self::HideToast => simple!("HideToast"),
             Self::ClearImportingPlaylist => simple!("ClearImportingPlaylist"),
-            Self::PlaylistCreated(id) => simple!("PlaylistCreated", "{}", id),
 
             // Playlist page
             Self::OpenPlaylist(id) => simple!("OpenPlaylist", "{}", id),
@@ -801,7 +787,6 @@ impl std::fmt::Debug for Message {
             Self::WindowOperationComplete => simple!("WindowOperationComplete"),
 
             // NCM Login
-            Self::NcmClientReady(_) => simple!("NcmClientReady"),
             Self::TryAutoLogin(retry) => simple!("TryAutoLogin", "retry={}", retry),
             Self::RequestQrCode => simple!("RequestQrCode"),
             Self::QrCodeReady(_, _) => simple!("QrCodeReady"),

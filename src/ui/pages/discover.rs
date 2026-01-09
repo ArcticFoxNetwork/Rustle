@@ -34,7 +34,7 @@ fn view_overview<'a>(
     let mut content_items: Vec<Element<'a, Message>> = Vec::new();
     let content_width = state.content_width;
 
-    // Recommended playlists section (only for logged-in users)
+    // Recommended playlists section
     if is_logged_in && !state.recommended_playlists.is_empty() {
         content_items.push(section_header::view(
             locale.get(Key::DiscoverRecommended),
@@ -52,7 +52,7 @@ fn view_overview<'a>(
         content_items.push(Space::new().height(40).into());
     }
 
-    // Hot playlists section (for all users)
+    // Hot playlists section
     if !state.hot_playlists.is_empty() {
         content_items.push(section_header::view(
             locale.get(Key::DiscoverHot),

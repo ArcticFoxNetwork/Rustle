@@ -220,6 +220,11 @@ pub enum Key {
     DiscoverRecommended,
     DiscoverHot,
     DiscoverSeeAll,
+    DiscoverDailyRecommend,
+    DiscoverDailyRecommendDesc,
+    DiscoverDailyRecommendCreator,
+    DiscoverLoadFailed,
+    DiscoverPlaylistLoadFailed,
 
     // Common UI
     Loading,
