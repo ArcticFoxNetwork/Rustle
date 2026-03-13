@@ -12,7 +12,7 @@ use std::sync::Arc;
 use crate::i18n::{Language, Locale};
 pub use message::{IconId, Message, SettingsSection, SidebarId};
 pub use state::{
-    App, CoreState, DiscoverPageState, DiscoverViewMode, HomePageState, LibraryState, UiState,
+    App, CoreState, DiscoverPageState, DiscoverViewMode, HomePageState, LibraryState, SearchPageState, SearchTab, UiState,
     UserInfo,
 };
 

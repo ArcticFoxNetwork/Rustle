@@ -3,7 +3,7 @@
 //! Displays personalized recommendations (for logged-in users) and
 //! hot playlists in a modern grid layout.
 
-use iced::widget::{Space, button, column, container, scrollable, text};
+use iced::widget::{button, column, container, scrollable, text, Space};
 use iced::{Element, Fill, Padding};
 
 use crate::app::{DiscoverPageState, DiscoverViewMode, Message};
@@ -75,8 +75,8 @@ fn view_overview<'a>(
         content_items.push(Space::new().height(100).into());
     }
 
-    // Top padding accounts for global navigation bar height (~48px)
-    let content = column(content_items).padding(Padding::new(32.0).top(56.0));
+    // Main content already receives top spacing from the app shell.
+    let content = column(content_items).padding(32);
 
     let scrollable_content = scrollable(content)
         .width(Fill)
@@ -98,7 +98,6 @@ fn view_all_recommended<'a>(state: &'a DiscoverPageState, locale: Locale) -> Ele
     // Section title only - use global navigation for back
     let header = text(locale.get(Key::DiscoverRecommended)).size(24);
 
-    // Top padding accounts for global navigation bar height (~48px)
     let content = column![
         header,
         Space::new().height(24),
@@ -111,7 +110,7 @@ fn view_all_recommended<'a>(state: &'a DiscoverPageState, locale: Locale) -> Ele
         ),
         Space::new().height(40),
     ]
-    .padding(Padding::new(32.0).top(56.0));
+    .padding(32);
 
     let scrollable_content = scrollable(content)
         .width(Fill)
@@ -174,8 +173,7 @@ fn view_all_hot<'a>(state: &'a DiscoverPageState, locale: Locale) -> Element<'a,
 
     content_items.push(Space::new().height(40).into());
 
-    // Top padding accounts for global navigation bar height (~48px)
-    let content = column(content_items).padding(Padding::new(32.0).top(56.0));
+    let content = column(content_items).padding(32);
 
     let scrollable_content = scrollable(content)
         .width(Fill)

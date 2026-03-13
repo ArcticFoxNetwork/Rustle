@@ -1,7 +1,7 @@
 //! Home page - "Home" view
-//! Main content area with search bar, carousel banner, and trending songs from NCM API
+//! Main content area with carousel banner and trending songs from NCM API
 
-use iced::widget::{Space, column, container, row, scrollable};
+use iced::widget::{column, container, scrollable, Space};
 use iced::{Element, Fill, Padding};
 
 use crate::app::HomePageState;
@@ -12,19 +12,11 @@ use crate::ui::theme;
 
 /// Build the home page view with NCM data
 pub fn view<'a>(
-    search_query: &'a str,
+    _search_query: &'a str,
     home_state: &'a HomePageState,
     locale: Locale,
     is_logged_in: bool,
 ) -> Element<'a, Message> {
-    // Top bar with search
-    let top_bar = row![
-        Space::new().width(Fill),
-        components::search_bar::view(search_query, locale),
-        Space::new().width(Fill),
-    ]
-    .padding(Padding::new(20.0).top(8.0).bottom(16.0));
-
     // Main scrollable content
     let content = column![
         // Carousel banner from NCM API
@@ -49,7 +41,7 @@ pub fn view<'a>(
         ),
         Space::new().height(40),
     ]
-    .padding(Padding::new(24.0).top(0.0));
+    .padding(Padding::new(24.0).top(50.0));
 
     let scrollable_content = scrollable(content)
         .width(Fill)
@@ -58,7 +50,7 @@ pub fn view<'a>(
         .style(theme::dark_scrollable);
 
     // Compose page
-    container(column![top_bar, scrollable_content])
+    container(scrollable_content)
         .width(Fill)
         .height(Fill)
         .style(theme::main_content)

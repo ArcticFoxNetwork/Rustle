@@ -3,7 +3,8 @@
 //! Wraps the local ncm_api module with cookie persistence and QR code login support.
 
 use anyhow::Result;
-use cookie_store::CookieStore;
+use reqwest::cookie::CookieStore as ReqwestCookieStore;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::{fs, io, path::PathBuf};
@@ -35,14 +36,18 @@ pub const BASE_URL_LIST: [&str; 12] = [
     "https://music.163.com/openapi/clientlog",
 ];
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct PersistedCookies {
+    csrf_token: String,
+    cookies: Vec<String>,
+}
+
 /// NCM API client with built-in quality settings
 #[derive(Clone)]
 pub struct NcmClient {
     pub client: MusicApi,
     /// 音质设置 (0=128k, 1=192k, 2=320k, 3=SQ, 4=Hi-Res)
     quality: Arc<AtomicU32>,
-    /// Cookie 持久化存储
-    cookie_store: Arc<parking_lot::RwLock<CookieStore>>,
 }
 
 impl std::fmt::Debug for NcmClient {
@@ -58,7 +63,6 @@ impl NcmClient {
         Self {
             client: MusicApi::new(MAX_CONS),
             quality: Arc::new(AtomicU32::new(DEFAULT_QUALITY)),
-            cookie_store: Arc::new(parking_lot::RwLock::new(CookieStore::default())),
         }
     }
 
@@ -73,29 +77,23 @@ impl NcmClient {
         client
     }
 
-    pub fn from_cookie_jar(
-        cookie_jar: Arc<CookieJar>,
-        cookie_store: CookieStore,
-        csrf_token: String,
-    ) -> Self {
+    pub fn from_cookie_jar(cookie_jar: Arc<CookieJar>, csrf_token: String) -> Self {
         let client = MusicApi::from_cookie_jar(cookie_jar, MAX_CONS);
         // Set CSRF token
         client.set_csrf(csrf_token);
         Self {
             client,
             quality: Arc::new(AtomicU32::new(DEFAULT_QUALITY)),
-            cookie_store: Arc::new(parking_lot::RwLock::new(cookie_store)),
         }
     }
 
     /// 带代理从 cookie jar 创建客户端
     pub fn from_cookie_jar_with_proxy(
         cookie_jar: Arc<CookieJar>,
-        cookie_store: CookieStore,
         csrf_token: String,
         proxy_url: Option<String>,
     ) -> Self {
-        let mut client = Self::from_cookie_jar(cookie_jar, cookie_store, csrf_token);
+        let mut client = Self::from_cookie_jar(cookie_jar, csrf_token);
         if let Some(url) = proxy_url {
             if let Err(e) = client.set_proxy(url) {
                 tracing::warn!("Failed to set proxy: {}", e);
@@ -159,46 +157,41 @@ impl NcmClient {
     }
 
     /// 从文件加载 cookie
-    pub fn load_cookie_jar_from_file() -> Option<(Arc<CookieJar>, CookieStore, String)> {
+    pub fn load_cookie_jar_from_file() -> Option<(Arc<CookieJar>, String)> {
         match fs::File::open(Self::cookie_file_path()) {
             Err(err) => match err.kind() {
                 io::ErrorKind::NotFound => (),
                 other => error!("{:?}", other),
             },
-            Ok(file) => match cookie_store::serde::json::load(io::BufReader::new(file)) {
-                Err(err) => error!("{:?}", err),
-                Ok(cookie_store) => {
-                    let cookie_jar = Arc::new(CookieJar::default());
-                    let mut csrf_token = String::new();
+            Ok(file) => {
+                let persisted: PersistedCookies =
+                    match serde_json::from_reader(io::BufReader::new(file)) {
+                        Ok(data) => data,
+                        Err(err) => {
+                            error!("{:?}", err);
+                            return None;
+                        }
+                    };
 
-                    // Add required cookies first
-                    let base_url: reqwest::Url = "https://music.163.com/".parse().unwrap();
-                    cookie_jar.add_cookie_str("os=pc; Domain=music.163.com; Path=/", &base_url);
-                    cookie_jar.add_cookie_str(
-                        "appver=2.7.1.198277; Domain=music.163.com; Path=/",
-                        &base_url,
-                    );
+                let cookie_jar = Arc::new(CookieJar::default());
 
-                    // Add cookies to reqwest jar
+                // Add required cookies first
+                let base_url: reqwest::Url = "https://music.163.com/".parse().unwrap();
+                cookie_jar.add_cookie_str("os=pc; Domain=music.163.com; Path=/", &base_url);
+                cookie_jar.add_cookie_str(
+                    "appver=2.7.1.198277; Domain=music.163.com; Path=/",
+                    &base_url,
+                );
+
+                for raw_cookie in persisted.cookies {
                     for base_url in BASE_URL_LIST {
                         let url: reqwest::Url = base_url.parse().unwrap();
-                        for c in cookie_store.matches(&url) {
-                            // Extract CSRF token
-                            if c.name() == "__csrf" {
-                                csrf_token = c.value().to_string();
-                            }
-                            let cookie_str = format!(
-                                "{}={}; Domain=music.163.com; Path={}",
-                                c.name(),
-                                c.value(),
-                                c.path().unwrap_or("/")
-                            );
-                            cookie_jar.add_cookie_str(&cookie_str, &url);
-                        }
+                        cookie_jar.add_cookie_str(&raw_cookie, &url);
                     }
-                    return Some((cookie_jar, cookie_store, csrf_token));
                 }
-            },
+
+                return Some((cookie_jar, persisted.csrf_token));
+            }
         };
         None
     }
@@ -206,9 +199,49 @@ impl NcmClient {
     pub fn save_cookie_jar_to_file(&self) {
         match fs::File::create(Self::cookie_file_path()) {
             Err(err) => error!("{:?}", err),
-            Ok(mut file) => {
-                let cookie_store = self.cookie_store.read();
-                if let Err(e) = cookie_store::serde::json::save(&*cookie_store, &mut file) {
+            Ok(file) => {
+                let mut cookies = Vec::new();
+                for base_url in BASE_URL_LIST {
+                    let url: reqwest::Url = base_url.parse().unwrap();
+                    if let Some(header_value) =
+                        self.client.cookie_jar().and_then(|jar| jar.cookies(&url))
+                    {
+                        if let Ok(cookie_str) = header_value.to_str() {
+                            for pair in cookie_str.split("; ") {
+                                if pair.is_empty() {
+                                    continue;
+                                }
+                                let name = pair.split('=').next().unwrap_or_default();
+                                if name.eq_ignore_ascii_case("os")
+                                    || name.eq_ignore_ascii_case("appver")
+                                {
+                                    continue;
+                                }
+                                let persisted_cookie =
+                                    format!("{}; Domain=music.163.com; Path=/", pair);
+                                if !cookies.contains(&persisted_cookie) {
+                                    cookies.push(persisted_cookie);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                let csrf_token = cookies
+                    .iter()
+                    .find_map(|c| {
+                        c.strip_prefix("__csrf=")
+                            .and_then(|rest| rest.split(';').next())
+                            .map(|s| s.to_string())
+                    })
+                    .unwrap_or_default();
+
+                let persisted = PersistedCookies {
+                    csrf_token,
+                    cookies,
+                };
+
+                if let Err(e) = serde_json::to_writer(file, &persisted) {
                     error!("Failed to save cookies: {:?}", e);
                 }
             }

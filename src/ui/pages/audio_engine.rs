@@ -8,11 +8,11 @@
 //! - Professional spectrum analyzer (FFT-based)
 
 use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke, Text};
-use iced::widget::{Space, column, container, pick_list, row, scrollable, text, toggler};
+use iced::widget::{column, container, pick_list, row, scrollable, text, toggler, Space};
 use iced::{Alignment, Background, Color, Element, Fill, Length, Padding, Point, Theme};
 
 use crate::app::Message;
-use crate::audio::{AudioAnalysisData, analyzer::FFT_SIZE};
+use crate::audio::{analyzer::FFT_SIZE, AudioAnalysisData};
 use crate::features::{EqualizerPreset, Settings};
 use crate::i18n::{Key, Locale};
 use crate::ui::theme;
@@ -61,7 +61,13 @@ pub fn view(
 
     let header_container = container(header)
         .width(Fill)
-        .padding(Padding::new(40.0).right(60.0).bottom(20.0).left(60.0))
+        .padding(
+            Padding::new(40.0)
+                .top(70.0)
+                .right(32.0)
+                .bottom(20.0)
+                .left(32.0),
+        )
         .style(|theme| container::Style {
             background: Some(Background::Color(theme::background(theme))),
             ..Default::default()
@@ -104,7 +110,7 @@ pub fn view(
     let scrollable_content = scrollable(
         container(content)
             .width(Fill)
-            .padding(Padding::new(20.0).right(60.0).bottom(60.0).left(60.0)),
+            .padding(Padding::new(20.0).right(32.0).bottom(60.0).left(32.0)),
     )
     .width(Fill)
     .height(Fill);

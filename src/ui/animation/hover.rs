@@ -5,7 +5,6 @@
 
 use std::hash::Hash;
 use std::time::{Duration, Instant};
-
 use iced_anim::Animated;
 use iced_anim::transition::Easing;
 
@@ -19,7 +18,7 @@ const HOVER_DURATION: Duration = Duration::from_millis(200);
 /// - The previously active item (fading out)
 ///
 /// This reduces memory usage and CPU overhead from O(n) to O(1).
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct HoverAnimations<K: Eq + Hash + Clone> {
     /// Currently hovered item key
     active_key: Option<K>,

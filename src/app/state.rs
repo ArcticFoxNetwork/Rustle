@@ -186,12 +186,16 @@ impl Default for LibraryState {
 pub enum NavigationEntry {
     /// Navigation page (Home, Discover, Radio, Settings, AudioEngine)
     Nav(NavItem),
+    /// Discover page with current sub-view
+    Discover(DiscoverViewMode),
     /// Playlist page with playlist ID
     Playlist(i64),
     /// NCM cloud playlist with playlist ID
     NcmPlaylist(u64),
     /// Recently played
     RecentlyPlayed,
+    /// Search results page with keyword
+    Search(String),
 }
 
 /// Navigation history for back/forward functionality
@@ -269,6 +273,7 @@ pub struct UiState {
     pub dialogs: DialogState,
     pub home: HomePageState,
     pub discover: DiscoverPageState,
+    pub search: SearchPageState,
 
     // Global UI Layout
     pub active_settings_section: SettingsSection,
@@ -394,6 +399,13 @@ impl UiState {
             },
 
             discover: DiscoverPageState::default(),
+
+            search: SearchPageState {
+                scroll_state: std::rc::Rc::new(std::cell::RefCell::new(
+                    crate::ui::widgets::VirtualListState::default(),
+                )),
+                ..Default::default()
+            },
         }
     }
 
@@ -413,6 +425,8 @@ impl UiState {
             || self.home.carousel_animation.is_animating(_now)
             || self.home.song_hover_animations.is_animating()
             || self.discover.card_animations.is_animating()
+            || self.search.song_animations.is_animating()
+            || self.search.card_animations.is_animating()
     }
 
     /// Clean up completed animations to prevent memory leaks
@@ -429,6 +443,8 @@ impl UiState {
         self.dialogs.delete_animation.tick(now);
         self.home.song_hover_animations.tick(now);
         self.discover.card_animations.tick(now);
+        self.search.song_animations.tick(now);
+        self.search.card_animations.tick(now);
 
         // Clean up completed fade-out animations
         self.sidebar_animations.cleanup_completed();
@@ -436,6 +452,8 @@ impl UiState {
         self.playlist_page.icon_animations.cleanup_completed();
         self.home.song_hover_animations.cleanup_completed();
         self.discover.card_animations.cleanup_completed();
+        self.search.song_animations.cleanup_completed();
+        self.search.card_animations.cleanup_completed();
     }
 
     /// Clear all playlist-related animations when navigating away
@@ -537,6 +555,74 @@ pub enum DiscoverViewMode {
     AllRecommended,
     /// Full view of hot playlists with infinite scroll
     AllHot,
+}
+
+/// Search tab types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SearchTab {
+    #[default]
+    Songs,
+    Artists,
+    Albums,
+    Playlists,
+}
+
+impl SearchTab {
+    /// Get the NCM API search type code
+    pub fn to_search_type(&self) -> crate::api::ncm_api::SearchType {
+        match self {
+            SearchTab::Songs => crate::api::ncm_api::SearchType::Songs,
+            SearchTab::Artists => crate::api::ncm_api::SearchType::Artists,
+            SearchTab::Albums => crate::api::ncm_api::SearchType::Albums,
+            SearchTab::Playlists => crate::api::ncm_api::SearchType::Playlists,
+        }
+    }
+}
+
+/// Search page state
+pub struct SearchPageState {
+    /// Current search keyword
+    pub keyword: String,
+    /// Active search tab
+    pub active_tab: SearchTab,
+    /// Song search results
+    pub songs: Vec<SongInfo>,
+    /// Album search results
+    pub albums: Vec<SongList>,
+    /// Playlist search results
+    pub playlists: Vec<SongList>,
+    /// Total count for pagination
+    pub total_count: u32,
+    /// Current page (0-indexed)
+    pub current_page: u32,
+    /// Loading state
+    pub loading: bool,
+    /// Virtual list scroll state for efficient rendering of search results
+    pub scroll_state: std::rc::Rc<std::cell::RefCell<crate::ui::widgets::VirtualListState>>,
+    /// Hover animations for song list
+    pub song_animations: HoverAnimations<u64>,
+    /// Hover animations for grid cards
+    pub card_animations: HoverAnimations<u64>,
+}
+
+impl Default for SearchPageState {
+    fn default() -> Self {
+        Self {
+            keyword: String::new(),
+            active_tab: SearchTab::default(),
+            songs: Vec::new(),
+            albums: Vec::new(),
+            playlists: Vec::new(),
+            total_count: 0,
+            current_page: 0,
+            loading: false,
+            scroll_state: std::rc::Rc::new(std::cell::RefCell::new(
+                crate::ui::widgets::VirtualListState::default(),
+            )),
+            song_animations: Default::default(),
+            card_animations: Default::default(),
+        }
+    }
 }
 
 /// Discover page state for browsing playlists

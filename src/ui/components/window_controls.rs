@@ -1,19 +1,24 @@
 //! Window control buttons and navigation bar
-//! Positioned at top of the application with navigation on left and controls on right
+//! Positioned at top of the application with navigation on left, search in center, and controls on right
 
 use iced::border::Radius;
-use iced::widget::{Space, button, container, row, svg, tooltip};
+use iced::widget::{Space, button, container, row, svg, text_input, tooltip};
 use iced::{Alignment, Element, Fill, Padding};
 
 use crate::app::Message;
 use crate::i18n::{Key, Locale};
 use crate::ui::theme;
 
-/// Build the complete top bar with navigation buttons on left and window controls on right
-pub fn view(locale: Locale, can_go_back: bool, can_go_forward: bool) -> Element<'static, Message> {
-    let button_size = 32;
-    let icon_size = 14;
-    let nav_icon_size = 16;
+/// Build the complete top bar with navigation buttons on left, search bar in center, and window controls on right
+pub fn view<'a>(
+    locale: Locale,
+    can_go_back: bool,
+    can_go_forward: bool,
+    search_query: &'a str,
+) -> Element<'a, Message> {
+    let button_size = 36;
+    let icon_size = 16;
+    let nav_icon_size = 18;
 
     // Navigation buttons (left side)
     let back_btn = tooltip(
@@ -31,7 +36,7 @@ pub fn view(locale: Locale, can_go_back: bool, can_go_forward: bool) -> Element<
         )
         .width(button_size)
         .height(button_size)
-        .style(move |theme, status| nav_button_style(theme, status, can_go_back,false))
+        .style(move |theme, status| nav_button_style(theme, status, can_go_back, false))
         .on_press_maybe(if can_go_back {
             Some(Message::NavigateBack)
         } else {
@@ -56,7 +61,7 @@ pub fn view(locale: Locale, can_go_back: bool, can_go_forward: bool) -> Element<
         )
         .width(button_size)
         .height(button_size)
-        .style(move |theme, status| nav_button_style(theme, status, can_go_forward,true))
+        .style(move |theme, status| nav_button_style(theme, status, can_go_forward, true))
         .on_press_maybe(if can_go_forward {
             Some(Message::NavigateForward)
         } else {
@@ -83,7 +88,7 @@ pub fn view(locale: Locale, can_go_back: bool, can_go_forward: bool) -> Element<
     .style(nav_group_container);
 
     // Add left margin to move buttons away from edge
-    let nav_buttons = container(nav_group).padding(Padding::new(8.0).left(16.0));
+    let nav_buttons = container(nav_group).padding(Padding::new(12.0).left(16.0));
 
     // Window control buttons (right side)
     let settings_btn = tooltip(
@@ -159,20 +164,77 @@ pub fn view(locale: Locale, can_go_back: bool, can_go_forward: bool) -> Element<
     let window_controls = container(
         row![
             settings_btn,
-            Space::new().width(4),
+            Space::new().width(6),
             minimize_btn,
-            Space::new().width(4),
+            Space::new().width(6),
             maximize_btn,
-            Space::new().width(4),
+            Space::new().width(6),
             close_btn,
         ]
         .align_y(Alignment::Center),
     )
-    .padding(Padding::new(8.0));
+    .padding(Padding::new(12.0));
 
-    // Complete top bar layout
-    row![nav_buttons, Space::new().width(Fill), window_controls,]
-        .align_y(Alignment::Center)
+    // Search bar (left, after nav buttons)
+    let search_bar = search_bar_view(search_query, locale);
+
+    // Complete top bar layout: nav + search on left, window controls on right
+    row![
+        nav_buttons,
+        Space::new().width(16),
+        search_bar,
+        Space::new().width(Fill),
+        window_controls,
+    ]
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// Build the search bar component for the top bar
+fn search_bar_view(search_query: &str, locale: Locale) -> Element<'_, Message> {
+    let search_icon = svg(svg::Handle::from_memory(
+        crate::ui::icons::SEARCH.as_bytes(),
+    ))
+    .width(16)
+    .height(16)
+    .style(|_theme, _status| svg::Style {
+        color: Some(theme::TEXT_MUTED),
+    });
+
+    let input = text_input(locale.get(Key::SearchPlaceholder), search_query)
+        .on_input(Message::SearchChanged)
+        .on_submit(Message::SearchSubmit)
+        .padding(Padding::new(8.0).left(0.0))
+        .size(13)
+        .style(|theme, _status| iced::widget::text_input::Style {
+            background: iced::Background::Color(iced::Color::TRANSPARENT),
+            border: iced::Border::default(),
+            icon: theme::TEXT_MUTED,
+            placeholder: theme::TEXT_MUTED,
+            value: theme::text_primary(theme),
+            selection: theme::ACCENT_PINK,
+        });
+
+    let content = row![
+        Space::new().width(12),
+        search_icon,
+        Space::new().width(8),
+        input,
+        Space::new().width(12),
+    ]
+    .align_y(Alignment::Center);
+
+    container(content)
+        .width(320)
+        .style(|theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(iced::Color::from_rgba(1.0, 1.0, 1.0, 0.08))),
+            border: iced::Border {
+                radius: 20.0.into(),
+                width: 1.0,
+                color: theme::border_color(theme),
+            },
+            ..Default::default()
+        })
         .into()
 }
 

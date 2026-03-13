@@ -610,6 +610,31 @@ impl MusicApi {
             .await?;
         to_song_info(result, Parse::PersonalFm)
     }
+
+    /// 搜索 - 搜索歌曲、专辑、歌手、歌单
+    /// search_type: 1=songs, 10=albums, 100=artists, 1000=playlists
+    pub async fn search(
+        &self,
+        keywords: &str,
+        search_type: SearchType,
+        limit: u32,
+        offset: u32,
+    ) -> Result<SearchResponse> {
+        let path = "/weapi/cloudsearch/get/web";
+        let mut params = HashMap::new();
+        let limit_str = limit.to_string();
+        let offset_str = offset.to_string();
+        let type_str = search_type.as_str();
+        params.insert("s", keywords);
+        params.insert("type", type_str);
+        params.insert("limit", &limit_str);
+        params.insert("offset", &offset_str);
+        params.insert("total", "true");
+        let result = self
+            .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
+            .await?;
+        to_search_response(result, search_type)
+    }
 }
 
 fn choose_user_agent(ua: &str) -> &str {

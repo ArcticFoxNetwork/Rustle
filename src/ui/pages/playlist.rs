@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use iced::widget::{
-    Space, button, column, container, image, mouse_area, row, svg, text, text_input,
+    button, column, container, image, mouse_area, row, svg, text, text_input, Space,
 };
 use iced::{Alignment, Color, Element, Fill, Padding};
 
@@ -356,7 +356,7 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
     // Header row - align to bottom of cover
     row![cover, Space::new().width(28), info,]
         .align_y(Alignment::End)
-        .padding(Padding::new(36.0).top(48.0).bottom(12.0))
+        .padding(Padding::new(36.0).top(60.0).bottom(12.0))
         .into()
 }
 

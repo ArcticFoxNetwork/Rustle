@@ -23,12 +23,11 @@ impl App {
             Message::TryAutoLogin(retry_count) => {
                 let retry = *retry_count;
                 let proxy_url = self.core.settings.network.proxy_url();
-                if let Some((cookie_jar, cookie_store, csrf_token)) =
+                if let Some((cookie_jar, csrf_token)) =
                     NcmClient::load_cookie_jar_from_file()
                 {
                     let client = NcmClient::from_cookie_jar_with_proxy(
                         cookie_jar,
-                        cookie_store,
                         csrf_token,
                         proxy_url,
                     );

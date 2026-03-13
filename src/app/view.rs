@@ -1,11 +1,11 @@
 // src/app/view.rs
 //! Application view rendering
 
-use iced::widget::{Space, column, container, row, stack};
+use iced::widget::{column, container, row, stack, Space};
 use iced::{Alignment, Element, Fill};
 
-use super::App;
 use super::message::Message;
+use super::App;
 use crate::ui::components::NavItem;
 use crate::ui::{components, pages, theme, widgets};
 
@@ -144,6 +144,8 @@ impl App {
                 current_user_id,
                 current_playing_id,
             )
+        } else if !self.ui.search.keyword.is_empty() {
+            pages::search::view(&self.ui.search, self.core.locale)
         } else {
             match self.ui.active_nav {
                 NavItem::Home => pages::home::view(
@@ -180,11 +182,25 @@ impl App {
             }
         };
 
-        // Top bar with navigation buttons (left) and window controls (right)
+        let needs_top_padding = self.ui.playlist_page.current.is_none()
+            && self.ui.search.keyword.is_empty()
+            && !matches!(self.ui.active_nav, NavItem::Settings | NavItem::AudioEngine);
+
+        let main_content = if needs_top_padding {
+            container(main_content)
+                .padding(iced::Padding::new(0.0).top(70.0))
+                .width(Fill)
+                .height(Fill)
+                .into()
+        } else {
+            main_content
+        };
+
         let top_bar = components::window_controls::view(
             self.core.locale,
             self.ui.nav_history.can_go_back(),
             self.ui.nav_history.can_go_forward(),
+            &self.ui.search_query,
         );
         let controls_overlay = container(top_bar).width(Fill).padding(0);
 

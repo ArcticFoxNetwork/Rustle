@@ -233,13 +233,25 @@ impl App {
 
             Message::SeeAllRecommended => {
                 debug!("See all recommended playlists");
+                self.ui.active_nav = crate::ui::components::NavItem::Discover;
+                self.ui.playlist_page.current = None;
+                self.ui.playlist_page.viewing_recently_played = false;
                 self.ui.discover.view_mode = crate::app::state::DiscoverViewMode::AllRecommended;
+                self.ui.nav_history.push(crate::app::state::NavigationEntry::Discover(
+                    crate::app::state::DiscoverViewMode::AllRecommended,
+                ));
                 Some(Task::none())
             }
 
             Message::SeeAllHot => {
                 debug!("See all hot playlists");
+                self.ui.active_nav = crate::ui::components::NavItem::Discover;
+                self.ui.playlist_page.current = None;
+                self.ui.playlist_page.viewing_recently_played = false;
                 self.ui.discover.view_mode = crate::app::state::DiscoverViewMode::AllHot;
+                self.ui.nav_history.push(crate::app::state::NavigationEntry::Discover(
+                    crate::app::state::DiscoverViewMode::AllHot,
+                ));
                 // Load more if we don't have many yet
                 if self.ui.discover.hot_playlists.len() < 30 && self.ui.discover.hot_has_more {
                     return Some(Task::done(Message::LoadMoreHotPlaylists));

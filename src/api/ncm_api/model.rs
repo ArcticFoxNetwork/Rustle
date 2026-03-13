@@ -809,3 +809,116 @@ impl From<i32> for TargetType {
         }
     }
 }
+
+// ============ Search Types ============
+
+/// Search type codes for NCM API
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchType {
+    Songs = 1,
+    Albums = 10,
+    Artists = 100,
+    Playlists = 1000,
+}
+
+impl SearchType {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            SearchType::Songs => "1",
+            SearchType::Albums => "10",
+            SearchType::Artists => "100",
+            SearchType::Playlists => "1000",
+        }
+    }
+}
+
+/// Search response containing results and counts
+#[derive(Debug, Clone, Default)]
+pub struct SearchResponse {
+    pub songs: Vec<SongInfo>,
+    pub albums: Vec<SongList>,
+    pub playlists: Vec<SongList>,
+    pub song_count: u32,
+    pub album_count: u32,
+    pub playlist_count: u32,
+}
+
+/// Parse search response from JSON
+pub fn to_search_response(json: String, search_type: SearchType) -> Result<SearchResponse> {
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i64 = get_val!(value, "code")?;
+    
+    if code != 200 {
+        return Err(anyhow!("Search API returned code: {}", code));
+    }
+    
+    let unk = "unknown".to_string();
+    let empty_vec = vec![];
+    let mut response = SearchResponse::default();
+    
+    match search_type {
+        SearchType::Songs => {
+            let songs_array: &Vec<Value> = get_val!(value, "result", "songs").unwrap_or(&empty_vec);
+            response.song_count = get_val!(value, "result", "songCount").unwrap_or(0);
+            
+            for v in songs_array.iter() {
+                response.songs.push(SongInfo {
+                    id: get_val!(v, "id")?,
+                    name: get_val!(v, "name")?,
+                    singer: get_val!(@as &Vec<Value>, v, "ar")?
+                        .first()
+                        .map(|v: &Value| get_val!(v, "name").unwrap_or_else(|_| unk.clone()))
+                        .unwrap_or_else(|| unk.clone()),
+                    album: get_val!(v, "al", "name").unwrap_or_else(|_| unk.clone()),
+                    album_id: get_val!(v, "al", "id").unwrap_or(0),
+                    pic_url: get_val!(v, "al", "picUrl").unwrap_or_default(),
+                    duration: get_val!(v, "dt")?,
+                    song_url: String::new(),
+                    copyright: SongCopyright::Unknown,
+                });
+            }
+        }
+        SearchType::Albums => {
+            let albums_array: &Vec<Value> = get_val!(value, "result", "albums").unwrap_or(&empty_vec);
+            response.album_count = get_val!(value, "result", "albumCount").unwrap_or(0);
+            
+            for v in albums_array.iter() {
+                response.albums.push(SongList {
+                    id: get_val!(v, "id")?,
+                    name: get_val!(v, "name")?,
+                    cover_img_url: get_val!(v, "picUrl").unwrap_or_default(),
+                    author: get_val!(v, "artist", "name").unwrap_or_else(|_| unk.clone()),
+                });
+            }
+        }
+        SearchType::Artists => {
+            // Artists are returned as a list, we convert to SongList for consistency
+            let artists_array: &Vec<Value> = get_val!(value, "result", "artists").unwrap_or(&empty_vec);
+            response.album_count = get_val!(value, "result", "artistCount").unwrap_or(0);
+            
+            for v in artists_array.iter() {
+                response.albums.push(SongList {
+                    id: get_val!(v, "id")?,
+                    name: get_val!(v, "name")?,
+                    cover_img_url: get_val!(v, "picUrl").unwrap_or_default(),
+                    author: String::new(), // Artists don't have an author
+                });
+            }
+        }
+        SearchType::Playlists => {
+            let playlists_array: &Vec<Value> = get_val!(value, "result", "playlists").unwrap_or(&empty_vec);
+            response.playlist_count = get_val!(value, "result", "playlistCount").unwrap_or(0);
+            
+            for v in playlists_array.iter() {
+                response.playlists.push(SongList {
+                    id: get_val!(v, "id")?,
+                    name: get_val!(v, "name")?,
+                    cover_img_url: get_val!(v, "coverImgUrl").unwrap_or_default(),
+                    author: get_val!(v, "creator", "nickname").unwrap_or_else(|_| unk.clone()),
+                });
+            }
+        }
+    }
+    
+    Ok(response)
+}

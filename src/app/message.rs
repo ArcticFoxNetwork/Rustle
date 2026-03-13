@@ -26,6 +26,16 @@ pub enum SettingsSection {
     About,
 }
 
+/// Search results payload for async loading
+#[derive(Debug, Clone)]
+pub struct SearchResultsPayload {
+    pub tab: crate::app::state::SearchTab,
+    pub songs: Vec<SongInfo>,
+    pub albums: Vec<SongList>,
+    pub playlists: Vec<SongList>,
+    pub total_count: u32,
+}
+
 /// Application messages
 #[derive(Clone)]
 pub enum Message {
@@ -474,6 +484,26 @@ pub enum Message {
     /// Start personal FM playback
     StartPersonalFm,
 
+    // ============ Search Page ============
+    /// Submit search query (Enter pressed in search bar)
+    SearchSubmit,
+    /// Change search tab
+    SearchTabChanged(crate::app::state::SearchTab),
+    /// Search results loaded
+    SearchResultsLoaded(SearchResultsPayload),
+    /// Search failed
+    SearchFailed(String),
+    /// Change search page (pagination)
+    SearchPageChanged(u32),
+    /// Hover over search result song
+    HoverSearchSong(Option<u64>),
+    /// Hover over search result card (album/playlist)
+    HoverSearchCard(Option<u64>),
+    /// Play search result song
+    PlaySearchSong(SongInfo),
+    /// Open search result album/playlist
+    OpenSearchResult(u64, crate::app::state::SearchTab),
+
     // ============ Sidebar Resize ============
     /// Start dragging sidebar resize handle
     SidebarResizeStart,
@@ -840,6 +870,28 @@ impl std::fmt::Debug for Message {
 
             // Personal FM
             Self::StartPersonalFm => simple!("StartPersonalFm"),
+
+            // Search Page
+            Self::SearchSubmit => simple!("SearchSubmit"),
+            Self::SearchTabChanged(tab) => simple!("SearchTabChanged", "{:?}", tab),
+            Self::SearchResultsLoaded(payload) => {
+                simple!(
+                    "SearchResultsLoaded",
+                    "tab={:?}, songs={}, albums={}, playlists={}",
+                    payload.tab,
+                    payload.songs.len(),
+                    payload.albums.len(),
+                    payload.playlists.len()
+                )
+            }
+            Self::SearchFailed(e) => simple!("SearchFailed", "{}", e),
+            Self::SearchPageChanged(page) => simple!("SearchPageChanged", "{}", page),
+            Self::HoverSearchSong(id) => simple!("HoverSearchSong", "{:?}", id),
+            Self::HoverSearchCard(id) => simple!("HoverSearchCard", "{:?}", id),
+            Self::PlaySearchSong(s) => simple!("PlaySearchSong", "id={}", s.id),
+            Self::OpenSearchResult(id, tab) => {
+                simple!("OpenSearchResult", "id={}, tab={:?}", id, tab)
+            }
 
             // Sidebar resize
             Self::SidebarResizeStart => simple!("SidebarResizeStart"),

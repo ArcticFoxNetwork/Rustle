@@ -5,7 +5,7 @@
 //! Clicking tab scrolls to corresponding section
 
 use iced::widget::{
-    Space, button, column, container, pick_list, row, scrollable, svg, text, text_input, toggler,
+    button, column, container, pick_list, row, scrollable, svg, text, text_input, toggler, Space,
 };
 use iced::{Alignment, Background, Border, Color, Element, Fill, Padding};
 
@@ -39,7 +39,13 @@ pub fn view(
 
     let header_container = container(header)
         .width(Fill)
-        .padding(Padding::new(40.0).right(60.0).bottom(20.0).left(60.0))
+        .padding(
+            Padding::new(40.0)
+                .top(70.0)
+                .right(32.0)
+                .bottom(20.0)
+                .left(32.0),
+        )
         .style(|theme| container::Style {
             background: Some(Background::Color(theme::background(theme))),
             ..Default::default()
@@ -58,7 +64,7 @@ pub fn view(
     let scrollable_content = scrollable(
         container(all_sections)
             .width(Fill)
-            .padding(Padding::new(20.0).right(60.0).bottom(60.0).left(60.0)),
+            .padding(Padding::new(20.0).right(32.0).bottom(60.0).left(32.0)),
     )
     .width(Fill)
     .height(Fill)

@@ -21,6 +21,7 @@ pub fn view(search_query: &str, locale: Locale) -> Element<'_, Message> {
 
     let input = text_input(locale.get(Key::SearchPlaceholder), search_query)
         .on_input(Message::SearchChanged)
+        .on_submit(Message::SearchSubmit)
         .padding(Padding::new(12.0).left(0.0))
         .size(14)
         .style(|theme, _status| iced::widget::text_input::Style {

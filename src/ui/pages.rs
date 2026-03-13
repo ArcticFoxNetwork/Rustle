@@ -6,6 +6,7 @@ pub mod discover;
 pub mod home;
 pub mod lyrics;
 pub mod playlist;
+pub mod search;
 pub mod settings;
 
 pub use lyrics::{LyricLine, LyricWord, find_current_line};

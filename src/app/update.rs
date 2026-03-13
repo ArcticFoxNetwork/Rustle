@@ -16,6 +16,7 @@ mod preload;
 pub mod preload_manager;
 mod queue;
 pub mod queue_navigator;
+mod search;
 mod settings;
 pub mod song_resolver;
 mod tray;
@@ -69,6 +70,9 @@ impl App {
             return task;
         }
         if let Some(task) = self.handle_discover(&message) {
+            return task;
+        }
+        if let Some(task) = self.handle_search(&message) {
             return task;
         }
         if let Some(task) = self.handle_preload(&message) {

@@ -53,7 +53,7 @@ impl App {
                 }
 
                 // For NCM playlists (negative ID), use the cached NCM playlist songs
-                if id < 0 {
+                if id <= 0 {
                     let ncm_songs = &self.ui.home.current_ncm_playlist_songs;
                     if !ncm_songs.is_empty() {
                         let db_songs: Vec<crate::database::DbSong> = ncm_songs
