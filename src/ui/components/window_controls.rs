@@ -1,6 +1,7 @@
 //! Window control buttons and navigation bar
 //! Positioned at top of the application with navigation on left and controls on right
 
+use iced::border::Radius;
 use iced::widget::{Space, button, container, row, svg, tooltip};
 use iced::{Alignment, Element, Fill, Padding};
 
@@ -30,7 +31,7 @@ pub fn view(locale: Locale, can_go_back: bool, can_go_forward: bool) -> Element<
         )
         .width(button_size)
         .height(button_size)
-        .style(move |theme, status| nav_button_style(theme, status, can_go_back))
+        .style(move |theme, status| nav_button_style(theme, status, can_go_back,false))
         .on_press_maybe(if can_go_back {
             Some(Message::NavigateBack)
         } else {
@@ -55,7 +56,7 @@ pub fn view(locale: Locale, can_go_back: bool, can_go_forward: bool) -> Element<
         )
         .width(button_size)
         .height(button_size)
-        .style(move |theme, status| nav_button_style(theme, status, can_go_forward))
+        .style(move |theme, status| nav_button_style(theme, status, can_go_forward,true))
         .on_press_maybe(if can_go_forward {
             Some(Message::NavigateForward)
         } else {
@@ -189,7 +190,12 @@ fn nav_group_container(theme: &iced::Theme) -> container::Style {
 }
 
 /// Navigation button style (back/forward)
-fn nav_button_style(theme: &iced::Theme, status: button::Status, enabled: bool) -> button::Style {
+fn nav_button_style(
+    theme: &iced::Theme,
+    status: button::Status,
+    enabled: bool,
+    btn_type: bool,
+) -> button::Style {
     let base = button::Style {
         background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
         text_color: if enabled {
@@ -198,7 +204,11 @@ fn nav_button_style(theme: &iced::Theme, status: button::Status, enabled: bool) 
             theme::TEXT_DISABLED
         },
         border: iced::Border {
-            radius: 6.0.into(),
+            radius: if btn_type {
+                Radius::default().right(6.0)
+            } else {
+                Radius::default().left(6.0)
+            },
             ..Default::default()
         },
         shadow: iced::Shadow::default(),
