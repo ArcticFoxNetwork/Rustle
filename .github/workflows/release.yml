@@ -101,10 +101,10 @@ jobs:
       matrix:
         include:
           - target: x86_64-apple-darwin
-            os: macos-14
+            os: macos-15
             arch: x86_64
           - target: aarch64-apple-darwin
-            os: macos-14
+            os: macos-15
             arch: arm64
     runs-on: ${{ matrix.os }}
     steps:
