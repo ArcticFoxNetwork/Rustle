@@ -168,38 +168,21 @@ jobs:
 
       - name: Compile app icon assets
         run: |
-          if [ -d "assets/macos/AppIcon.icon" ]; then
-            xcrun actool \
-              assets/macos/AppIcon.icon \
-              --compile "${{ env.APP_DISPLAY_NAME }}.app/Contents/Resources" \
-              --output-format human-readable-text \
-              --notices \
-              --warnings \
-              --errors \
-              --output-partial-info-plist build/macos/appicon-partial.plist \
-              --app-icon AppIcon \
-              --include-all-app-icons \
-              --enable-on-demand-resources NO \
-              --development-region en \
-              --target-device mac \
-              --minimum-deployment-target 26.0 \
-              --platform macosx
-          elif [ -f "assets/icons/icon.png" ]; then
-            mkdir -p build/macos/icon.iconset
-            sips -z 1024 1024 assets/icons/icon.png --out build/macos/icon.iconset/icon_512x512@2x.png
-            sips -z 512 512 assets/icons/icon.png --out build/macos/icon.iconset/icon_512x512.png
-            sips -z 512 512 assets/icons/icon.png --out build/macos/icon.iconset/icon_256x256@2x.png
-            sips -z 256 256 assets/icons/icon.png --out build/macos/icon.iconset/icon_256x256.png
-            sips -z 256 256 assets/icons/icon.png --out build/macos/icon.iconset/icon_128x128@2x.png
-            sips -z 128 128 assets/icons/icon.png --out build/macos/icon.iconset/icon_128x128.png
-            sips -z 64 64 assets/icons/icon.png --out build/macos/icon.iconset/icon_32x32@2x.png
-            sips -z 32 32 assets/icons/icon.png --out build/macos/icon.iconset/icon_32x32.png
-            sips -z 32 32 assets/icons/icon.png --out build/macos/icon.iconset/icon_16x16@2x.png
-            sips -z 16 16 assets/icons/icon.png --out build/macos/icon.iconset/icon_16x16.png
-            iconutil -c icns build/macos/icon.iconset -o "${{ env.APP_DISPLAY_NAME }}.app/Contents/Resources/AppIcon.icns"
-          elif [ -f "assets/icon.icns" ]; then
-            cp assets/icon.icns "${{ env.APP_DISPLAY_NAME }}.app/Contents/Resources/AppIcon.icns"
-          fi
+          xcrun actool \
+            assets/macos/AppIcon.icon \
+            --compile "${{ env.APP_DISPLAY_NAME }}.app/Contents/Resources" \
+            --output-format human-readable-text \
+            --notices \
+            --warnings \
+            --errors \
+            --output-partial-info-plist build/macos/appicon-partial.plist \
+            --app-icon AppIcon \
+            --include-all-app-icons \
+            --enable-on-demand-resources NO \
+            --development-region en \
+            --target-device mac \
+            --minimum-deployment-target 26.0 \
+            --platform macosx
 
       - name: Create DMG
         run: |
