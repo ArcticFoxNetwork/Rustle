@@ -168,8 +168,51 @@ jobs:
 
       - name: Compile app icon assets
         run: |
+          mkdir -p build/macos/AppIcon.icon/Assets
+          sips -z 1024 1024 assets/icons/icon.png --out build/macos/AppIcon.icon/Assets/icon.png
+          cat > build/macos/AppIcon.icon/icon.json <<'JSON'
+          {
+            "fill" : {
+              "automatic-gradient" : "extended-srgb:0.00000,0.53333,1.00000,1.00000"
+            },
+            "groups" : [
+              {
+                "layers" : [
+                  {
+                    "blend-mode" : "normal",
+                    "fill" : "automatic",
+                    "glass" : false,
+                    "image-name" : "icon.png",
+                    "name" : "icon",
+                    "position" : {
+                      "scale" : 0.55,
+                      "translation-in-points" : [
+                        0,
+                        0
+                      ]
+                    }
+                  }
+                ],
+                "shadow" : {
+                  "kind" : "neutral",
+                  "opacity" : 0.5
+                },
+                "translucency" : {
+                  "enabled" : true,
+                  "value" : 0.5
+                }
+              }
+            ],
+            "supported-platforms" : {
+              "circles" : [
+                "watchOS"
+              ],
+              "squares" : "shared"
+            }
+          }
+          JSON
           xcrun actool \
-            assets/macos/AppIcon.icon \
+            build/macos/AppIcon.icon \
             --compile "${{ env.APP_DISPLAY_NAME }}.app/Contents/Resources" \
             --output-format human-readable-text \
             --notices \
