@@ -49,8 +49,20 @@ impl App {
         tracing::info!("Opening main window with id: {:?}", window_id);
 
         // 5. Initialize async tasks
+        let open_window_and_init_mpris = open_window.then(move |_| {
+            crate::platform::window::native_window_handle(window_id).then(|window_handle| {
+                Task::perform(helpers::init_mpris(window_handle), |result| match result {
+                    Ok((handle, rx)) => Message::MprisStartedWithHandle(handle, rx),
+                    Err(e) => {
+                        tracing::warn!("Failed to start media controls: {}", e);
+                        Message::Noop
+                    }
+                })
+            })
+        });
+
         let init_task = Task::batch([
-            open_window.discard(),
+            open_window_and_init_mpris,
             Task::perform(helpers::init_database(), |result| match result {
                 Ok(db) => Message::DatabaseReady(Arc::new(db)),
                 Err(e) => Message::DatabaseError(e.to_string()),
@@ -60,13 +72,6 @@ impl App {
                 Err(e) => Message::DatabaseError(format!("Cover cache error: {}", e)),
             }),
             crate::platform::tray::init_task(Message::TrayStarted),
-            Task::perform(helpers::init_mpris(), |result| match result {
-                Ok((handle, rx)) => Message::MprisStartedWithHandle(handle, rx),
-                Err(e) => {
-                    tracing::warn!("Failed to start media controls: {}", e);
-                    Message::Noop
-                }
-            }),
             Task::perform(helpers::init_font_system(), |font_system| {
                 Message::LyricsFontSystemReady(font_system)
             }),

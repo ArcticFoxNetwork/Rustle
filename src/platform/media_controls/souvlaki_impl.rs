@@ -6,6 +6,9 @@ use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata as SouvlakiMetadata, MediaPlayback,
     MediaPosition, PlatformConfig, SeekDirection,
 };
+#[cfg(target_os = "windows")]
+use std::ffi::c_void;
+use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -97,15 +100,37 @@ impl SouvlakiMediaHandle {
 }
 
 /// Start media controls service using souvlaki
-pub fn start() -> (SouvlakiMediaHandle, mpsc::UnboundedReceiver<MediaCommand>) {
+pub fn start(
+    window_handle: Option<usize>,
+) -> (SouvlakiMediaHandle, mpsc::UnboundedReceiver<MediaCommand>) {
     let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
+    let state = Arc::new(SharedState {
+        controls: Mutex::new(None),
+    });
+    let metadata_cache = Arc::new(Mutex::new(MetadataCache::default()));
 
-    // Create platform config
     #[cfg(target_os = "windows")]
-    let hwnd = None; // Will be set later if needed
+    let hwnd = match window_handle {
+        Some(handle) => Some(handle as *mut c_void),
+        None => {
+            tracing::warn!(
+                "Skipping Windows media controls initialization because no HWND was available"
+            );
+            return (
+                SouvlakiMediaHandle {
+                    state,
+                    metadata_cache,
+                },
+                cmd_rx,
+            );
+        }
+    };
 
     #[cfg(target_os = "macos")]
-    let hwnd = None;
+    let hwnd = {
+        let _ = window_handle;
+        None
+    };
 
     let config = PlatformConfig {
         dbus_name: "rustle", // Not used on Windows/macOS
@@ -113,15 +138,9 @@ pub fn start() -> (SouvlakiMediaHandle, mpsc::UnboundedReceiver<MediaCommand>) {
         hwnd,
     };
 
-    let state = Arc::new(SharedState {
-        controls: Mutex::new(None),
-    });
-
-    let metadata_cache = Arc::new(Mutex::new(MetadataCache::default()));
-
     // Try to create media controls
-    match MediaControls::new(config) {
-        Ok(mut controls) => {
+    match catch_unwind(AssertUnwindSafe(|| MediaControls::new(config))) {
+        Ok(Ok(mut controls)) => {
             // Attach event handler
             let tx = cmd_tx.clone();
             if let Err(e) = controls.attach(move |event: MediaControlEvent| {
@@ -168,8 +187,11 @@ pub fn start() -> (SouvlakiMediaHandle, mpsc::UnboundedReceiver<MediaCommand>) {
             *state.controls.lock().unwrap() = Some(controls);
             tracing::info!("Media controls (souvlaki) initialized successfully");
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             tracing::warn!("Failed to create media controls: {:?}", e);
+        }
+        Err(_) => {
+            tracing::warn!("Media controls initialization panicked; disabling media controls");
         }
     }
 

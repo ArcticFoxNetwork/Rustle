@@ -208,11 +208,13 @@ pub fn get_tray_handle() -> Option<&'static TrayHandle> {
 
 /// Initialize MPRIS/Media Controls
 /// Returns the command receiver wrapped in Arc<Mutex>
-pub async fn init_mpris() -> anyhow::Result<(
+pub async fn init_mpris(
+    window_handle: Option<usize>,
+) -> anyhow::Result<(
     MediaHandle,
     std::sync::Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<MediaCommand>>>,
 )> {
-    let (handle, rx) = start_media_controls();
+    let (handle, rx) = start_media_controls(window_handle);
 
     tracing::info!("Media controls service started");
     Ok((handle, std::sync::Arc::new(tokio::sync::Mutex::new(rx))))

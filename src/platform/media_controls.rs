@@ -97,21 +97,27 @@ impl MediaHandle {
 
 /// Start media controls service (Linux - MPRIS)
 #[cfg(target_os = "linux")]
-pub fn start_media_controls() -> (MediaHandle, mpsc::UnboundedReceiver<MediaCommand>) {
+pub fn start_media_controls(
+    _window_handle: Option<usize>,
+) -> (MediaHandle, mpsc::UnboundedReceiver<MediaCommand>) {
     let (inner, rx) = linux::start();
     (MediaHandle { inner }, rx)
 }
 
 /// Start media controls service (Windows/macOS - souvlaki)
 #[cfg(any(target_os = "windows", target_os = "macos"))]
-pub fn start_media_controls() -> (MediaHandle, mpsc::UnboundedReceiver<MediaCommand>) {
-    let (inner, rx) = souvlaki_impl::start();
+pub fn start_media_controls(
+    window_handle: Option<usize>,
+) -> (MediaHandle, mpsc::UnboundedReceiver<MediaCommand>) {
+    let (inner, rx) = souvlaki_impl::start(window_handle);
     (MediaHandle { inner }, rx)
 }
 
 /// Start media controls service (no-op on unsupported platforms)
 #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-pub fn start_media_controls() -> (MediaHandle, mpsc::UnboundedReceiver<MediaCommand>) {
+pub fn start_media_controls(
+    _window_handle: Option<usize>,
+) -> (MediaHandle, mpsc::UnboundedReceiver<MediaCommand>) {
     let (_tx, rx) = mpsc::unbounded_channel();
     (MediaHandle { _phantom: () }, rx)
 }

@@ -54,6 +54,19 @@ pub fn is_wayland_backend() -> bool {
     }
 }
 
+pub fn native_window_handle(id: iced::window::Id) -> Task<Option<usize>> {
+    #[cfg(target_os = "windows")]
+    {
+        windows::native_window_handle(id)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = id;
+        Task::done(None)
+    }
+}
+
 /// Get platform-specific window settings
 pub fn window_settings() -> iced::window::Settings {
     iced::window::Settings {
