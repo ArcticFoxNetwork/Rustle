@@ -50,14 +50,14 @@ impl App {
 
         // 5. Initialize async tasks
         let open_window_and_init_mpris = open_window.then(move |_| {
-            crate::platform::window::native_window_handle(window_id).then(|window_handle| {
-                Task::perform(helpers::init_mpris(window_handle), |result| match result {
+            crate::platform::window::native_window_handle(window_id).map(|window_handle| {
+                match helpers::init_mpris(window_handle) {
                     Ok((handle, rx)) => Message::MprisStartedWithHandle(handle, rx),
                     Err(e) => {
                         tracing::warn!("Failed to start media controls: {}", e);
                         Message::Noop
                     }
-                })
+                }
             })
         });
 

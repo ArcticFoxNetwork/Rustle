@@ -338,6 +338,19 @@ impl App {
     }
 
     pub fn handle_audio_event(&mut self, event: AudioEvent) -> Task<Message> {
+        let should_sync_mpris = matches!(
+            &event,
+            AudioEvent::Started { .. }
+                | AudioEvent::Paused { .. }
+                | AudioEvent::Resumed
+                | AudioEvent::Stopped
+                | AudioEvent::SeekComplete { .. }
+                | AudioEvent::SeekStarted { .. }
+                | AudioEvent::StateChanged { .. }
+                | AudioEvent::BufferingStarted { .. }
+                | AudioEvent::BufferingEnded
+        );
+
         match event {
             AudioEvent::Started { path } => {
                 tracing::debug!("AudioEvent::Started: {:?}", path);
@@ -441,6 +454,11 @@ impl App {
                 return Task::done(Message::ShowErrorToast(format!("播放错误: {}", message)));
             }
         }
+
+        if should_sync_mpris {
+            self.update_mpris_state();
+        }
+
         Task::none()
     }
 

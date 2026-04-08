@@ -12,6 +12,13 @@ mod macos;
 #[cfg(target_os = "windows")]
 mod windows;
 
+pub fn initialize_process() {
+    #[cfg(target_os = "windows")]
+    {
+        windows::initialize_process();
+    }
+}
+
 pub fn set_window_mode<Message: Send + 'static>(mode: iced::window::Mode) -> Task<Message> {
     #[cfg(target_os = "windows")]
     {

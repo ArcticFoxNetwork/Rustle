@@ -27,6 +27,7 @@ impl App {
                 let handle_clone = handle.clone();
                 crate::app::helpers::set_mpris_handle(handle.clone());
                 self.core.mpris_handle = Some(handle_clone);
+                self.update_mpris_state();
 
                 // Start listening for media control commands
                 let rx = rx.clone();
@@ -95,8 +96,16 @@ impl App {
 
             MediaCommand::Seek(offset_us) => {
                 if let Some(player) = &self.core.audio {
-                    let current_pos = player.get_info().position;
-                    let new_pos = current_pos + Duration::from_micros(*offset_us as u64);
+                    let info = player.get_info();
+                    let current_us = info.position.as_micros() as i128;
+                    let duration_us = info.duration.as_micros() as i128;
+                    let max_us = if duration_us > 0 {
+                        duration_us
+                    } else {
+                        i128::MAX
+                    };
+                    let new_pos = (current_us + i128::from(*offset_us)).clamp(0, max_us) as u64;
+                    let new_pos = Duration::from_micros(new_pos);
                     player.seek(new_pos);
                 }
                 Some(Task::none())
@@ -104,7 +113,14 @@ impl App {
 
             MediaCommand::SetPosition(_track_id, position_us) => {
                 if let Some(player) = &self.core.audio {
-                    let new_pos = Duration::from_micros(*position_us as u64);
+                    let duration_us = player.get_info().duration.as_micros() as i128;
+                    let max_us = if duration_us > 0 {
+                        duration_us
+                    } else {
+                        i128::MAX
+                    };
+                    let new_pos = (*position_us as i128).clamp(0, max_us) as u64;
+                    let new_pos = Duration::from_micros(new_pos);
                     player.seek(new_pos);
                 }
                 Some(Task::none())

@@ -34,7 +34,7 @@ pub enum MediaCommand {
 }
 
 /// Track metadata for media controls
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MediaMetadata {
     pub track_id: Option<String>,
     pub title: Option<String>,

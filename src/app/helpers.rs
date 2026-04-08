@@ -208,7 +208,7 @@ pub fn get_tray_handle() -> Option<&'static TrayHandle> {
 
 /// Initialize MPRIS/Media Controls
 /// Returns the command receiver wrapped in Arc<Mutex>
-pub async fn init_mpris(
+pub fn init_mpris(
     window_handle: Option<usize>,
 ) -> anyhow::Result<(
     MediaHandle,

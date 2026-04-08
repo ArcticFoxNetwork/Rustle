@@ -15,3 +15,8 @@ pub mod media_controls;
 pub mod theme;
 pub mod tray;
 pub mod window;
+
+pub fn init() {
+    #[cfg(target_os = "windows")]
+    window::initialize_process();
+}
