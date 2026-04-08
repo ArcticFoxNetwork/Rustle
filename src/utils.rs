@@ -25,6 +25,7 @@ pub fn find_cached_image(dir: &Path, stem: &str) -> Option<PathBuf> {
         .iter()
         .map(|ext| dir.join(format!("{}.{}", stem, ext)))
         .find(|p| p.exists())
+        .and_then(normalize_cached_image_path)
 }
 
 // ============================================================================
@@ -389,6 +390,41 @@ fn detect_image_format(bytes: &[u8]) -> &'static str {
     }
 
     "jpg" // Default fallback
+}
+
+fn normalize_cached_image_path(path: PathBuf) -> Option<PathBuf> {
+    let bytes = std::fs::read(&path).ok()?;
+    let detected_ext = detect_image_format(&bytes);
+    let current_ext = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_ascii_lowercase());
+
+    if current_ext.as_deref() == Some(detected_ext) {
+        return Some(path);
+    }
+
+    let stem = path.file_stem()?.to_str()?;
+    let parent = path.parent()?;
+    let normalized_path = parent.join(format!("{}.{}", stem, detected_ext));
+
+    if normalized_path.exists() {
+        let _ = std::fs::remove_file(&path);
+        return Some(normalized_path);
+    }
+
+    match std::fs::rename(&path, &normalized_path) {
+        Ok(()) => Some(normalized_path),
+        Err(e) => {
+            tracing::warn!(
+                "Failed to normalize cached image path {:?} -> {:?}: {}",
+                path,
+                normalized_path,
+                e
+            );
+            None
+        }
+    }
 }
 
 /// Download an image from URL to local path

@@ -3,7 +3,6 @@
 use iced::Task;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
-use std::path::PathBuf;
 use tracing::{debug, error};
 
 use crate::api::SongList;
@@ -238,10 +237,14 @@ impl App {
 
             Message::SeeAllHot => {
                 let route = Route::Discover(crate::app::state::DiscoverViewMode::AllHot);
-                let needs_more = self.ui.discover.hot_playlists.len() < 30 && self.ui.discover.hot_has_more;
+                let needs_more =
+                    self.ui.discover.hot_playlists.len() < 30 && self.ui.discover.hot_has_more;
                 let nav_task = self.navigate_to_route(route, true);
                 if needs_more {
-                    Some(Task::batch([nav_task, Task::done(Message::LoadMoreHotPlaylists)]))
+                    Some(Task::batch([
+                        nav_task,
+                        Task::done(Message::LoadMoreHotPlaylists),
+                    ]))
                 } else {
                     Some(nav_task)
                 }
@@ -264,8 +267,8 @@ impl App {
                 }
 
                 // Skip if already cached on disk (will be loaded by preload_cached_covers)
-                let cover_path = covers_dir.join(format!("playlist_{}.jpg", playlist.id));
-                if cover_path.exists() {
+                let cover_stem = format!("playlist_{}", playlist.id);
+                if crate::utils::find_cached_image(&covers_dir, &cover_stem).is_some() {
                     continue;
                 }
 
@@ -274,7 +277,11 @@ impl App {
                 let cover_url = playlist.cover_img_url.clone();
 
                 tasks.push(Task::perform(
-                    async move { download_playlist_cover(&client, playlist_id, &cover_url).await },
+                    async move {
+                        crate::utils::download_playlist_cover(&client, playlist_id, &cover_url)
+                            .await
+                            .map(|path| (playlist_id, path))
+                    },
                     |result| {
                         if let Some((id, path)) = result {
                             Message::DiscoverPlaylistCoverLoaded(id, path)
@@ -308,8 +315,8 @@ impl App {
             }
 
             // Check disk cache and create image handle
-            let cover_path = covers_dir.join(format!("playlist_{}.jpg", playlist.id));
-            if cover_path.exists() {
+            let cover_stem = format!("playlist_{}", playlist.id);
+            if let Some(cover_path) = crate::utils::find_cached_image(&covers_dir, &cover_stem) {
                 let handle = iced::widget::image::Handle::from_path(&cover_path);
                 self.ui
                     .discover
@@ -329,39 +336,6 @@ impl App {
             Task::none()
         } else {
             Task::batch(allocation_tasks)
-        }
-    }
-}
-
-/// Download and cache a playlist cover image
-async fn download_playlist_cover(
-    client: &crate::api::NcmClient,
-    playlist_id: u64,
-    cover_url: &str,
-) -> Option<(u64, PathBuf)> {
-    let covers_dir = crate::utils::covers_cache_dir();
-    if let Err(e) = std::fs::create_dir_all(&covers_dir) {
-        error!("Failed to create covers cache dir: {}", e);
-        return None;
-    }
-
-    let cover_path = covers_dir.join(format!("playlist_{}.jpg", playlist_id));
-
-    // Return cached path if exists
-    if cover_path.exists() {
-        return Some((playlist_id, cover_path));
-    }
-
-    // Download the cover
-    match client
-        .client
-        .download_file(cover_url, cover_path.clone())
-        .await
-    {
-        Ok(_) => Some((playlist_id, cover_path)),
-        Err(e) => {
-            error!("Failed to download playlist cover {}: {}", playlist_id, e);
-            None
         }
     }
 }
