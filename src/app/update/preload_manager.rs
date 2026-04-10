@@ -188,21 +188,27 @@ impl std::fmt::Debug for PreloadManager {
 }
 
 impl PreloadManager {
+    fn clear_slot(slot: &mut Option<PreloadSlot>) -> Option<u64> {
+        slot.take().and_then(|slot| {
+            if let Some(buffer) = slot.buffer {
+                buffer.cancel();
+            }
+            slot.request_id
+        })
+    }
+
     /// Reset all preload state
-    pub fn reset(&mut self) {
-        // Cancel any ongoing downloads
-        if let Some(slot) = &self.next {
-            if let Some(buffer) = &slot.buffer {
-                buffer.cancel();
-            }
+    pub fn reset(&mut self) -> Vec<u64> {
+        let mut released = Vec::new();
+
+        if let Some(request_id) = Self::clear_slot(&mut self.next) {
+            released.push(request_id);
         }
-        if let Some(slot) = &self.prev {
-            if let Some(buffer) = &slot.buffer {
-                buffer.cancel();
-            }
+        if let Some(request_id) = Self::clear_slot(&mut self.prev) {
+            released.push(request_id);
         }
-        self.next = None;
-        self.prev = None;
+
+        released
     }
 
     /// Check if we should preload for the given index
@@ -222,13 +228,18 @@ impl PreloadManager {
     }
 
     /// Mark as pending (download started)
-    pub fn mark_pending(&mut self, idx: usize, is_next: bool) {
+    pub fn mark_pending(&mut self, idx: usize, is_next: bool) -> Option<u64> {
         let existing_slot = if is_next { &self.next } else { &self.prev };
-        if let Some(slot) = existing_slot {
-            if !slot.is_for_index(idx) {
-                if let Some(buffer) = &slot.buffer {
-                    buffer.cancel();
-                }
+        let release_request_id = existing_slot
+            .as_ref()
+            .filter(|slot| !slot.is_for_index(idx))
+            .and_then(|slot| slot.request_id);
+
+        if release_request_id.is_some() {
+            if is_next {
+                let _ = Self::clear_slot(&mut self.next);
+            } else {
+                let _ = Self::clear_slot(&mut self.prev);
             }
         }
 
@@ -238,6 +249,8 @@ impl PreloadManager {
         } else {
             self.prev = Some(slot);
         }
+
+        release_request_id
     }
 
     /// Mark as failed
@@ -281,30 +294,40 @@ impl PreloadManager {
     }
 
     /// Invalidate preloads that are no longer relevant
-    pub fn invalidate_stale(&mut self, next_idx: Option<usize>, prev_idx: Option<usize>) {
+    pub fn invalidate_stale(
+        &mut self,
+        next_idx: Option<usize>,
+        prev_idx: Option<usize>,
+    ) -> Vec<u64> {
+        let mut released = Vec::new();
+
         // Check next slot
         if let Some(expected) = next_idx {
             if let Some(slot) = &self.next {
                 if !slot.is_for_index(expected) {
-                    if let Some(buffer) = &slot.buffer {
-                        buffer.cancel();
+                    if let Some(request_id) = Self::clear_slot(&mut self.next) {
+                        released.push(request_id);
                     }
-                    self.next = None;
                 }
             }
+        } else if let Some(request_id) = Self::clear_slot(&mut self.next) {
+            released.push(request_id);
         }
 
         // Check prev slot
         if let Some(expected) = prev_idx {
             if let Some(slot) = &self.prev {
                 if !slot.is_for_index(expected) {
-                    if let Some(buffer) = &slot.buffer {
-                        buffer.cancel();
+                    if let Some(request_id) = Self::clear_slot(&mut self.prev) {
+                        released.push(request_id);
                     }
-                    self.prev = None;
                 }
             }
+        } else if let Some(request_id) = Self::clear_slot(&mut self.prev) {
+            released.push(request_id);
         }
+
+        released
     }
 
     /// Get current slot state (for debugging/UI)

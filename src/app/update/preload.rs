@@ -19,6 +19,17 @@ use super::preload_manager::{self};
 use super::queue_navigator::{self, QueueNavigator};
 
 impl App {
+    fn release_preload_request_ids<I>(&self, request_ids: I)
+    where
+        I: IntoIterator<Item = u64>,
+    {
+        if let Some(audio) = &self.core.audio {
+            for request_id in request_ids {
+                audio.release_preload(request_id);
+            }
+        }
+    }
+
     /// Create a QueueNavigator for the current state
     fn queue_navigator(&self) -> QueueNavigator<'_> {
         QueueNavigator::new(
@@ -41,9 +52,11 @@ impl App {
         }
 
         // Invalidate stale preloads
-        self.library
+        let stale_request_ids = self
+            .library
             .preload_manager
             .invalidate_stale(adjacent.next, adjacent.prev);
+        self.release_preload_request_ids(stale_request_ids);
 
         let mut tasks = Vec::new();
 
@@ -88,7 +101,8 @@ impl App {
                     request_id
                 );
 
-                self.library.preload_manager.mark_pending(idx, is_next);
+                let released_request_id = self.library.preload_manager.mark_pending(idx, is_next);
+                self.release_preload_request_ids(released_request_id);
                 return Some(Task::done(Message::PreloadRequestSent(
                     idx, is_next, request_id, local_path,
                 )));
@@ -102,7 +116,8 @@ impl App {
         }
 
         // Mark as pending and create download task
-        self.library.preload_manager.mark_pending(idx, is_next);
+        let released_request_id = self.library.preload_manager.mark_pending(idx, is_next);
+        self.release_preload_request_ids(released_request_id);
 
         // Create async download task
         if let Some(client) = &self.core.ncm_client {
@@ -217,6 +232,9 @@ impl App {
                 "PreloadReady received but no matching pending slot: request_id={} (stale)",
                 request_id
             );
+            if let Some(audio) = &self.core.audio {
+                audio.release_preload(request_id);
+            }
         }
     }
 

@@ -185,6 +185,13 @@ impl AudioHandle {
             .send(AudioCommand::PlayPreloaded { request_id, path });
     }
 
+    /// Release a preloaded sink by request_id without playing it
+    pub fn release_preload(&self, request_id: u64) {
+        let _ = self
+            .command_tx
+            .send(AudioCommand::ReleasePreload { request_id });
+    }
+
     // ============ Device Control ============
 
     /// Switch audio output device

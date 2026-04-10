@@ -60,6 +60,8 @@ pub enum AudioCommand {
     },
     /// Play a preloaded sink by request_id
     PlayPreloaded { request_id: u64, path: PathBuf },
+    /// Release a preloaded sink by request_id without playing it
+    ReleasePreload { request_id: u64 },
     /// Switch audio output device
     SwitchDevice { device_name: Option<String> },
     /// Periodic tick for buffer status checks and position sync
@@ -118,6 +120,10 @@ impl std::fmt::Debug for AudioCommand {
                 .debug_struct("PlayPreloaded")
                 .field("request_id", request_id)
                 .field("path", path)
+                .finish(),
+            Self::ReleasePreload { request_id } => f
+                .debug_struct("ReleasePreload")
+                .field("request_id", request_id)
                 .finish(),
             Self::SwitchDevice { device_name } => f
                 .debug_struct("SwitchDevice")

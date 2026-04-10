@@ -313,6 +313,15 @@ fn audio_thread_main(
                 );
             }
 
+            AudioCommand::ReleasePreload { request_id } => {
+                if let Some(preloaded) = preloaded_sinks.remove(&request_id) {
+                    if let Some(shared_buffer) = preloaded.shared_buffer {
+                        shared_buffer.clear_buffer_callback();
+                    }
+                    tracing::debug!("Released stale preload sink: request_id={}", request_id);
+                }
+            }
+
             AudioCommand::SwitchDevice { device_name } => {
                 // Clear all preloaded sinks when switching device (they use old mixer)
                 preloaded_sinks.clear();

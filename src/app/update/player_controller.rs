@@ -347,7 +347,12 @@ impl App {
     /// Clear cached shuffle indices (call when queue or play mode changes)
     pub fn clear_shuffle_cache(&mut self) {
         self.library.shuffle_cache.clear();
-        self.library.preload_manager.reset();
+        let released_request_ids = self.library.preload_manager.reset();
+        if let Some(audio) = &self.core.audio {
+            for request_id in released_request_ids {
+                audio.release_preload(request_id);
+            }
+        }
     }
 
     fn resolve_and_play(&mut self, idx: usize, song: DbSong) -> Task<Message> {
