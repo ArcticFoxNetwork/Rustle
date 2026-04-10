@@ -91,7 +91,7 @@ jobs:
           ARCH=x86_64 ./appimagetool-x86_64.AppImage --appimage-extract-and-run AppDir ${{ env.APP_NAME }}-linux-x86_64.AppImage
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: linux-appimage
           path: ${{ env.APP_NAME }}-linux-x86_64.AppImage
@@ -233,7 +233,7 @@ jobs:
           hdiutil create -volname "${{ env.APP_DISPLAY_NAME }}" -srcfolder "${{ env.APP_DISPLAY_NAME }}.app" -ov -format UDZO "${{ env.APP_NAME }}-macos-${{ matrix.arch }}.dmg"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: macos-${{ matrix.arch }}
           path: ${{ env.APP_NAME }}-macos-${{ matrix.arch }}.dmg
@@ -269,7 +269,7 @@ jobs:
           Move-Item "target/release/${{ env.APP_NAME }}.exe" "${{ env.APP_NAME }}-windows-x86_64.exe"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: windows-x86_64
           path: ${{ env.APP_NAME }}-windows-x86_64.exe
