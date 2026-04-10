@@ -200,7 +200,24 @@ pub fn view(
 
     // Backdrop with event interception
     // Use opaque + mouse_area to block all events from reaching underlying widgets
-    let backdrop_content = container(dialog_box)
+    let mask = column![
+        mouse_area(Space::new().width(Fill).height(Fill))
+            .interaction(Interaction::Idle)
+            .on_press(Message::CancelExit),
+        row![
+            mouse_area(Space::new().width(Fill).height(Fill))
+                .interaction(Interaction::Idle)
+                .on_press(Message::CancelExit),
+            container(dialog_box),
+            mouse_area(Space::new().width(Fill).height(Fill))
+                .interaction(Interaction::Idle)
+                .on_press(Message::CancelExit)
+        ],
+        mouse_area(Space::new().width(Fill).height(Fill))
+            .interaction(Interaction::Idle)
+            .on_press(Message::CancelExit)
+    ];
+    let backdrop_content = container(mask)
         .width(Fill)
         .height(Fill)
         .center_x(Fill)
@@ -215,12 +232,6 @@ pub fn view(
             ..Default::default()
         });
 
-    // mouse_area with interaction set to Idle to reset cursor
-    // on_press to capture click events (clicking backdrop cancels dialog)
-    let event_blocker = mouse_area(backdrop_content)
-        .interaction(Interaction::Idle)
-        .on_press(Message::CancelExit);
-
     // opaque to block all mouse button events from propagating
-    opaque(event_blocker).into()
+    opaque(backdrop_content).into()
 }
