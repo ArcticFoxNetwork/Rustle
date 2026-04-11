@@ -11,6 +11,38 @@ use crate::app::{App, Message, Route};
 use crate::i18n::Key;
 
 impl App {
+    fn ncm_song_to_db_song(song_info: &crate::api::SongInfo) -> crate::database::DbSong {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        crate::database::DbSong {
+            id: -(song_info.id as i64),
+            file_path: String::new(),
+            title: song_info.name.clone(),
+            artist: song_info.singer.clone(),
+            album: song_info.album.clone(),
+            duration_secs: (song_info.duration / 1000) as i64,
+            track_number: None,
+            year: None,
+            genre: None,
+            cover_path: if song_info.pic_url.is_empty() {
+                None
+            } else {
+                Some(song_info.pic_url.clone())
+            },
+            file_hash: None,
+            file_size: 0,
+            format: Some("mp3".to_string()),
+            normalization_gain: None,
+            play_count: 0,
+            last_played: Some(now),
+            last_modified: now,
+            created_at: now,
+        }
+    }
+
     /// Set the NCM client and sync quality settings
     fn set_ncm_client(&mut self, client: NcmClient) {
         client.set_quality(self.core.settings.playback.music_quality.to_api_rate());
@@ -831,108 +863,20 @@ impl App {
             Message::PlayNcmSong(song_info) => {
                 debug!("Playing NCM song: {}", song_info.name);
 
-                if let Some(client) = &self.core.ncm_client {
-                    let client = client.clone();
-                    let song_info_clone = song_info.clone();
-
-                    Some(Task::perform(
-                        async move {
-                            let song_cache_dir = crate::utils::songs_cache_dir();
-                            let cover_cache_dir = crate::utils::covers_cache_dir();
-
-                            if let Err(e) = std::fs::create_dir_all(&song_cache_dir) {
-                                error!("Failed to create song cache dir: {}", e);
-                                return None;
-                            }
-                            std::fs::create_dir_all(&cover_cache_dir).ok();
-
-                            // Use stem for cache lookup - actual extension determined by format
-                            let song_stem = song_info_clone.id.to_string();
-
-                            // Handle Cover Image - use download_cover which handles format detection
-                            let cover_path_str = crate::utils::download_cover(
-                                &client,
-                                song_info_clone.id,
-                                &song_info_clone.pic_url,
-                            )
-                            .await
-                            .map(|p| p.to_string_lossy().to_string());
-
-                            // Handle Song File - check cache with any audio extension
-                            if let Some(cached_path) =
-                                crate::utils::find_cached_audio(&song_cache_dir, &song_stem)
-                            {
-                                debug!("Song found in cache: {:?}", cached_path);
-                                return Some((
-                                    song_info_clone,
-                                    cached_path.to_string_lossy().to_string(),
-                                    cover_path_str,
-                                ));
-                            }
-
-                            // Download to temp file, then rename with correct extension
-                            let temp_path = song_cache_dir.join(format!("{}.tmp", song_stem));
-
-                            match client.songs_url(&[song_info_clone.id]).await {
-                                Ok(urls) => {
-                                    if let Some(song_url) = urls.first() {
-                                        debug!("Got song URL: {}", song_url.url);
-                                        if client
-                                            .client
-                                            .download_file(&song_url.url, temp_path.clone())
-                                            .await
-                                            .is_ok()
-                                        {
-                                            // Detect format and rename
-                                            let ext = if let Ok(bytes) = std::fs::read(&temp_path) {
-                                                crate::utils::detect_audio_format(&bytes)
-                                            } else {
-                                                "mp3"
-                                            };
-                                            let final_path = song_cache_dir
-                                                .join(format!("{}.{}", song_stem, ext));
-                                            if std::fs::rename(&temp_path, &final_path).is_ok() {
-                                                Some((
-                                                    song_info_clone,
-                                                    final_path.to_string_lossy().to_string(),
-                                                    cover_path_str,
-                                                ))
-                                            } else {
-                                                let _ = std::fs::remove_file(&temp_path);
-                                                error!("Failed to rename downloaded song");
-                                                None
-                                            }
-                                        } else {
-                                            error!("Failed to download song");
-                                            None
-                                        }
-                                    } else {
-                                        error!(
-                                            "No song URL returned for song {}",
-                                            song_info_clone.id
-                                        );
-                                        None
-                                    }
-                                }
-                                Err(e) => {
-                                    error!("Failed to fetch song URL: {}", e);
-                                    None
-                                }
-                            }
-                        },
-                        |result| {
-                            if let Some((song_info, path, cover_path)) = result {
-                                Message::PlayNcmUrl(song_info, path, cover_path)
-                            } else {
-                                Message::ShowErrorToast("无法播放歌曲".to_string())
-                            }
-                        },
-                    ))
-                } else {
-                    Some(Task::done(Message::ShowWarningToast(
+                if self.core.ncm_client.is_none() {
+                    return Some(Task::done(Message::ShowWarningToast(
                         "请先登录".to_string(),
-                    )))
+                    )));
                 }
+
+                self.exit_fm_mode();
+                self.playback.queue.clear();
+                self.playback
+                    .queue
+                    .push(Self::ncm_song_to_db_song(song_info));
+                self.persist_queue_snapshot();
+
+                Some(self.play_song_at_index(0))
             }
 
             Message::PlayNcmUrl(song_info, url, cover_override) => {

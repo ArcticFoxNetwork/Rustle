@@ -32,7 +32,7 @@ impl App {
         QueueNavigator::new(
             self.playback.queue.len(),
             self.playback.current_index,
-            self.core.settings.play_mode,
+            self.effective_queue_play_mode(),
             &self.playback.shuffle_cache,
         )
     }
@@ -43,8 +43,19 @@ impl App {
         let nav = self.queue_navigator();
         let adjacent = nav.adjacent_indices();
 
+        tracing::info!(
+            "Preload scan: current_index={:?}, queue_len={}, play_mode={:?}, effective_mode={:?}, next={:?}, prev={:?}",
+            self.playback.current_index,
+            self.playback.queue.len(),
+            self.core.settings.play_mode,
+            self.effective_queue_play_mode(),
+            adjacent.next,
+            adjacent.prev
+        );
+
         // Skip preloading for LoopOne mode (same song)
         if nav.is_loop_one() {
+            tracing::debug!("Preload scan skipped: loop-one mode");
             return Task::none();
         }
 
@@ -69,8 +80,13 @@ impl App {
         }
 
         if tasks.is_empty() {
+            tracing::debug!("Preload scan finished: no preload task scheduled");
             Task::none()
         } else {
+            tracing::debug!(
+                "Preload scan finished: {} preload task(s) scheduled",
+                tasks.len()
+            );
             Task::batch(tasks)
         }
     }
@@ -82,6 +98,11 @@ impl App {
 
         // Check if we should preload
         if !self.playback.preload_manager.should_preload(idx, direction) {
+            tracing::debug!(
+                "Preload skipped ({}): idx={}, reason=slot_not_eligible",
+                direction,
+                idx
+            );
             return None;
         }
 
@@ -94,25 +115,39 @@ impl App {
             if let Ok(request_id) =
                 self.create_preload_sink_for_file(local_path.clone(), track_gain)
             {
-                tracing::debug!(
-                    "Requesting {} preload for local track at index {}, request_id={}",
+                tracing::info!(
+                    "Preload request ({}): idx={}, source=local, path={:?}, request_id={}",
                     direction,
                     idx,
+                    local_path,
                     request_id
                 );
 
                 let released_request_id =
                     self.playback.preload_manager.mark_pending(idx, direction);
+                if let Some(slot) = self.playback.preload_manager.slot_mut(direction) {
+                    slot.set_pending_request_id(request_id);
+                }
                 self.release_preload_request_ids(released_request_id);
-                return Some(Task::done(Message::PreloadRequestSent(
-                    idx, direction, request_id, local_path,
-                )));
+                return Some(Task::none());
             }
+            tracing::warn!(
+                "Preload request failed ({}): idx={}, source=local, path={:?}",
+                direction,
+                idx,
+                local_path
+            );
             return None;
         }
 
         // NCM song - needs download
         if !queue_navigator::needs_ncm_download(&song) {
+            tracing::debug!(
+                "Preload skipped ({}): idx={}, reason=no_download_needed, file_path={}",
+                direction,
+                idx,
+                song.file_path
+            );
             return None;
         }
 
@@ -123,10 +158,22 @@ impl App {
         // Create async download task
         if let Some(client) = &self.core.ncm_client {
             let client = Arc::new(client.clone());
+            tracing::info!(
+                "Preload request ({}): idx={}, source=streaming-download, song_id={}, title={}",
+                direction,
+                idx,
+                song.id,
+                song.title
+            );
             Some(preload_manager::create_preload_task(
                 client, idx, song, direction,
             ))
         } else {
+            tracing::warn!(
+                "Preload skipped ({}): idx={}, reason=no_ncm_client",
+                direction,
+                idx
+            );
             None
         }
     }
@@ -134,23 +181,6 @@ impl App {
     /// Handle preload-related messages
     pub fn handle_preload(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
-            // Preload request sent to audio thread
-            Message::PreloadRequestSent(idx, direction, request_id, path) => {
-                if let Some(slot) = self.playback.preload_manager.slot_mut(*direction) {
-                    if slot.is_for_index(*idx) {
-                        slot.set_pending_request_id(*request_id);
-                        tracing::debug!(
-                            "Preload request sent: idx={}, direction={}, request_id={}, path={:?}",
-                            idx,
-                            direction,
-                            request_id,
-                            path
-                        );
-                    }
-                }
-                Some(Task::none())
-            }
-
             // Preload ready message
             Message::PreloadReady(idx, file_path, direction) => {
                 self.handle_preload_complete(*idx, file_path.clone(), *direction)
@@ -167,6 +197,7 @@ impl App {
                 ),
 
             Message::PreloadAudioFailed(idx, direction) => {
+                tracing::warn!("Preload failed ({}): idx={}", direction, idx);
                 self.playback.preload_manager.mark_failed(*idx, *direction);
                 Some(Task::none())
             }
@@ -245,19 +276,26 @@ impl App {
         if let Ok(request_id) =
             self.create_preload_sink_for_file(PathBuf::from(&file_path), track_gain)
         {
-            let path = PathBuf::from(&file_path);
+            if let Some(slot) = self.playback.preload_manager.slot_mut(direction) {
+                slot.set_pending_request_id(request_id);
+            }
             tracing::info!(
-                "NCM track downloaded at index {}, requesting {} preload: request_id={}",
-                idx,
+                "Preload file ready ({}): idx={}, path={}, request_id={}",
                 direction,
+                idx,
+                file_path,
                 request_id
             );
 
-            return Some(Task::done(Message::PreloadRequestSent(
-                idx, direction, request_id, path,
-            )));
+            return Some(Task::none());
         }
 
+        tracing::warn!(
+            "Preload file handoff failed ({}): idx={}, path={}",
+            direction,
+            idx,
+            file_path
+        );
         self.playback.preload_manager.mark_failed(idx, direction);
         Some(Task::none())
     }
@@ -293,6 +331,9 @@ impl App {
             Duration::from_secs(duration_secs),
             track_gain,
         ) {
+            if let Some(slot) = self.playback.preload_manager.slot_mut(direction) {
+                slot.set_pending_request_id(request_id);
+            }
             tracing::info!(
                 "NCM streaming track buffer ready at index {}, requesting {} preload: request_id={}",
                 idx,
@@ -304,15 +345,16 @@ impl App {
                 slot.buffer = Some(buffer);
             }
 
-            return Some(Task::done(Message::PreloadRequestSent(
-                idx,
-                direction,
-                request_id,
-                PathBuf::from(file_path),
-            )));
+            return Some(Task::none());
         }
 
         // No audio handle - mark as failed
+        tracing::warn!(
+            "Preload buffer handoff failed ({}): idx={}, path={}",
+            direction,
+            idx,
+            file_path
+        );
         self.playback.preload_manager.mark_failed(idx, direction);
         Some(Task::none())
     }
@@ -326,7 +368,14 @@ impl App {
             if let Some(request_id) = slot.take_request_id() {
                 let path = slot.path.clone();
                 let buffer = slot.take_buffer();
-                tracing::info!("Using {} preloaded track at index {}", direction, idx);
+                tracing::info!(
+                    "Using {} preloaded track: idx={}, request_id={}, path={:?}, streaming_buffer={}",
+                    direction,
+                    idx,
+                    request_id,
+                    path,
+                    buffer.is_some()
+                );
                 return Some(PlaybackSource::Preloaded {
                     request_id,
                     path,
@@ -334,6 +383,7 @@ impl App {
                 });
             }
         }
+        tracing::debug!("No {} preloaded track available for idx={}", direction, idx);
         None
     }
 }

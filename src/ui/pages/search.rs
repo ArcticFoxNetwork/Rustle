@@ -3,7 +3,7 @@
 //! Displays search results for songs, artists, albums, and playlists
 //! with tabbed navigation and pagination.
 
-use iced::widget::{Space, button, column, container, row, scrollable, text};
+use iced::widget::{Space, button, column, container, image, row, scrollable, text};
 use iced::{Alignment, Element, Fill, Length, Padding};
 
 use crate::app::{Message, SearchPageState, SearchTab};
@@ -169,7 +169,7 @@ pub fn view<'a>(state: &'a SearchPageState, locale: Locale) -> Element<'a, Messa
                 let content = if state.albums.is_empty() {
                     empty_results_state(&state.keyword)
                 } else {
-                    let grid = grid_results(state, SearchTab::Albums);
+                    let grid = grid_results(state, state.active_tab);
                     let mut col = column![grid];
 
                     if state.total_count > PAGE_SIZE {
@@ -386,7 +386,8 @@ fn grid_results<'a>(state: &'a SearchPageState, tab: SearchTab) -> Element<'a, M
             let item_id = item.id;
             let item_tab = tab;
 
-            let card = grid_card(item, hover_progress, item_id, item_tab);
+            let cover_handle = state.result_covers.get(&(item_tab, item_id));
+            let card = grid_card(item, cover_handle, hover_progress, item_id, item_tab);
             row_items.push(card);
 
             if row_items.len() < columns * 2 - 1 {
@@ -413,17 +414,32 @@ fn grid_results<'a>(state: &'a SearchPageState, tab: SearchTab) -> Element<'a, M
 /// Grid card for album/playlist
 fn grid_card<'a>(
     item: &'a crate::api::SongList,
+    cover_handle: Option<&'a iced::widget::image::Handle>,
     hover_progress: f32,
     item_id: u64,
     tab: SearchTab,
 ) -> Element<'a, Message> {
     const CARD_WIDTH: f32 = 160.0;
 
-    // Cover placeholder
-    let cover = container(Space::new())
+    let cover: Element<'a, Message> = if let Some(handle) = cover_handle {
+        container(
+            image(handle.clone())
+                .width(Fill)
+                .height(Fill)
+                .content_fit(iced::ContentFit::Cover)
+                .border_radius(8.0),
+        )
         .width(CARD_WIDTH)
         .height(CARD_WIDTH)
-        .style(move |theme| cover_placeholder_style(theme, hover_progress));
+        .style(move |theme| cover_card_style(theme, hover_progress))
+        .into()
+    } else {
+        container(Space::new())
+            .width(CARD_WIDTH)
+            .height(CARD_WIDTH)
+            .style(move |theme| cover_placeholder_style(theme, hover_progress))
+            .into()
+    };
 
     let card_content = column![
         cover,
@@ -459,6 +475,26 @@ fn grid_card<'a>(
 
 /// Cover placeholder style
 fn cover_placeholder_style(theme: &iced::Theme, hover_progress: f32) -> container::Style {
+    cover_base_style(
+        theme,
+        hover_progress,
+        iced::Background::Color(theme::surface(theme)),
+    )
+}
+
+fn cover_card_style(theme: &iced::Theme, hover_progress: f32) -> container::Style {
+    cover_base_style(
+        theme,
+        hover_progress,
+        iced::Background::Color(iced::Color::TRANSPARENT),
+    )
+}
+
+fn cover_base_style(
+    theme: &iced::Theme,
+    hover_progress: f32,
+    background: iced::Background,
+) -> container::Style {
     let shadow_blur = 8.0 + 8.0 * hover_progress;
     let shadow_alpha = if theme::is_dark_theme(theme) {
         0.2 + 0.2 * hover_progress
@@ -468,7 +504,7 @@ fn cover_placeholder_style(theme: &iced::Theme, hover_progress: f32) -> containe
     let scale_offset = -2.0 * hover_progress;
 
     container::Style {
-        background: Some(iced::Background::Color(theme::surface(theme))),
+        background: Some(background),
         border: iced::Border {
             radius: 8.0.into(),
             width: 1.0,

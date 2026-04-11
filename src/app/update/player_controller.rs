@@ -15,6 +15,7 @@ use crate::features::PlayMode;
 
 use super::preload_manager::PreloadDirection;
 use super::queue_navigator::QueueNavigator;
+use super::song_resolver::ResolvedSong;
 
 #[derive(Clone, Copy)]
 pub(super) enum TrackGainMode {
@@ -44,6 +45,14 @@ pub(super) enum PlaybackSource {
 const MAX_CONSECUTIVE_FAILURES: u8 = 3;
 
 impl App {
+    pub(super) fn effective_queue_play_mode(&self) -> PlayMode {
+        if self.is_fm_mode() {
+            PlayMode::Sequential
+        } else {
+            self.core.settings.play_mode
+        }
+    }
+
     pub(super) fn replace_active_streaming_buffer(
         &mut self,
         next_buffer: Option<crate::audio::SharedBuffer>,
@@ -149,6 +158,51 @@ impl App {
         }
         if let Some(state) = &mut self.playback.saved_state {
             state.position_secs = 0.0;
+        }
+    }
+
+    pub(super) fn apply_resolved_song_to_queue(
+        &mut self,
+        idx: usize,
+        resolved: &ResolvedSong,
+    ) -> Option<DbSong> {
+        let song = self.playback.queue.get_mut(idx)?;
+        song.file_path = resolved.file_path.clone();
+        if let Some(cover_path) = &resolved.cover_path {
+            song.cover_path = Some(cover_path.clone());
+        }
+
+        if let Some(db) = &self.core.db {
+            let db = db.clone();
+            let song_clone = song.clone();
+            tokio::spawn(async move {
+                let _ = db.upsert_ncm_song(&song_clone).await;
+            });
+        }
+
+        Some(song.clone())
+    }
+
+    fn playback_source_from_resolved_song(
+        song: &DbSong,
+        resolved: &ResolvedSong,
+        restore_position: Option<f64>,
+    ) -> Result<PlaybackSource, String> {
+        if let Some(buffer) = resolved.shared_buffer.clone() {
+            return Ok(PlaybackSource::StreamingBuffer {
+                buffer,
+                duration_secs: resolved.duration_secs,
+                file_path: resolved.file_path.clone(),
+            });
+        }
+
+        if let Some(position) = restore_position {
+            Self::audio_path_source_for_song_at_position(
+                song,
+                std::time::Duration::from_secs_f64(position),
+            )
+        } else {
+            Self::audio_path_source_for_song(song)
         }
     }
 
@@ -1070,21 +1124,13 @@ impl App {
             shared_buffer.is_some()
         );
 
-        // Always update the song info in queue (for caching purposes)
-        if let Some(song) = self.playback.queue.get_mut(idx) {
-            song.file_path = file_path.clone();
-            if cover_path.is_some() {
-                song.cover_path = cover_path.clone();
-            }
-
-            if let Some(db) = &self.core.db {
-                let db = db.clone();
-                let song_clone = song.clone();
-                tokio::spawn(async move {
-                    let _ = db.upsert_ncm_song(&song_clone).await;
-                });
-            }
-        }
+        let resolved = ResolvedSong {
+            file_path,
+            cover_path,
+            shared_buffer,
+            duration_secs,
+        };
+        let _ = self.apply_resolved_song_to_queue(idx, &resolved);
 
         // Only trigger playback if this is the song we're actually waiting for
         let should_play = self.playback.pending_resolution_index == Some(idx);
@@ -1108,73 +1154,45 @@ impl App {
         // Clear pending state
         self.playback.pending_resolution_index = None;
 
-        if let Some(song) = self.playback.queue.get(idx).cloned() {
-            // Try to play from SharedBuffer first (no file I/O)
-            if let Some(buffer) = shared_buffer {
-                let source = PlaybackSource::StreamingBuffer {
-                    buffer,
-                    duration_secs,
-                    file_path: file_path.clone(),
-                };
-                if let Ok(task) = self.start_queue_song_from_source(idx, song.clone(), source) {
+        let Some(song) = self.playback.queue.get(idx).cloned() else {
+            return Task::none();
+        };
+
+        let Ok(source) =
+            Self::playback_source_from_resolved_song(&song, &resolved, restore_position)
+        else {
+            return self.skip_to_next_playable(idx);
+        };
+
+        match self.start_queue_song_from_source(idx, song, source) {
+            Ok(task) => {
+                if resolved.shared_buffer.is_some() {
                     tracing::info!("Playing from streaming buffer");
-                    if let Some(pos) = restore_position {
-                        self.restore_current_playback_position(pos);
-                    }
-                    return task;
                 }
+                if let Some(pos) = restore_position {
+                    self.restore_current_playback_position(pos);
+                }
+                task
             }
-
-            // Fallback to file-based playback
-            let source_result = if let Some(pos) = restore_position {
-                Self::audio_path_source_for_song_at_position(
-                    &song,
-                    std::time::Duration::from_secs_f64(pos),
-                )
-            } else {
-                Self::audio_path_source_for_song(&song)
-            };
-
-            let Ok(source) = source_result else {
-                return self.skip_to_next_playable(idx);
-            };
-
-            match self.start_queue_song_from_source(idx, song, source) {
-                Ok(task) => task,
-                Err(_) => self.skip_to_next_playable(idx),
-            }
-        } else {
-            Task::none()
+            Err(_) => self.skip_to_next_playable(idx),
         }
     }
 
     fn calculate_next_index(&self) -> Option<usize> {
-        let play_mode = if self.is_fm_mode() {
-            PlayMode::Sequential
-        } else {
-            self.core.settings.play_mode
-        };
-
         let nav = QueueNavigator::new(
             self.playback.queue.len(),
             self.playback.current_index,
-            play_mode,
+            self.effective_queue_play_mode(),
             &self.playback.shuffle_cache,
         );
         nav.next_index()
     }
 
     fn calculate_prev_index(&self) -> Option<usize> {
-        let play_mode = if self.is_fm_mode() {
-            PlayMode::Sequential
-        } else {
-            self.core.settings.play_mode
-        };
-
         let nav = QueueNavigator::new(
             self.playback.queue.len(),
             self.playback.current_index,
-            play_mode,
+            self.effective_queue_play_mode(),
             &self.playback.shuffle_cache,
         );
         nav.prev_index()

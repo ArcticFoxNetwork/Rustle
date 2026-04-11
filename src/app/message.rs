@@ -315,8 +315,6 @@ pub enum Message {
     ),
     /// Audio preload failed - (queue_index, direction)
     PreloadAudioFailed(usize, PreloadDirection),
-    /// Preload request sent to audio thread
-    PreloadRequestSent(usize, PreloadDirection, u64, PathBuf),
 
     // ============ Queue management ============
     /// Play entire playlist (replace queue with playlist songs)
@@ -518,6 +516,14 @@ pub enum Message {
     HoverSearchSong(Option<u64>),
     /// Hover over search result card (album/playlist)
     HoverSearchCard(Option<u64>),
+    /// Search result cover loaded from disk/network
+    SearchCoverLoaded(crate::app::state::SearchTab, u64, PathBuf),
+    /// Search result cover GPU allocation completed
+    SearchCoverAllocated(
+        crate::app::state::SearchTab,
+        u64,
+        Result<iced::widget::image::Allocation, iced::widget::image::Error>,
+    ),
     /// Play search result song
     PlaySearchSong(SongInfo),
     /// Open search result album/playlist
@@ -793,15 +799,6 @@ impl std::fmt::Debug for Message {
             Self::PreloadAudioFailed(idx, direction) => {
                 simple!("PreloadAudioFailed", "idx={}, direction={}", idx, direction)
             }
-            Self::PreloadRequestSent(idx, direction, request_id, _) => {
-                simple!(
-                    "PreloadRequestSent",
-                    "idx={}, direction={}, req={}",
-                    idx,
-                    direction,
-                    request_id
-                )
-            }
 
             // Queue management
             Self::PlayPlaylist(id) => simple!("PlayPlaylist", "{}", id),
@@ -911,6 +908,12 @@ impl std::fmt::Debug for Message {
             Self::SearchPageChanged(page) => simple!("SearchPageChanged", "{}", page),
             Self::HoverSearchSong(id) => simple!("HoverSearchSong", "{:?}", id),
             Self::HoverSearchCard(id) => simple!("HoverSearchCard", "{:?}", id),
+            Self::SearchCoverLoaded(tab, id, _) => {
+                simple!("SearchCoverLoaded", "tab={:?}, id={}", tab, id)
+            }
+            Self::SearchCoverAllocated(tab, id, _) => {
+                simple!("SearchCoverAllocated", "tab={:?}, id={}", tab, id)
+            }
             Self::PlaySearchSong(s) => simple!("PlaySearchSong", "id={}", s.id),
             Self::OpenSearchResult(id, tab) => {
                 simple!("OpenSearchResult", "id={}, tab={:?}", id, tab)

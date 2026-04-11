@@ -514,6 +514,8 @@ pub struct PlaybackSessionState {
     pub runtime: PlaybackRuntimeState,
     /// Consecutive playback failure counter.
     pub consecutive_failures: u8,
+    /// Startup restore coordination state.
+    pub startup_restore: StartupRestoreState,
 }
 
 impl Default for PlaybackSessionState {
@@ -531,8 +533,18 @@ impl Default for PlaybackSessionState {
             active_streaming_buffer: None,
             runtime: Default::default(),
             consecutive_failures: 0,
+            startup_restore: Default::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct StartupRestoreState {
+    pub playback_state_loaded: bool,
+    pub queue_loaded: bool,
+    pub songs_loaded: bool,
+    pub in_progress: bool,
+    pub completed: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -964,7 +976,7 @@ pub enum DiscoverViewMode {
 }
 
 /// Search tab types
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum SearchTab {
     #[default]
     Songs,
@@ -1009,6 +1021,11 @@ pub struct SearchPageState {
     pub song_animations: HoverAnimations<u64>,
     /// Hover animations for grid cards
     pub card_animations: HoverAnimations<u64>,
+    /// Search result cover image handles keyed by (tab, item_id)
+    pub result_covers: std::collections::HashMap<(SearchTab, u64), iced::widget::image::Handle>,
+    /// GPU allocations to keep search result covers in GPU memory
+    pub result_cover_allocations:
+        std::collections::HashMap<(SearchTab, u64), iced::widget::image::Allocation>,
 }
 
 impl Default for SearchPageState {
@@ -1027,6 +1044,8 @@ impl Default for SearchPageState {
             )),
             song_animations: Default::default(),
             card_animations: Default::default(),
+            result_covers: std::collections::HashMap::new(),
+            result_cover_allocations: std::collections::HashMap::new(),
         }
     }
 }
