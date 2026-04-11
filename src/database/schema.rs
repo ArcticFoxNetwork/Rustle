@@ -22,6 +22,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
             file_hash TEXT,
             file_size INTEGER NOT NULL DEFAULT 0,
             format TEXT,
+            normalization_gain REAL,
             play_count INTEGER NOT NULL DEFAULT 0,
             last_played INTEGER,
             last_modified INTEGER NOT NULL,
@@ -161,6 +162,9 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
         .execute(pool)
         .await;
     let _ = sqlx::query("ALTER TABLE songs ADD COLUMN last_played INTEGER")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE songs ADD COLUMN normalization_gain REAL")
         .execute(pool)
         .await;
 

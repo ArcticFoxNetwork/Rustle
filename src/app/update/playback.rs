@@ -4,7 +4,7 @@
 use iced::Task;
 use std::time::Duration;
 
-use crate::app::helpers::update_tray_state_full;
+use crate::app::helpers::update_tray_state_with_favorite;
 use crate::app::message::Message;
 use crate::app::state::App;
 use crate::audio::AudioEvent;
@@ -16,14 +16,15 @@ impl App {
             Message::PlaySong(id) => {
                 tracing::info!("Playing song id: {}", id);
                 // Find song in queue or add it
-                if let Some(idx) = self.library.queue.iter().position(|s| s.id == *id) {
+                if let Some(idx) = self.playback.queue.iter().position(|s| s.id == *id) {
                     return Some(self.play_song_at_index(idx));
                 }
 
                 // Try to find in DB songs
                 if let Some(song) = self.library.db_songs.iter().find(|s| s.id == *id).cloned() {
-                    self.library.queue.push(song);
-                    let idx = self.library.queue.len() - 1;
+                    self.playback.queue.push(song);
+                    self.persist_queue_snapshot();
+                    let idx = self.playback.queue.len() - 1;
                     return Some(self.play_song_at_index(idx));
                 }
 
@@ -55,13 +56,15 @@ impl App {
                             file_hash: None,
                             file_size: 0,
                             format: Some("mp3".to_string()),
+                            normalization_gain: None,
                             play_count: 0,
                             last_played: None,
                             last_modified: 0,
                             created_at: 0,
                         };
-                        self.library.queue.push(db_song);
-                        let idx = self.library.queue.len() - 1;
+                        self.playback.queue.push(db_song);
+                        self.persist_queue_snapshot();
+                        let idx = self.playback.queue.len() - 1;
                         return Some(self.play_song_at_index(idx));
                     }
                 }
@@ -71,7 +74,7 @@ impl App {
 
             Message::TogglePlayback => {
                 tracing::info!("TogglePlayback message received");
-                Some(self.toggle_playback())
+                Some(self.toggle_current_playback())
             }
 
             Message::NextSong => Some(self.play_next_song()),
@@ -86,16 +89,7 @@ impl App {
             Message::SeekRelease => Some(self.apply_seek()),
 
             Message::SetVolume(volume) => {
-                if let Some(player) = &self.core.audio {
-                    player.set_volume(*volume);
-                    if let Some(db) = &self.core.db {
-                        let db = db.clone();
-                        let vol = *volume as f64;
-                        tokio::spawn(async move {
-                            let _ = db.update_volume(vol).await;
-                        });
-                    }
-                }
+                self.set_output_volume(*volume, true);
                 Some(Task::none())
             }
 
@@ -115,19 +109,8 @@ impl App {
                     self.core.settings.play_mode.display_name()
                 );
 
-                let (title, artist) = self
-                    .library
-                    .current_song
-                    .as_ref()
-                    .map(|s| (Some(s.title.clone()), Some(s.artist.clone())))
-                    .unwrap_or((None, None));
-                let is_playing = self
-                    .core
-                    .audio
-                    .as_ref()
-                    .map(|p| p.is_playing())
-                    .unwrap_or(false);
-                update_tray_state_full(is_playing, title, artist, self.core.settings.play_mode);
+                let is_playing = self.playback_is_playing();
+                self.update_tray_and_mpris_current(is_playing);
 
                 // Clear shuffle cache and re-calculate for new mode
                 self.clear_shuffle_cache();
@@ -147,147 +130,60 @@ impl App {
         }
     }
 
-    /// Toggle playback state
-    fn toggle_playback(&mut self) -> Task<Message> {
-        use crate::audio::PlaybackStatus;
-
-        // Get current status from shared state
-        let status = match &self.core.audio {
-            Some(player) => player.get_info().status,
-            None => {
-                tracing::warn!("toggle_playback: No audio player");
-                return Task::none();
-            }
-        };
-
-        tracing::info!("toggle_playback: current status = {:?}", status);
-
-        match status {
-            PlaybackStatus::Stopped => {
-                // No audio loaded, try to play current song
-                if let Some(idx) = self.library.queue_index {
-                    return self.play_song_at_index(idx);
-                }
-
-                // Fallback: try to play from current_song directly (for local songs)
-                if let Some(song) = self.library.current_song.as_ref() {
-                    let is_ncm = song.id < 0
-                        || song.file_path.is_empty()
-                        || song.file_path.starts_with("ncm://");
-                    if is_ncm {
-                        tracing::warn!("Cannot play NCM song without queue index");
-                        return Task::none();
-                    }
-
-                    let file_path = song.file_path.clone();
-                    let title = song.title.clone();
-                    let artist = song.artist.clone();
-                    let playback_pos = self
-                        .library
-                        .playback_state
-                        .as_ref()
-                        .filter(|s| s.position_secs > 0.0)
-                        .map(|s| s.position_secs);
-                    let fade_in = self.core.settings.playback.fade_in_out;
-                    let normalize = self.core.settings.playback.volume_normalization;
-
-                    let path = std::path::PathBuf::from(&file_path);
-                    if let Some(player) = &self.core.audio {
-                        player.play_with_fade(path, fade_in);
-                        if normalize {
-                            player.set_track_gain(1.0);
-                        }
-                        if let Some(pos) = playback_pos {
-                            let seek_pos = std::time::Duration::from_secs_f64(pos);
-                            player.seek(seek_pos);
-                        }
-                    }
-                    self.update_tray_and_mpris(true, Some(title), Some(artist));
-                }
-            }
-            PlaybackStatus::Playing => {
-                let position_info = self
-                    .core
-                    .audio
-                    .as_ref()
-                    .map(|p| p.get_info().position.as_secs_f64());
-                if let (Some(pos), Some(db), Some(song)) =
-                    (position_info, &self.core.db, &self.library.current_song)
-                {
-                    let db = db.clone();
-                    let song_id = song.id;
-                    let queue_pos = self.library.queue_index.unwrap_or(0) as i64;
-                    tokio::spawn(async move {
-                        let _ = db
-                            .update_playback_position(Some(song_id), queue_pos, pos)
-                            .await;
-                    });
-                }
-
-                let fade = self.core.settings.playback.fade_in_out;
-                if let Some(player) = &self.core.audio {
-                    player.pause_with_fade(fade);
-                }
-                self.update_tray_and_mpris_current(false);
-            }
-            PlaybackStatus::Paused => {
-                let fade = self.core.settings.playback.fade_in_out;
-                if let Some(player) = &self.core.audio {
-                    player.resume_with_fade(fade);
-                }
-                self.update_tray_and_mpris_current(true);
-            }
-            PlaybackStatus::Buffering { .. } => {
-                let fade = self.core.settings.playback.fade_in_out;
-                if let Some(player) = &self.core.audio {
-                    player.pause_with_fade(fade);
-                }
-                self.update_tray_and_mpris_current(false);
-            }
-        }
-
-        Task::none()
-    }
-
-    fn update_tray_and_mpris(
-        &mut self,
-        is_playing: bool,
-        title: Option<String>,
-        artist: Option<String>,
-    ) {
-        update_tray_state_full(is_playing, title, artist, self.core.settings.play_mode);
-        self.update_mpris_state();
-    }
-
-    fn update_tray_and_mpris_current(&mut self, is_playing: bool) {
-        let (title, artist) = self
-            .library
+    pub(super) fn update_tray_and_mpris_current(&mut self, is_playing: bool) {
+        let (title, artist, ncm_song_id, is_favorited) = self
+            .playback
             .current_song
             .as_ref()
-            .map(|s| (Some(s.title.clone()), Some(s.artist.clone())))
-            .unwrap_or((None, None));
-        update_tray_state_full(is_playing, title, artist, self.core.settings.play_mode);
+            .map(|song| {
+                let ncm_song_id = (song.id < 0).then(|| (-song.id) as u64);
+                let is_favorited = ncm_song_id
+                    .and_then(|ncm_id| {
+                        self.core
+                            .user_info
+                            .as_ref()
+                            .map(|user| user.like_songs.contains(&ncm_id))
+                    })
+                    .unwrap_or(false);
+
+                (
+                    Some(song.title.clone()),
+                    Some(song.artist.clone()),
+                    ncm_song_id,
+                    is_favorited,
+                )
+            })
+            .unwrap_or((None, None, None, false));
+        update_tray_state_with_favorite(
+            is_playing,
+            title,
+            artist,
+            self.core.settings.play_mode,
+            ncm_song_id,
+            is_favorited,
+        );
         self.update_mpris_state();
     }
 
     fn apply_seek(&mut self) -> Task<Message> {
         if let Some(preview_pos) = self.ui.seek_preview_position.take() {
-            if let Some(player) = &self.core.audio {
-                let info = player.get_info();
-                if info.duration.as_secs_f32() > 0.0 {
-                    let seek_pos = std::time::Duration::from_secs_f32(
-                        preview_pos * info.duration.as_secs_f32(),
-                    );
-                    player.seek(seek_pos);
-                    self.update_mpris_state();
-                } else if let Some(song) = &self.library.current_song {
-                    let path = std::path::PathBuf::from(&song.file_path);
-                    if !song.file_path.is_empty() && path.exists() {
-                        let duration = song.duration_secs as f32;
-                        player.play(path);
-                        let seek_pos = std::time::Duration::from_secs_f32(preview_pos * duration);
-                        player.seek(seek_pos);
-                        self.update_mpris_state();
+            self.refresh_playback_runtime();
+            let info = self.playback_info().clone();
+
+            if info.duration.as_secs_f32() > 0.0 {
+                let seek_pos =
+                    std::time::Duration::from_secs_f32(preview_pos * info.duration.as_secs_f32());
+                self.seek_to_position(seek_pos);
+            } else if let Some(song) = self.playback.current_song.clone() {
+                let path = std::path::PathBuf::from(&song.file_path);
+                if !song.file_path.is_empty() && path.exists() {
+                    let duration = song.duration_secs as f32;
+                    let seek_pos = std::time::Duration::from_secs_f32(preview_pos * duration);
+                    if self
+                        .restart_audio_path_for_song_at_position(&song, seek_pos)
+                        .is_ok()
+                    {
+                        return Task::none();
                     }
                 }
             }
@@ -295,10 +191,8 @@ impl App {
         Task::none()
     }
 
-    pub fn update_audio_tick(&self) {
-        if let Some(player) = &self.core.audio {
-            player.tick();
-        }
+    pub fn update_audio_tick(&mut self) {
+        self.tick_audio_output();
     }
 
     fn handle_playback_tick(&mut self) -> Task<Message> {
@@ -325,15 +219,13 @@ impl App {
         self.ui.save_position_counter += 1;
         if self.ui.save_position_counter >= 50 {
             self.ui.save_position_counter = 0;
-            if let (Some(player), Some(db), Some(song)) =
-                (&self.core.audio, &self.core.db, &self.library.current_song)
-            {
-                if player.is_playing() {
-                    let info = player.get_info();
+            if let (Some(db), Some(song)) = (&self.core.db, &self.playback.current_song) {
+                if self.playback_is_playing() {
+                    let info = self.playback_info().clone();
                     let position_secs = info.position.as_secs_f64();
                     let db = db.clone();
                     let song_id = song.id;
-                    let queue_pos = self.library.queue_index.unwrap_or(0) as i64;
+                    let queue_pos = self.playback.current_index.unwrap_or(0) as i64;
                     tokio::spawn(async move {
                         let _ = db
                             .update_playback_position(Some(song_id), queue_pos, position_secs)
@@ -347,13 +239,11 @@ impl App {
     }
 
     pub fn handle_audio_event(&mut self, event: AudioEvent) -> Task<Message> {
+        self.refresh_playback_runtime();
+
         let should_sync_mpris = matches!(
             &event,
-            AudioEvent::Started { .. }
-                | AudioEvent::Paused { .. }
-                | AudioEvent::Resumed
-                | AudioEvent::Stopped
-                | AudioEvent::SeekComplete { .. }
+            AudioEvent::SeekComplete { .. }
                 | AudioEvent::SeekStarted { .. }
                 | AudioEvent::StateChanged { .. }
                 | AudioEvent::BufferingStarted { .. }
@@ -361,18 +251,17 @@ impl App {
         );
 
         match event {
-            AudioEvent::Started { path } => {
-                tracing::debug!("AudioEvent::Started: {:?}", path);
+            AudioEvent::Started { request_id, path } => {
+                return self.handle_audio_started_event(request_id, path);
             }
-            AudioEvent::Paused { position } => {
-                tracing::debug!("AudioEvent::Paused at {:?}", position);
+            AudioEvent::Paused {
+                request_id,
+                position,
+            } => {
+                return self.handle_audio_paused_event(request_id, position);
             }
-            AudioEvent::Resumed => {
-                tracing::debug!("AudioEvent::Resumed");
-            }
-            AudioEvent::Stopped => {
-                tracing::debug!("AudioEvent::Stopped");
-            }
+            AudioEvent::Resumed => return self.handle_audio_resumed_event(),
+            AudioEvent::Stopped => return self.handle_audio_stopped_event(),
             AudioEvent::SeekComplete { position } => {
                 tracing::debug!("AudioEvent::SeekComplete at {:?}", position);
             }
@@ -385,8 +274,8 @@ impl App {
                 }
                 if error.contains("end of stream") || error.contains("streaming") {
                     let progress = self
-                        .library
-                        .streaming_buffer
+                        .playback
+                        .active_streaming_buffer
                         .as_ref()
                         .map(|b| (b.progress() * 100.0) as u32)
                         .unwrap_or(0);
@@ -454,19 +343,20 @@ impl App {
             }
             AudioEvent::Finished => {
                 tracing::info!("Song finished (AudioEvent::Finished)");
-                if self.library.pending_resolution_idx.is_none()
-                    && self.library.current_song.is_some()
+                if self.playback.pending_resolution_index.is_none()
+                    && self.playback.current_song.is_some()
                 {
                     return self.handle_song_finished();
                 }
             }
-            AudioEvent::Error { message } => {
-                tracing::error!("Audio error: {}", message);
-                return Task::done(Message::ShowErrorToast(format!("播放错误: {}", message)));
-            }
+            AudioEvent::Error {
+                request_id,
+                message,
+            } => return self.handle_audio_error_event(request_id, message),
         }
 
         if should_sync_mpris {
+            self.refresh_playback_runtime();
             self.update_mpris_state();
         }
 
@@ -481,7 +371,7 @@ impl App {
         use crate::audio::streaming::StreamingEvent;
 
         let is_current = self
-            .library
+            .playback
             .current_song
             .as_ref()
             .map(|s| s.id == song_id)
@@ -503,7 +393,7 @@ impl App {
             }
             StreamingEvent::Error(err) => {
                 tracing::error!("Streaming error for song {}: {}", song_id, err);
-                self.library.streaming_buffer = None;
+                self.replace_active_streaming_buffer(None);
                 return Task::done(Message::ShowErrorToast(format!("下载失败: {}", err)));
             }
         }

@@ -13,7 +13,7 @@ impl App {
             && !self.core.is_window_hidden()
             && self.core.window_focused
             && !self.core.settings.display.power_saving_mode;
-        self.core.audio_chain.set_analysis_enabled(enabled);
+        self.set_audio_analysis_enabled(enabled);
     }
 
     fn close_route_overlays(&mut self) {

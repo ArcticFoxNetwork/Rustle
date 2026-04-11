@@ -56,24 +56,16 @@ impl App {
     fn handle_mpris_command(&mut self, cmd: &MediaCommand) -> Option<Task<Message>> {
         match cmd {
             MediaCommand::Play => {
-                if let Some(player) = &self.core.audio {
-                    if !player.is_playing() {
-                        Some(self.update(Message::TogglePlayback))
-                    } else {
-                        Some(Task::none())
-                    }
+                if self.playback_output_available() && !self.playback_is_playing() {
+                    Some(self.update(Message::TogglePlayback))
                 } else {
                     Some(Task::none())
                 }
             }
 
             MediaCommand::Pause => {
-                if let Some(player) = &self.core.audio {
-                    if player.is_playing() {
-                        Some(self.update(Message::TogglePlayback))
-                    } else {
-                        Some(Task::none())
-                    }
+                if self.playback_is_playing() {
+                    Some(self.update(Message::TogglePlayback))
                 } else {
                     Some(Task::none())
                 }
@@ -82,11 +74,7 @@ impl App {
             MediaCommand::PlayPause => Some(self.update(Message::TogglePlayback)),
 
             MediaCommand::Stop => {
-                if let Some(player) = &self.core.audio {
-                    player.stop();
-                    self.library.current_song = None;
-                    self.update_mpris_state();
-                }
+                self.stop_and_clear_current_playback();
                 Some(Task::none())
             }
 
@@ -95,8 +83,8 @@ impl App {
             MediaCommand::Previous => Some(self.update(Message::PrevSong)),
 
             MediaCommand::Seek(offset_us) => {
-                if let Some(player) = &self.core.audio {
-                    let info = player.get_info();
+                if self.playback_can_seek() {
+                    let info = self.playback_info();
                     let current_us = info.position.as_micros() as i128;
                     let duration_us = info.duration.as_micros() as i128;
                     let max_us = if duration_us > 0 {
@@ -106,14 +94,14 @@ impl App {
                     };
                     let new_pos = (current_us + i128::from(*offset_us)).clamp(0, max_us) as u64;
                     let new_pos = Duration::from_micros(new_pos);
-                    player.seek(new_pos);
+                    self.seek_to_position(new_pos);
                 }
                 Some(Task::none())
             }
 
             MediaCommand::SetPosition(_track_id, position_us) => {
-                if let Some(player) = &self.core.audio {
-                    let duration_us = player.get_info().duration.as_micros() as i128;
+                if self.playback_can_seek() {
+                    let duration_us = self.playback_info().duration.as_micros() as i128;
                     let max_us = if duration_us > 0 {
                         duration_us
                     } else {
@@ -121,7 +109,7 @@ impl App {
                     };
                     let new_pos = (*position_us as i128).clamp(0, max_us) as u64;
                     let new_pos = Duration::from_micros(new_pos);
-                    player.seek(new_pos);
+                    self.seek_to_position(new_pos);
                 }
                 Some(Task::none())
             }
@@ -145,19 +133,16 @@ impl App {
     /// Update media controls state when playback changes
     pub fn update_mpris_state(&mut self) {
         if let Some(handle) = &self.core.mpris_handle {
-            let status = if let Some(player) = &self.core.audio {
-                if player.is_empty() {
-                    MediaPlaybackStatus::Stopped
-                } else if player.is_playing() {
-                    MediaPlaybackStatus::Playing
-                } else {
-                    MediaPlaybackStatus::Paused
-                }
-            } else {
+            let runtime = self.playback_runtime();
+            let status = if !runtime.has_loaded_audio {
                 MediaPlaybackStatus::Stopped
+            } else if runtime.is_playing() {
+                MediaPlaybackStatus::Playing
+            } else {
+                MediaPlaybackStatus::Paused
             };
 
-            let metadata = if let Some(song) = &self.library.current_song {
+            let metadata = if let Some(song) = &self.playback.current_song {
                 let art_url = song.cover_path.as_ref().map(|path| {
                     if path.starts_with("http") {
                         path.clone()
@@ -179,26 +164,17 @@ impl App {
                 MediaMetadata::default()
             };
 
-            let position = if let Some(player) = &self.core.audio {
-                player.get_info().position.as_micros() as i64
-            } else {
-                0
-            };
-
-            let volume = if let Some(player) = &self.core.audio {
-                player.get_info().volume
-            } else {
-                0.0
-            };
+            let position = runtime.info.position.as_micros() as i64;
+            let volume = runtime.info.volume;
 
             let can_go_next = self
-                .library
-                .queue_index
-                .is_some_and(|i| i + 1 < self.library.queue.len());
-            let can_go_previous = self.library.queue_index.is_some_and(|i| i > 0);
-            let can_play = self.core.audio.is_some();
+                .playback
+                .current_index
+                .is_some_and(|i| i + 1 < self.playback.queue.len());
+            let can_go_previous = self.playback.current_index.is_some_and(|i| i > 0);
+            let can_play = self.playback_output_available();
             let can_pause = can_play;
-            let can_seek = self.core.audio.is_some();
+            let can_seek = can_play;
 
             let state = MediaState {
                 status,

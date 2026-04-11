@@ -5,10 +5,11 @@ use iced::time::Instant;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use crate::api::{BannersInfo, NcmClient, SongInfo, SongList, TopList};
 use crate::app::SettingsSection;
-use crate::audio::AudioProcessingChain;
+use crate::audio::{AudioAnalysisData, AudioProcessingChain, PlaybackInfo, PlaybackStatus};
 use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong};
 use crate::features::import::{CoverCache, FolderWatcher, ScanHandle, ScanProgress, ScanState};
 use crate::i18n::Locale;
@@ -24,8 +25,10 @@ use crate::ui::widgets::Toast;
 pub struct App {
     /// Core infrastructure (Settings, DB, Audio, System integrations)
     pub core: CoreState,
-    /// Business data (Songs, Playlists, Queue)
+    /// Library/business data (Songs, Playlists, Import state)
     pub library: LibraryState,
+    /// Playback session state (Queue, current track, preload, resume snapshot)
+    pub playback: PlaybackSessionState,
     /// UI state (Navigation, Page states, Animations)
     pub ui: UiState,
 }
@@ -35,9 +38,9 @@ pub struct CoreState {
     pub db: Option<Arc<Database>>,
     pub db_error: Option<String>,
     /// Audio handle for non-blocking audio control
-    pub audio: Option<crate::audio::AudioHandle>,
+    audio: Option<crate::audio::AudioHandle>,
     /// Audio processing chain (preamp, EQ, analyzer) - shared with AudioPlayer
-    pub audio_chain: AudioProcessingChain,
+    audio_chain: AudioProcessingChain,
     pub volume_before_mute: Option<f32>,
     pub settings: crate::features::Settings,
     pub locale: Locale,
@@ -107,6 +110,325 @@ impl CoreState {
     }
 }
 
+#[derive(Clone)]
+pub struct PlaybackRuntimeState {
+    pub info: PlaybackInfo,
+    pub display_position: Duration,
+    pub buffer_progress: Option<f32>,
+    pub has_loaded_audio: bool,
+    pub analysis: AudioAnalysisData,
+}
+
+impl Default for PlaybackRuntimeState {
+    fn default() -> Self {
+        Self {
+            info: PlaybackInfo::default(),
+            display_position: Duration::ZERO,
+            buffer_progress: None,
+            has_loaded_audio: false,
+            analysis: AudioAnalysisData::new(),
+        }
+    }
+}
+
+impl PlaybackRuntimeState {
+    pub fn is_playing(&self) -> bool {
+        matches!(
+            self.info.status,
+            PlaybackStatus::Playing | PlaybackStatus::Buffering { .. }
+        )
+    }
+
+    pub fn is_buffering(&self) -> bool {
+        matches!(self.info.status, PlaybackStatus::Buffering { .. })
+    }
+
+    pub fn can_seek(&self) -> bool {
+        self.has_loaded_audio || !self.info.duration.is_zero()
+    }
+}
+
+impl App {
+    fn audio_handle(&self) -> Option<&crate::audio::AudioHandle> {
+        self.core.audio.as_ref()
+    }
+
+    fn require_audio_handle(&self) -> Result<&crate::audio::AudioHandle, String> {
+        self.audio_handle()
+            .ok_or_else(|| "No audio player".to_string())
+    }
+
+    pub(crate) fn refresh_playback_runtime(&mut self) {
+        let analysis = self.core.audio_chain.analysis();
+
+        if let Some(audio) = self.audio_handle() {
+            self.playback.runtime = PlaybackRuntimeState {
+                info: audio.get_info(),
+                display_position: audio.display_position(),
+                buffer_progress: audio.buffer_progress(),
+                has_loaded_audio: !audio.is_empty(),
+                analysis,
+            };
+            return;
+        }
+
+        let mut runtime = PlaybackRuntimeState {
+            analysis,
+            ..PlaybackRuntimeState::default()
+        };
+        if let Some(saved_state) = &self.playback.saved_state {
+            runtime.info.volume = saved_state.volume as f32;
+        }
+        self.playback.runtime = runtime;
+    }
+
+    pub(crate) fn playback_runtime(&self) -> &PlaybackRuntimeState {
+        &self.playback.runtime
+    }
+
+    pub(crate) fn playback_info(&self) -> &PlaybackInfo {
+        &self.playback.runtime.info
+    }
+
+    pub(crate) fn playback_status(&self) -> PlaybackStatus {
+        self.playback.runtime.info.status.clone()
+    }
+
+    pub(crate) fn playback_is_playing(&self) -> bool {
+        self.playback.runtime.is_playing()
+    }
+
+    pub(crate) fn playback_is_buffering(&self) -> bool {
+        self.playback.runtime.is_buffering()
+    }
+
+    pub(crate) fn playback_output_available(&self) -> bool {
+        self.core.audio.is_some()
+    }
+
+    pub(crate) fn playback_can_seek(&self) -> bool {
+        self.playback.runtime.can_seek()
+    }
+
+    pub(crate) fn playback_buffer_progress(&self) -> Option<f32> {
+        self.playback.runtime.buffer_progress
+    }
+
+    pub(crate) fn playback_analysis_data(&self) -> AudioAnalysisData {
+        self.playback.runtime.analysis.clone()
+    }
+
+    pub(crate) fn play_audio_file(
+        &self,
+        path: PathBuf,
+        fade_in: bool,
+        track_gain: f32,
+    ) -> Result<u64, String> {
+        let audio = self.require_audio_handle()?;
+        Ok(audio.play_with_fade(path, fade_in, track_gain))
+    }
+
+    pub(crate) fn play_audio_file_at_position(
+        &self,
+        path: PathBuf,
+        position: Duration,
+        fade_in: bool,
+        track_gain: f32,
+    ) -> Result<u64, String> {
+        let audio = self.require_audio_handle()?;
+        Ok(audio.play_from_position_with_fade(path, position, fade_in, track_gain))
+    }
+
+    pub(crate) fn play_streaming_audio(
+        &self,
+        buffer: crate::audio::SharedBuffer,
+        duration: Duration,
+        cache_path: Option<PathBuf>,
+        fade_in: bool,
+        track_gain: f32,
+    ) -> Result<u64, String> {
+        let audio = self.require_audio_handle()?;
+        let streaming_buffer = crate::audio::StreamingBuffer::new(buffer);
+        Ok(audio.play_streaming(streaming_buffer, duration, cache_path, fade_in, track_gain))
+    }
+
+    pub(crate) fn play_preloaded_audio(
+        &self,
+        request_id: u64,
+        path: PathBuf,
+        fade_in: bool,
+    ) -> Result<u64, String> {
+        let audio = self.require_audio_handle()?;
+        Ok(audio.play_preloaded(request_id, path, fade_in))
+    }
+
+    pub(crate) fn load_audio_file_paused(
+        &self,
+        path: PathBuf,
+        position: Duration,
+        track_gain: f32,
+    ) -> Result<u64, String> {
+        let audio = self.require_audio_handle()?;
+        Ok(audio.load_paused(path, position, track_gain))
+    }
+
+    pub(crate) fn load_streaming_audio_paused(
+        &self,
+        buffer: crate::audio::SharedBuffer,
+        duration: Duration,
+        cache_path: Option<PathBuf>,
+        position: Duration,
+        track_gain: f32,
+    ) -> Result<u64, String> {
+        let audio = self.require_audio_handle()?;
+        let streaming_buffer = crate::audio::StreamingBuffer::new(buffer);
+        Ok(audio.load_streaming_paused(
+            streaming_buffer,
+            duration,
+            cache_path,
+            position,
+            track_gain,
+        ))
+    }
+
+    pub(crate) fn create_preload_sink_for_file(
+        &self,
+        path: PathBuf,
+        track_gain: f32,
+    ) -> Result<u64, String> {
+        let audio = self.require_audio_handle()?;
+        Ok(audio.create_preload_sink(path, track_gain))
+    }
+
+    pub(crate) fn create_preload_sink_for_stream(
+        &self,
+        buffer: crate::audio::SharedBuffer,
+        duration: Duration,
+        track_gain: f32,
+    ) -> Result<u64, String> {
+        let audio = self.require_audio_handle()?;
+        let streaming_buffer = crate::audio::StreamingBuffer::new(buffer);
+        Ok(audio.create_preload_sink_streaming(streaming_buffer, duration, track_gain))
+    }
+
+    pub(crate) fn release_preload_request(&self, request_id: u64) {
+        if let Some(audio) = self.audio_handle() {
+            audio.release_preload(request_id);
+        }
+    }
+
+    pub(crate) fn release_preload_requests<I>(&self, request_ids: I)
+    where
+        I: IntoIterator<Item = u64>,
+    {
+        if let Some(audio) = self.audio_handle() {
+            for request_id in request_ids {
+                audio.release_preload(request_id);
+            }
+        }
+    }
+
+    pub(crate) fn pause_audio_output_with_fade(&self, fade_out: bool) {
+        if let Some(audio) = self.audio_handle() {
+            audio.pause_with_fade(fade_out);
+        }
+    }
+
+    pub(crate) fn resume_audio_output_with_fade(&self, fade_in: bool) {
+        if let Some(audio) = self.audio_handle() {
+            audio.resume_with_fade(fade_in);
+        }
+    }
+
+    pub(crate) fn stop_audio_backend(&self) {
+        if let Some(audio) = self.audio_handle() {
+            audio.stop();
+        }
+    }
+
+    pub(crate) fn seek_audio_output(&mut self, position: Duration) {
+        if let Some(audio) = self.audio_handle() {
+            audio.seek(position);
+            self.refresh_playback_runtime();
+        }
+    }
+
+    pub(crate) fn tick_audio_output(&mut self) {
+        if let Some(audio) = self.audio_handle() {
+            audio.tick();
+        }
+        self.refresh_playback_runtime();
+    }
+
+    pub(crate) fn apply_output_volume(&mut self, volume: f32) {
+        if let Some(audio) = self.audio_handle() {
+            audio.set_volume(volume);
+        }
+        self.playback.runtime.info.volume = volume;
+    }
+
+    pub(crate) fn persist_output_volume(&self, volume: f32) {
+        if let Some(db) = &self.core.db {
+            let db = db.clone();
+            tokio::spawn(async move {
+                let _ = db.update_volume(volume as f64).await;
+            });
+        }
+    }
+
+    pub(crate) fn persist_queue_snapshot(&self) {
+        if let Some(db) = &self.core.db {
+            let db = db.clone();
+            let queue_snapshot = self.playback.queue.clone();
+            tokio::spawn(async move {
+                if let Err(err) = db.save_queue_with_songs(&queue_snapshot, None).await {
+                    tracing::warn!("Failed to persist queue snapshot: {}", err);
+                }
+            });
+        }
+    }
+
+    pub(crate) fn set_output_volume(&mut self, volume: f32, persist: bool) {
+        self.apply_output_volume(volume);
+        if persist {
+            self.persist_output_volume(volume);
+        }
+    }
+
+    pub(crate) fn switch_audio_output_device(&self, device_name: Option<String>) {
+        if let Some(audio) = self.audio_handle() {
+            audio.switch_device(device_name);
+        }
+    }
+
+    pub(crate) fn audio_output_devices(&self) -> Vec<(String, String)> {
+        crate::audio::get_audio_devices()
+            .into_iter()
+            .map(|device| (device.name, device.description))
+            .collect()
+    }
+
+    pub(crate) fn set_audio_analysis_enabled(&self, enabled: bool) {
+        self.core.audio_chain.set_analysis_enabled(enabled);
+    }
+
+    pub(crate) fn set_audio_analysis_decay(&self, decay: f32) {
+        self.core.audio_chain.set_analysis_decay(decay);
+    }
+
+    pub(crate) fn set_audio_equalizer_enabled(&self, enabled: bool) {
+        self.core.audio_chain.set_equalizer_enabled(enabled);
+    }
+
+    pub(crate) fn set_audio_equalizer_gains(&self, gains: [f32; 10]) {
+        self.core.audio_chain.set_equalizer_gains(gains);
+    }
+
+    pub(crate) fn set_audio_preamp(&self, preamp_db: f32) {
+        self.core.audio_chain.set_preamp(preamp_db);
+    }
+}
+
 /// User information from NCM
 #[derive(Debug, Clone)]
 pub struct UserInfo {
@@ -140,32 +462,6 @@ pub struct LibraryState {
     pub playlists: Vec<DbPlaylist>,
     pub recently_played: Vec<DbSong>,
 
-    // Playback Data
-    pub current_song: Option<DbSong>,
-    pub playback_state: Option<DbPlaybackState>,
-    pub queue: Vec<DbSong>,
-    pub queue_index: Option<usize>,
-    pub personal_fm_mode: bool,
-
-    // Queue navigation - Single Source of Truth for index calculations
-    pub shuffle_cache: crate::app::update::queue_navigator::ShuffleCache,
-
-    // Preload state machine
-    pub preload_manager: crate::app::update::preload_manager::PreloadManager,
-
-    // Track which song is currently being resolved for playback
-    // Only the resolution result matching this index should trigger playback
-    pub pending_resolution_idx: Option<usize>,
-
-    // Streaming playback state (SharedBuffer architecture)
-    /// Shared buffer for streaming playback (no file I/O)
-    /// This is the ONLY streaming state - no file-based streaming
-    pub streaming_buffer: Option<crate::audio::SharedBuffer>,
-
-    // Error handling
-    /// Consecutive playback failures counter (reset on successful play)
-    pub consecutive_failures: u8,
-
     // Import State
     pub scan_state: Option<Arc<ScanState>>,
     pub scan_handle: Option<ScanHandle>,
@@ -180,16 +476,6 @@ impl Default for LibraryState {
             db_songs: Vec::new(),
             playlists: Vec::new(),
             recently_played: Vec::new(),
-            current_song: None,
-            playback_state: None,
-            queue: Vec::new(),
-            queue_index: None,
-            personal_fm_mode: false,
-            shuffle_cache: Default::default(),
-            preload_manager: Default::default(),
-            pending_resolution_idx: None,
-            streaming_buffer: None,
-            consecutive_failures: 0,
             scan_state: None,
             scan_handle: None,
             scan_progress: None,
@@ -197,6 +483,71 @@ impl Default for LibraryState {
             watched_folders: Vec::new(),
         }
     }
+}
+
+/// Playback-owned session state.
+///
+/// This is kept separate from `LibraryState` so playback coordination has a
+/// single home for queue ownership, preload state, and resume bookkeeping.
+pub struct PlaybackSessionState {
+    /// Current playing song reflected in UI/system integrations.
+    pub current_song: Option<DbSong>,
+    /// Last saved playback snapshot loaded from the database.
+    pub saved_state: Option<DbPlaybackState>,
+    /// Active playback queue.
+    pub queue: Vec<DbSong>,
+    /// Current position within the active queue.
+    pub current_index: Option<usize>,
+    /// Whether personal FM playback mode is active.
+    pub personal_fm_mode: bool,
+    /// Queue navigation cache used as the single source of truth for shuffle order.
+    pub shuffle_cache: crate::app::update::queue_navigator::ShuffleCache,
+    /// Preload state machine for adjacent tracks.
+    pub preload_manager: crate::app::update::preload_manager::PreloadManager,
+    /// Track index currently being resolved before playback starts.
+    pub pending_resolution_index: Option<usize>,
+    /// Playback request waiting for audio thread confirmation.
+    pub pending_playback_request: Option<PendingPlaybackRequest>,
+    /// Active streaming buffer shared with the audio thread.
+    pub active_streaming_buffer: Option<crate::audio::SharedBuffer>,
+    /// Cached runtime snapshot consumed by UI/system integrations.
+    pub runtime: PlaybackRuntimeState,
+    /// Consecutive playback failure counter.
+    pub consecutive_failures: u8,
+}
+
+impl Default for PlaybackSessionState {
+    fn default() -> Self {
+        Self {
+            current_song: None,
+            saved_state: None,
+            queue: Vec::new(),
+            current_index: None,
+            personal_fm_mode: false,
+            shuffle_cache: Default::default(),
+            preload_manager: Default::default(),
+            pending_resolution_index: None,
+            pending_playback_request: None,
+            active_streaming_buffer: None,
+            runtime: Default::default(),
+            consecutive_failures: 0,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PendingPlaybackKind {
+    StartPlayingTrack,
+    LoadPausedTrack,
+    RestartCurrentTrack,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingPlaybackRequest {
+    pub request_id: u64,
+    pub queue_index: Option<usize>,
+    pub song: DbSong,
+    pub kind: PendingPlaybackKind,
 }
 
 /// Unified route model for page rendering and navigation history

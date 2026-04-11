@@ -7,6 +7,7 @@ use iced::keyboard::{Key, Modifiers};
 
 use crate::api::{BannersInfo, LoginInfo, PlayListDetail, SongInfo, SongList};
 use crate::app::state::UserInfo;
+use crate::app::update::preload_manager::PreloadDirection;
 use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong};
 use crate::features::Action;
 use crate::features::import::{CoverCache, ScanProgress, WatchEvent};
@@ -301,15 +302,21 @@ pub enum Message {
     ToggleQueue,
     /// Cycle to next play mode
     CyclePlayMode,
-    /// Audio preload ready (local file cached) - (queue_index, file_path, is_next)
-    PreloadReady(usize, String, bool),
+    /// Audio preload ready (local file cached) - (queue_index, file_path, direction)
+    PreloadReady(usize, String, PreloadDirection),
     /// Audio preload ready with SharedBuffer for streaming playback
-    /// (queue_index, file_path, is_next, shared_buffer, duration_secs)
-    PreloadBufferReady(usize, String, bool, crate::audio::SharedBuffer, u64),
-    /// Audio preload failed - (queue_index, is_next)
-    PreloadAudioFailed(usize, bool),
+    /// (queue_index, file_path, direction, shared_buffer, duration_secs)
+    PreloadBufferReady(
+        usize,
+        String,
+        PreloadDirection,
+        crate::audio::SharedBuffer,
+        u64,
+    ),
+    /// Audio preload failed - (queue_index, direction)
+    PreloadAudioFailed(usize, PreloadDirection),
     /// Preload request sent to audio thread
-    PreloadRequestSent(usize, bool, u64, PathBuf),
+    PreloadRequestSent(usize, PreloadDirection, u64, PathBuf),
 
     // ============ Queue management ============
     /// Play entire playlist (replace queue with playlist songs)
@@ -770,28 +777,28 @@ impl std::fmt::Debug for Message {
             Self::SetVolume(v) => simple!("SetVolume", "{:.2}", v),
             Self::ToggleQueue => simple!("ToggleQueue"),
             Self::CyclePlayMode => simple!("CyclePlayMode"),
-            Self::PreloadReady(idx, _, is_next) => {
-                simple!("PreloadReady", "idx={}, next={}", idx, is_next)
+            Self::PreloadReady(idx, _, direction) => {
+                simple!("PreloadReady", "idx={}, direction={}", idx, direction)
             }
-            Self::PreloadBufferReady(idx, _, is_next, buffer, duration) => {
+            Self::PreloadBufferReady(idx, _, direction, buffer, duration) => {
                 simple!(
                     "PreloadBufferReady",
-                    "idx={}, next={}, downloaded={}, duration={}s",
+                    "idx={}, direction={}, downloaded={}, duration={}s",
                     idx,
-                    is_next,
+                    direction,
                     buffer.downloaded(),
                     duration
                 )
             }
-            Self::PreloadAudioFailed(idx, is_next) => {
-                simple!("PreloadAudioFailed", "idx={}, next={}", idx, is_next)
+            Self::PreloadAudioFailed(idx, direction) => {
+                simple!("PreloadAudioFailed", "idx={}, direction={}", idx, direction)
             }
-            Self::PreloadRequestSent(idx, is_next, request_id, _) => {
+            Self::PreloadRequestSent(idx, direction, request_id, _) => {
                 simple!(
                     "PreloadRequestSent",
-                    "idx={}, next={}, req={}",
+                    "idx={}, direction={}, req={}",
                     idx,
-                    is_next,
+                    direction,
                     request_id
                 )
             }

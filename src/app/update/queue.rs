@@ -16,8 +16,8 @@ impl App {
                 // When opening the queue, scroll to center the current song
                 if self.ui.queue_visible {
                     let offset = crate::ui::components::queue_panel::calculate_scroll_offset(
-                        self.library.queue.len(),
-                        self.library.queue_index,
+                        self.playback.queue.len(),
+                        self.playback.current_index,
                     );
                     return Some(iced::widget::operation::snap_to(
                         iced::widget::Id::new(
@@ -37,15 +37,8 @@ impl App {
                 if id == -1 {
                     if !self.library.recently_played.is_empty() {
                         let db_songs = self.library.recently_played.clone();
-                        self.library.queue = db_songs.clone();
-
-                        // Save queue to database
-                        if let Some(db) = &self.core.db {
-                            let db = db.clone();
-                            tokio::spawn(async move {
-                                let _ = db.save_queue_with_songs(&db_songs, None).await;
-                            });
-                        }
+                        self.playback.queue = db_songs.clone();
+                        self.persist_queue_snapshot();
 
                         return Some(self.play_song_at_index(0));
                     }
@@ -76,6 +69,7 @@ impl App {
                                 file_hash: None,
                                 file_size: 0,
                                 format: Some("mp3".to_string()),
+                                normalization_gain: None,
                                 play_count: 0,
                                 last_played: None,
                                 last_modified: 0,
@@ -83,15 +77,8 @@ impl App {
                             })
                             .collect();
 
-                        self.library.queue = db_songs.clone();
-
-                        // Save queue to database
-                        if let Some(db) = &self.core.db {
-                            let db = db.clone();
-                            tokio::spawn(async move {
-                                let _ = db.save_queue_with_songs(&db_songs, None).await;
-                            });
-                        }
+                        self.playback.queue = db_songs.clone();
+                        self.persist_queue_snapshot();
 
                         return Some(self.play_song_at_index(0));
                     }
@@ -112,15 +99,8 @@ impl App {
             Message::QueueLoaded(songs) => {
                 self.exit_fm_mode();
                 if !songs.is_empty() {
-                    if let Some(db) = &self.core.db {
-                        let db = db.clone();
-                        let songs_clone = songs.clone();
-                        tokio::spawn(async move {
-                            let _ = db.save_queue_with_songs(&songs_clone, None).await;
-                        });
-                    }
-
-                    self.library.queue = songs.clone();
+                    self.playback.queue = songs.clone();
+                    self.persist_queue_snapshot();
                     return Some(self.play_song_at_index(0));
                 }
                 Some(Task::none())
@@ -145,7 +125,7 @@ impl App {
             Message::SongResolveFailed => {
                 tracing::error!("Failed to resolve song");
                 // Use handle_playback_failure for consistent failure tracking
-                if let Some(idx) = self.library.queue_index {
+                if let Some(idx) = self.playback.current_index {
                     return Some(self.handle_playback_failure(idx, "Song resolution failed"));
                 }
                 Some(Task::done(Message::ShowErrorToast(
@@ -154,16 +134,16 @@ impl App {
             }
 
             Message::RemoveFromQueue(idx) => {
-                if *idx < self.library.queue.len() {
-                    self.library.queue.remove(*idx);
-                    if let Some(current_idx) = self.library.queue_index {
+                if *idx < self.playback.queue.len() {
+                    self.playback.queue.remove(*idx);
+                    if let Some(current_idx) = self.playback.current_index {
                         if *idx < current_idx {
-                            self.library.queue_index = Some(current_idx - 1);
+                            self.playback.current_index = Some(current_idx - 1);
                         } else if *idx == current_idx {
-                            if self.library.queue.is_empty() {
-                                self.library.queue_index = None;
-                            } else if current_idx >= self.library.queue.len() {
-                                self.library.queue_index = Some(self.library.queue.len() - 1);
+                            if self.playback.queue.is_empty() {
+                                self.playback.current_index = None;
+                            } else if current_idx >= self.playback.queue.len() {
+                                self.playback.current_index = Some(self.playback.queue.len() - 1);
                             }
                         }
                     }
@@ -183,8 +163,8 @@ impl App {
             }
 
             Message::ClearQueue => {
-                self.library.queue.clear();
-                self.library.queue_index = None;
+                self.playback.queue.clear();
+                self.playback.current_index = None;
 
                 if let Some(db) = &self.core.db {
                     let db = db.clone();

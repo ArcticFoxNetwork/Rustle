@@ -191,8 +191,7 @@ impl App {
             }
             Message::UpdateEqualizerEnabled(enabled) => {
                 self.core.settings.playback.equalizer_enabled = *enabled;
-                // Apply to audio processing chain
-                self.core.audio_chain.set_equalizer_enabled(*enabled);
+                self.set_audio_equalizer_enabled(*enabled);
                 Some(Task::perform(async { Message::SaveSettings }, |m| m))
             }
             Message::UpdateEqualizerPreset(preset) => {
@@ -202,8 +201,7 @@ impl App {
                 if *preset != EqualizerPreset::Custom {
                     let values = preset.values();
                     self.core.settings.playback.equalizer_values = values;
-                    // Apply to audio processing chain
-                    self.core.audio_chain.set_equalizer_gains(values);
+                    self.set_audio_equalizer_gains(values);
                 }
                 Some(Task::perform(async { Message::SaveSettings }, |m| m))
             }
@@ -212,20 +210,17 @@ impl App {
                 // When manually adjusting, switch to custom preset
                 self.core.settings.playback.equalizer_preset =
                     crate::features::EqualizerPreset::Custom;
-                // Apply to audio processing chain
-                self.core.audio_chain.set_equalizer_gains(*values);
+                self.set_audio_equalizer_gains(*values);
                 Some(Task::perform(async { Message::SaveSettings }, |m| m))
             }
             Message::UpdateEqualizerPreamp(preamp) => {
                 self.core.settings.playback.equalizer_preamp = *preamp;
-                // Apply to audio processing chain
-                self.core.audio_chain.set_preamp(*preamp);
+                self.set_audio_preamp(*preamp);
                 Some(Task::perform(async { Message::SaveSettings }, |m| m))
             }
             Message::UpdateSpectrumDecay(decay) => {
                 self.core.settings.playback.spectrum_decay = *decay;
-                // Apply to audio analysis
-                self.core.audio_chain.analysis().set_decay(*decay);
+                self.set_audio_analysis_decay(*decay);
                 Some(Task::perform(async { Message::SaveSettings }, |m| m))
             }
             Message::UpdateSpectrumBarsMode(bars_mode) => {
@@ -316,10 +311,7 @@ impl App {
             }
             Message::UpdateAudioOutputDevice(device) => {
                 self.core.settings.system.audio_output_device = device.clone();
-                // Switch audio output device
-                if let Some(player) = &self.core.audio {
-                    player.switch_device(device.clone());
-                }
+                self.switch_audio_output_device(device.clone());
                 Some(Task::perform(async { Message::SaveSettings }, |m| m))
             }
             Message::UpdateAudioBufferSize(size) => {

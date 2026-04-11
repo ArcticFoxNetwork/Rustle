@@ -29,6 +29,29 @@ const MAX_RETRIES: u8 = 2;
 
 // ============ Core Types ============
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PreloadDirection {
+    Next,
+    Previous,
+}
+
+impl PreloadDirection {
+    pub const ALL: [Self; 2] = [Self::Next, Self::Previous];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Next => "next",
+            Self::Previous => "previous",
+        }
+    }
+}
+
+impl std::fmt::Display for PreloadDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
 /// State of a preload slot
 #[derive(Debug, Clone, Default, PartialEq)]
 pub enum SlotState {
@@ -188,6 +211,20 @@ impl std::fmt::Debug for PreloadManager {
 }
 
 impl PreloadManager {
+    fn slot_ref(&self, direction: PreloadDirection) -> &Option<PreloadSlot> {
+        match direction {
+            PreloadDirection::Next => &self.next,
+            PreloadDirection::Previous => &self.prev,
+        }
+    }
+
+    fn slot_entry_mut(&mut self, direction: PreloadDirection) -> &mut Option<PreloadSlot> {
+        match direction {
+            PreloadDirection::Next => &mut self.next,
+            PreloadDirection::Previous => &mut self.prev,
+        }
+    }
+
     fn clear_slot(slot: &mut Option<PreloadSlot>) -> Option<u64> {
         slot.take().and_then(|slot| {
             if let Some(buffer) = slot.buffer {
@@ -212,8 +249,8 @@ impl PreloadManager {
     }
 
     /// Check if we should preload for the given index
-    pub fn should_preload(&self, idx: usize, is_next: bool) -> bool {
-        let slot = if is_next { &self.next } else { &self.prev };
+    pub fn should_preload(&self, idx: usize, direction: PreloadDirection) -> bool {
+        let slot = self.slot_ref(direction);
 
         match slot {
             None => true,
@@ -228,55 +265,40 @@ impl PreloadManager {
     }
 
     /// Mark as pending (download started)
-    pub fn mark_pending(&mut self, idx: usize, is_next: bool) -> Option<u64> {
-        let existing_slot = if is_next { &self.next } else { &self.prev };
+    pub fn mark_pending(&mut self, idx: usize, direction: PreloadDirection) -> Option<u64> {
+        let existing_slot = self.slot_ref(direction);
         let release_request_id = existing_slot
             .as_ref()
             .filter(|slot| !slot.is_for_index(idx))
             .and_then(|slot| slot.request_id);
 
         if release_request_id.is_some() {
-            if is_next {
-                let _ = Self::clear_slot(&mut self.next);
-            } else {
-                let _ = Self::clear_slot(&mut self.prev);
-            }
+            let _ = Self::clear_slot(self.slot_entry_mut(direction));
         }
 
         let slot = PreloadSlot::pending(idx);
-        if is_next {
-            self.next = Some(slot);
-        } else {
-            self.prev = Some(slot);
-        }
+        *self.slot_entry_mut(direction) = Some(slot);
 
         release_request_id
     }
 
     /// Mark as failed
-    pub fn mark_failed(&mut self, idx: usize, is_next: bool) {
-        let retry_count = if is_next {
-            self.next.as_ref().map(|s| s.retry_count()).unwrap_or(0) + 1
-        } else {
-            self.prev.as_ref().map(|s| s.retry_count()).unwrap_or(0) + 1
-        };
+    pub fn mark_failed(&mut self, idx: usize, direction: PreloadDirection) {
+        let retry_count = self
+            .slot_ref(direction)
+            .as_ref()
+            .map(|s| s.retry_count())
+            .unwrap_or(0)
+            + 1;
 
         let slot = PreloadSlot::failed(idx, retry_count);
-        if is_next {
-            self.next = Some(slot);
-        } else {
-            self.prev = Some(slot);
-        }
+        *self.slot_entry_mut(direction) = Some(slot);
     }
 
     /// Take ready preload slot (consumes it)
     /// Returns the full PreloadSlot if ready for the given index
-    pub fn take_ready(&mut self, idx: usize, is_next: bool) -> Option<PreloadSlot> {
-        let slot_ref = if is_next {
-            &mut self.next
-        } else {
-            &mut self.prev
-        };
+    pub fn take_ready(&mut self, idx: usize, direction: PreloadDirection) -> Option<PreloadSlot> {
+        let slot_ref = self.slot_entry_mut(direction);
 
         match slot_ref {
             Some(slot) if slot.is_for_index(idx) && slot.is_ready() => slot_ref.take(),
@@ -286,8 +308,8 @@ impl PreloadManager {
 
     /// Check if preload is ready for the given index (without consuming)
     #[allow(dead_code)]
-    pub fn is_ready_for(&self, idx: usize, is_next: bool) -> bool {
-        let slot = if is_next { &self.next } else { &self.prev };
+    pub fn is_ready_for(&self, idx: usize, direction: PreloadDirection) -> bool {
+        let slot = self.slot_ref(direction);
         slot.as_ref()
             .map(|s| s.is_for_index(idx) && s.is_ready())
             .unwrap_or(false)
@@ -301,60 +323,51 @@ impl PreloadManager {
     ) -> Vec<u64> {
         let mut released = Vec::new();
 
-        // Check next slot
-        if let Some(expected) = next_idx {
-            if let Some(slot) = &self.next {
-                if !slot.is_for_index(expected) {
-                    if let Some(request_id) = Self::clear_slot(&mut self.next) {
-                        released.push(request_id);
-                    }
-                }
+        for (direction, expected_idx) in [
+            (PreloadDirection::Next, next_idx),
+            (PreloadDirection::Previous, prev_idx),
+        ] {
+            if let Some(request_id) = self.invalidate_direction(direction, expected_idx) {
+                released.push(request_id);
             }
-        } else if let Some(request_id) = Self::clear_slot(&mut self.next) {
-            released.push(request_id);
-        }
-
-        // Check prev slot
-        if let Some(expected) = prev_idx {
-            if let Some(slot) = &self.prev {
-                if !slot.is_for_index(expected) {
-                    if let Some(request_id) = Self::clear_slot(&mut self.prev) {
-                        released.push(request_id);
-                    }
-                }
-            }
-        } else if let Some(request_id) = Self::clear_slot(&mut self.prev) {
-            released.push(request_id);
         }
 
         released
     }
 
+    fn invalidate_direction(
+        &mut self,
+        direction: PreloadDirection,
+        expected_idx: Option<usize>,
+    ) -> Option<u64> {
+        let should_clear = match expected_idx {
+            Some(expected_idx) => self
+                .slot(direction)
+                .map(|slot| !slot.is_for_index(expected_idx))
+                .unwrap_or(false),
+            None => self.slot(direction).is_some(),
+        };
+
+        if should_clear {
+            Self::clear_slot(self.slot_entry_mut(direction))
+        } else {
+            None
+        }
+    }
+
     /// Get current slot state (for debugging/UI)
     #[allow(dead_code)]
-    pub fn get_state(&self, is_next: bool) -> Option<&SlotState> {
-        let slot = if is_next { &self.next } else { &self.prev };
+    pub fn get_state(&self, direction: PreloadDirection) -> Option<&SlotState> {
+        let slot = self.slot_ref(direction);
         slot.as_ref().map(|s| &s.state)
     }
 
-    /// Get reference to next slot
-    pub fn next_slot(&self) -> Option<&PreloadSlot> {
-        self.next.as_ref()
+    pub fn slot(&self, direction: PreloadDirection) -> Option<&PreloadSlot> {
+        self.slot_ref(direction).as_ref()
     }
 
-    /// Get reference to prev slot
-    pub fn prev_slot(&self) -> Option<&PreloadSlot> {
-        self.prev.as_ref()
-    }
-
-    /// Get mutable reference to next slot
-    pub fn next_slot_mut(&mut self) -> Option<&mut PreloadSlot> {
-        self.next.as_mut()
-    }
-
-    /// Get mutable reference to prev slot
-    pub fn prev_slot_mut(&mut self) -> Option<&mut PreloadSlot> {
-        self.prev.as_mut()
+    pub fn slot_mut(&mut self, direction: PreloadDirection) -> Option<&mut PreloadSlot> {
+        self.slot_entry_mut(direction).as_mut()
     }
 }
 
@@ -368,10 +381,10 @@ pub fn create_preload_task(
     client: Arc<NcmClient>,
     idx: usize,
     song: DbSong,
-    is_next: bool,
+    direction: PreloadDirection,
 ) -> Task<Message> {
     Task::perform(
-        async move { download_audio_streaming(client, idx, song, is_next).await },
+        async move { download_audio_streaming(client, idx, song, direction).await },
         |result| result,
     )
 }
@@ -387,7 +400,7 @@ async fn download_audio_streaming(
     client: Arc<NcmClient>,
     idx: usize,
     song: DbSong,
-    is_next: bool,
+    direction: PreloadDirection,
 ) -> Message {
     let ncm_id = if song.id < 0 {
         (-song.id) as u64
@@ -402,7 +415,7 @@ async fn download_audio_streaming(
 
     let song_cache_dir = crate::utils::songs_cache_dir();
     if std::fs::create_dir_all(&song_cache_dir).is_err() {
-        return Message::PreloadAudioFailed(idx, is_next);
+        return Message::PreloadAudioFailed(idx, direction);
     }
 
     // Use stem for cache lookup - actual extension determined by format detection
@@ -422,7 +435,11 @@ async fn download_audio_streaming(
                 ncm_id,
                 file_size
             );
-            return Message::PreloadReady(idx, cached_path.to_string_lossy().to_string(), is_next);
+            return Message::PreloadReady(
+                idx,
+                cached_path.to_string_lossy().to_string(),
+                direction,
+            );
         }
         tracing::info!(
             "Preload: song {} cache incomplete ({} bytes), using streaming buffer",
@@ -438,7 +455,7 @@ async fn download_audio_streaming(
         Ok(urls) => urls,
         Err(e) => {
             tracing::error!("Preload: failed to get song URL for {}: {}", ncm_id, e);
-            return Message::PreloadAudioFailed(idx, is_next);
+            return Message::PreloadAudioFailed(idx, direction);
         }
     };
 
@@ -446,7 +463,7 @@ async fn download_audio_streaming(
         Some(u) if !u.url.is_empty() => u.url.clone(),
         _ => {
             tracing::error!("Preload: no valid URL for song {}", ncm_id);
-            return Message::PreloadAudioFailed(idx, is_next);
+            return Message::PreloadAudioFailed(idx, direction);
         }
     };
 
@@ -467,13 +484,13 @@ async fn download_audio_streaming(
         Message::PreloadBufferReady(
             idx,
             cache_path.to_string_lossy().to_string(),
-            is_next,
+            direction,
             shared_buffer,
             song.duration_secs as u64,
         )
     } else {
         tracing::error!("Preload: download failed for song {}", ncm_id);
-        Message::PreloadAudioFailed(idx, is_next)
+        Message::PreloadAudioFailed(idx, direction)
     }
 }
 

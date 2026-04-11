@@ -45,49 +45,31 @@ impl App {
                 return self.update(Message::PrevSong);
             }
             Action::VolumeUp => {
-                if let Some(player) = &self.core.audio {
-                    let current = player.get_info().volume;
-                    player.set_volume((current + 0.05).min(1.0));
-                }
+                let current = self.playback_info().volume;
+                self.set_output_volume((current + 0.05).min(1.0), true);
             }
             Action::VolumeDown => {
-                if let Some(player) = &self.core.audio {
-                    let current = player.get_info().volume;
-                    player.set_volume((current - 0.05).max(0.0));
-                }
+                let current = self.playback_info().volume;
+                self.set_output_volume((current - 0.05).max(0.0), true);
             }
             Action::VolumeMute => {
-                if let Some(player) = &self.core.audio {
-                    let current = player.get_info().volume;
-                    if current > 0.0 {
-                        // Save current volume before muting
-                        self.core.volume_before_mute = Some(current);
-                        player.set_volume(0.0);
-                    } else {
-                        // Restore previous volume or default to 0.5
-                        let restore_vol = self.core.volume_before_mute.unwrap_or(0.5);
-                        player.set_volume(restore_vol);
-                        self.core.volume_before_mute = None;
-                    }
+                let current = self.playback_info().volume;
+                if current > 0.0 {
+                    // Save current volume before muting
+                    self.core.volume_before_mute = Some(current);
+                    self.set_output_volume(0.0, true);
+                } else {
+                    // Restore previous volume or default to 0.5
+                    let restore_vol = self.core.volume_before_mute.unwrap_or(0.5);
+                    self.set_output_volume(restore_vol, true);
+                    self.core.volume_before_mute = None;
                 }
             }
             Action::SeekForward => {
-                if let Some(player) = &self.core.audio {
-                    let info = player.get_info();
-                    let new_pos = info.position + std::time::Duration::from_secs(10);
-                    if new_pos < info.duration {
-                        player.seek(new_pos);
-                    }
-                }
+                self.seek_by_offset(std::time::Duration::from_secs(10), true);
             }
             Action::SeekBackward => {
-                if let Some(player) = &self.core.audio {
-                    let info = player.get_info();
-                    let new_pos = info
-                        .position
-                        .saturating_sub(std::time::Duration::from_secs(10));
-                    player.seek(new_pos);
-                }
+                self.seek_by_offset(std::time::Duration::from_secs(10), false);
             }
             Action::GoHome => {
                 return self.navigate_to_route(Route::Home, true);

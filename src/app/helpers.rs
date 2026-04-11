@@ -394,28 +394,28 @@ use crate::app::state::App;
 impl App {
     /// Check if currently in Personal FM mode
     pub fn is_fm_mode(&self) -> bool {
-        self.library.personal_fm_mode
+        self.playback.personal_fm_mode
     }
 
     /// Enter Personal FM mode
     pub fn enter_fm_mode(&mut self) {
-        self.library.personal_fm_mode = true;
+        self.playback.personal_fm_mode = true;
         self.clear_shuffle_cache();
     }
 
     /// Exit Personal FM mode
     pub fn exit_fm_mode(&mut self) {
-        self.library.personal_fm_mode = false;
+        self.playback.personal_fm_mode = false;
     }
 
     /// Check if more FM songs should be fetched
     /// Returns true if queue_index is within 3 songs of the end
     pub fn should_fetch_more_fm(&self) -> bool {
-        if !self.library.personal_fm_mode {
+        if !self.playback.personal_fm_mode {
             return false;
         }
-        let queue_len = self.library.queue.len();
-        let current_idx = self.library.queue_index.unwrap_or(0);
+        let queue_len = self.playback.queue.len();
+        let current_idx = self.playback.current_index.unwrap_or(0);
         queue_len.saturating_sub(current_idx) <= 3
     }
 

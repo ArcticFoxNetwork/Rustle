@@ -50,7 +50,7 @@ const SPECTRUM_DB_LABELS: [(i32, &str); 5] = [
 pub fn view(
     settings: &Settings,
     locale: Locale,
-    analysis_data: Option<&AudioAnalysisData>,
+    analysis_data: Option<AudioAnalysisData>,
 ) -> Element<'static, Message> {
     // Header with just title
     let header = text(locale.get(Key::AudioEngineTitle).to_string())
@@ -74,16 +74,17 @@ pub fn view(
         });
 
     // Get real-time audio levels and spectrum
-    let (left_level, right_level, spectrum_db, sample_rate) = if let Some(data) = analysis_data {
-        (
-            data.left_rms(),
-            data.right_rms(),
-            data.spectrum_db(),
-            data.sample_rate(),
-        )
-    } else {
-        (0.0, 0.0, vec![-60.0; 128], 48000)
-    };
+    let (left_level, right_level, spectrum_db, sample_rate) =
+        if let Some(data) = analysis_data.as_ref() {
+            (
+                data.left_rms(),
+                data.right_rms(),
+                data.spectrum_db(),
+                data.sample_rate(),
+            )
+        } else {
+            (0.0, 0.0, vec![-60.0; 128], 48000)
+        };
 
     let decay = settings.playback.spectrum_decay;
     let bars_mode = settings.playback.spectrum_bars_mode;

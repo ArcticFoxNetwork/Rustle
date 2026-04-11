@@ -91,7 +91,7 @@ impl App {
                         }
 
                         // Also update in-memory state if the renamed file is currently playing
-                        if let Some(song) = &mut self.library.current_song {
+                        if let Some(song) = &mut self.playback.current_song {
                             if song.file_path == old.to_string_lossy() {
                                 song.file_path = new.to_string_lossy().to_string();
                                 tracing::info!("Updated current song path to: {}", song.file_path);
@@ -106,7 +106,7 @@ impl App {
                         }
 
                         // Update songs in queue
-                        for song in &mut self.library.queue {
+                        for song in &mut self.playback.queue {
                             if song.file_path == old.to_string_lossy() {
                                 song.file_path = new.to_string_lossy().to_string();
                             }

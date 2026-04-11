@@ -33,6 +33,8 @@ pub struct DbSong {
     pub file_size: i64,
     /// Audio format (mp3, flac, etc.)
     pub format: Option<String>,
+    /// Cached normalization gain (linear multiplier)
+    pub normalization_gain: Option<f64>,
     /// Play count
     pub play_count: i64,
     /// Last played timestamp
@@ -136,6 +138,7 @@ pub struct NewSong {
     pub file_hash: Option<String>,
     pub file_size: i64,
     pub format: Option<String>,
+    pub normalization_gain: Option<f64>,
 }
 
 /// Watched folder for auto-scanning
@@ -180,6 +183,7 @@ pub struct DbPlaylistSongWithDate {
     pub file_hash: Option<String>,
     pub file_size: i64,
     pub format: Option<String>,
+    pub normalization_gain: Option<f64>,
     pub play_count: i64,
     pub last_played: Option<i64>,
     pub last_modified: i64,

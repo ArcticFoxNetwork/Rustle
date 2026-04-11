@@ -14,7 +14,7 @@ use std::time::Duration;
 use rodio::Sink;
 
 use super::PlaybackStatus;
-use super::chain::AudioProcessingChain;
+use super::chain::{AudioProcessingChain, PlaybackProcessingRuntime};
 use super::events::{
     AudioCommand, AudioCommandReceiver, AudioEvent, AudioEventSender, SharedPlaybackState,
     audio_command_channel, audio_event_channel,
@@ -29,6 +29,8 @@ struct PreloadedSink {
     duration: Duration,
     #[allow(dead_code)]
     path: PathBuf,
+    track_gain: f32,
+    runtime: PlaybackProcessingRuntime,
     is_streaming: bool,
     shared_buffer: Option<SharedBuffer>,
 }
@@ -127,7 +129,10 @@ pub fn spawn_audio_thread(
                 }
                 Err(e) => {
                     tracing::error!("Failed to create audio player: {}", e);
-                    let _ = event_tx.send(AudioEvent::Error { message: e });
+                    let _ = event_tx.send(AudioEvent::Error {
+                        request_id: None,
+                        message: e,
+                    });
                 }
             }
         })
@@ -164,19 +169,106 @@ fn audio_thread_main(
     // Process commands until channel closes
     while let Some(cmd) = command_rx.blocking_recv() {
         match cmd {
-            AudioCommand::Play { path, fade_in } => {
+            AudioCommand::Play {
+                request_id,
+                path,
+                fade_in,
+                track_gain,
+            } => {
                 if let Some(ref old_buffer) = current_buffer {
                     old_buffer.clear_buffer_callback();
                 }
                 // Local file playback
                 current_buffer = None;
-                handle_play(&mut player, &event_tx, &state, path, fade_in);
+                handle_play(
+                    &mut player,
+                    &event_tx,
+                    &state,
+                    request_id,
+                    path,
+                    fade_in,
+                    track_gain,
+                );
             }
 
-            AudioCommand::PlayStreaming {
+            AudioCommand::LoadPaused {
+                request_id,
+                path,
+                position,
+                track_gain,
+            } => {
+                if let Some(ref old_buffer) = current_buffer {
+                    old_buffer.clear_buffer_callback();
+                }
+                current_buffer = None;
+                handle_load_paused(
+                    &mut player,
+                    &event_tx,
+                    &state,
+                    request_id,
+                    path,
+                    position,
+                    track_gain,
+                );
+            }
+
+            AudioCommand::LoadPausedStreaming {
+                request_id,
                 buffer,
                 duration,
                 cache_path,
+                position,
+                track_gain,
+            } => {
+                if let Some(ref old_buffer) = current_buffer {
+                    old_buffer.clear_buffer_callback();
+                }
+                let shared_buffer = buffer.shared().clone();
+                handle_load_paused_streaming(
+                    &mut player,
+                    &command_tx,
+                    &event_tx,
+                    &state,
+                    request_id,
+                    buffer,
+                    duration,
+                    cache_path,
+                    position,
+                    track_gain,
+                );
+                current_buffer = Some(shared_buffer);
+            }
+
+            AudioCommand::PlayAt {
+                request_id,
+                path,
+                position,
+                fade_in,
+                track_gain,
+            } => {
+                if let Some(ref old_buffer) = current_buffer {
+                    old_buffer.clear_buffer_callback();
+                }
+                current_buffer = None;
+                handle_play_at(
+                    &mut player,
+                    &event_tx,
+                    &state,
+                    request_id,
+                    path,
+                    position,
+                    fade_in,
+                    track_gain,
+                );
+            }
+
+            AudioCommand::PlayStreaming {
+                request_id,
+                buffer,
+                duration,
+                cache_path,
+                fade_in,
+                track_gain,
             } => {
                 if let Some(ref old_buffer) = current_buffer {
                     old_buffer.clear_buffer_callback();
@@ -188,9 +280,12 @@ fn audio_thread_main(
                     &command_tx,
                     &event_tx,
                     &state,
+                    request_id,
                     buffer,
                     duration,
                     cache_path,
+                    fade_in,
+                    track_gain,
                 );
                 current_buffer = Some(shared_buffer);
             }
@@ -203,7 +298,10 @@ fn audio_thread_main(
                 }
                 update_state_from_player(&player, &state);
                 let pos = player.get_info().position;
-                let _ = event_tx.send(AudioEvent::Paused { position: pos });
+                let _ = event_tx.send(AudioEvent::Paused {
+                    request_id: None,
+                    position: pos,
+                });
             }
 
             AudioCommand::Resume { fade_in } => {
@@ -264,18 +362,18 @@ fn audio_thread_main(
                 player.set_volume(volume);
                 state.set_volume(volume);
             }
-
-            AudioCommand::SetTrackGain { gain } => {
-                player.set_track_gain(gain);
-            }
-
-            AudioCommand::CreatePreloadSink { path, request_id } => {
+            AudioCommand::CreatePreloadSink {
+                path,
+                request_id,
+                track_gain,
+            } => {
                 handle_create_preload_sink(
                     &player,
                     &event_tx,
                     &mut preloaded_sinks,
                     path,
                     request_id,
+                    track_gain,
                 );
             }
 
@@ -283,6 +381,7 @@ fn audio_thread_main(
                 buffer,
                 duration,
                 request_id,
+                track_gain,
             } => {
                 handle_create_preload_sink_streaming(
                     &player,
@@ -291,10 +390,16 @@ fn audio_thread_main(
                     buffer,
                     duration,
                     request_id,
+                    track_gain,
                 );
             }
 
-            AudioCommand::PlayPreloaded { request_id, path } => {
+            AudioCommand::PlayPreloaded {
+                request_id,
+                playback_request_id,
+                path,
+                fade_in,
+            } => {
                 if let Some(ref old_buffer) = current_buffer {
                     old_buffer.clear_buffer_callback();
                 }
@@ -308,8 +413,10 @@ fn audio_thread_main(
                     &event_tx,
                     &state,
                     &mut preloaded_sinks,
+                    playback_request_id,
                     request_id,
                     path,
+                    fade_in,
                 );
             }
 
@@ -352,11 +459,6 @@ fn audio_thread_main(
                 ) {
                     state.set_status(info.status);
                 }
-            }
-
-            AudioCommand::UpdatePausedPosition { position } => {
-                player.update_paused_position(position);
-                state.set_position(position);
             }
 
             AudioCommand::BufferDataAvailable { downloaded, total } => {
@@ -418,20 +520,92 @@ fn handle_play(
     player: &mut AudioPlayer,
     event_tx: &AudioEventSender,
     state: &SharedPlaybackState,
+    request_id: u64,
     path: PathBuf,
     fade_in: bool,
+    track_gain: f32,
 ) {
     state.set_pending_seek(None);
     state.set_buffer_bytes(1, 1);
 
-    match player.play_with_fade(path.clone(), fade_in) {
+    match player.play_with_fade(path.clone(), fade_in, track_gain) {
         Ok(_) => {
             update_state_from_player(player, state);
             state.set_current_path(Some(path.clone()));
-            let _ = event_tx.send(AudioEvent::Started { path: Some(path) });
+            let _ = event_tx.send(AudioEvent::Started {
+                request_id,
+                path: Some(path),
+            });
         }
         Err(e) => {
-            let _ = event_tx.send(AudioEvent::Error { message: e });
+            let _ = event_tx.send(AudioEvent::Error {
+                request_id: Some(request_id),
+                message: e,
+            });
+        }
+    }
+}
+
+fn handle_load_paused(
+    player: &mut AudioPlayer,
+    event_tx: &AudioEventSender,
+    state: &SharedPlaybackState,
+    request_id: u64,
+    path: PathBuf,
+    position: Duration,
+    track_gain: f32,
+) {
+    state.set_pending_seek(None);
+    state.set_buffer_bytes(1, 1);
+
+    match player.load_paused(path.clone(), position, track_gain) {
+        Ok(_) => {
+            update_state_from_player(player, state);
+            state.set_current_path(Some(path));
+            let _ = event_tx.send(AudioEvent::Paused {
+                request_id: Some(request_id),
+                position: player.get_info().position,
+            });
+        }
+        Err(e) => {
+            let _ = event_tx.send(AudioEvent::Error {
+                request_id: Some(request_id),
+                message: e,
+            });
+        }
+    }
+}
+
+fn handle_play_at(
+    player: &mut AudioPlayer,
+    event_tx: &AudioEventSender,
+    state: &SharedPlaybackState,
+    request_id: u64,
+    path: PathBuf,
+    position: Duration,
+    fade_in: bool,
+    track_gain: f32,
+) {
+    state.set_pending_seek(None);
+    state.set_buffer_bytes(1, 1);
+
+    match player.play_from_position_with_fade(path.clone(), position, fade_in, track_gain) {
+        Ok(seek_error) => {
+            update_state_from_player(player, state);
+            state.set_current_path(Some(path.clone()));
+            let _ = event_tx.send(AudioEvent::Started {
+                request_id,
+                path: Some(path),
+            });
+            if let Some(error) = seek_error {
+                let _ = event_tx.send(AudioEvent::SeekFailed { error });
+            }
+        }
+        Err(e) => {
+            let _ = event_tx.send(AudioEvent::Error {
+                request_id: Some(request_id),
+                message: e,
+            });
         }
     }
 }
@@ -441,9 +615,12 @@ fn handle_play_streaming(
     command_tx: &super::events::AudioCommandSender,
     event_tx: &AudioEventSender,
     state: &SharedPlaybackState,
+    request_id: u64,
     buffer: super::streaming::StreamingBuffer,
     duration: Duration,
     cache_path: Option<PathBuf>,
+    fade_in: bool,
+    track_gain: f32,
 ) {
     // Clear pending seek from previous track (important for correct display_position)
     state.set_pending_seek(None);
@@ -473,14 +650,72 @@ fn handle_play_streaming(
         });
     }
 
-    match player.play_streaming(buffer, duration, cache_path.clone()) {
+    match player.play_streaming(buffer, duration, cache_path.clone(), fade_in, track_gain) {
         Ok(_) => {
             update_state_from_player(player, state);
             state.set_current_path(cache_path);
-            let _ = event_tx.send(AudioEvent::Started { path: None });
+            let _ = event_tx.send(AudioEvent::Started {
+                request_id,
+                path: None,
+            });
         }
         Err(e) => {
-            let _ = event_tx.send(AudioEvent::Error { message: e });
+            let _ = event_tx.send(AudioEvent::Error {
+                request_id: Some(request_id),
+                message: e,
+            });
+        }
+    }
+}
+
+fn handle_load_paused_streaming(
+    player: &mut AudioPlayer,
+    command_tx: &super::events::AudioCommandSender,
+    event_tx: &AudioEventSender,
+    state: &SharedPlaybackState,
+    request_id: u64,
+    buffer: super::streaming::StreamingBuffer,
+    duration: Duration,
+    cache_path: Option<PathBuf>,
+    position: Duration,
+    track_gain: f32,
+) {
+    state.set_pending_seek(None);
+    state.set_buffer_bytes(0, 0);
+
+    let shared_buffer = buffer.shared().clone();
+    setup_buffer_callback(&shared_buffer, command_tx);
+
+    let downloaded = shared_buffer.downloaded();
+    let total = shared_buffer.total_size();
+    state.set_buffer_bytes(downloaded, total);
+
+    if total > 0 {
+        let progress = downloaded as f32 / total as f32;
+        let _ = event_tx.send(AudioEvent::BufferProgress {
+            downloaded,
+            total,
+            progress,
+        });
+    }
+
+    match player.load_streaming_paused(buffer, duration, cache_path.clone(), position, track_gain) {
+        Ok(seek_error) => {
+            update_state_from_player(player, state);
+            state.set_current_path(cache_path);
+            let _ = event_tx.send(AudioEvent::Paused {
+                request_id: Some(request_id),
+                position: player.get_info().position,
+            });
+            if let Some(error) = seek_error {
+                let _ = event_tx.send(AudioEvent::SeekFailed { error });
+            }
+        }
+        Err(e) => {
+            let _ = event_tx.send(AudioEvent::Error {
+                request_id: Some(request_id),
+                message: e,
+            });
         }
     }
 }
@@ -593,9 +828,10 @@ fn handle_create_preload_sink(
     preloaded_sinks: &mut HashMap<u64, PreloadedSink>,
     path: PathBuf,
     request_id: u64,
+    track_gain: f32,
 ) {
-    match player.create_preload_sink(&path) {
-        Ok((sink, duration)) => {
+    match player.create_preload_sink(&path, track_gain) {
+        Ok((sink, duration, runtime)) => {
             // Store the sink for later playback
             preloaded_sinks.insert(
                 request_id,
@@ -603,6 +839,8 @@ fn handle_create_preload_sink(
                     sink,
                     duration,
                     path: path.clone(),
+                    track_gain,
+                    runtime,
                     is_streaming: false,
                     shared_buffer: None, // Local files don't have shared buffer
                 },
@@ -634,13 +872,14 @@ fn handle_create_preload_sink_streaming(
     buffer: super::streaming::StreamingBuffer,
     duration: Duration,
     request_id: u64,
+    track_gain: f32,
 ) {
     // Clone shared buffer before passing to decoder (for later callback setup)
     let shared_buffer = buffer.shared().clone();
 
     // This may block waiting for streaming data
-    match player.create_preload_sink_streaming(buffer, duration) {
-        Ok((sink, actual_duration)) => {
+    match player.create_preload_sink_streaming(buffer, duration, track_gain) {
+        Ok((sink, actual_duration, runtime)) => {
             // For streaming, we don't have a real path, use a placeholder
             let path = PathBuf::from(format!("streaming://{}", request_id));
             preloaded_sinks.insert(
@@ -649,6 +888,8 @@ fn handle_create_preload_sink_streaming(
                     sink,
                     duration: actual_duration,
                     path: path.clone(),
+                    track_gain,
+                    runtime,
                     is_streaming: true,
                     shared_buffer: Some(shared_buffer), // Save for callback setup on play
                 },
@@ -675,8 +916,10 @@ fn handle_play_preloaded_by_id(
     event_tx: &AudioEventSender,
     state: &SharedPlaybackState,
     preloaded_sinks: &mut HashMap<u64, PreloadedSink>,
+    playback_request_id: u64,
     request_id: u64,
     path: PathBuf,
+    fade_in: bool,
 ) {
     if let Some(preloaded) = preloaded_sinks.remove(&request_id) {
         // Clear pending seek from previous track (important for correct display_position)
@@ -706,19 +949,29 @@ fn handle_play_preloaded_by_id(
             preloaded.duration,
             path.clone(),
             preloaded.is_streaming,
+            fade_in,
+            preloaded.track_gain,
+            preloaded.runtime,
         ) {
             Ok(_) => {
                 update_state_from_player(player, state);
                 state.set_current_path(Some(path.clone()));
-                let _ = event_tx.send(AudioEvent::Started { path: Some(path) });
+                let _ = event_tx.send(AudioEvent::Started {
+                    request_id: playback_request_id,
+                    path: Some(path),
+                });
             }
             Err(e) => {
-                let _ = event_tx.send(AudioEvent::Error { message: e });
+                let _ = event_tx.send(AudioEvent::Error {
+                    request_id: Some(playback_request_id),
+                    message: e,
+                });
             }
         }
     } else {
         tracing::warn!("PlayPreloaded: request_id {} not found", request_id);
         let _ = event_tx.send(AudioEvent::Error {
+            request_id: Some(playback_request_id),
             message: format!("Preloaded sink not found: {}", request_id),
         });
     }

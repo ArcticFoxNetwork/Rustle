@@ -12,8 +12,12 @@ pub async fn insert_song(pool: &Pool<Sqlite>, song: NewSong) -> Result<i64> {
 
     let result = sqlx::query(
         r#"
-        INSERT INTO songs (file_path, title, artist, album, duration_secs, track_number, year, genre, cover_path, file_hash, file_size, format, last_modified, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO songs (
+            file_path, title, artist, album, duration_secs, track_number, year, genre,
+            cover_path, file_hash, file_size, format, normalization_gain,
+            last_modified, created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&song.file_path)
@@ -28,6 +32,7 @@ pub async fn insert_song(pool: &Pool<Sqlite>, song: NewSong) -> Result<i64> {
     .bind(&song.file_hash)
     .bind(song.file_size)
     .bind(&song.format)
+    .bind(song.normalization_gain)
     .bind(now)
     .bind(now)
     .execute(pool)
@@ -104,6 +109,40 @@ pub async fn update_song_path(pool: &Pool<Sqlite>, old_path: &str, new_path: &st
         .bind(old_path)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+/// Update cached normalization gain for a song identified by storage path.
+pub async fn update_song_normalization(
+    pool: &Pool<Sqlite>,
+    song_id: i64,
+    file_path: &str,
+    normalization_gain: f64,
+) -> Result<()> {
+    if song_id > 0 {
+        let result = sqlx::query("UPDATE songs SET normalization_gain = ? WHERE id = ?")
+            .bind(normalization_gain)
+            .bind(song_id)
+            .execute(pool)
+            .await?;
+
+        if result.rows_affected() > 0 {
+            return Ok(());
+        }
+    }
+
+    let lookup_path = if song_id < 0 {
+        format!("ncm://{}", -song_id)
+    } else {
+        file_path.to_string()
+    };
+
+    sqlx::query("UPDATE songs SET normalization_gain = ? WHERE file_path = ?")
+        .bind(normalization_gain)
+        .bind(lookup_path)
+        .execute(pool)
+        .await?;
+
     Ok(())
 }
 

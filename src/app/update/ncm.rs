@@ -811,14 +811,9 @@ impl App {
                 }
 
                 // Update tray state if this is the current song
-                if let Some(current) = &self.library.current_song {
+                if let Some(current) = &self.playback.current_song {
                     if current.id < 0 && (-current.id) as u64 == *song_id {
-                        let is_playing = self
-                            .core
-                            .audio
-                            .as_ref()
-                            .map(|p| p.is_playing())
-                            .unwrap_or(false);
+                        let is_playing = self.playback_is_playing();
                         crate::app::helpers::update_tray_state_with_favorite(
                             is_playing,
                             Some(current.title.clone()),
@@ -968,6 +963,7 @@ impl App {
                     file_hash: None,
                     file_size: 0,
                     format: Some("mp3".to_string()),
+                    normalization_gain: None,
                     play_count: 0,
                     last_played: Some(
                         std::time::SystemTime::now()
@@ -1014,29 +1010,34 @@ impl App {
             }
 
             Message::PlayResolvedNcmSong(song) => {
-                if let Some(player) = &self.core.audio {
-                    let path = std::path::PathBuf::from(&song.file_path);
-                    player.play(path);
-                    info!("Started playing resolved NCM song: {}", song.title);
-
-                    self.library.current_song = Some(song.clone());
-                    self.library.queue.clear();
-                    self.library.queue.push(song.clone());
-                    self.library.queue_index = Some(0);
-
-                    if let Some(db) = &self.core.db {
-                        let db = db.clone();
-                        let song_id = song.id;
-                        tokio::spawn(async move {
-                            let _ = db.record_play(song_id, 0, false).await;
-                        });
+                self.playback.queue.clear();
+                self.playback.queue.push(song.clone());
+                self.persist_queue_snapshot();
+                let source = match Self::audio_path_source_for_song(song) {
+                    Ok(source) => source,
+                    Err(err) => {
+                        error!(
+                            "Failed to prepare resolved NCM song {}: {}",
+                            song.title, err
+                        );
+                        return Some(Task::done(Message::ShowErrorToast(
+                            "无法播放解析后的歌曲".to_string(),
+                        )));
                     }
+                };
 
-                    self.update_mpris_state();
-                    return Some(Task::none());
+                match self.start_queue_song_from_source(0, song.clone(), source) {
+                    Ok(task) => {
+                        info!("Started playing resolved NCM song: {}", song.title);
+                        Some(task)
+                    }
+                    Err(err) => {
+                        error!("Failed to start resolved NCM song {}: {}", song.title, err);
+                        Some(Task::done(Message::ShowErrorToast(
+                            "无法播放解析后的歌曲".to_string(),
+                        )))
+                    }
                 }
-
-                Some(Task::none())
             }
 
             Message::AddNcmPlaylist(songs, play_now) => {
@@ -1066,6 +1067,7 @@ impl App {
                         file_hash: None,
                         file_size: 0,
                         format: Some("mp3".to_string()),
+                        normalization_gain: None,
                         play_count: 0,
                         last_played: None,
                         last_modified: 0,
@@ -1075,43 +1077,20 @@ impl App {
 
                 if self.is_fm_mode() && !*play_now {
                     debug!("FM mode: appending {} songs to queue", db_songs.len());
-                    self.library.queue.extend(db_songs.clone());
-
-                    if let Some(db) = &self.core.db {
-                        let db = db.clone();
-                        let queue_clone = self.library.queue.clone();
-                        tokio::spawn(async move {
-                            let _ = db.save_queue_with_songs(&queue_clone, None).await;
-                        });
-                    }
+                    self.playback.queue.extend(db_songs.clone());
+                    self.persist_queue_snapshot();
                     return Some(Task::none());
                 }
 
                 if *play_now {
-                    self.library.queue = db_songs.clone();
-                    self.library.queue_index = Some(0);
-
-                    // Save queue to database
-                    if let Some(db) = &self.core.db {
-                        let db = db.clone();
-                        let queue_clone = db_songs;
-                        tokio::spawn(async move {
-                            let _ = db.save_queue_with_songs(&queue_clone, None).await;
-                        });
-                    }
+                    self.playback.queue = db_songs.clone();
+                    self.playback.current_index = Some(0);
+                    self.persist_queue_snapshot();
 
                     return Some(self.update(Message::PlayQueueIndex(0)));
                 } else {
-                    self.library.queue.extend(db_songs);
-
-                    // Save updated queue to database
-                    if let Some(db) = &self.core.db {
-                        let db = db.clone();
-                        let queue_clone = self.library.queue.clone();
-                        tokio::spawn(async move {
-                            let _ = db.save_queue_with_songs(&queue_clone, None).await;
-                        });
-                    }
+                    self.playback.queue.extend(db_songs);
+                    self.persist_queue_snapshot();
                 }
 
                 Some(Task::none())
@@ -1324,15 +1303,15 @@ impl App {
                 );
 
                 // Update current_song's cover_path
-                if let Some(current) = &mut self.library.current_song {
+                if let Some(current) = &mut self.playback.current_song {
                     if current.id == *song_id {
                         current.cover_path = Some(path.clone());
                     }
                 }
 
                 // Update in queue and database
-                if let Some(idx) = self.library.queue_index {
-                    if let Some(queue_song) = self.library.queue.get_mut(idx) {
+                if let Some(idx) = self.playback.current_index {
+                    if let Some(queue_song) = self.playback.queue.get_mut(idx) {
                         if queue_song.id == *song_id {
                             queue_song.cover_path = Some(path.clone());
 
@@ -1355,7 +1334,7 @@ impl App {
 
                 // If lyrics page is open, update the background with new cover
                 if self.ui.lyrics.is_open {
-                    if let Some(song) = self.library.current_song.clone() {
+                    if let Some(song) = self.playback.current_song.clone() {
                         if song.id == *song_id {
                             return Some(self.update_lyrics_background_only(&song));
                         }

@@ -15,7 +15,8 @@ use iced::Task;
 use crate::app::message::Message;
 use crate::app::state::App;
 
-use super::preload_manager::{self};
+use super::player_controller::PlaybackSource;
+use super::preload_manager::{self, PreloadDirection, SlotState};
 use super::queue_navigator::{self, QueueNavigator};
 
 impl App {
@@ -23,20 +24,16 @@ impl App {
     where
         I: IntoIterator<Item = u64>,
     {
-        if let Some(audio) = &self.core.audio {
-            for request_id in request_ids {
-                audio.release_preload(request_id);
-            }
-        }
+        self.release_preload_requests(request_ids);
     }
 
     /// Create a QueueNavigator for the current state
     fn queue_navigator(&self) -> QueueNavigator<'_> {
         QueueNavigator::new(
-            self.library.queue.len(),
-            self.library.queue_index,
+            self.playback.queue.len(),
+            self.playback.current_index,
             self.core.settings.play_mode,
-            &self.library.shuffle_cache,
+            &self.playback.shuffle_cache,
         )
     }
 
@@ -53,24 +50,21 @@ impl App {
 
         // Invalidate stale preloads
         let stale_request_ids = self
-            .library
+            .playback
             .preload_manager
             .invalidate_stale(adjacent.next, adjacent.prev);
         self.release_preload_request_ids(stale_request_ids);
 
         let mut tasks = Vec::new();
 
-        // Preload next track (higher priority)
-        if let Some(next_idx) = adjacent.next {
-            if let Some(task) = self.preload_track(next_idx, true) {
-                tasks.push(task);
-            }
-        }
-
-        // Preload prev track
-        if let Some(prev_idx) = adjacent.prev {
-            if let Some(task) = self.preload_track(prev_idx, false) {
-                tasks.push(task);
+        for (candidate_idx, direction) in [
+            (adjacent.next, PreloadDirection::Next),
+            (adjacent.prev, PreloadDirection::Previous),
+        ] {
+            if let Some(idx) = candidate_idx {
+                if let Some(task) = self.preload_track(idx, direction) {
+                    tasks.push(task);
+                }
             }
         }
 
@@ -83,48 +77,54 @@ impl App {
 
     /// Preload a specific track
     /// Returns None if already preloaded or preloading
-    fn preload_track(&mut self, idx: usize, is_next: bool) -> Option<Task<Message>> {
-        let song = self.library.queue.get(idx)?;
+    fn preload_track(&mut self, idx: usize, direction: PreloadDirection) -> Option<Task<Message>> {
+        let song = self.playback.queue.get(idx)?.clone();
 
         // Check if we should preload
-        if !self.library.preload_manager.should_preload(idx, is_next) {
+        if !self.playback.preload_manager.should_preload(idx, direction) {
             return None;
         }
 
         // Check if it's a local song with existing file
-        if let Some(local_path) = queue_navigator::get_local_path(song) {
-            if let Some(audio) = &self.core.audio {
-                let request_id = audio.create_preload_sink(local_path.clone());
+        if let Some(local_path) = queue_navigator::get_local_path(&song) {
+            let track_gain = self.resolve_track_gain_for_song(
+                &song,
+                super::player_controller::TrackGainMode::AnalyzeIfMissing,
+            );
+            if let Ok(request_id) =
+                self.create_preload_sink_for_file(local_path.clone(), track_gain)
+            {
                 tracing::debug!(
-                    "Requesting preload for local track at index {}, request_id={}",
+                    "Requesting {} preload for local track at index {}, request_id={}",
+                    direction,
                     idx,
                     request_id
                 );
 
-                let released_request_id = self.library.preload_manager.mark_pending(idx, is_next);
+                let released_request_id =
+                    self.playback.preload_manager.mark_pending(idx, direction);
                 self.release_preload_request_ids(released_request_id);
                 return Some(Task::done(Message::PreloadRequestSent(
-                    idx, is_next, request_id, local_path,
+                    idx, direction, request_id, local_path,
                 )));
             }
             return None;
         }
 
         // NCM song - needs download
-        if !queue_navigator::needs_ncm_download(song) {
+        if !queue_navigator::needs_ncm_download(&song) {
             return None;
         }
 
         // Mark as pending and create download task
-        let released_request_id = self.library.preload_manager.mark_pending(idx, is_next);
+        let released_request_id = self.playback.preload_manager.mark_pending(idx, direction);
         self.release_preload_request_ids(released_request_id);
 
         // Create async download task
         if let Some(client) = &self.core.ncm_client {
             let client = Arc::new(client.clone());
-            let song = song.clone();
             Some(preload_manager::create_preload_task(
-                client, idx, song, is_next,
+                client, idx, song, direction,
             ))
         } else {
             None
@@ -135,20 +135,14 @@ impl App {
     pub fn handle_preload(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
             // Preload request sent to audio thread
-            Message::PreloadRequestSent(idx, is_next, request_id, path) => {
-                let slot = if *is_next {
-                    self.library.preload_manager.next_slot_mut()
-                } else {
-                    self.library.preload_manager.prev_slot_mut()
-                };
-
-                if let Some(slot) = slot {
+            Message::PreloadRequestSent(idx, direction, request_id, path) => {
+                if let Some(slot) = self.playback.preload_manager.slot_mut(*direction) {
                     if slot.is_for_index(*idx) {
                         slot.set_pending_request_id(*request_id);
                         tracing::debug!(
-                            "Preload request sent: idx={}, is_next={}, request_id={}, path={:?}",
+                            "Preload request sent: idx={}, direction={}, request_id={}, path={:?}",
                             idx,
-                            is_next,
+                            direction,
                             request_id,
                             path
                         );
@@ -158,22 +152,22 @@ impl App {
             }
 
             // Preload ready message
-            Message::PreloadReady(idx, file_path, is_next) => {
-                self.handle_preload_complete(*idx, file_path.clone(), *is_next)
+            Message::PreloadReady(idx, file_path, direction) => {
+                self.handle_preload_complete(*idx, file_path.clone(), *direction)
             }
 
             // Preload ready with SharedBuffer for streaming playback
-            Message::PreloadBufferReady(idx, file_path, is_next, buffer, duration_secs) => self
+            Message::PreloadBufferReady(idx, file_path, direction, buffer, duration_secs) => self
                 .handle_preload_buffer_ready(
                     *idx,
                     file_path.clone(),
-                    *is_next,
+                    *direction,
                     buffer.clone(),
                     *duration_secs,
                 ),
 
-            Message::PreloadAudioFailed(idx, is_next) => {
-                self.library.preload_manager.mark_failed(*idx, *is_next);
+            Message::PreloadAudioFailed(idx, direction) => {
+                self.playback.preload_manager.mark_failed(*idx, *direction);
                 Some(Task::none())
             }
 
@@ -188,54 +182,39 @@ impl App {
         duration: Duration,
         path: PathBuf,
     ) {
-        let next_matches = self
-            .library
-            .preload_manager
-            .next_slot()
-            .map(|s| s.has_pending_request(request_id))
-            .unwrap_or(false);
-        let prev_matches = self
-            .library
-            .preload_manager
-            .prev_slot()
-            .map(|s| s.has_pending_request(request_id))
-            .unwrap_or(false);
+        for direction in PreloadDirection::ALL {
+            let matches = self
+                .playback
+                .preload_manager
+                .slot(direction)
+                .map(|slot| slot.has_pending_request(request_id))
+                .unwrap_or(false);
 
-        if next_matches {
-            if let Some(slot) = self.library.preload_manager.next_slot_mut() {
+            if !matches {
+                continue;
+            }
+
+            if let Some(slot) = self.playback.preload_manager.slot_mut(direction) {
                 slot.request_id = Some(request_id);
-                slot.pending_request_id = None; // Clear pending
+                slot.pending_request_id = None;
                 slot.path = path.clone();
                 slot.duration = duration;
-                slot.state = preload_manager::SlotState::Ready;
+                slot.state = SlotState::Ready;
                 tracing::info!(
-                    "Preload ready (next): request_id={}, path={:?}",
+                    "Preload ready ({}): request_id={}, path={:?}",
+                    direction,
                     request_id,
                     path
                 );
             }
-        } else if prev_matches {
-            if let Some(slot) = self.library.preload_manager.prev_slot_mut() {
-                slot.request_id = Some(request_id);
-                slot.pending_request_id = None; // Clear pending
-                slot.path = path.clone();
-                slot.duration = duration;
-                slot.state = preload_manager::SlotState::Ready;
-                tracing::info!(
-                    "Preload ready (prev): request_id={}, path={:?}",
-                    request_id,
-                    path
-                );
-            }
-        } else {
-            tracing::debug!(
-                "PreloadReady received but no matching pending slot: request_id={} (stale)",
-                request_id
-            );
-            if let Some(audio) = &self.core.audio {
-                audio.release_preload(request_id);
-            }
+            return;
         }
+
+        tracing::debug!(
+            "PreloadReady received but no matching pending slot: request_id={} (stale)",
+            request_id
+        );
+        self.release_preload_request(request_id);
     }
 
     /// Handle successful preload completion
@@ -243,29 +222,43 @@ impl App {
         &mut self,
         idx: usize,
         file_path: String,
-        is_next: bool,
+        direction: PreloadDirection,
     ) -> Option<Task<Message>> {
         // Update song info in queue
-        if let Some(song) = self.library.queue.get_mut(idx) {
+        if let Some(song) = self.playback.queue.get_mut(idx) {
             song.file_path = file_path.clone();
         }
 
         // Request preload via audio thread
-        if let Some(audio) = &self.core.audio {
+        let track_gain = self
+            .playback
+            .queue
+            .get(idx)
+            .cloned()
+            .map(|song| {
+                self.resolve_track_gain_for_song(
+                    &song,
+                    super::player_controller::TrackGainMode::AnalyzeIfMissing,
+                )
+            })
+            .unwrap_or(1.0);
+        if let Ok(request_id) =
+            self.create_preload_sink_for_file(PathBuf::from(&file_path), track_gain)
+        {
             let path = PathBuf::from(&file_path);
-            let request_id = audio.create_preload_sink(path.clone());
             tracing::info!(
-                "NCM track downloaded at index {}, requesting preload: request_id={}",
+                "NCM track downloaded at index {}, requesting {} preload: request_id={}",
                 idx,
+                direction,
                 request_id
             );
 
             return Some(Task::done(Message::PreloadRequestSent(
-                idx, is_next, request_id, path,
+                idx, direction, request_id, path,
             )));
         }
 
-        self.library.preload_manager.mark_failed(idx, is_next);
+        self.playback.preload_manager.mark_failed(idx, direction);
         Some(Task::none())
     }
 
@@ -274,62 +267,73 @@ impl App {
         &mut self,
         idx: usize,
         file_path: String,
-        is_next: bool,
+        direction: PreloadDirection,
         buffer: crate::audio::SharedBuffer,
         duration_secs: u64,
     ) -> Option<Task<Message>> {
         // Update song info in queue
-        if let Some(song) = self.library.queue.get_mut(idx) {
+        if let Some(song) = self.playback.queue.get_mut(idx) {
             song.file_path = file_path.clone();
         }
 
-        if let Some(audio) = &self.core.audio {
-            let duration = Duration::from_secs(duration_secs);
-            let streaming_buffer = crate::audio::StreamingBuffer::new(buffer.clone());
-            let request_id = audio.create_preload_sink_streaming(streaming_buffer, duration);
+        let track_gain = self
+            .playback
+            .queue
+            .get(idx)
+            .cloned()
+            .map(|song| {
+                self.resolve_track_gain_for_song(
+                    &song,
+                    super::player_controller::TrackGainMode::MetadataOnly,
+                )
+            })
+            .unwrap_or(1.0);
+        if let Ok(request_id) = self.create_preload_sink_for_stream(
+            buffer.clone(),
+            Duration::from_secs(duration_secs),
+            track_gain,
+        ) {
             tracing::info!(
-                "NCM streaming track buffer ready at index {}, requesting preload: request_id={}",
+                "NCM streaming track buffer ready at index {}, requesting {} preload: request_id={}",
                 idx,
+                direction,
                 request_id
             );
 
-            if is_next {
-                if let Some(slot) = self.library.preload_manager.next_slot_mut() {
-                    slot.buffer = Some(buffer);
-                }
-            } else {
-                if let Some(slot) = self.library.preload_manager.prev_slot_mut() {
-                    slot.buffer = Some(buffer);
-                }
+            if let Some(slot) = self.playback.preload_manager.slot_mut(direction) {
+                slot.buffer = Some(buffer);
             }
 
             return Some(Task::done(Message::PreloadRequestSent(
                 idx,
-                is_next,
+                direction,
                 request_id,
                 PathBuf::from(file_path),
             )));
         }
 
         // No audio handle - mark as failed
-        self.library.preload_manager.mark_failed(idx, is_next);
+        self.playback.preload_manager.mark_failed(idx, direction);
         Some(Task::none())
     }
 
-    pub fn try_play_preloaded(&mut self, idx: usize, is_next: bool) -> bool {
-        if let Some(mut slot) = self.library.preload_manager.take_ready(idx, is_next) {
-            if let (Some(request_id), Some(audio)) = (slot.take_request_id(), &self.core.audio) {
+    pub(super) fn take_preloaded_source(
+        &mut self,
+        idx: usize,
+        direction: PreloadDirection,
+    ) -> Option<PlaybackSource> {
+        if let Some(mut slot) = self.playback.preload_manager.take_ready(idx, direction) {
+            if let Some(request_id) = slot.take_request_id() {
                 let path = slot.path.clone();
-                audio.play_preloaded(request_id, path);
-
-                if let Some(buffer) = slot.take_buffer() {
-                    self.library.streaming_buffer = Some(buffer);
-                }
-
-                tracing::info!("Playing preloaded track at index {}", idx);
-                return true;
+                let buffer = slot.take_buffer();
+                tracing::info!("Using {} preloaded track at index {}", direction, idx);
+                return Some(PlaybackSource::Preloaded {
+                    request_id,
+                    path,
+                    buffer,
+                });
             }
         }
-        false
+        None
     }
 }

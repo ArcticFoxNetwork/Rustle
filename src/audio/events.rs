@@ -31,12 +31,44 @@ use super::streaming::StreamingBuffer;
 /// Results are communicated back via `AudioEvent`.
 pub enum AudioCommand {
     /// Play a local file
-    Play { path: PathBuf, fade_in: bool },
-    /// Play from streaming buffer (for NCM songs)
-    PlayStreaming {
+    Play {
+        request_id: u64,
+        path: PathBuf,
+        fade_in: bool,
+        track_gain: f32,
+    },
+    /// Load a local file into paused state at a target position
+    LoadPaused {
+        request_id: u64,
+        path: PathBuf,
+        position: Duration,
+        track_gain: f32,
+    },
+    /// Load a streaming source into paused state at a target position
+    LoadPausedStreaming {
+        request_id: u64,
         buffer: StreamingBuffer,
         duration: Duration,
         cache_path: Option<PathBuf>,
+        position: Duration,
+        track_gain: f32,
+    },
+    /// Play a local file from a target position
+    PlayAt {
+        request_id: u64,
+        path: PathBuf,
+        position: Duration,
+        fade_in: bool,
+        track_gain: f32,
+    },
+    /// Play from streaming buffer (for NCM songs)
+    PlayStreaming {
+        request_id: u64,
+        buffer: StreamingBuffer,
+        duration: Duration,
+        cache_path: Option<PathBuf>,
+        fade_in: bool,
+        track_gain: f32,
     },
     /// Pause playback
     Pause { fade_out: bool },
@@ -48,26 +80,32 @@ pub enum AudioCommand {
     Seek { position: Duration },
     /// Set volume (0.0 - 1.0)
     SetVolume { volume: f32 },
-    /// Set track gain for normalization
-    SetTrackGain { gain: f32 },
     /// Create preload sink for a local file (async, returns via PreloadReady event)
-    CreatePreloadSink { path: PathBuf, request_id: u64 },
+    CreatePreloadSink {
+        path: PathBuf,
+        request_id: u64,
+        track_gain: f32,
+    },
     /// Create preload sink for streaming (async, returns via PreloadReady event)
     CreatePreloadSinkStreaming {
         buffer: StreamingBuffer,
         duration: Duration,
         request_id: u64,
+        track_gain: f32,
     },
     /// Play a preloaded sink by request_id
-    PlayPreloaded { request_id: u64, path: PathBuf },
+    PlayPreloaded {
+        request_id: u64,
+        playback_request_id: u64,
+        path: PathBuf,
+        fade_in: bool,
+    },
     /// Release a preloaded sink by request_id without playing it
     ReleasePreload { request_id: u64 },
     /// Switch audio output device
     SwitchDevice { device_name: Option<String> },
     /// Periodic tick for buffer status checks and position sync
     Tick,
-    /// Update paused position cache
-    UpdatePausedPosition { position: Duration },
     /// Buffer data available notification (from download callback)
     /// Used by Audio Thread to update buffer progress and check if buffering can end
     BufferDataAvailable { downloaded: u64, total: u64 },
@@ -76,19 +114,73 @@ pub enum AudioCommand {
 impl std::fmt::Debug for AudioCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Play { path, fade_in } => f
+            Self::Play {
+                request_id,
+                path,
+                fade_in,
+                track_gain,
+            } => f
                 .debug_struct("Play")
+                .field("request_id", request_id)
                 .field("path", path)
                 .field("fade_in", fade_in)
+                .field("track_gain", track_gain)
                 .finish(),
-            Self::PlayStreaming {
+            Self::LoadPaused {
+                request_id,
+                path,
+                position,
+                track_gain,
+            } => f
+                .debug_struct("LoadPaused")
+                .field("request_id", request_id)
+                .field("path", path)
+                .field("position", position)
+                .field("track_gain", track_gain)
+                .finish(),
+            Self::LoadPausedStreaming {
+                request_id,
                 duration,
                 cache_path,
+                position,
+                track_gain,
+                ..
+            } => f
+                .debug_struct("LoadPausedStreaming")
+                .field("request_id", request_id)
+                .field("duration", duration)
+                .field("cache_path", cache_path)
+                .field("position", position)
+                .field("track_gain", track_gain)
+                .finish_non_exhaustive(),
+            Self::PlayAt {
+                request_id,
+                path,
+                position,
+                fade_in,
+                track_gain,
+            } => f
+                .debug_struct("PlayAt")
+                .field("request_id", request_id)
+                .field("path", path)
+                .field("position", position)
+                .field("fade_in", fade_in)
+                .field("track_gain", track_gain)
+                .finish(),
+            Self::PlayStreaming {
+                request_id,
+                duration,
+                cache_path,
+                fade_in,
+                track_gain,
                 ..
             } => f
                 .debug_struct("PlayStreaming")
+                .field("request_id", request_id)
                 .field("duration", duration)
                 .field("cache_path", cache_path)
+                .field("fade_in", fade_in)
+                .field("track_gain", track_gain)
                 .finish_non_exhaustive(),
             Self::Pause { fade_out } => {
                 f.debug_struct("Pause").field("fade_out", fade_out).finish()
@@ -99,27 +191,38 @@ impl std::fmt::Debug for AudioCommand {
             Self::SetVolume { volume } => {
                 f.debug_struct("SetVolume").field("volume", volume).finish()
             }
-            Self::SetTrackGain { gain } => {
-                f.debug_struct("SetTrackGain").field("gain", gain).finish()
-            }
-            Self::CreatePreloadSink { path, request_id } => f
+            Self::CreatePreloadSink {
+                path,
+                request_id,
+                track_gain,
+            } => f
                 .debug_struct("CreatePreloadSink")
                 .field("path", path)
                 .field("request_id", request_id)
+                .field("track_gain", track_gain)
                 .finish(),
             Self::CreatePreloadSinkStreaming {
                 duration,
                 request_id,
+                track_gain,
                 ..
             } => f
                 .debug_struct("CreatePreloadSinkStreaming")
                 .field("duration", duration)
                 .field("request_id", request_id)
+                .field("track_gain", track_gain)
                 .finish_non_exhaustive(),
-            Self::PlayPreloaded { request_id, path } => f
+            Self::PlayPreloaded {
+                request_id,
+                playback_request_id,
+                path,
+                fade_in,
+            } => f
                 .debug_struct("PlayPreloaded")
                 .field("request_id", request_id)
+                .field("playback_request_id", playback_request_id)
                 .field("path", path)
+                .field("fade_in", fade_in)
                 .finish(),
             Self::ReleasePreload { request_id } => f
                 .debug_struct("ReleasePreload")
@@ -130,10 +233,6 @@ impl std::fmt::Debug for AudioCommand {
                 .field("device_name", device_name)
                 .finish(),
             Self::Tick => write!(f, "Tick"),
-            Self::UpdatePausedPosition { position } => f
-                .debug_struct("UpdatePausedPosition")
-                .field("position", position)
-                .finish(),
             Self::BufferDataAvailable { downloaded, total } => f
                 .debug_struct("BufferDataAvailable")
                 .field("downloaded", downloaded)
@@ -152,9 +251,15 @@ impl std::fmt::Debug for AudioCommand {
 #[derive(Debug, Clone)]
 pub enum AudioEvent {
     /// Playback started for a track
-    Started { path: Option<PathBuf> },
+    Started {
+        request_id: u64,
+        path: Option<PathBuf>,
+    },
     /// Playback paused
-    Paused { position: Duration },
+    Paused {
+        request_id: Option<u64>,
+        position: Duration,
+    },
     /// Playback resumed
     Resumed,
     /// Playback stopped
@@ -198,12 +303,13 @@ pub enum AudioEvent {
     /// Playback finished (track ended)
     Finished,
     /// Error occurred
-    Error { message: String },
+    Error {
+        request_id: Option<u64>,
+        message: String,
+    },
 }
 
 // ============ Shared State ============
-
-use super::player::EffectiveStatus;
 
 /// Inner state protected by RwLock
 #[derive(Debug, Clone)]
@@ -247,26 +353,6 @@ impl Default for PlaybackStateInner {
             pending_seek_target: None,
         }
     }
-}
-
-/// UI rendering snapshot of playback state
-#[derive(Debug, Clone)]
-#[allow(dead_code)] // Reserved for future UI snapshot API
-pub struct PlaybackStateSnapshot {
-    /// Effective status for UI icon display
-    pub effective_status: EffectiveStatus,
-    /// Whether loading indicator should be shown
-    pub is_loading: bool,
-    /// Display position (target position during seek)
-    pub display_position: Duration,
-    /// Actual playback position
-    pub actual_position: Duration,
-    /// Total duration
-    pub duration: Duration,
-    /// Volume
-    pub volume: f32,
-    /// Buffer progress (None for local files)
-    pub buffer_progress: Option<f32>,
 }
 
 /// Thread-safe shared playback state
@@ -315,24 +401,10 @@ impl SharedPlaybackState {
         }
     }
 
-    /// Check if currently playing
-    ///
-    /// Uses effective_status() so that Buffering returns true.
-    pub fn is_playing(&self) -> bool {
-        let inner = self.inner.read();
-        inner.status.effective_status() == super::player::EffectiveStatus::Playing
-    }
-
     /// Check if stopped
     pub fn is_stopped(&self) -> bool {
         let inner = self.inner.read();
         inner.status == PlaybackStatus::Stopped
-    }
-
-    /// Check if in loading state
-    pub fn is_loading(&self) -> bool {
-        let inner = self.inner.read();
-        inner.status.is_loading()
     }
 
     /// Get display positio

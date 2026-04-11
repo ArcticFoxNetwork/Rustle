@@ -6,7 +6,10 @@
 use anyhow::{Context, Result};
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::probe::Probe;
-use lofty::tag::Accessor;
+use lofty::tag::{Accessor, ItemKey, Tag};
+use rodio::{Decoder, Source};
+use std::fs::File;
+use std::io::BufReader;
 use std::path::Path;
 
 use super::encoding::{decode_string, normalize_string};
@@ -124,6 +127,117 @@ pub fn extract_metadata(path: &Path) -> Result<AudioMetadata> {
     Ok(metadata)
 }
 
+/// Extract track normalization gain from audio tags.
+///
+/// Returns linear gain to multiply the player volume by.
+/// Priority:
+/// 1. `REPLAYGAIN_TRACK_GAIN`
+/// 2. `REPLAYGAIN_ALBUM_GAIN`
+/// 3. `R128_TRACK_GAIN`
+/// 4. `R128_ALBUM_GAIN`
+pub fn extract_track_gain(path: &Path) -> Option<f32> {
+    let tagged_file = Probe::open(path).ok()?.read().ok()?;
+
+    tagged_file
+        .tags()
+        .iter()
+        .find_map(extract_track_gain_from_tag)
+}
+
+/// Resolve normalization gain from tags or by analyzing the decoded waveform.
+pub fn resolve_track_gain(path: &Path) -> Option<f32> {
+    extract_track_gain(path).or_else(|| analyze_track_gain(path))
+}
+
+fn extract_track_gain_from_tag(tag: &Tag) -> Option<f32> {
+    tag.get_string(&ItemKey::ReplayGainTrackGain)
+        .and_then(parse_replaygain_db)
+        .map(db_to_linear)
+        .or_else(|| {
+            tag.get_string(&ItemKey::ReplayGainAlbumGain)
+                .and_then(parse_replaygain_db)
+                .map(db_to_linear)
+        })
+        .or_else(|| extract_r128_gain(tag, "R128_TRACK_GAIN"))
+        .or_else(|| extract_r128_gain(tag, "R128_ALBUM_GAIN"))
+}
+
+fn extract_r128_gain(tag: &Tag, key: &str) -> Option<f32> {
+    tag.items()
+        .find_map(|item| match (item.key(), item.value().text()) {
+            (ItemKey::Unknown(unknown), Some(value)) if unknown.eq_ignore_ascii_case(key) => {
+                parse_r128_db(value).map(db_to_linear)
+            }
+            _ => None,
+        })
+}
+
+fn parse_replaygain_db(value: &str) -> Option<f32> {
+    let cleaned = value
+        .trim()
+        .trim_end_matches(" dB")
+        .trim_end_matches("dB")
+        .trim();
+    cleaned.parse::<f32>().ok()
+}
+
+fn parse_r128_db(value: &str) -> Option<f32> {
+    let raw = value.trim().parse::<f32>().ok()?;
+    Some(raw / 256.0)
+}
+
+fn db_to_linear(db: f32) -> f32 {
+    10.0_f32.powf(db / 20.0)
+}
+
+fn analyze_track_gain(path: &Path) -> Option<f32> {
+    let file = File::open(path).ok()?;
+    let reader = BufReader::new(file);
+    let decoder = Decoder::new(reader).ok()?;
+
+    let channels = decoder.channels().max(1) as usize;
+    let sample_rate = decoder.sample_rate().max(1) as usize;
+    let stride = ((sample_rate * channels) / 4_000).max(1);
+
+    let mut sum_sq = 0.0_f64;
+    let mut sample_count = 0_u64;
+    let mut peak = 0.0_f32;
+
+    for (idx, sample) in decoder.enumerate() {
+        if idx % stride != 0 {
+            continue;
+        }
+
+        let sample = sample.clamp(-1.0, 1.0);
+        peak = peak.max(sample.abs());
+        sum_sq += f64::from(sample) * f64::from(sample);
+        sample_count += 1;
+    }
+
+    if sample_count == 0 {
+        return None;
+    }
+
+    let rms = (sum_sq / sample_count as f64).sqrt() as f32;
+    if rms <= 1e-6 {
+        return Some(1.0);
+    }
+
+    // Approximate integrated loudness target near -18 dBFS.
+    let target_rms = 10.0_f32.powf(-18.0 / 20.0);
+    let min_gain = 10.0_f32.powf(-18.0 / 20.0);
+    let max_gain = 10.0_f32.powf(12.0 / 20.0);
+
+    let mut gain = (target_rms / rms).clamp(min_gain, max_gain);
+
+    // Keep some headroom to avoid clipping after normalization.
+    if peak > 1e-6 {
+        gain = gain.min(0.98 / peak);
+    }
+
+    Some(gain.clamp(min_gain, max_gain))
+}
+
 /// Try to parse artist and title from filename
 ///
 /// Common patterns:
@@ -229,5 +343,18 @@ mod tests {
         let (artist, title) = parse_filename("01. 七里香.mp3");
         assert_eq!(artist, None);
         assert_eq!(title, Some("七里香".to_string()));
+    }
+
+    #[test]
+    fn test_parse_replaygain_db() {
+        assert_eq!(parse_replaygain_db("-7.43 dB"), Some(-7.43));
+        assert_eq!(parse_replaygain_db("+3.00 dB"), Some(3.0));
+        assert_eq!(parse_replaygain_db("1.25"), Some(1.25));
+    }
+
+    #[test]
+    fn test_parse_r128_db() {
+        assert_eq!(parse_r128_db("-256"), Some(-1.0));
+        assert_eq!(parse_r128_db("512"), Some(2.0));
     }
 }

@@ -16,40 +16,29 @@ impl App {
         let lyrics_animating = self.ui.lyrics.animation.is_animating();
         let lyrics_overlay: Element<'_, Message> =
             if self.ui.lyrics.is_open || lyrics_animating || lyrics_progress > 0.01 {
-                if let Some(song) = &self.library.current_song {
+                if let Some(song) = &self.playback.current_song {
+                    let runtime = self.playback_runtime();
                     // Get playback info - same logic as player bar for consistency
-                    let (is_playing, position, duration) = if let Some(player) = &self.core.audio {
-                        let info = player.get_info();
-                        if info.duration.as_secs_f32() > 0.0 {
-                            // Player has loaded a file
+                    let (is_playing, position, duration) =
+                        if runtime.has_loaded_audio && runtime.info.duration.as_secs_f32() > 0.0 {
                             (
-                                player.is_playing(),
-                                info.position.as_secs_f32() / info.duration.as_secs_f32().max(1.0),
-                                info.duration.as_secs_f32(),
+                                runtime.is_playing(),
+                                runtime.info.position.as_secs_f32()
+                                    / runtime.info.duration.as_secs_f32().max(1.0),
+                                runtime.info.duration.as_secs_f32(),
                             )
                         } else {
                             // Player exists but no file loaded yet (e.g., NCM song still resolving)
                             // Use saved state for display
                             let saved_pos = self
-                                .library
-                                .playback_state
+                                .playback
+                                .saved_state
                                 .as_ref()
                                 .map(|s| s.position_secs as f32)
                                 .unwrap_or(0.0);
                             let song_duration = song.duration_secs.max(1) as f32;
                             (false, saved_pos / song_duration, song_duration)
-                        }
-                    } else {
-                        // No player - use saved state
-                        let saved_pos = self
-                            .library
-                            .playback_state
-                            .as_ref()
-                            .map(|s| s.position_secs as f32)
-                            .unwrap_or(0.0);
-                        let song_duration = song.duration_secs.max(1) as f32;
-                        (false, saved_pos / song_duration, song_duration)
-                    };
+                        };
 
                     // Use preview position while seeking, otherwise use actual position
                     let display_position = if self.ui.seek_preview_position.is_some() {
@@ -87,7 +76,7 @@ impl App {
                         } else {
                             false
                         },
-                        self.core.audio.as_ref().and_then(|p| p.buffer_progress()),
+                        self.playback_buffer_progress(),
                         self.is_fm_mode(),
                     )
                 } else {
@@ -125,7 +114,7 @@ impl App {
 
         let current_user_id = self.core.user_info.as_ref().map(|u| u.user_id);
 
-        let current_playing_id = self.library.current_song.as_ref().map(|s| s.id);
+        let current_playing_id = self.playback.current_song.as_ref().map(|s| s.id);
 
         let main_content = match &self.ui.current_route {
             Route::Playlist(_) | Route::NcmPlaylist(_) | Route::RecentlyPlayed => {
@@ -168,6 +157,7 @@ impl App {
                 let _ = section;
                 pages::settings::view(
                     &self.core.settings,
+                    self.audio_output_devices(),
                     self.ui.active_settings_section,
                     self.core.locale,
                     self.ui.editing_keybinding,
@@ -179,7 +169,7 @@ impl App {
             Route::AudioEngine => pages::audio_engine::view(
                 &self.core.settings,
                 self.core.locale,
-                Some(self.core.audio_chain.analysis()),
+                Some(self.playback_analysis_data()),
             ),
         };
 
@@ -223,64 +213,39 @@ impl App {
 
         // Build right panel with player bar at bottom (always visible)
         let right_content: Element<'_, Message> = {
+            let runtime = self.playback_runtime();
             // Get playback info from audio player, or fall back to saved state
-            let (is_playing, position, duration, volume) = if let Some(player) = &self.core.audio {
-                let info = player.get_info();
-                if info.duration.as_secs_f32() > 0.0 {
-                    // Player has loaded a file
-                    let display_pos = player.display_position().as_secs_f32();
+            let (is_playing, position, duration, volume) =
+                if runtime.has_loaded_audio && runtime.info.duration.as_secs_f32() > 0.0 {
                     (
-                        player.is_playing(),
-                        display_pos,
-                        info.duration.as_secs_f32().max(1.0),
-                        info.volume,
+                        runtime.is_playing(),
+                        runtime.display_position.as_secs_f32(),
+                        runtime.info.duration.as_secs_f32().max(1.0),
+                        runtime.info.volume,
                     )
                 } else {
                     // Player exists but no file loaded - use saved state
                     let saved_pos = self
-                        .library
-                        .playback_state
+                        .playback
+                        .saved_state
                         .as_ref()
                         .map(|s| s.position_secs as f32)
                         .unwrap_or(0.0);
                     let saved_vol = self
-                        .library
-                        .playback_state
+                        .playback
+                        .saved_state
                         .as_ref()
                         .map(|s| s.volume as f32)
                         .unwrap_or(1.0);
                     let song_duration = self
-                        .library
+                        .playback
                         .current_song
                         .as_ref()
                         .map(|s| s.duration_secs as f32)
                         .unwrap_or(1.0)
                         .max(1.0);
                     (false, saved_pos, song_duration, saved_vol)
-                }
-            } else {
-                // No player - use saved state
-                let saved_pos = self
-                    .library
-                    .playback_state
-                    .as_ref()
-                    .map(|s| s.position_secs as f32)
-                    .unwrap_or(0.0);
-                let saved_vol = self
-                    .library
-                    .playback_state
-                    .as_ref()
-                    .map(|s| s.volume as f32)
-                    .unwrap_or(1.0);
-                let song_duration = self
-                    .library
-                    .current_song
-                    .as_ref()
-                    .map(|s| s.duration_secs as f32)
-                    .unwrap_or(1.0)
-                    .max(1.0);
-                (false, saved_pos, song_duration, saved_vol)
-            };
+                };
 
             // Use preview position while seeking, otherwise use actual position
             let display_position = if let Some(preview) = self.ui.seek_preview_position {
@@ -289,18 +254,17 @@ impl App {
                 position / duration
             };
 
-            let is_buffering = self
-                .core
-                .audio
-                .as_ref()
-                .map(|p| p.is_loading())
-                .unwrap_or(false);
+            let is_buffering = self.playback_is_buffering();
 
             let is_fm_mode = self.is_fm_mode();
-            let is_first_song = self.library.queue_index.map(|idx| idx == 0).unwrap_or(true);
+            let is_first_song = self
+                .playback
+                .current_index
+                .map(|idx| idx == 0)
+                .unwrap_or(true);
 
             let player_bar = components::player_bar::view(
-                self.library.current_song.as_ref(),
+                self.playback.current_song.as_ref(),
                 is_playing,
                 display_position,
                 duration,
@@ -308,7 +272,7 @@ impl App {
                 self.ui.seek_preview_position.is_some(),
                 self.core.settings.play_mode,
                 is_buffering,
-                self.core.audio.as_ref().and_then(|p| p.buffer_progress()),
+                self.playback_buffer_progress(),
                 is_fm_mode,
                 is_first_song,
             );
@@ -316,8 +280,8 @@ impl App {
             // Build content with player bar - always use stack to keep layout consistent
             let queue_overlay: Element<'_, Message> = if self.ui.queue_visible {
                 let queue_popup = components::queue_panel::view(
-                    &self.library.queue,
-                    self.library.queue_index,
+                    &self.playback.queue,
+                    self.playback.current_index,
                     self.core.locale,
                     is_fm_mode,
                 );

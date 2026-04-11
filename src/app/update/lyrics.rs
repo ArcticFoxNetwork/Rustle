@@ -18,7 +18,7 @@ impl App {
         match message {
             Message::OpenLyricsPage => {
                 // Only open if there's a song playing
-                if let Some(song) = self.library.current_song.clone() {
+                if let Some(song) = self.playback.current_song.clone() {
                     self.ui.lyrics.is_open = true;
                     self.ui.lyrics.animation.start();
 
@@ -490,7 +490,7 @@ impl App {
             // NEW: Handle async background colors
             Message::LyricsBackgroundReady(song_id, primary, secondary, tertiary) => {
                 // Only apply if this is still the current song
-                if self.library.current_song.as_ref().map(|s| s.id) == Some(*song_id) {
+                if self.playback.current_song.as_ref().map(|s| s.id) == Some(*song_id) {
                     self.ui
                         .lyrics
                         .bg_shader
@@ -523,7 +523,7 @@ impl App {
 
             // NEW: Handle async cover image loading for textured background
             Message::LyricsCoverImageReady(song_id, image_data, width, height) => {
-                if self.library.current_song.as_ref().map(|s| s.id) == Some(*song_id) {
+                if self.playback.current_song.as_ref().map(|s| s.id) == Some(*song_id) {
                     // Convert raw bytes back to DynamicImage
                     if let Some(img) =
                         image::RgbImage::from_raw(*width, *height, image_data.clone())
@@ -600,13 +600,9 @@ impl App {
             return Task::none();
         }
 
-        let position_ms = if let Some(player) = &self.core.audio {
-            let info = player.get_info();
-            if info.duration.as_secs_f32() > 0.0 {
-                (info.position.as_secs_f32() * 1000.0) as u64
-            } else {
-                0
-            }
+        let runtime = self.playback_runtime();
+        let position_ms = if runtime.has_loaded_audio && runtime.info.duration.as_secs_f32() > 0.0 {
+            (runtime.info.position.as_secs_f32() * 1000.0) as u64
         } else {
             0
         };
@@ -637,34 +633,21 @@ impl App {
         let font_size = (self.ui.lyrics.viewport_height * 0.055).clamp(24.0, 72.0);
         let viewport_height = self.ui.lyrics.viewport_height;
 
-        let time_ms = if let Some(player) = &self.core.audio {
-            let info = player.get_info();
-            if info.duration.as_secs_f32() > 0.0 {
-                info.position.as_secs_f64() * 1000.0
-            } else {
-                self.library
-                    .playback_state
-                    .as_ref()
-                    .map(|s| s.position_secs * 1000.0)
-                    .unwrap_or(0.0)
-            }
+        let runtime = self.playback_runtime();
+        let time_ms = if runtime.has_loaded_audio && runtime.info.duration.as_secs_f32() > 0.0 {
+            runtime.info.position.as_secs_f64() * 1000.0
         } else {
-            self.library
-                .playback_state
+            self.playback
+                .saved_state
                 .as_ref()
                 .map(|s| s.position_secs * 1000.0)
                 .unwrap_or(0.0)
         };
 
-        let is_playing = self
-            .core
-            .audio
-            .as_ref()
-            .map(|player| {
-                let info = player.get_info();
-                info.status == crate::audio::PlaybackStatus::Playing
-            })
-            .unwrap_or(false);
+        let is_playing = matches!(
+            self.playback_runtime().info.status,
+            crate::audio::PlaybackStatus::Playing
+        );
 
         if let Some(engine_cell) = &self.ui.lyrics.engine {
             let mut engine = engine_cell.borrow_mut();

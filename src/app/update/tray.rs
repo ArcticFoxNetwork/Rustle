@@ -55,22 +55,17 @@ impl App {
                         self.cache_shuffle_indices();
                         let _ = self.preload_adjacent_tracks_with_ncm();
                         let (title, artist) = self
-                            .library
+                            .playback
                             .current_song
                             .as_ref()
                             .map(|s| (Some(s.title.clone()), Some(s.artist.clone())))
                             .unwrap_or((None, None));
-                        let is_playing = self
-                            .core
-                            .audio
-                            .as_ref()
-                            .map(|p| p.is_playing())
-                            .unwrap_or(false);
+                        let is_playing = self.playback_is_playing();
                         update_tray_state_full(is_playing, title, artist, *mode);
                     }
                     TrayCommand::ToggleFavorite => {
                         // Toggle favorite for current NCM song
-                        if let Some(song) = &self.library.current_song {
+                        if let Some(song) = &self.playback.current_song {
                             if song.id < 0 {
                                 let ncm_id = (-song.id) as u64;
                                 return Some(self.update(Message::ToggleFavorite(ncm_id)));

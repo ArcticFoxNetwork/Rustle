@@ -10,7 +10,6 @@ use iced::widget::{
 use iced::{Alignment, Background, Border, Color, Element, Fill, Padding};
 
 use crate::app::{Message, SettingsSection};
-use crate::audio::get_audio_devices;
 use crate::features::{Action, KeyBindings, Settings};
 use crate::i18n::{Key, Locale};
 use crate::ui::theme;
@@ -18,6 +17,7 @@ use crate::ui::theme;
 /// Settings page view with fixed header and all sections on one scrollable page
 pub fn view(
     settings: &Settings,
+    audio_devices: Vec<(String, String)>,
     active_section: SettingsSection,
     locale: Locale,
     editing_keybinding: Option<Action>,
@@ -54,6 +54,7 @@ pub fn view(
     // All sections on one page
     let all_sections = all_sections_content(
         settings,
+        &audio_devices,
         locale,
         editing_keybinding,
         is_logged_in,
@@ -186,6 +187,7 @@ fn tab_bar(active_section: SettingsSection, locale: Locale) -> Element<'static, 
 /// All settings sections on one page
 fn all_sections_content(
     settings: &Settings,
+    audio_devices: &[(String, String)],
     locale: Locale,
     editing_keybinding: Option<Action>,
     is_logged_in: bool,
@@ -211,7 +213,7 @@ fn all_sections_content(
         // System section
         section_header(locale.get(Key::SettingsSystemTitle)),
         Space::new().height(16),
-        system_section(settings, locale),
+        system_section(settings, audio_devices, locale),
         Space::new().height(40),
         // Network section
         section_header(locale.get(Key::SettingsNetworkTitle)),
@@ -586,30 +588,32 @@ fn display_section(settings: &Settings, locale: Locale) -> Element<'static, Mess
     .into()
 }
 
-fn system_section(settings: &Settings, locale: Locale) -> Element<'static, Message> {
-    // Get real audio devices from PulseAudio/PipeWire
-    let audio_devices = get_audio_devices();
+fn system_section(
+    settings: &Settings,
+    audio_devices: &[(String, String)],
+    locale: Locale,
+) -> Element<'static, Message> {
     let default_device_label = locale.get(Key::SettingsDefaultDevice).to_string();
 
     // Build display names list (descriptions) and keep track of internal names
     let mut display_names: Vec<String> = vec![default_device_label.clone()];
-    for device in &audio_devices {
-        display_names.push(device.description.clone());
+    for device in audio_devices {
+        display_names.push(device.1.clone());
     }
 
     // Find current device's display name
     let current_display = if let Some(ref device_name) = settings.system.audio_output_device {
         audio_devices
             .iter()
-            .find(|d| &d.name == device_name)
-            .map(|d| d.description.clone())
+            .find(|(name, _)| name == device_name)
+            .map(|(_, description)| description.clone())
             .unwrap_or_else(|| default_device_label.clone())
     } else {
         default_device_label.clone()
     };
 
     // Clone for closure
-    let devices_for_closure = audio_devices.clone();
+    let devices_for_closure = audio_devices.to_vec();
     let default_label = default_device_label.clone();
 
     column![setting_row(
@@ -622,8 +626,8 @@ fn system_section(settings: &Settings, locale: Locale) -> Element<'static, Messa
             } else {
                 devices_for_closure
                     .iter()
-                    .find(|d| d.description == display_value)
-                    .map(|d| d.name.clone())
+                    .find(|(_, description)| *description == display_value)
+                    .map(|(name, _)| name.clone())
             };
             Message::UpdateAudioOutputDevice(device)
         },)

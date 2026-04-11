@@ -9,8 +9,8 @@ pub mod lyrics;
 pub mod media;
 pub mod settings;
 
+pub use import::{extract_track_gain, resolve_track_gain};
 pub use keybindings::{Action, KeyBindings};
 
 pub use crate::platform::tray::TrayCommand;
-
 pub use settings::{CloseBehavior, EqualizerPreset, MusicQuality, PlayMode, ProxyType, Settings};

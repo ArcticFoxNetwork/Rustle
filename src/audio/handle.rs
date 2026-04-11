@@ -14,6 +14,8 @@ use super::streaming::StreamingBuffer;
 
 /// Counter for generating unique preload request IDs
 static PRELOAD_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+/// Counter for generating unique playback request IDs
+static PLAYBACK_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Handle for controlling audio from UI thread
 ///
@@ -37,6 +39,10 @@ impl std::fmt::Debug for AudioHandle {
 }
 
 impl AudioHandle {
+    fn next_playback_request_id() -> u64 {
+        PLAYBACK_REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+    }
+
     /// Create a new audio handle
     pub fn new(command_tx: AudioCommandSender, state: SharedPlaybackState) -> Self {
         Self { command_tx, state }
@@ -44,17 +50,68 @@ impl AudioHandle {
 
     // ============ Playback Control ============
 
-    /// Play a local file
-    ///
-    /// Sends Play command to audio thread and returns immediately.
-    /// Listen for `AudioEvent::Started` to know when playback begins.
-    pub fn play(&self, path: PathBuf) {
-        self.play_with_fade(path, false);
+    /// Play a local file with optional fade in
+    pub fn play_with_fade(&self, path: PathBuf, fade_in: bool, track_gain: f32) -> u64 {
+        let request_id = Self::next_playback_request_id();
+        let _ = self.command_tx.send(AudioCommand::Play {
+            request_id,
+            path,
+            fade_in,
+            track_gain,
+        });
+        request_id
     }
 
-    /// Play a local file with optional fade in
-    pub fn play_with_fade(&self, path: PathBuf, fade_in: bool) {
-        let _ = self.command_tx.send(AudioCommand::Play { path, fade_in });
+    /// Load a local file in paused state at a target position
+    pub fn load_paused(&self, path: PathBuf, position: Duration, track_gain: f32) -> u64 {
+        let request_id = Self::next_playback_request_id();
+        let _ = self.command_tx.send(AudioCommand::LoadPaused {
+            request_id,
+            path,
+            position,
+            track_gain,
+        });
+        request_id
+    }
+
+    /// Load a streaming source in paused state at a target position
+    pub fn load_streaming_paused(
+        &self,
+        buffer: StreamingBuffer,
+        duration: Duration,
+        cache_path: Option<PathBuf>,
+        position: Duration,
+        track_gain: f32,
+    ) -> u64 {
+        let request_id = Self::next_playback_request_id();
+        let _ = self.command_tx.send(AudioCommand::LoadPausedStreaming {
+            request_id,
+            buffer,
+            duration,
+            cache_path,
+            position,
+            track_gain,
+        });
+        request_id
+    }
+
+    /// Play a local file from a target position
+    pub fn play_from_position_with_fade(
+        &self,
+        path: PathBuf,
+        position: Duration,
+        fade_in: bool,
+        track_gain: f32,
+    ) -> u64 {
+        let request_id = Self::next_playback_request_id();
+        let _ = self.command_tx.send(AudioCommand::PlayAt {
+            request_id,
+            path,
+            position,
+            fade_in,
+            track_gain,
+        });
+        request_id
     }
 
     /// Play from streaming buffer
@@ -65,17 +122,19 @@ impl AudioHandle {
         buffer: StreamingBuffer,
         duration: Duration,
         cache_path: Option<PathBuf>,
-    ) {
+        fade_in: bool,
+        track_gain: f32,
+    ) -> u64 {
+        let request_id = Self::next_playback_request_id();
         let _ = self.command_tx.send(AudioCommand::PlayStreaming {
+            request_id,
             buffer,
             duration,
             cache_path,
+            fade_in,
+            track_gain,
         });
-    }
-
-    /// Pause playback
-    pub fn pause(&self) {
-        self.pause_with_fade(false);
+        request_id
     }
 
     /// Pause playback with optional fade out
@@ -125,21 +184,9 @@ impl AudioHandle {
         let _ = self.command_tx.send(AudioCommand::SetVolume { volume });
     }
 
-    /// Set track gain for normalization
-    pub fn set_track_gain(&self, gain: f32) {
-        let _ = self.command_tx.send(AudioCommand::SetTrackGain { gain });
-    }
-
     /// Tick handler - checks buffer status and syncs position
     pub fn tick(&self) {
         let _ = self.command_tx.send(AudioCommand::Tick);
-    }
-
-    /// Update paused position cache
-    pub fn update_paused_position(&self, position: Duration) {
-        let _ = self
-            .command_tx
-            .send(AudioCommand::UpdatePausedPosition { position });
     }
     // ============ Preloading ============
 
@@ -147,11 +194,13 @@ impl AudioHandle {
     ///
     /// Returns a request ID. Listen for `AudioEvent::PreloadReady` or
     /// `AudioEvent::PreloadFailed` with matching request_id.
-    pub fn create_preload_sink(&self, path: PathBuf) -> u64 {
+    pub fn create_preload_sink(&self, path: PathBuf, track_gain: f32) -> u64 {
         let request_id = PRELOAD_REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let _ = self
-            .command_tx
-            .send(AudioCommand::CreatePreloadSink { path, request_id });
+        let _ = self.command_tx.send(AudioCommand::CreatePreloadSink {
+            path,
+            request_id,
+            track_gain,
+        });
         request_id
     }
 
@@ -163,6 +212,7 @@ impl AudioHandle {
         &self,
         buffer: StreamingBuffer,
         duration: Duration,
+        track_gain: f32,
     ) -> u64 {
         let request_id = PRELOAD_REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
         let _ = self
@@ -171,6 +221,7 @@ impl AudioHandle {
                 buffer,
                 duration,
                 request_id,
+                track_gain,
             });
         request_id
     }
@@ -179,10 +230,15 @@ impl AudioHandle {
     ///
     /// The sink must have been created via `create_preload_sink` or
     /// `create_preload_sink_streaming` and received `AudioEvent::PreloadReady`.
-    pub fn play_preloaded(&self, request_id: u64, path: PathBuf) {
-        let _ = self
-            .command_tx
-            .send(AudioCommand::PlayPreloaded { request_id, path });
+    pub fn play_preloaded(&self, request_id: u64, path: PathBuf, fade_in: bool) -> u64 {
+        let playback_request_id = Self::next_playback_request_id();
+        let _ = self.command_tx.send(AudioCommand::PlayPreloaded {
+            request_id,
+            playback_request_id,
+            path,
+            fade_in,
+        });
+        playback_request_id
     }
 
     /// Release a preloaded sink by request_id without playing it
@@ -218,16 +274,6 @@ impl AudioHandle {
     /// Use this for UI display to show immediate feedback during seek.
     pub fn display_position(&self) -> Duration {
         self.state.display_position()
-    }
-
-    /// Check if in loading state (buffering)
-    pub fn is_loading(&self) -> bool {
-        self.state.is_loading()
-    }
-
-    /// Check if currently playing
-    pub fn is_playing(&self) -> bool {
-        self.state.is_playing()
     }
 
     /// Check if player has no loaded audio

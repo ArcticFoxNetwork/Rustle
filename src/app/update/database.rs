@@ -11,6 +11,172 @@ use crate::app::state::App;
 use crate::ui::pages;
 
 impl App {
+    fn resolve_startup_restore_index(
+        &self,
+        state: &crate::database::DbPlaybackState,
+    ) -> Option<usize> {
+        let queue_len = self.playback.queue.len();
+        if queue_len == 0 {
+            tracing::info!("Startup restore skipped: queue is empty");
+            return None;
+        }
+
+        if state.queue_position >= 0 {
+            let idx = state.queue_position as usize;
+            if idx < queue_len {
+                tracing::info!(
+                    "Startup restore selected queue index {} from saved queue_position {}",
+                    idx,
+                    state.queue_position
+                );
+                return Some(idx);
+            }
+
+            tracing::warn!(
+                "Startup restore queue_position {} is out of range for queue len {}",
+                state.queue_position,
+                queue_len
+            );
+        } else {
+            tracing::warn!(
+                "Startup restore queue_position {} is invalid",
+                state.queue_position
+            );
+        }
+
+        let Some(current_song_id) = state.current_song_id else {
+            tracing::warn!(
+                "Startup restore skipped: queue_position invalid and current_song_id is missing"
+            );
+            return None;
+        };
+
+        if let Some(idx) = self
+            .playback
+            .queue
+            .iter()
+            .position(|song| song.id == current_song_id)
+        {
+            tracing::info!(
+                "Startup restore selected queue index {} from direct current_song_id match {}",
+                idx,
+                current_song_id
+            );
+            return Some(idx);
+        }
+
+        let Some(saved_song_path) = self
+            .library
+            .db_songs
+            .iter()
+            .find(|song| song.id == current_song_id)
+            .map(|song| song.file_path.clone())
+        else {
+            tracing::info!(
+                "Startup restore waiting for songs list to resolve current_song_id {}",
+                current_song_id
+            );
+            return None;
+        };
+
+        if let Some(idx) = self
+            .playback
+            .queue
+            .iter()
+            .position(|song| song.file_path == saved_song_path)
+        {
+            tracing::info!(
+                "Startup restore selected queue index {} from current_song_id {} via path {}",
+                idx,
+                current_song_id,
+                saved_song_path
+            );
+            return Some(idx);
+        }
+
+        tracing::warn!(
+            "Startup restore could not find current_song_id {} with path {} in queue",
+            current_song_id,
+            saved_song_path
+        );
+        None
+    }
+
+    fn try_restore_startup_playback(&mut self) -> Task<Message> {
+        let Some(state) = self.playback.saved_state.clone() else {
+            tracing::debug!("Startup restore skipped: playback state not loaded yet");
+            return Task::none();
+        };
+
+        let Some(idx) = self.resolve_startup_restore_index(&state) else {
+            return Task::none();
+        };
+        let Some(song) = self.playback.queue.get(idx).cloned() else {
+            tracing::warn!(
+                "Startup restore selected queue index {} but queue len is {}",
+                idx,
+                self.playback.queue.len()
+            );
+            return Task::none();
+        };
+
+        self.playback.current_index = Some(idx);
+        self.playback.current_song = Some(song.clone());
+        self.update_tray_and_mpris_current(false);
+
+        if self.playback.pending_playback_request.is_some()
+            || self.playback.pending_resolution_index == Some(idx)
+        {
+            return Task::none();
+        }
+
+        if crate::app::update::song_resolver::needs_resolution(&song) {
+            tracing::info!("Restoring NCM song: {} - {}", song.title, song.artist);
+
+            if let Some(client) = self.core.ncm_client.clone() {
+                let song_clone = song.clone();
+                let saved_position = state.position_secs;
+                let client = std::sync::Arc::new(client);
+
+                self.playback.pending_resolution_index = Some(idx);
+
+                return Task::perform(
+                    async move {
+                        let (event_tx, _event_rx) = tokio::sync::mpsc::channel(1);
+                        crate::app::update::song_resolver::resolve_song(
+                            client,
+                            &song_clone,
+                            event_tx,
+                        )
+                        .await
+                    },
+                    move |result| Message::SongResolvedForRestore(idx, result, saved_position),
+                );
+            }
+
+            tracing::warn!("NCM client not available for song restoration");
+            return Task::none();
+        }
+
+        let path_buf = std::path::PathBuf::from(&song.file_path);
+        if !path_buf.exists() {
+            tracing::warn!(
+                "Saved song path no longer exists, cannot restore: {}",
+                song.file_path
+            );
+            return Task::none();
+        }
+
+        let position = std::time::Duration::from_secs_f64(state.position_secs);
+        if let Err(err) = self.load_audio_path_paused_for_song(&song, path_buf, position) {
+            tracing::warn!("Failed to restore local song {}: {}", song.title, err);
+        } else {
+            tracing::info!("Loaded song and seeked to {:?}", position);
+        }
+
+        Task::none()
+    }
+
     /// Handle database-related messages
     pub fn handle_database(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
@@ -53,6 +219,9 @@ impl App {
             Message::SongsLoaded(songs) => {
                 tracing::info!("Loaded {} songs from database", songs.len());
                 self.library.db_songs = songs.clone();
+                if self.playback.current_song.is_none() {
+                    return Some(self.try_restore_startup_playback());
+                }
                 Some(Task::none())
             }
 
@@ -68,103 +237,30 @@ impl App {
                     state.position_secs,
                     state.volume
                 );
-                if let Some(player) = &self.core.audio {
-                    player.set_volume(state.volume as f32);
-                }
-                self.library.playback_state = Some(state.clone());
-                Some(Task::none())
+                self.set_output_volume(state.volume as f32, false);
+                self.playback.saved_state = Some(state.clone());
+                self.refresh_playback_runtime();
+                Some(self.try_restore_startup_playback())
             }
 
             Message::QueueRestored(queue) => {
                 tracing::info!("Restored {} songs in queue", queue.len());
-                self.library.queue = queue.clone();
+                self.playback.queue = queue.clone();
 
                 // Initialize shuffle cache for preloading (must be done before preload)
                 self.cache_shuffle_indices();
-
-                if let Some(state) = &self.library.playback_state {
-                    if state.queue_position >= 0
-                        && (state.queue_position as usize) < self.library.queue.len()
-                    {
-                        let idx = state.queue_position as usize;
-                        self.library.queue_index = Some(idx);
-                        if let Some(song) = self.library.queue.get(idx) {
-                            self.library.current_song = Some(song.clone());
-
-                            // Check if this is an NCM song (negative ID or ncm:// path)
-                            let is_ncm = song.id < 0 || song.file_path.starts_with("ncm://");
-
-                            if is_ncm {
-                                // NCM song - resolve and load just like local songs
-                                tracing::info!(
-                                    "Restoring NCM song: {} - {}",
-                                    song.title,
-                                    song.artist
-                                );
-
-                                // Trigger resolution task
-                                if let Some(client) = self.core.ncm_client.clone() {
-                                    let song_clone = song.clone();
-                                    let saved_position = state.position_secs;
-                                    let client = std::sync::Arc::new(client);
-
-                                    return Some(Task::perform(
-                                        async move {
-                                            // Create a dummy channel for restore
-                                            let (event_tx, _event_rx) =
-                                                tokio::sync::mpsc::channel(1);
-                                            crate::app::update::song_resolver::resolve_song(
-                                                client,
-                                                &song_clone,
-                                                event_tx,
-                                            )
-                                            .await
-                                        },
-                                        move |result| {
-                                            Message::SongResolvedForRestore(
-                                                idx,
-                                                result,
-                                                saved_position,
-                                            )
-                                        },
-                                    ));
-                                } else {
-                                    tracing::warn!("NCM client not available for song restoration");
-                                }
-                            } else {
-                                // Local song - load into audio player and trigger preload
-                                if let Some(player) = &self.core.audio {
-                                    let path_buf = std::path::PathBuf::from(&song.file_path);
-                                    if path_buf.exists() {
-                                        player.play(path_buf.clone());
-                                        // Pause immediately and seek to saved position
-                                        player.pause();
-                                        let position =
-                                            std::time::Duration::from_secs_f64(state.position_secs);
-                                        player.seek(position);
-                                        // Update cached position for UI display
-                                        player.update_paused_position(position);
-                                        tracing::info!("Loaded song and seeked to {:?}", position);
-                                    }
-                                }
-
-                                // Trigger preload for adjacent tracks after queue is restored
-                                let preload_task = self.preload_adjacent_tracks_with_ncm();
-                                return Some(preload_task);
-                            }
-                        }
-                    }
-                }
-                Some(Task::none())
+                Some(self.try_restore_startup_playback())
             }
 
             Message::SongResolvedForRestore(idx, result, saved_position) => {
                 // Handle NCM song resolution result during app startup
+                self.playback.pending_resolution_index = None;
+
                 if let Some(resolved) = result {
                     tracing::info!("NCM song resolved for restore: {:?}", resolved.file_path);
 
                     // Update song in queue with resolved file path and cover
-                    if let Some(song) = self.library.queue.get_mut(*idx) {
+                    if let Some(song) = self.playback.queue.get_mut(*idx) {
                         song.file_path = resolved.file_path.clone();
                         if let Some(cover) = &resolved.cover_path {
                             song.cover_path = Some(cover.clone());
@@ -172,26 +268,38 @@ impl App {
                     }
 
                     // Update current_song if this is the current song
-                    if self.library.queue_index == Some(*idx) {
-                        if let Some(song) = self.library.queue.get(*idx) {
-                            self.library.current_song = Some(song.clone());
-                        }
-
-                        // Load into audio player
-                        if let Some(player) = &self.core.audio {
-                            let path_buf = std::path::PathBuf::from(&resolved.file_path);
-                            player.play(path_buf);
-                            // Pause immediately and seek to saved position
-                            player.pause();
+                    if self.playback.current_index == Some(*idx) {
+                        if let Some(song) = self.playback.queue.get(*idx).cloned() {
                             let position = std::time::Duration::from_secs_f64(*saved_position);
-                            player.seek(position);
-                            player.update_paused_position(position);
-                            tracing::info!("Loaded NCM song and seeked to {:?}", position);
+                            let restore_result =
+                                if let Some(buffer) = resolved.shared_buffer.clone() {
+                                    self.load_streaming_buffer_paused_for_song(
+                                        &song,
+                                        buffer,
+                                        resolved.duration_secs,
+                                        &resolved.file_path,
+                                        position,
+                                    )
+                                } else {
+                                    self.load_audio_path_paused_for_song(
+                                        &song,
+                                        std::path::PathBuf::from(&resolved.file_path),
+                                        position,
+                                    )
+                                };
+
+                            if let Err(err) = restore_result {
+                                tracing::warn!(
+                                    "Failed to restore resolved NCM song {}: {}",
+                                    song.title,
+                                    err
+                                );
+                            } else {
+                                tracing::info!("Loaded NCM song and seeked to {:?}", position);
+                            }
                         }
 
-                        // Trigger preload for adjacent tracks after NCM song is restored
-                        let preload_task = self.preload_adjacent_tracks_with_ncm();
-                        return Some(preload_task);
+                        return Some(Task::none());
                     }
                 } else {
                     tracing::warn!("Failed to resolve NCM song for restore at index {}", idx);

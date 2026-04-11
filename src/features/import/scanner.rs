@@ -15,7 +15,7 @@ use xxhash_rust::xxh3::xxh3_64;
 
 use super::cover::CoverCache;
 use super::is_audio_file;
-use super::metadata::{AudioMetadata, apply_smart_parsing, extract_metadata};
+use super::metadata::{AudioMetadata, apply_smart_parsing, extract_metadata, resolve_track_gain};
 use super::progress::{ProgressSender, ScanProgress, ScanState, SkipReason};
 use crate::database::{Database, NewSong};
 
@@ -53,6 +53,7 @@ pub struct ScanResult {
     pub metadata: AudioMetadata,
     pub file_size: u64,
     pub file_hash: Option<String>,
+    pub normalization_gain: Option<f64>,
     pub cover_hash: Option<String>,
     pub cover_path: Option<PathBuf>,
 }
@@ -170,6 +171,8 @@ fn process_file(
         None
     };
 
+    let normalization_gain = resolve_track_gain(path).map(f64::from);
+
     // Process cover art if enabled
     // Priority: embedded > same-name image > common cover files
     let (cover_hash, cover_path) = if config.extract_covers {
@@ -196,6 +199,7 @@ fn process_file(
         metadata,
         file_size: file_meta.len(),
         file_hash,
+        normalization_gain,
         cover_hash,
         cover_path,
     })
@@ -320,6 +324,7 @@ pub async fn scan_and_import(
                         file_hash: scan_result.file_hash,
                         file_size: scan_result.file_size as i64,
                         format: Some(scan_result.metadata.format),
+                        normalization_gain: scan_result.normalization_gain,
                     };
 
                     match db.insert_song(new_song).await {

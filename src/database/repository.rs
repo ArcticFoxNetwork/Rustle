@@ -83,6 +83,15 @@ impl Database {
         ops::update_song_path(&self.pool, old_path, new_path).await
     }
 
+    pub async fn update_song_normalization(
+        &self,
+        song_id: i64,
+        file_path: &str,
+        normalization_gain: f64,
+    ) -> Result<()> {
+        ops::update_song_normalization(&self.pool, song_id, file_path, normalization_gain).await
+    }
+
     pub async fn upsert_ncm_song(&self, song: &DbSong) -> Result<i64> {
         ops::upsert_ncm_song(&self.pool, song).await
     }

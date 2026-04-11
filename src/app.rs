@@ -12,8 +12,8 @@ use std::sync::Arc;
 use crate::i18n::{Language, Locale};
 pub use message::{IconId, Message, SettingsSection, SidebarId};
 pub use state::{
-    App, CoreState, DiscoverPageState, DiscoverViewMode, HomePageState, LibraryState, Route,
-    SearchPageState, SearchTab, UiState, UserInfo,
+    App, CoreState, DiscoverPageState, DiscoverViewMode, HomePageState, LibraryState,
+    PlaybackSessionState, Route, SearchPageState, SearchTab, UiState, UserInfo,
 };
 
 impl App {
@@ -39,9 +39,15 @@ impl App {
         // 3. Initialize sub-states
         let core = CoreState::new(settings, locale, audio, audio_chain);
         let library = LibraryState::default();
+        let playback = PlaybackSessionState::default();
         let ui = UiState::new();
 
-        let app = Self { core, library, ui };
+        let app = Self {
+            core,
+            library,
+            playback,
+            ui,
+        };
 
         // 4. Open main window
         let (window_id, open_window) =
@@ -96,7 +102,7 @@ impl App {
     /// Dynamic window title based on current playback state
     pub fn title(&self, _window_id: iced::window::Id) -> String {
         // Access current song via library state
-        if let Some(song) = &self.library.current_song {
+        if let Some(song) = &self.playback.current_song {
             format!("Rustle - {}", song.title)
         } else {
             "Rustle - Music".to_string()
@@ -121,12 +127,7 @@ impl App {
         };
 
         // 2. Playback state
-        let is_playing = self
-            .core
-            .audio
-            .as_ref()
-            .map(|p| p.is_playing())
-            .unwrap_or(false);
+        let is_playing = self.playback_is_playing();
 
         // 3. Lyrics page needs continuous updates for smooth scrolling
         let lyrics_needs_frames = if power_saving {
