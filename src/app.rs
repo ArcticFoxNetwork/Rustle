@@ -10,7 +10,7 @@ use iced::{Task, Theme};
 use std::sync::Arc;
 
 use crate::i18n::{Language, Locale};
-pub use message::{IconId, Message, SettingsSection, SidebarId};
+pub use message::{ContentWidthTarget, IconId, Message, SettingsSection, SidebarId};
 pub use state::{
     App, CoreState, DiscoverPageState, DiscoverViewMode, HomePageState, LibraryState,
     PlaybackSessionState, Route, SearchPageState, SearchTab, UiState, UserInfo,

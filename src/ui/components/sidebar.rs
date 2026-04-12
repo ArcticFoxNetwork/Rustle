@@ -1,7 +1,7 @@
 //! Left sidebar navigation component
 //! Dark gray panel with logo, menu, library section, and user profile
 
-use iced::widget::{button, column, container, mouse_area, row, scrollable, svg, text, Space};
+use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, svg, text};
 use iced::{Alignment, Color, Element, Fill, Padding};
 
 use crate::app::{Message, Route, SidebarId};
@@ -192,11 +192,13 @@ pub fn view(
             };
 
             let vip_text = if info.vip_type > 0 {
-                row![text("VIP")
-                    .size(theme::TEXT_SIZE_CAPTION)
-                    .style(|_theme| text::Style {
-                        color: Some(theme::ACCENT_PINK),
-                    }),]
+                row![
+                    text("VIP")
+                        .size(theme::TEXT_SIZE_CAPTION)
+                        .style(|_theme| text::Style {
+                            color: Some(theme::ACCENT_PINK),
+                        }),
+                ]
             } else {
                 row![]
             };

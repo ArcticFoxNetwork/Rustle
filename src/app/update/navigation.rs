@@ -85,6 +85,8 @@ impl App {
                         (self.ui.discover.content_width + delta).max(200.0);
                     self.ui.playlist_page.content_width =
                         (self.ui.playlist_page.content_width + delta).max(200.0);
+                    self.ui.search.content_width =
+                        (self.ui.search.content_width + delta).max(200.0);
                 }
                 Some(Task::none())
             }

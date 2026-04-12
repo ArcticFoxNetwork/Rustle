@@ -3,14 +3,14 @@
 //! Displays personalized recommendations (for logged-in users) and
 //! hot playlists in a modern grid layout.
 
-use iced::widget::{Space, button, column, container, scrollable, text};
+use iced::widget::{Space, button, column, container, text};
 use iced::{Element, Fill, Padding};
 
-use crate::app::{DiscoverPageState, DiscoverViewMode, Message};
+use crate::app::{ContentWidthTarget, DiscoverPageState, DiscoverViewMode, Message};
 use crate::i18n::{Key, Locale};
 use crate::ui::components::playlist_grid;
 use crate::ui::theme;
-use crate::ui::widgets::section_header;
+use crate::ui::widgets::{self, section_header};
 
 /// Build the discover page view
 pub fn view<'a>(
@@ -78,17 +78,15 @@ fn view_overview<'a>(
     // Main content already receives top spacing from the app shell.
     let content = column(content_items).padding(32);
 
-    let scrollable_content = scrollable(content)
-        .width(Fill)
-        .height(Fill)
-        .id(iced::widget::Id::new("discover_scroll"))
-        .style(theme::dark_scrollable);
-
-    container(scrollable_content)
-        .width(Fill)
-        .height(Fill)
-        .style(theme::main_content)
-        .into()
+    container(widgets::measured_scrollable(
+        content,
+        "discover_scroll",
+        |size| Message::ContentWidthResized(ContentWidthTarget::Discover, size),
+    ))
+    .width(Fill)
+    .height(Fill)
+    .style(theme::main_content)
+    .into()
 }
 
 /// Full view of all recommended playlists
@@ -112,17 +110,15 @@ fn view_all_recommended<'a>(state: &'a DiscoverPageState, locale: Locale) -> Ele
     ]
     .padding(32);
 
-    let scrollable_content = scrollable(content)
-        .width(Fill)
-        .height(Fill)
-        .id(iced::widget::Id::new("discover_scroll"))
-        .style(theme::dark_scrollable);
-
-    container(scrollable_content)
-        .width(Fill)
-        .height(Fill)
-        .style(theme::main_content)
-        .into()
+    container(widgets::measured_scrollable(
+        content,
+        "discover_scroll",
+        |size| Message::ContentWidthResized(ContentWidthTarget::Discover, size),
+    ))
+    .width(Fill)
+    .height(Fill)
+    .style(theme::main_content)
+    .into()
 }
 
 /// Full view of all hot playlists with infinite scroll
@@ -175,15 +171,13 @@ fn view_all_hot<'a>(state: &'a DiscoverPageState, locale: Locale) -> Element<'a,
 
     let content = column(content_items).padding(32);
 
-    let scrollable_content = scrollable(content)
-        .width(Fill)
-        .height(Fill)
-        .id(iced::widget::Id::new("discover_scroll"))
-        .style(theme::dark_scrollable);
-
-    container(scrollable_content)
-        .width(Fill)
-        .height(Fill)
-        .style(theme::main_content)
-        .into()
+    container(widgets::measured_scrollable(
+        content,
+        "discover_scroll",
+        |size| Message::ContentWidthResized(ContentWidthTarget::Discover, size),
+    ))
+    .width(Fill)
+    .height(Fill)
+    .style(theme::main_content)
+    .into()
 }

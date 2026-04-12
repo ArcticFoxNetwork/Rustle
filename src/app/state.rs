@@ -759,7 +759,7 @@ impl UiState {
                 )),
                 pending_cover_downloads: HashSet::new(),
                 load_state: Default::default(),
-                content_width: 976.0,
+                content_width: 904.0,
                 artist_album_covers: std::collections::HashMap::new(),
             },
 
@@ -1041,6 +1041,8 @@ pub struct SearchPageState {
     /// GPU allocations to keep search result covers in GPU memory
     pub result_cover_allocations:
         std::collections::HashMap<(SearchTab, u64), iced::widget::image::Allocation>,
+    /// Content area width for responsive grid layouts
+    pub content_width: f32,
 }
 
 impl Default for SearchPageState {
@@ -1061,6 +1063,7 @@ impl Default for SearchPageState {
             card_animations: Default::default(),
             result_covers: std::collections::HashMap::new(),
             result_cover_allocations: std::collections::HashMap::new(),
+            content_width: 936.0,
         }
     }
 }
@@ -1109,9 +1112,9 @@ impl Default for DiscoverPageState {
             hot_offset: 0,
             hot_has_more: true,
             data_loaded: false,
-            // Default width, will be updated from WindowResized
-            // Assumes window width ~1280, sidebar 240, padding 64
-            content_width: 976.0,
+            // Default width, will be updated from WindowResized/Sensor
+            // Assumes window width ~1280, sidebar 280, padding 64
+            content_width: 936.0,
         }
     }
 }

@@ -70,13 +70,14 @@ impl App {
                     engine.invalidate_layout();
                 }
 
-                // Update discover page content width
-                // Content width = window width - sidebar - padding
-                const CONTENT_PADDING: f32 = 64.0; // 32px on each side
-                let content_width =
-                    (size.width - self.ui.sidebar_width - CONTENT_PADDING).max(200.0);
-                self.ui.discover.content_width = content_width;
-                self.ui.playlist_page.content_width = content_width;
+                // Fallback widths before Sensor reports the rendered content size.
+                const GRID_PADDING: f32 = 64.0;
+                const DETAIL_GRID_PADDING: f32 = 96.0;
+                let available_width = (size.width - self.ui.sidebar_width).max(200.0);
+                self.ui.discover.content_width = (available_width - GRID_PADDING).max(200.0);
+                self.ui.playlist_page.content_width =
+                    (available_width - DETAIL_GRID_PADDING).max(200.0);
+                self.ui.search.content_width = (available_width - GRID_PADDING).max(200.0);
 
                 Some(Task::none())
             }

@@ -4,6 +4,7 @@ mod database;
 mod discover;
 mod import;
 mod keyboard;
+mod layout;
 mod lyrics;
 mod mpris;
 mod navigation;
@@ -66,6 +67,9 @@ impl App {
             return task;
         }
         if let Some(task) = self.handle_keyboard(&message) {
+            return task;
+        }
+        if let Some(task) = self.handle_layout(&message) {
             return task;
         }
         if let Some(task) = self.handle_lyrics(&message) {

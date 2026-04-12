@@ -3,10 +3,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use iced::widget::{Space, button, column, container, image, row, scrollable, text};
+use iced::widget::{Space, button, column, container, image, row, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
-use crate::app::Message;
+use crate::app::{ContentWidthTarget, Message};
 use crate::i18n::Locale;
 use crate::ui::pages::playlist::PlaylistView;
 use crate::ui::theme::BOLD_WEIGHT;
@@ -132,7 +132,8 @@ fn build_playlist_grid<'a>(user: &PlaylistView, content_width: f32) -> Element<'
 
     let card_width = 208.0;
     let card_spacing = 20.0;
-    let columns_per_row = calculate_grid_columns(content_width, card_width, card_spacing);
+    let columns_per_row =
+        widgets::calculate_grid_columns_clamped(content_width, card_width, card_spacing, 8);
 
     let title = text("歌单")
         .size(theme::TEXT_SIZE_TITLE_LARGE)
@@ -160,10 +161,11 @@ fn build_playlist_grid<'a>(user: &PlaylistView, content_width: f32) -> Element<'
         rows = rows.push(row(row_items).align_y(Alignment::Start));
     }
 
-    scrollable(column![rows, Space::new().height(32)])
-        .width(Fill)
-        .height(Fill)
-        .into()
+    widgets::measured_scrollable(
+        column![rows, Space::new().height(32)],
+        "playlist_scroll",
+        |size| Message::ContentWidthResized(ContentWidthTarget::PlaylistDetail, size),
+    )
 }
 
 fn build_playlist_card<'a>(
@@ -230,13 +232,6 @@ fn build_playlist_card<'a>(
     })
     .on_press(Message::OpenNcmPlaylist(playlist.id))
     .into()
-}
-
-fn calculate_grid_columns(content_width: f32, card_width: f32, spacing: f32) -> usize {
-    let horizontal_padding = 96.0;
-    let usable_width = (content_width - horizontal_padding).max(card_width);
-    let columns = ((usable_width + spacing) / (card_width + spacing)).floor() as usize;
-    columns.clamp(1, 8)
 }
 
 fn resolve_playlist_cover_path(playlist: &crate::api::SongList) -> Option<String> {

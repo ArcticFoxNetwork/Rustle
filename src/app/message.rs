@@ -30,6 +30,14 @@ pub enum SettingsSection {
     About,
 }
 
+/// Target state bucket for measured responsive content widths.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContentWidthTarget {
+    Search,
+    Discover,
+    PlaylistDetail,
+}
+
 /// Search results payload for async loading
 #[derive(Debug, Clone)]
 pub struct SearchResultsPayload {
@@ -557,6 +565,8 @@ pub enum Message {
         u64,
         Result<iced::widget::image::Allocation, iced::widget::image::Error>,
     ),
+    /// Measured content area resized
+    ContentWidthResized(ContentWidthTarget, iced::Size),
     /// Play search result song
     PlaySearchSong(SongInfo),
     /// Open search result album/playlist
@@ -1012,6 +1022,15 @@ impl std::fmt::Debug for Message {
             }
             Self::SearchCoverAllocated(tab, id, _) => {
                 simple!("SearchCoverAllocated", "tab={:?}, id={}", tab, id)
+            }
+            Self::ContentWidthResized(target, size) => {
+                simple!(
+                    "ContentWidthResized",
+                    "target={:?}, {}x{}",
+                    target,
+                    size.width,
+                    size.height
+                )
             }
             Self::PlaySearchSong(s) => simple!("PlaySearchSong", "id={}", s.id),
             Self::OpenSearchResult(id, tab) => {

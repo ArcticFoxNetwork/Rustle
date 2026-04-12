@@ -3,12 +3,12 @@
 //! Displays search results for songs, artists, albums, and playlists
 //! with tabbed navigation and pagination.
 
-use iced::widget::{Space, button, column, container, image, row, scrollable, text};
+use iced::widget::{Space, button, column, container, image, row, text};
 use iced::{Alignment, Element, Fill, Length, Padding};
 
-use crate::app::{Message, SearchPageState, SearchTab};
+use crate::app::{ContentWidthTarget, Message, SearchPageState, SearchTab};
 use crate::i18n::Locale;
-use crate::ui::theme;
+use crate::ui::{theme, widgets};
 
 use crate::ui::primitives::virtual_list::VirtualList;
 
@@ -184,12 +184,9 @@ pub fn view<'a>(state: &'a SearchPageState, locale: Locale) -> Element<'a, Messa
                     col.padding(Padding::new(32.0).top(0.0)).into()
                 };
 
-                scrollable(content)
-                    .width(Fill)
-                    .height(Fill)
-                    .id(iced::widget::Id::new("search_scroll"))
-                    .style(theme::dark_scrollable)
-                    .into()
+                widgets::measured_scrollable(content, "search_scroll", |size| {
+                    Message::ContentWidthResized(ContentWidthTarget::Search, size)
+                })
             }
             SearchTab::Playlists => {
                 let content = if state.playlists.is_empty() {
@@ -206,12 +203,9 @@ pub fn view<'a>(state: &'a SearchPageState, locale: Locale) -> Element<'a, Messa
                     col.padding(Padding::new(32.0).top(0.0)).into()
                 };
 
-                scrollable(content)
-                    .width(Fill)
-                    .height(Fill)
-                    .id(iced::widget::Id::new("search_scroll"))
-                    .style(theme::dark_scrollable)
-                    .into()
+                widgets::measured_scrollable(content, "search_scroll", |size| {
+                    Message::ContentWidthResized(ContentWidthTarget::Search, size)
+                })
             }
         }
     };
@@ -377,8 +371,7 @@ fn grid_results<'a>(state: &'a SearchPageState, tab: SearchTab) -> Element<'a, M
     const CARD_SPACING: f32 = 24.0;
     const ROW_SPACING: f32 = 32.0;
 
-    // Calculate columns (assume ~900px content width)
-    let columns = 5usize;
+    let columns = widgets::calculate_grid_columns(state.content_width, CARD_WIDTH, CARD_SPACING);
 
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
 

@@ -10,19 +10,13 @@ use iced::{Color, Element, Fill};
 use crate::api::SongList;
 use crate::app::Message;
 use crate::ui::animation::HoverAnimations;
-use crate::ui::theme;
 use crate::ui::widgets::playlist_card;
+use crate::ui::{theme, widgets};
 
 /// Grid configuration
 const CARD_WIDTH: f32 = 160.0;
 const CARD_SPACING: f32 = 24.0;
 const ROW_SPACING: f32 = 32.0;
-
-/// Calculate number of columns based on container width
-fn calculate_columns(container_width: f32) -> usize {
-    let columns = ((container_width + CARD_SPACING) / (CARD_WIDTH + CARD_SPACING)).floor() as usize;
-    columns.max(1)
-}
 
 fn daily_recommend_cover<'a>(hover_progress: f32) -> Element<'a, Message> {
     let day = chrono::Local::now().format("%d").to_string();
@@ -87,7 +81,7 @@ pub fn view<'a>(
     }
 
     // Calculate number of columns based on container width
-    let columns = calculate_columns(container_width);
+    let columns = widgets::calculate_grid_columns(container_width, CARD_WIDTH, CARD_SPACING);
 
     // Build rows of cards
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
