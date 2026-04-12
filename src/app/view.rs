@@ -122,7 +122,10 @@ impl App {
         let current_playing_id = self.playback.current_song.as_ref().map(|s| s.id);
 
         let main_content = match &self.ui.current_route {
-            Route::Playlist(_) | Route::NcmPlaylist(_) | Route::RecentlyPlayed => {
+            Route::Playlist(_)
+            | Route::NcmPlaylist(_)
+            | Route::Album(_)
+            | Route::RecentlyPlayed => {
                 if let Some(playlist) = &self.ui.playlist_page.current {
                     pages::playlist::view(
                         playlist,
@@ -227,6 +230,7 @@ impl App {
                 | Route::NcmPlaylist(_)
                 | Route::User(_)
                 | Route::Artist(_)
+                | Route::Album(_)
                 | Route::RecentlyPlayed
                 | Route::Search { .. }
         );

@@ -6,7 +6,8 @@ use std::sync::Arc;
 use iced::keyboard::{Key, Modifiers};
 
 use crate::api::{
-    ArtistDetail, BannersInfo, LoginInfo, PlayListDetail, SongInfo, SongList, UserDetail,
+    AlbumDetail, ArtistDetail, BannersInfo, LoginInfo, PlayListDetail, SongInfo, SongList,
+    UserDetail,
 };
 use crate::app::state::UserInfo;
 use crate::app::update::preload_manager::PreloadDirection;
@@ -456,6 +457,8 @@ pub enum Message {
     OpenUser(u64),
     /// Open artist detail page
     OpenArtist(u64),
+    /// Open album detail page
+    OpenAlbum(u64),
     /// Resolve artist by name then open detail page
     OpenArtistByName(String),
     /// Play resolved NCM song (with real DB ID)
@@ -470,6 +473,8 @@ pub enum Message {
     NcmPlaylistDetailLoaded(PlayListDetail),
     /// Artist detail loaded
     ArtistDetailLoaded(ArtistDetail),
+    /// Album detail loaded
+    AlbumDetailLoaded(AlbumDetail),
     /// Artist albums loaded for artist page
     ArtistAlbumsLoaded(i64, Vec<SongList>),
     /// Artist album cover loaded
@@ -496,6 +501,8 @@ pub enum Message {
     UserPlaylistCoverLoaded(i64, u64, String),
     /// Artist cover loaded (artist page id, local_path)
     ArtistCoverLoaded(i64, String),
+    /// Album cover loaded (album page id, local_path)
+    AlbumCoverLoaded(i64, String),
     /// Toggle playlist subscription (subscribe/unsubscribe)
     TogglePlaylistSubscribe(i64),
     /// Playlist subscription status changed
@@ -659,6 +666,7 @@ impl std::fmt::Debug for Message {
             // Complex types - show key identifier only
             Self::NcmPlaylistDetailLoaded(d) => simple!("NcmPlaylistDetailLoaded", "id={}", d.id),
             Self::ArtistDetailLoaded(d) => simple!("ArtistDetailLoaded", "id={}", d.id),
+            Self::AlbumDetailLoaded(d) => simple!("AlbumDetailLoaded", "id={}", d.id),
             Self::ArtistAlbumsLoaded(id, albums) => {
                 simple!(
                     "ArtistAlbumsLoaded",
@@ -939,6 +947,7 @@ impl std::fmt::Debug for Message {
             Self::OpenNcmPlaylist(id) => simple!("OpenNcmPlaylist", "{}", id),
             Self::OpenUser(id) => simple!("OpenUser", "{}", id),
             Self::OpenArtist(id) => simple!("OpenArtist", "{}", id),
+            Self::OpenAlbum(id) => simple!("OpenAlbum", "{}", id),
             Self::OpenArtistByName(name) => simple!("OpenArtistByName", "{}", name),
             Self::ToggleBannerFavorite(i) => simple!("ToggleBannerFavorite", "{}", i),
 
@@ -957,6 +966,7 @@ impl std::fmt::Debug for Message {
                 )
             }
             Self::ArtistCoverLoaded(id, _) => simple!("ArtistCoverLoaded", "{}", id),
+            Self::AlbumCoverLoaded(id, _) => simple!("AlbumCoverLoaded", "{}", id),
             Self::TogglePlaylistSubscribe(id) => simple!("TogglePlaylistSubscribe", "{}", id),
             Self::PlaylistSubscribeChanged(id, s) => {
                 simple!("PlaylistSubscribeChanged", "{}, {}", id, s)

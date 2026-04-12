@@ -577,6 +577,7 @@ pub enum Route {
     NcmPlaylist(u64),
     User(u64),
     Artist(u64),
+    Album(u64),
     RecentlyPlayed,
     Search {
         keyword: String,
@@ -597,6 +598,7 @@ impl Route {
             | Self::NcmPlaylist(_)
             | Self::User(_)
             | Self::Artist(_)
+            | Self::Album(_)
             | Self::RecentlyPlayed
             | Self::Search { .. } => None,
         }

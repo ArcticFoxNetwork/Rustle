@@ -41,7 +41,8 @@ impl App {
             | Message::OpenSettings
             | Message::OpenSettingsWithCloseLyrics
             | Message::OpenAudioEngine
-            | Message::OpenUser(_) => {
+            | Message::OpenUser(_)
+            | Message::OpenAlbum(_) => {
                 let Some(route) = self.route_for_message(message) else {
                     return Some(Task::none());
                 };

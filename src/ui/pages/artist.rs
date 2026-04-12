@@ -339,10 +339,7 @@ fn build_album_card<'a>(
         background: Some(iced::Background::Color(Color::TRANSPARENT)),
         ..Default::default()
     })
-    .on_press(Message::OpenSearchResult(
-        album.id,
-        crate::app::SearchTab::Albums,
-    ))
+    .on_press(Message::OpenAlbum(album.id))
     .into()
 }
 

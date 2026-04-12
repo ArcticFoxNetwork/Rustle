@@ -374,6 +374,21 @@ impl MusicApi {
         to_artist_detail(result)
     }
 
+    pub async fn album_detail(&self, album_id: u64) -> Result<AlbumDetail> {
+        let path = format!("/weapi/v1/album/{}", album_id);
+        let result = self
+            .request(
+                Method::Post,
+                &path,
+                HashMap::new(),
+                CryptoApi::Weapi,
+                "",
+                true,
+            )
+            .await?;
+        to_album_detail(result)
+    }
+
     pub async fn user_detail(&self, user_id: u64) -> Result<UserDetail> {
         let path = format!("/weapi/w/v1/user/detail/{}", user_id);
         let result = self

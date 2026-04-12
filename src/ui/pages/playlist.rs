@@ -54,6 +54,7 @@ pub struct PlaylistView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DetailPageKind {
     Playlist,
+    Album,
     User,
     Artist,
 }
@@ -221,6 +222,7 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
     // Playlist type label - larger font
     let type_label_text = match playlist.kind {
         DetailPageKind::Playlist => locale.get(Key::PlaylistTypeLabel).to_string(),
+        DetailPageKind::Album => "专辑".to_string(),
         DetailPageKind::User => "用户".to_string(),
         DetailPageKind::Artist => "歌手".to_string(),
     };
@@ -310,15 +312,13 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
                 row![owner_avatar, Space::new().width(8), owner_label].align_y(Alignment::Center),
             )
             .padding(Padding::new(4.0).left(0.0).right(8.0))
-            .style(|_theme, _status| {
-                button::Style {
-                    background: Some(iced::Background::Color(Color::TRANSPARENT)),
-                    border: iced::Border {
-                        radius: 999.0.into(),
-                        ..Default::default()
-                    },
+            .style(|_theme, _status| button::Style {
+                background: Some(iced::Background::Color(Color::TRANSPARENT)),
+                border: iced::Border {
+                    radius: 999.0.into(),
                     ..Default::default()
-                }
+                },
+                ..Default::default()
             })
             .on_press(action),
         )
@@ -430,6 +430,7 @@ pub(crate) fn build_controls<'a>(
 
     let is_local = playlist.is_local;
     let is_artist = playlist.kind == DetailPageKind::Artist;
+    let is_album = playlist.kind == DetailPageKind::Album;
     let is_user = playlist.kind == DetailPageKind::User;
     let playlist_id = playlist.id;
     let is_own_playlist = current_user_id.map_or(false, |uid| uid == playlist.creator_id);
@@ -538,7 +539,7 @@ pub(crate) fn build_controls<'a>(
     let mut control_items: Vec<Element<'a, Message>> =
         vec![play_btn.into(), Space::new().width(24).into()];
 
-    if is_artist || is_user {
+    if is_artist || is_user || is_album {
         // Artist page keeps only play and search controls.
     } else if is_local && playlist_id != -1 {
         // For local playlists (but not recently played), show edit button with animated color
@@ -729,7 +730,7 @@ pub(crate) fn build_controls<'a>(
 
     control_items.push(search_component);
 
-    if !is_artist {
+    if !is_artist && !is_album {
         control_items.push(Space::new().width(20).into());
         control_items.push(sort_btn.into());
     }

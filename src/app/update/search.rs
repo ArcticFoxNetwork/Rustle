@@ -129,9 +129,7 @@ impl App {
                 match tab {
                     SearchTab::Albums => {
                         tracing::info!("Open album: {}", id);
-                        return Some(Task::done(Message::ShowInfoToast(
-                            "专辑详情页暂未实现".to_string(),
-                        )));
+                        return Some(Task::done(Message::OpenAlbum(*id)));
                     }
                     SearchTab::Playlists => {
                         // Open NCM playlist

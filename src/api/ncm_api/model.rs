@@ -133,6 +133,20 @@ pub struct ArtistDetail {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AlbumDetail {
+    pub id: u64,
+    pub name: String,
+    pub cover_img_url: String,
+    pub description: String,
+    pub artist_id: u64,
+    pub artist_name: String,
+    pub artist_pic_url: String,
+    pub track_count: u32,
+    pub publish_time: u64,
+    pub songs: Vec<SongInfo>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct UserDetail {
     pub user_id: u64,
     pub artist_id: u64,
@@ -633,6 +647,69 @@ pub fn to_artist_detail(json: String) -> Result<ArtistDetail> {
         mv_size: get_val!(value, "artist", "mvSize").unwrap_or(0),
         followed: get_val!(value, "artist", "followed").unwrap_or(false),
         hot_songs,
+    })
+}
+
+pub fn to_album_detail(json: String) -> Result<AlbumDetail> {
+    let value = &serde_json::from_str::<Value>(&json)?;
+    let code: i64 = get_val!(value, "code")?;
+
+    if code != 200 {
+        return Err(anyhow!("none"));
+    }
+
+    let unk = "unknown".to_string();
+    let empty_vec = Vec::new();
+    let songs_array: &Vec<Value> = get_val!(value, "songs").unwrap_or(&empty_vec);
+    let album_artist = get_val!(@as &Value, value, "album", "artist")
+        .ok()
+        .or_else(|| {
+            get_val!(@as &Vec<Value>, value, "album", "artists")
+                .ok()
+                .and_then(|artists| artists.first())
+        });
+
+    let mut songs = Vec::with_capacity(songs_array.len());
+    for song in songs_array.iter() {
+        songs.push(SongInfo {
+            id: get_val!(song, "id")?,
+            name: get_val!(song, "name")?,
+            singer: get_val!(@as &Vec<Value>, song, "ar")?
+                .first()
+                .map(|artist: &Value| get_val!(artist, "name").unwrap_or_else(|_| unk.clone()))
+                .unwrap_or_else(|| unk.clone()),
+            singer_id: get_val!(@as &Vec<Value>, song, "ar")?
+                .first()
+                .and_then(|artist| get_val!(artist, "id").ok())
+                .unwrap_or(0),
+            album: get_val!(value, "album", "name").unwrap_or_else(|_| unk.clone()),
+            album_id: get_val!(value, "album", "id").unwrap_or(0),
+            pic_url: get_val!(value, "album", "picUrl").unwrap_or_default(),
+            duration: get_val!(song, "dt")?,
+            song_url: String::new(),
+            copyright: SongCopyright::Unknown,
+        });
+    }
+
+    Ok(AlbumDetail {
+        id: get_val!(value, "album", "id")?,
+        name: get_val!(value, "album", "name")?,
+        cover_img_url: get_val!(value, "album", "picUrl").unwrap_or_default(),
+        description: get_val!(value, "album", "description")
+            .or_else(|_| get_val!(value, "album", "briefDesc"))
+            .unwrap_or_default(),
+        artist_id: album_artist
+            .and_then(|artist| get_val!(artist, "id").ok())
+            .unwrap_or(0),
+        artist_name: album_artist
+            .and_then(|artist| get_val!(artist, "name").ok())
+            .unwrap_or_else(|| unk),
+        artist_pic_url: album_artist
+            .and_then(|artist| get_val!(artist, "picUrl").ok())
+            .unwrap_or_default(),
+        track_count: get_val!(value, "album", "size").unwrap_or(songs.len() as u32),
+        publish_time: get_val!(value, "album", "publishTime").unwrap_or(0),
+        songs,
     })
 }
 
