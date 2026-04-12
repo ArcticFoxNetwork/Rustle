@@ -45,6 +45,31 @@ pub(super) enum PlaybackSource {
 const MAX_CONSECUTIVE_FAILURES: u8 = 3;
 
 impl App {
+    fn resolve_artist_id_for_song(&self, song: &DbSong) -> Option<u64> {
+        let ncm_id = if song.id < 0 {
+            Some((-song.id) as u64)
+        } else {
+            None
+        };
+
+        self.ui
+            .home
+            .current_ncm_playlist_songs
+            .iter()
+            .chain(self.ui.home.trending_songs.iter())
+            .chain(self.ui.search.songs.iter())
+            .find(|candidate| {
+                if let Some(id) = ncm_id {
+                    candidate.id == id
+                } else {
+                    candidate.name == song.title
+                        && candidate.singer == song.artist
+                        && candidate.album == song.album
+                }
+            })
+            .and_then(|song| (song.singer_id != 0).then_some(song.singer_id))
+    }
+
     pub(super) fn effective_queue_play_mode(&self) -> PlayMode {
         if self.is_fm_mode() {
             PlayMode::Sequential
@@ -541,6 +566,7 @@ impl App {
             self.playback.current_index = Some(idx);
         }
 
+        self.playback.current_artist_id = self.resolve_artist_id_for_song(&song);
         self.playback.current_song = Some(song);
         self.playback.consecutive_failures = 0;
         self.update_tray_and_mpris_current(is_playing);
@@ -740,6 +766,7 @@ impl App {
     pub fn stop_and_clear_current_playback(&mut self) {
         self.stop_audio_output();
         self.playback.current_song = None;
+        self.playback.current_artist_id = None;
     }
 
     pub fn seek_to_position(&mut self, position: std::time::Duration) {

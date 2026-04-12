@@ -201,7 +201,7 @@ pub fn build_header(locale: Locale, columns: PlaylistColumns) -> Element<'static
     let mut header_items: Vec<Element<'static, Message>> = vec![
         container(
             text(locale.get(Key::PlaylistHeaderNumber))
-                .size(13)
+                .size(theme::TEXT_SIZE_LABEL)
                 .style(|theme| text::Style {
                     color: Some(theme::header_text(theme)),
                 }),
@@ -212,7 +212,7 @@ pub fn build_header(locale: Locale, columns: PlaylistColumns) -> Element<'static
         Space::new().width(44).into(), // Cover space
         Space::new().width(14).into(),
         text(locale.get(Key::PlaylistHeaderTitle))
-            .size(13)
+            .size(theme::TEXT_SIZE_LABEL)
             .style(|theme| text::Style {
                 color: Some(theme::header_text(theme)),
             })
@@ -224,7 +224,7 @@ pub fn build_header(locale: Locale, columns: PlaylistColumns) -> Element<'static
         header_items.push(
             container(
                 text(locale.get(Key::PlaylistHeaderAlbum))
-                    .size(13)
+                    .size(theme::TEXT_SIZE_LABEL)
                     .style(|theme| text::Style {
                         color: Some(theme::header_text(theme)),
                     }),
@@ -238,7 +238,7 @@ pub fn build_header(locale: Locale, columns: PlaylistColumns) -> Element<'static
         header_items.push(
             container(
                 text(locale.get(Key::PlaylistHeaderAddedDate))
-                    .size(13)
+                    .size(theme::TEXT_SIZE_LABEL)
                     .style(|theme| text::Style {
                         color: Some(theme::header_text(theme)),
                     }),
@@ -296,8 +296,10 @@ pub fn build_list<'a>(
     let song_count = songs.len();
 
     if song_count == 0 {
-        return container(text("暂无歌曲").size(14).style(|theme| text::Style {
-            color: Some(theme::dimmed_text(theme)),
+        return container(text("暂无歌曲").size(theme::TEXT_SIZE_BODY).style(|theme| {
+            text::Style {
+                color: Some(theme::dimmed_text(theme)),
+            }
         }))
         .width(Fill)
         .padding(Padding::new(32.0))
@@ -387,7 +389,7 @@ fn build_song_row(
             .into()
     } else {
         text(index_str)
-            .size(15)
+            .size(theme::TEXT_SIZE_BODY_LARGE)
             .style(|theme| text::Style {
                 color: Some(theme::dimmed_text(theme)),
             })
@@ -400,7 +402,7 @@ fn build_song_row(
     // --- Title info (use pre-truncated strings) ---
     let title_info = column![
         text(display_title)
-            .size(15)
+            .size(theme::TEXT_SIZE_BODY_LARGE)
             .style(move |theme| text::Style {
                 color: Some(if is_playing {
                     theme::ACCENT_PINK
@@ -413,7 +415,7 @@ fn build_song_row(
                 ..Default::default()
             }),
         text(display_artist)
-            .size(13)
+            .size(theme::TEXT_SIZE_LABEL)
             .style(move |theme| text::Style {
                 color: Some(theme::animated_text(theme, animation_progress))
             }),
@@ -456,7 +458,7 @@ fn build_song_row(
         .into()
     } else {
         text(duration)
-            .size(14)
+            .size(theme::TEXT_SIZE_BODY)
             .style(move |theme| text::Style {
                 color: Some(theme::animated_text(theme, animation_progress * 0.8)),
             })
@@ -474,7 +476,7 @@ fn build_song_row(
     if columns.show_album {
         row_items.push(
             text(display_album)
-                .size(14)
+                .size(theme::TEXT_SIZE_BODY)
                 .style(move |theme| text::Style {
                     color: Some(theme::animated_text(theme, animation_progress)),
                 })
@@ -486,7 +488,7 @@ fn build_song_row(
     if columns.show_added_date {
         row_items.push(
             text(added_date)
-                .size(14)
+                .size(theme::TEXT_SIZE_BODY)
                 .style(move |theme| text::Style {
                     color: Some(theme::animated_text(theme, animation_progress)),
                 })

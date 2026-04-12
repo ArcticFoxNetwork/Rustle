@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use iced::keyboard::{Key, Modifiers};
 
-use crate::api::{BannersInfo, LoginInfo, PlayListDetail, SongInfo, SongList};
+use crate::api::{
+    ArtistDetail, BannersInfo, LoginInfo, PlayListDetail, SongInfo, SongList, UserDetail,
+};
 use crate::app::state::UserInfo;
 use crate::app::update::preload_manager::PreloadDirection;
 use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong};
@@ -450,6 +452,12 @@ pub enum Message {
     AddNcmPlaylist(Vec<SongInfo>, bool),
     /// Open NCM playlist detail page
     OpenNcmPlaylist(u64),
+    /// Open user detail page
+    OpenUser(u64),
+    /// Open artist detail page
+    OpenArtist(u64),
+    /// Resolve artist by name then open detail page
+    OpenArtistByName(String),
     /// Play resolved NCM song (with real DB ID)
     PlayResolvedNcmSong(DbSong),
     /// Toggle favorite status for banner item
@@ -460,6 +468,20 @@ pub enum Message {
     UserPlaylistsLoaded(Vec<SongList>),
     /// NCM playlist detail loaded
     NcmPlaylistDetailLoaded(PlayListDetail),
+    /// Artist detail loaded
+    ArtistDetailLoaded(ArtistDetail),
+    /// Artist albums loaded for artist page
+    ArtistAlbumsLoaded(i64, Vec<SongList>),
+    /// Artist album cover loaded
+    ArtistAlbumCoverLoaded(i64, u64, String),
+    /// User page detail loaded
+    UserPageDetailLoaded(i64, UserDetail),
+    /// User playlists loaded for user page
+    UserPagePlaylistsLoaded(i64, Vec<SongList>),
+    /// Artist detail loaded for a user page
+    UserArtistDetailLoaded(i64, ArtistDetail),
+    /// Playlist creator user detail loaded
+    PlaylistCreatorDetailLoaded(i64, UserDetail),
     /// Current playing song cover downloaded (song_id, local_path)
     CurrentSongCoverReady(i64, String),
     /// NCM playlist song covers batch loaded (vec of (song_id, local_path))
@@ -470,6 +492,10 @@ pub enum Message {
     NcmPlaylistCoverLoaded(i64, String),
     /// NCM playlist creator avatar loaded (playlist_id, local_path)
     NcmPlaylistCreatorAvatarLoaded(i64, String),
+    /// User playlist cover loaded (page_id, playlist_id, local_path)
+    UserPlaylistCoverLoaded(i64, u64, String),
+    /// Artist cover loaded (artist page id, local_path)
+    ArtistCoverLoaded(i64, String),
     /// Toggle playlist subscription (subscribe/unsubscribe)
     TogglePlaylistSubscribe(i64),
     /// Playlist subscription status changed
@@ -528,6 +554,8 @@ pub enum Message {
     PlaySearchSong(SongInfo),
     /// Open search result album/playlist
     OpenSearchResult(u64, crate::app::state::SearchTab),
+    /// Switch artist page tab
+    SwitchArtistTab(crate::ui::pages::playlist::ArtistPageTab),
 
     // ============ Sidebar Resize ============
     /// Start dragging sidebar resize handle
@@ -630,6 +658,55 @@ impl std::fmt::Debug for Message {
 
             // Complex types - show key identifier only
             Self::NcmPlaylistDetailLoaded(d) => simple!("NcmPlaylistDetailLoaded", "id={}", d.id),
+            Self::ArtistDetailLoaded(d) => simple!("ArtistDetailLoaded", "id={}", d.id),
+            Self::ArtistAlbumsLoaded(id, albums) => {
+                simple!(
+                    "ArtistAlbumsLoaded",
+                    "page_id={}, albums={}",
+                    id,
+                    albums.len()
+                )
+            }
+            Self::ArtistAlbumCoverLoaded(page_id, album_id, _) => {
+                simple!(
+                    "ArtistAlbumCoverLoaded",
+                    "page_id={}, album_id={}",
+                    page_id,
+                    album_id
+                )
+            }
+            Self::UserPageDetailLoaded(id, d) => {
+                simple!(
+                    "UserPageDetailLoaded",
+                    "page_id={}, user_id={}",
+                    id,
+                    d.user_id
+                )
+            }
+            Self::UserPagePlaylistsLoaded(id, playlists) => {
+                simple!(
+                    "UserPagePlaylistsLoaded",
+                    "page_id={}, playlists={}",
+                    id,
+                    playlists.len()
+                )
+            }
+            Self::UserArtistDetailLoaded(id, d) => {
+                simple!(
+                    "UserArtistDetailLoaded",
+                    "page_id={}, artist_id={}",
+                    id,
+                    d.id
+                )
+            }
+            Self::PlaylistCreatorDetailLoaded(id, d) => {
+                simple!(
+                    "PlaylistCreatorDetailLoaded",
+                    "playlist_id={}, user_id={}",
+                    id,
+                    d.user_id
+                )
+            }
             Self::PlaylistViewLoaded(v) => simple!("PlaylistViewLoaded", "id={}", v.id),
             Self::NcmPlaylistSongsReady(id, songs, _, _, _) => {
                 simple!("NcmPlaylistSongsReady", "id={}, {} songs", id, songs.len())
@@ -860,6 +937,9 @@ impl std::fmt::Debug for Message {
             Self::ToggleFavorite(id) => simple!("ToggleFavorite", "{}", id),
             Self::FavoriteStatusChanged(id, s) => simple!("FavoriteStatusChanged", "{}, {}", id, s),
             Self::OpenNcmPlaylist(id) => simple!("OpenNcmPlaylist", "{}", id),
+            Self::OpenUser(id) => simple!("OpenUser", "{}", id),
+            Self::OpenArtist(id) => simple!("OpenArtist", "{}", id),
+            Self::OpenArtistByName(name) => simple!("OpenArtistByName", "{}", name),
             Self::ToggleBannerFavorite(i) => simple!("ToggleBannerFavorite", "{}", i),
 
             // Cloud Playlist
@@ -868,6 +948,15 @@ impl std::fmt::Debug for Message {
             Self::NcmPlaylistCreatorAvatarLoaded(id, _) => {
                 simple!("NcmPlaylistCreatorAvatarLoaded", "{}", id)
             }
+            Self::UserPlaylistCoverLoaded(page_id, playlist_id, _) => {
+                simple!(
+                    "UserPlaylistCoverLoaded",
+                    "page_id={}, playlist_id={}",
+                    page_id,
+                    playlist_id
+                )
+            }
+            Self::ArtistCoverLoaded(id, _) => simple!("ArtistCoverLoaded", "{}", id),
             Self::TogglePlaylistSubscribe(id) => simple!("TogglePlaylistSubscribe", "{}", id),
             Self::PlaylistSubscribeChanged(id, s) => {
                 simple!("PlaylistSubscribeChanged", "{}, {}", id, s)
@@ -918,6 +1007,7 @@ impl std::fmt::Debug for Message {
             Self::OpenSearchResult(id, tab) => {
                 simple!("OpenSearchResult", "id={}, tab={:?}", id, tab)
             }
+            Self::SwitchArtistTab(tab) => simple!("SwitchArtistTab", "{:?}", tab),
 
             // Sidebar resize
             Self::SidebarResizeStart => simple!("SidebarResizeStart"),

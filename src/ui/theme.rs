@@ -8,6 +8,22 @@ use iced::{Background, Border, Color, Shadow, Theme, Vector};
 pub use crate::platform::theme::{BOLD_WEIGHT, MEDIUM_WEIGHT};
 
 // ============================================================================
+// Typography
+// ============================================================================
+
+pub const TEXT_SIZE_MICRO: f32 = 10.0;
+pub const TEXT_SIZE_CAPTION: f32 = 12.0;
+pub const TEXT_SIZE_LABEL: f32 = 13.0;
+pub const TEXT_SIZE_BODY: f32 = 14.0;
+pub const TEXT_SIZE_BODY_LARGE: f32 = 16.0;
+pub const TEXT_SIZE_SUBTITLE: f32 = 18.0;
+pub const TEXT_SIZE_TITLE: f32 = 24.0;
+pub const TEXT_SIZE_TITLE_LARGE: f32 = 28.0;
+pub const TEXT_SIZE_HERO: f32 = 32.0;
+pub const TEXT_SIZE_DISPLAY: f32 = 48.0;
+pub const TEXT_SIZE_DISPLAY_LARGE: f32 = 72.0;
+
+// ============================================================================
 // Color Palette - Dynamic based on theme
 // ============================================================================
 
@@ -720,10 +736,15 @@ pub fn placeholder_bg(theme: &Theme) -> Color {
 
 /// Player bar background
 pub fn player_bar_bg(theme: &Theme) -> Color {
+    sidebar_bg(theme)
+}
+
+/// Top border color used by the player bar and matching sidebar footer separator
+pub fn player_bar_border(theme: &Theme) -> Color {
     if is_dark(theme) {
-        Color::from_rgb(0.08, 0.08, 0.08)
+        color!(0x2d2d2d)
     } else {
-        Color::from_rgb(0.95, 0.95, 0.95)
+        color!(0xd8d8d8)
     }
 }
 

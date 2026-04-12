@@ -370,11 +370,17 @@ pub async fn load_playlist_view(
         .unwrap_or_default();
 
     Some(pages::PlaylistView {
+        kind: pages::playlist::DetailPageKind::Playlist,
         id: playlist.id,
         name: playlist.name,
         description: playlist.description,
+        profile_stats: None,
+        artist_tab: pages::playlist::ArtistPageTab::TopSongs,
+        artist_albums: Vec::new(),
+        user_playlists: Vec::new(),
         cover_path: playlist.cover_path,
         owner: "本地".to_string(),
+        owner_artist_id: None,
         owner_avatar_path: None,
         creator_id: 0,
         song_count: songs.len() as u32,

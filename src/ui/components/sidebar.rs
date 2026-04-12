@@ -1,14 +1,15 @@
 //! Left sidebar navigation component
 //! Dark gray panel with logo, menu, library section, and user profile
 
-use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, svg, text};
+use iced::widget::{button, column, container, mouse_area, row, scrollable, svg, text, Space};
 use iced::{Alignment, Color, Element, Fill, Padding};
 
 use crate::app::{Message, Route, SidebarId};
 use crate::i18n::{Key, Locale};
 use crate::ui::animation::HoverAnimations;
 use crate::ui::components::importing_card::{self, ImportingPlaylist};
-use crate::ui::theme::{self, MEDIUM_WEIGHT};
+use crate::ui::components::player_bar::PLAYER_BAR_HEIGHT;
+use crate::ui::theme::{self, BOLD_WEIGHT, MEDIUM_WEIGHT};
 
 /// Navigation menu items
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -81,21 +82,25 @@ pub fn view(
             svg(svg::Handle::from_memory(
                 crate::ui::icons::MUSIC_LOGO.as_bytes()
             ))
-            .width(24)
-            .height(24)
+            .width(30)
+            .height(30)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::ACCENT_PINK),
             })
         ),
-        Space::new().width(10),
+        Space::new().width(12),
         text(locale.get(Key::AppName))
-            .size(22)
+            .size(theme::TEXT_SIZE_TITLE_LARGE - 2.0)
             .style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
             })
+            .font(iced::Font {
+                weight: BOLD_WEIGHT,
+                ..Default::default()
+            })
     ]
     .align_y(Alignment::Center)
-    .padding(Padding::new(20.0).bottom(30.0));
+    .padding(Padding::new(24.0).bottom(34.0));
 
     // Main navigation menu with hover animations
     let nav_items = [NavItem::Home, NavItem::Discover, NavItem::Radio];
@@ -115,7 +120,7 @@ pub fn view(
 
     // Library section header
     let library_header = text(locale.get(Key::LibraryTitle))
-        .size(12)
+        .size(theme::TEXT_SIZE_LABEL)
         .color(theme::TEXT_MUTED)
         .width(Fill);
 
@@ -146,6 +151,9 @@ pub fn view(
 
     let not_logged_in = locale.get(Key::NotLoggedIn).to_string();
     let click_to_login = locale.get(Key::ClickToLogin).to_string();
+    let avatar_size = 40.0;
+    let avatar_radius = avatar_size / 2.0;
+    let avatar_icon_size = 20.0;
 
     let user_card_content = if is_logged_in {
         if let Some(info) = user_info {
@@ -155,35 +163,28 @@ pub fn view(
                     iced::widget::image(handle.clone())
                         .width(Fill)
                         .height(Fill)
-                        .content_fit(iced::ContentFit::Cover),
+                        .content_fit(iced::ContentFit::Cover)
+                        .border_radius(avatar_radius),
                 )
-                .width(36)
-                .height(36)
-                .style(|_theme| iced::widget::container::Style {
-                    border: iced::Border {
-                        radius: 18.0.into(),
-                        width: 0.0,
-                        color: Color::TRANSPARENT,
-                    },
-                    ..Default::default()
-                })
+                .width(avatar_size)
+                .height(avatar_size)
             } else {
                 container(
                     svg(svg::Handle::from_memory(crate::ui::icons::USER.as_bytes()))
-                        .width(18)
-                        .height(18)
+                        .width(avatar_icon_size)
+                        .height(avatar_icon_size)
                         .style(|theme, _status| svg::Style {
                             color: Some(theme::text_secondary(theme)),
                         }),
                 )
-                .width(36)
-                .height(36)
-                .center_x(36)
-                .center_y(36)
-                .style(|theme| iced::widget::container::Style {
+                .width(avatar_size)
+                .height(avatar_size)
+                .center_x(avatar_size)
+                .center_y(avatar_size)
+                .style(move |theme| iced::widget::container::Style {
                     background: Some(iced::Background::Color(theme::border_color(theme))),
                     border: iced::Border {
-                        radius: 18.0.into(),
+                        radius: avatar_radius.into(),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -191,9 +192,11 @@ pub fn view(
             };
 
             let vip_text = if info.vip_type > 0 {
-                row![text("VIP").size(10).style(|_theme| text::Style {
-                    color: Some(theme::ACCENT_PINK),
-                }),]
+                row![text("VIP")
+                    .size(theme::TEXT_SIZE_CAPTION)
+                    .style(|_theme| text::Style {
+                        color: Some(theme::ACCENT_PINK),
+                    }),]
             } else {
                 row![]
             };
@@ -204,7 +207,7 @@ pub fn view(
                     Space::new().width(12),
                     column![
                         text(info.nickname.clone())
-                            .size(14)
+                            .size(theme::TEXT_SIZE_BODY_LARGE)
                             .style(|theme| text::Style {
                                 color: Some(theme::text_primary(theme))
                             })
@@ -236,20 +239,20 @@ pub fn view(
                     // Avatar placeholder
                     container(
                         svg(svg::Handle::from_memory(crate::ui::icons::USER.as_bytes()))
-                            .width(18)
-                            .height(18)
+                            .width(avatar_icon_size)
+                            .height(avatar_icon_size)
                             .style(|theme, _status| svg::Style {
                                 color: Some(theme::text_secondary(theme)),
                             })
                     )
-                    .width(36)
-                    .height(36)
-                    .center_x(36)
-                    .center_y(36)
-                    .style(|theme| iced::widget::container::Style {
+                    .width(avatar_size)
+                    .height(avatar_size)
+                    .center_x(avatar_size)
+                    .center_y(avatar_size)
+                    .style(move |theme| iced::widget::container::Style {
                         background: Some(iced::Background::Color(theme::border_color(theme))),
                         border: iced::Border {
-                            radius: 18.0.into(),
+                            radius: avatar_radius.into(),
                             ..Default::default()
                         },
                         ..Default::default()
@@ -257,7 +260,7 @@ pub fn view(
                     Space::new().width(12),
                     column![
                         text(not_logged_in)
-                            .size(14)
+                            .size(theme::TEXT_SIZE_BODY_LARGE)
                             .style(|theme| text::Style {
                                 color: Some(theme::text_primary(theme))
                             })
@@ -266,7 +269,9 @@ pub fn view(
                                 ..Default::default()
                             }),
                         Space::new().height(2),
-                        text(click_to_login).size(12).color(theme::ACCENT_PINK),
+                        text(click_to_login)
+                            .size(theme::TEXT_SIZE_LABEL)
+                            .color(theme::ACCENT_PINK),
                     ],
                     Space::new().width(Fill),
                     // Arrow indicator with animated color
@@ -289,20 +294,20 @@ pub fn view(
                 // Avatar placeholder
                 container(
                     svg(svg::Handle::from_memory(crate::ui::icons::USER.as_bytes()))
-                        .width(18)
-                        .height(18)
+                        .width(avatar_icon_size)
+                        .height(avatar_icon_size)
                         .style(|theme, _status| svg::Style {
                             color: Some(theme::text_secondary(theme)),
                         })
                 )
-                .width(36)
-                .height(36)
-                .center_x(36)
-                .center_y(36)
-                .style(|theme| iced::widget::container::Style {
+                .width(avatar_size)
+                .height(avatar_size)
+                .center_x(avatar_size)
+                .center_y(avatar_size)
+                .style(move |theme| iced::widget::container::Style {
                     background: Some(iced::Background::Color(theme::border_color(theme))),
                     border: iced::Border {
-                        radius: 18.0.into(),
+                        radius: avatar_radius.into(),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -310,7 +315,7 @@ pub fn view(
                 Space::new().width(12),
                 column![
                     text(not_logged_in)
-                        .size(14)
+                        .size(theme::TEXT_SIZE_BODY_LARGE)
                         .style(|theme| text::Style {
                             color: Some(theme::text_primary(theme))
                         })
@@ -319,7 +324,9 @@ pub fn view(
                             ..Default::default()
                         }),
                     Space::new().height(2),
-                    text(click_to_login).size(12).color(theme::ACCENT_PINK),
+                    text(click_to_login)
+                        .size(theme::TEXT_SIZE_LABEL)
+                        .color(theme::ACCENT_PINK),
                 ],
                 Space::new().width(Fill),
                 // Arrow indicator with animated color
@@ -338,11 +345,8 @@ pub fn view(
     }
     .width(Fill)
     .padding(0)
-    .style(move |theme, _status| iced::widget::button::Style {
-        background: Some(iced::Background::Color(theme::hover_bg_alpha(
-            theme,
-            0.08 * user_hover_progress,
-        ))),
+    .style(move |_theme, _status| iced::widget::button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
         border: iced::Border {
             radius: 8.0.into(),
             ..Default::default()
@@ -400,7 +404,7 @@ pub fn view(
     // Only show cloud playlists section if logged in
     if is_logged_in {
         let cloud_header = text(locale.get(Key::CloudPlaylistsTitle))
-            .size(12)
+            .size(theme::TEXT_SIZE_LABEL)
             .color(theme::TEXT_MUTED)
             .width(Fill);
 
@@ -465,17 +469,32 @@ pub fn view(
                 },
             });
 
-    // Main content: fixed header (logo + nav) + scrollable area + fixed user card
-    let content = column![
-        logo,
-        nav_menu,
-        Space::new().height(24),
-        scrollable_content,
-        Space::new().height(8),
-        user_card,
-    ]
-    .padding(16)
-    .width(sidebar_width);
+    let top_content = column![logo, nav_menu, Space::new().height(24), scrollable_content,]
+        .padding(16)
+        .width(sidebar_width)
+        .height(Fill);
+
+    let user_footer_border = container(Space::new().height(0))
+        .width(Fill)
+        .height(1)
+        .style(|theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(theme::player_bar_border(theme))),
+            ..Default::default()
+        });
+
+    let user_footer_content = container(user_card)
+        .width(Fill)
+        .height(PLAYER_BAR_HEIGHT - 1.0)
+        .padding(Padding::new(8.0).left(16.0).right(16.0))
+        .align_y(Alignment::Center)
+        .style(|theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(theme::player_bar_bg(theme))),
+            ..Default::default()
+        });
+
+    let content = column![top_content, user_footer_border, user_footer_content]
+        .width(sidebar_width)
+        .height(Fill);
 
     // Wrap entire sidebar in mouse_area to clear hover when leaving sidebar
     let sidebar_container = container(content)
@@ -499,8 +518,8 @@ fn sidebar_button_animated(
     on_press: Message,
 ) -> Element<'static, Message> {
     let icon = svg(svg::Handle::from_memory(icon_svg.as_bytes()))
-        .width(20)
-        .height(20)
+        .width(22)
+        .height(22)
         .style(move |theme, _status| svg::Style {
             color: Some(if is_active {
                 theme::text_primary(theme)
@@ -509,13 +528,15 @@ fn sidebar_button_animated(
             }),
         });
 
-    let label_text = text(label).size(14).style(move |theme| text::Style {
-        color: Some(if is_active {
-            theme::text_primary(theme)
-        } else {
-            theme::animated_brightness(theme, hover_progress)
-        }),
-    });
+    let label_text = text(label)
+        .size(theme::TEXT_SIZE_BODY_LARGE)
+        .style(move |theme| text::Style {
+            color: Some(if is_active {
+                theme::text_primary(theme)
+            } else {
+                theme::animated_brightness(theme, hover_progress)
+            }),
+        });
 
     let content = row![icon, Space::new().width(12), label_text]
         .align_y(Alignment::Center)

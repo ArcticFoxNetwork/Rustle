@@ -37,7 +37,7 @@ pub fn view<'a>(
 
     // Dialog content
     let title = text(locale.get(Key::EditPlaylistTitle).to_string())
-        .size(24)
+        .size(theme::TEXT_SIZE_TITLE)
         .color(theme::TEXT_PRIMARY)
         .font(iced::Font {
             weight: BOLD_WEIGHT,
@@ -86,7 +86,7 @@ pub fn view<'a>(
 
     let change_cover_btn = button(
         text(locale.get(Key::EditPlaylistChangeCover).to_string())
-            .size(13)
+            .size(theme::TEXT_SIZE_LABEL)
             .color(theme::TEXT_PRIMARY),
     )
     .padding(Padding::new(6.0).left(12.0).right(12.0))
@@ -111,12 +111,12 @@ pub fn view<'a>(
         column![cover_box, Space::new().height(8), change_cover_btn,].align_x(Alignment::Center);
 
     let name_label = text(locale.get(Key::EditPlaylistName).to_string())
-        .size(14)
+        .size(theme::TEXT_SIZE_BODY)
         .color(theme::TEXT_SECONDARY);
     let name_input = text_input(locale.get(Key::EditPlaylistNamePlaceholder), name)
         .on_input(Message::EditPlaylistNameChanged)
         .padding(12)
-        .size(15)
+        .size(theme::TEXT_SIZE_BODY_LARGE)
         .style(|theme, _status| text_input::Style {
             background: iced::Background::Color(theme::surface_container(theme)),
             border: iced::Border {
@@ -131,12 +131,12 @@ pub fn view<'a>(
         });
 
     let desc_label = text(locale.get(Key::EditPlaylistDesc).to_string())
-        .size(14)
+        .size(theme::TEXT_SIZE_BODY)
         .color(theme::TEXT_SECONDARY);
     let desc_input = text_input(locale.get(Key::EditPlaylistDescPlaceholder), description)
         .on_input(Message::EditPlaylistDescriptionChanged)
         .padding(12)
-        .size(15)
+        .size(theme::TEXT_SIZE_BODY_LARGE)
         .style(|theme, _status| text_input::Style {
             background: iced::Background::Color(theme::surface_container(theme)),
             border: iced::Border {
@@ -153,7 +153,7 @@ pub fn view<'a>(
     // Buttons with smooth hover transitions
     let cancel_btn = button(
         text(locale.get(Key::Cancel).to_string())
-            .size(14)
+            .size(theme::TEXT_SIZE_BODY)
             .color(theme::TEXT_PRIMARY),
     )
     .padding(Padding::new(10.0).left(24.0).right(24.0))
@@ -178,7 +178,7 @@ pub fn view<'a>(
 
     let save_btn = button(
         text(locale.get(Key::Save).to_string())
-            .size(14)
+            .size(theme::TEXT_SIZE_BODY)
             .color(theme::BLACK),
     )
     .padding(Padding::new(10.0).left(24.0).right(24.0))

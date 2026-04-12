@@ -103,7 +103,7 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
             column![
                 view_progress_ring_styled(progress_ring, 28.0),
                 text(format!("{}%", percentage))
-                    .size(8)
+                    .size(theme::TEXT_SIZE_MICRO)
                     .color(theme::TEXT_MUTED)
             ]
             .align_x(Alignment::Center)
@@ -126,14 +126,18 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
 
     let completed = playlist.completed;
     let info = column![
-        text(name).size(13).style(move |theme| text::Style {
-            color: Some(if completed {
-                theme::text_primary(theme)
-            } else {
-                theme::TEXT_SECONDARY
-            })
-        }),
-        text(status_text).size(11).color(theme::TEXT_MUTED)
+        text(name)
+            .size(theme::TEXT_SIZE_LABEL)
+            .style(move |theme| text::Style {
+                color: Some(if completed {
+                    theme::text_primary(theme)
+                } else {
+                    theme::TEXT_SECONDARY
+                })
+            }),
+        text(status_text)
+            .size(theme::TEXT_SIZE_CAPTION)
+            .color(theme::TEXT_MUTED)
     ]
     .spacing(2);
 

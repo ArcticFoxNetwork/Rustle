@@ -359,6 +359,36 @@ impl MusicApi {
         Ok(detail)
     }
 
+    pub async fn artist_detail(&self, artist_id: u64) -> Result<ArtistDetail> {
+        let path = format!("/weapi/v1/artist/{}", artist_id);
+        let result = self
+            .request(
+                Method::Post,
+                &path,
+                HashMap::new(),
+                CryptoApi::Weapi,
+                "",
+                true,
+            )
+            .await?;
+        to_artist_detail(result)
+    }
+
+    pub async fn user_detail(&self, user_id: u64) -> Result<UserDetail> {
+        let path = format!("/weapi/w/v1/user/detail/{}", user_id);
+        let result = self
+            .request(
+                Method::Post,
+                &path,
+                HashMap::new(),
+                CryptoApi::Weapi,
+                "",
+                true,
+            )
+            .await?;
+        to_user_detail(result)
+    }
+
     async fn playlist_track_ids(&self, playlist_id: u64) -> Result<Vec<u64>> {
         let csrf_token = self.csrf.read().clone();
         let path = "/weapi/v6/playlist/detail";

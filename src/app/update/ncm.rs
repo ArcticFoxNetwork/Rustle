@@ -10,6 +10,22 @@ use crate::app::state::UserInfo;
 use crate::app::{App, Message, Route};
 use crate::i18n::Key;
 
+fn artist_page_id(artist_id: u64) -> i64 {
+    i64::MIN + artist_id as i64
+}
+
+fn user_page_id(user_id: u64) -> i64 {
+    (i64::MIN / 2) + user_id as i64
+}
+
+fn format_social_count(value: u64) -> String {
+    if value >= 10_000 {
+        format!("{:.1}万", value as f64 / 10_000.0)
+    } else {
+        value.to_string()
+    }
+}
+
 impl App {
     fn ncm_song_to_db_song(song_info: &crate::api::SongInfo) -> crate::database::DbSong {
         let now = std::time::SystemTime::now()
@@ -134,11 +150,17 @@ impl App {
         };
 
         let skeleton_view = crate::ui::pages::PlaylistView {
+            kind: crate::ui::pages::playlist::DetailPageKind::Playlist,
             id: internal_id,
             name,
             description: None,
+            profile_stats: None,
+            artist_tab: crate::ui::pages::playlist::ArtistPageTab::TopSongs,
+            artist_albums: Vec::new(),
+            user_playlists: Vec::new(),
             cover_path: None,
             owner,
+            owner_artist_id: None,
             owner_avatar_path: None,
             creator_id: 0,
             song_count: 0,
@@ -247,6 +269,137 @@ impl App {
         };
 
         Task::batch([cover_task, api_task])
+    }
+
+    pub(super) fn open_artist_route(&mut self, artist_id: u64) -> Task<Message> {
+        let route = Route::Artist(artist_id);
+        if self.ui.current_route != route {
+            return self.navigate_to_route(route, true);
+        }
+
+        if matches!(
+            self.ui.playlist_page.load_state,
+            crate::app::update::page_loader::PlaylistLoadState::Loading
+        ) {
+            debug!("Artist page already loading, skipping");
+            return Task::none();
+        }
+
+        debug!("Opening artist page: {}", artist_id);
+        self.reset_playlist_page_state();
+
+        let internal_id = artist_page_id(artist_id);
+        let skeleton_view = crate::ui::pages::PlaylistView {
+            kind: crate::ui::pages::playlist::DetailPageKind::Artist,
+            id: internal_id,
+            name: "加载中...".to_string(),
+            description: None,
+            profile_stats: Some("歌手".to_string()),
+            artist_tab: crate::ui::pages::playlist::ArtistPageTab::TopSongs,
+            artist_albums: Vec::new(),
+            user_playlists: Vec::new(),
+            cover_path: None,
+            owner: "网易云音乐".to_string(),
+            owner_artist_id: Some(artist_id),
+            owner_avatar_path: None,
+            creator_id: 0,
+            song_count: 0,
+            total_duration: String::new(),
+            like_count: String::new(),
+            songs: Vec::new(),
+            palette: crate::utils::ColorPalette::default(),
+            is_local: false,
+            is_subscribed: false,
+        };
+
+        self.ui.playlist_page.current = Some(skeleton_view);
+        self.ui.playlist_page.load_state =
+            crate::app::update::page_loader::PlaylistLoadState::Loading;
+
+        if let Some(client) = &self.core.ncm_client {
+            let client = client.clone();
+            return Task::perform(
+                async move { client.client.artist_detail(artist_id).await.ok() },
+                |result| {
+                    if let Some(detail) = result {
+                        Message::ArtistDetailLoaded(detail)
+                    } else {
+                        Message::ShowErrorToast("加载歌手失败".to_string())
+                    }
+                },
+            );
+        }
+
+        Task::done(Message::ShowWarningToast("请先登录".to_string()))
+    }
+
+    pub(super) fn open_user_route(&mut self, user_id: u64) -> Task<Message> {
+        let route = Route::User(user_id);
+        if self.ui.current_route != route {
+            return self.navigate_to_route(route, true);
+        }
+
+        if matches!(
+            self.ui.playlist_page.load_state,
+            crate::app::update::page_loader::PlaylistLoadState::Loading
+        ) {
+            debug!("User page already loading, skipping");
+            return Task::none();
+        }
+
+        debug!("Opening user page: {}", user_id);
+        self.reset_playlist_page_state();
+
+        let page_id = user_page_id(user_id);
+        let skeleton_view = crate::ui::pages::PlaylistView {
+            kind: crate::ui::pages::playlist::DetailPageKind::User,
+            id: page_id,
+            name: "加载中...".to_string(),
+            description: None,
+            profile_stats: Some("关注 0 · 粉丝 0".to_string()),
+            artist_tab: crate::ui::pages::playlist::ArtistPageTab::TopSongs,
+            artist_albums: Vec::new(),
+            user_playlists: Vec::new(),
+            cover_path: None,
+            owner: "网易云用户".to_string(),
+            owner_artist_id: None,
+            owner_avatar_path: None,
+            creator_id: user_id,
+            song_count: 0,
+            total_duration: String::new(),
+            like_count: String::new(),
+            songs: Vec::new(),
+            palette: crate::utils::ColorPalette::default(),
+            is_local: false,
+            is_subscribed: false,
+        };
+
+        self.ui.playlist_page.current = Some(skeleton_view);
+        self.ui.playlist_page.load_state =
+            crate::app::update::page_loader::PlaylistLoadState::Loading;
+
+        if let Some(client) = &self.core.ncm_client {
+            let client = client.clone();
+            return Task::perform(
+                async move {
+                    client
+                        .client
+                        .user_detail(user_id)
+                        .await
+                        .ok()
+                        .map(|detail| (page_id, detail))
+                },
+                |result| {
+                    if let Some((page_id, detail)) = result {
+                        Message::UserPageDetailLoaded(page_id, detail)
+                    } else {
+                        Message::ShowErrorToast("加载用户失败".to_string())
+                    }
+                },
+            );
+        }
+
+        Task::done(Message::ShowWarningToast("请先登录".to_string()))
     }
 
     /// Handle NCM-related messages
@@ -870,6 +1023,7 @@ impl App {
                 }
 
                 self.exit_fm_mode();
+                self.ui.home.current_ncm_playlist_songs = vec![song_info.clone()];
                 self.playback.queue.clear();
                 self.playback
                     .queue
@@ -881,6 +1035,7 @@ impl App {
 
             Message::PlayNcmUrl(song_info, url, cover_override) => {
                 debug!("Preparing NCM song: {} - {}", song_info.name, url);
+                self.ui.home.current_ncm_playlist_songs = vec![song_info.clone()];
 
                 // Get cover path: use override, or check if cached cover exists
                 let cover_path = cover_override.clone().or_else(|| {
@@ -990,6 +1145,7 @@ impl App {
                     songs.len(),
                     play_now
                 );
+                self.ui.home.current_ncm_playlist_songs = songs.clone();
 
                 let db_songs: Vec<crate::database::DbSong> = songs
                     .iter()
@@ -1060,6 +1216,49 @@ impl App {
                 }
 
                 Some(self.open_ncm_playlist_route(*playlist_id))
+            }
+
+            Message::OpenArtist(artist_id) => Some(self.open_artist_route(*artist_id)),
+
+            Message::SwitchArtistTab(tab) => {
+                if let Some(playlist) = &mut self.ui.playlist_page.current {
+                    playlist.artist_tab = *tab;
+                }
+                Some(Task::none())
+            }
+
+            Message::OpenArtistByName(name) => {
+                let keyword = name.trim().to_string();
+                if keyword.is_empty() {
+                    return Some(Task::none());
+                }
+
+                if let Some(client) = &self.core.ncm_client {
+                    let client = client.clone();
+                    Some(Task::perform(
+                        async move {
+                            client
+                                .client
+                                .search(&keyword, crate::api::ncm_api::SearchType::Artists, 1, 0)
+                                .await
+                                .ok()
+                                .and_then(|response| {
+                                    response.albums.first().map(|artist| artist.id)
+                                })
+                        },
+                        |result| {
+                            if let Some(artist_id) = result {
+                                Message::OpenArtist(artist_id)
+                            } else {
+                                Message::ShowWarningToast("未找到对应歌手".to_string())
+                            }
+                        },
+                    ))
+                } else {
+                    Some(Task::done(Message::ShowWarningToast(
+                        "请先登录".to_string(),
+                    )))
+                }
             }
 
             Message::NcmPlaylistDetailLoaded(detail) => {
@@ -1154,6 +1353,28 @@ impl App {
                     Task::none()
                 };
 
+                let creator_detail_task = if detail.creator_id != 0 {
+                    if let Some(client) = &self.core.ncm_client {
+                        let client = client.clone();
+                        let creator_id = detail.creator_id;
+                        let internal_id = playlist_id;
+                        Task::perform(
+                            async move { client.client.user_detail(creator_id).await.ok() },
+                            move |result| {
+                                if let Some(user_detail) = result {
+                                    Message::PlaylistCreatorDetailLoaded(internal_id, user_detail)
+                                } else {
+                                    Message::NoOp
+                                }
+                            },
+                        )
+                    } else {
+                        Task::none()
+                    }
+                } else {
+                    Task::none()
+                };
+
                 // Spawn async task to convert songs (cover download already started in OpenNcmPlaylist)
                 let songs = detail.songs.clone();
                 let cover_cache_dir = crate::utils::covers_cache_dir();
@@ -1206,7 +1427,7 @@ impl App {
                     },
                 );
 
-                return Some(Task::batch([songs_task, avatar_task]));
+                return Some(Task::batch([songs_task, avatar_task, creator_detail_task]));
             }
 
             Message::NcmPlaylistSongsReady(
@@ -1217,6 +1438,17 @@ impl App {
                 avatar_path,
             ) => {
                 debug!("NCM playlist songs ready: {} songs", song_views.len());
+
+                let initial_cover_requests: Vec<(i64, String)> = song_views
+                    .iter()
+                    .filter_map(|song| {
+                        song.pic_url
+                            .as_ref()
+                            .filter(|url| !url.is_empty())
+                            .map(|url| (song.id, url.clone()))
+                    })
+                    .take(12)
+                    .collect();
 
                 // Update existing playlist view with songs
                 if let Some(playlist) = &mut self.ui.playlist_page.current {
@@ -1233,10 +1465,565 @@ impl App {
                     crate::app::update::page_loader::PlaylistLoadState::Ready;
 
                 // Scroll to top
-                Some(iced::widget::operation::snap_to(
+                let mut tasks = vec![iced::widget::operation::snap_to(
                     iced::widget::Id::new("playlist_scroll"),
                     iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
-                ))
+                )];
+                if !initial_cover_requests.is_empty() {
+                    tasks.push(Task::done(Message::RequestSongCoversLazy(
+                        initial_cover_requests,
+                    )));
+                }
+                Some(Task::batch(tasks))
+            }
+
+            Message::ArtistDetailLoaded(detail) => {
+                debug!(
+                    "Artist detail loaded: {} with {} songs",
+                    detail.name,
+                    detail.hot_songs.len()
+                );
+
+                let page_id = artist_page_id(detail.id);
+                let total_secs: u64 = detail.hot_songs.iter().map(|s| s.duration / 1000).sum();
+                let total_mins = total_secs / 60;
+                let total_hours = total_mins / 60;
+                let remaining_mins = total_mins % 60;
+                let total_duration = if total_hours > 0 {
+                    format!("约 {} 小时 {} 分钟", total_hours, remaining_mins)
+                } else {
+                    format!("{} 分钟", total_mins)
+                };
+
+                let description = if detail.description.trim().is_empty() {
+                    Some(format!(
+                        "{} 首热门单曲 · {} 张专辑",
+                        detail.music_size, detail.album_size
+                    ))
+                } else {
+                    Some(detail.description.clone())
+                };
+
+                if let Some(playlist) = &mut self.ui.playlist_page.current {
+                    if playlist.id == page_id {
+                        playlist.kind = crate::ui::pages::playlist::DetailPageKind::Artist;
+                        playlist.name = detail.name.clone();
+                        playlist.description = description;
+                        playlist.profile_stats = Some(format!(
+                            "{} 首热门单曲 · {} 张专辑",
+                            detail.music_size, detail.album_size
+                        ));
+                        playlist.owner = "歌手热门作品".to_string();
+                        playlist.owner_artist_id = Some(detail.id);
+                        playlist.song_count = detail.hot_songs.len() as u32;
+                        playlist.total_duration = total_duration;
+                        playlist.like_count = format!("{} 张专辑", detail.album_size);
+                    }
+                }
+
+                self.ui.home.current_ncm_playlist_songs = detail.hot_songs.clone();
+
+                let cover_cache_dir = crate::utils::covers_cache_dir();
+                let cover_stem = format!("artist_{}", detail.id);
+                let existing_cover = crate::utils::find_cached_image(&cover_cache_dir, &cover_stem)
+                    .map(|p| p.to_string_lossy().to_string());
+
+                let cover_task = if let Some(path) = existing_cover {
+                    Task::done(Message::ArtistCoverLoaded(page_id, path))
+                } else if !detail.pic_url.is_empty() {
+                    if let Some(client) = &self.core.ncm_client {
+                        let client = client.clone();
+                        let artist_id = detail.id;
+                        let cover_url = detail.pic_url.clone();
+                        Task::perform(
+                            async move {
+                                crate::utils::download_artist_cover(&client, artist_id, &cover_url)
+                                    .await
+                                    .map(|p| {
+                                        (artist_page_id(artist_id), p.to_string_lossy().to_string())
+                                    })
+                            },
+                            |result| {
+                                if let Some((id, path)) = result {
+                                    Message::ArtistCoverLoaded(id, path)
+                                } else {
+                                    Message::NoOp
+                                }
+                            },
+                        )
+                    } else {
+                        Task::none()
+                    }
+                } else {
+                    Task::none()
+                };
+
+                let songs = detail.hot_songs.clone();
+                let songs_task = Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let cover_paths: Vec<(u64, Option<String>)> = songs
+                                .iter()
+                                .map(|song| {
+                                    let stem = format!("cover_{}", song.id);
+                                    let cover_path =
+                                        crate::utils::find_cached_image(&cover_cache_dir, &stem)
+                                            .map(|p| p.to_string_lossy().to_string());
+                                    (song.id, cover_path)
+                                })
+                                .collect();
+
+                            crate::app::update::page_loader::convert_ncm_songs_to_views(
+                                &songs,
+                                &cover_paths,
+                            )
+                        })
+                        .await
+                        .unwrap_or_default()
+                    },
+                    move |song_views| {
+                        Message::NcmPlaylistSongsReady(
+                            page_id,
+                            song_views,
+                            None,
+                            crate::utils::ColorPalette::default(),
+                            None,
+                        )
+                    },
+                );
+
+                let albums_task = if let Some(client) = &self.core.ncm_client {
+                    let client = client.clone();
+                    let page_id = page_id;
+                    let artist_name = detail.name.clone();
+                    Task::perform(
+                        async move {
+                            client
+                                .client
+                                .search(
+                                    &artist_name,
+                                    crate::api::ncm_api::SearchType::Albums,
+                                    50,
+                                    0,
+                                )
+                                .await
+                                .ok()
+                                .map(|response| {
+                                    let mut albums: Vec<_> = response
+                                        .albums
+                                        .into_iter()
+                                        .filter(|album| album.author.trim() == artist_name.trim())
+                                        .collect();
+                                    albums.sort_by(|a, b| a.name.cmp(&b.name));
+                                    (page_id, albums)
+                                })
+                        },
+                        move |result| {
+                            if let Some((page_id, albums)) = result {
+                                Message::ArtistAlbumsLoaded(page_id, albums)
+                            } else {
+                                Message::ArtistAlbumsLoaded(page_id, Vec::new())
+                            }
+                        },
+                    )
+                } else {
+                    Task::none()
+                };
+
+                Some(Task::batch([cover_task, songs_task, albums_task]))
+            }
+
+            Message::ArtistAlbumsLoaded(page_id, albums) => {
+                if let Some(playlist) = &mut self.ui.playlist_page.current {
+                    if playlist.id == *page_id {
+                        playlist.artist_albums = albums.clone();
+                    }
+                }
+                let Some(client) = &self.core.ncm_client else {
+                    return Some(Task::none());
+                };
+
+                let covers_dir = crate::utils::covers_cache_dir();
+                let mut tasks = Vec::new();
+                for album in albums {
+                    if album.cover_img_url.is_empty() {
+                        continue;
+                    }
+
+                    let cover_stem = format!("search_album_{}", album.id);
+                    if let Some(path) = crate::utils::find_cached_image(&covers_dir, &cover_stem) {
+                        tasks.push(Task::done(Message::ArtistAlbumCoverLoaded(
+                            *page_id,
+                            album.id,
+                            path.to_string_lossy().to_string(),
+                        )));
+                        continue;
+                    }
+
+                    let client = client.clone();
+                    let page_id = *page_id;
+                    let album_id = album.id;
+                    let cover_url = album.cover_img_url.clone();
+                    let cover_path = covers_dir.join(format!("{}.jpg", cover_stem));
+                    tasks.push(Task::perform(
+                        async move {
+                            crate::utils::download_img(&client, &cover_url, cover_path, 300, 300)
+                                .await
+                                .map(|path| (page_id, album_id, path.to_string_lossy().to_string()))
+                        },
+                        |result| {
+                            if let Some((page_id, album_id, path)) = result {
+                                Message::ArtistAlbumCoverLoaded(page_id, album_id, path)
+                            } else {
+                                Message::NoOp
+                            }
+                        },
+                    ));
+                }
+
+                Some(if tasks.is_empty() {
+                    Task::none()
+                } else {
+                    Task::batch(tasks)
+                })
+            }
+
+            Message::ArtistAlbumCoverLoaded(page_id, album_id, path) => {
+                let mut should_cache_handle = false;
+                if let Some(playlist) = &mut self.ui.playlist_page.current {
+                    if playlist.id == *page_id {
+                        if let Some(album) = playlist
+                            .artist_albums
+                            .iter_mut()
+                            .find(|album| album.id == *album_id)
+                        {
+                            album.cover_img_url = path.clone();
+                            should_cache_handle = true;
+                        }
+                    }
+                }
+
+                if should_cache_handle && std::path::Path::new(path).exists() {
+                    self.ui.playlist_page.artist_album_covers.insert(
+                        *album_id,
+                        iced::widget::image::Handle::from_path(path.clone()),
+                    );
+                }
+                Some(Task::none())
+            }
+
+            Message::UserPageDetailLoaded(page_id, detail) => {
+                let page_id = *page_id;
+                let description = if !detail.signature.trim().is_empty() {
+                    Some(detail.signature.clone())
+                } else if detail.artist_id != 0 {
+                    Some("网易云音乐人".to_string())
+                } else {
+                    Some(format!("网易云用户 {}", detail.nickname))
+                };
+
+                if let Some(playlist) = &mut self.ui.playlist_page.current {
+                    if playlist.id == page_id {
+                        playlist.kind = crate::ui::pages::playlist::DetailPageKind::User;
+                        playlist.name = detail.nickname.clone();
+                        playlist.description = description;
+                        playlist.profile_stats = Some(format!(
+                            "关注 {} · 粉丝 {}",
+                            format_social_count(detail.follows),
+                            format_social_count(detail.followeds)
+                        ));
+                        playlist.owner = if detail.artist_name.trim().is_empty() {
+                            "网易云用户".to_string()
+                        } else {
+                            detail.artist_name.clone()
+                        };
+                        playlist.owner_artist_id =
+                            (detail.artist_id != 0).then_some(detail.artist_id);
+                        playlist.creator_id = detail.user_id;
+                        playlist.like_count.clear();
+                    }
+                }
+
+                let avatar_cache_dir = crate::utils::avatars_cache_dir();
+                let avatar_stem = format!("avatar_{}", detail.user_id);
+                let existing_avatar =
+                    crate::utils::find_cached_image(&avatar_cache_dir, &avatar_stem)
+                        .map(|p| p.to_string_lossy().to_string());
+
+                let avatar_task = if let Some(path) = existing_avatar {
+                    Task::batch([
+                        Task::done(Message::NcmPlaylistCreatorAvatarLoaded(
+                            page_id,
+                            path.clone(),
+                        )),
+                        Task::done(Message::ArtistCoverLoaded(page_id, path)),
+                    ])
+                } else if !detail.avatar_url.is_empty() {
+                    if let Some(client) = &self.core.ncm_client {
+                        let client = client.clone();
+                        let user_id = detail.user_id;
+                        let avatar_url = detail.avatar_url.clone();
+                        Task::perform(
+                            async move {
+                                crate::utils::download_avatar(&client, user_id, &avatar_url)
+                                    .await
+                                    .map(|p| (page_id, p.to_string_lossy().to_string()))
+                            },
+                            |result| {
+                                if let Some((page_id, path)) = result {
+                                    Message::NcmPlaylistCreatorAvatarLoaded(page_id, path)
+                                } else {
+                                    Message::NoOp
+                                }
+                            },
+                        )
+                    } else {
+                        Task::none()
+                    }
+                } else {
+                    Task::none()
+                };
+
+                let artist_task = if detail.artist_id != 0 {
+                    if let Some(client) = &self.core.ncm_client {
+                        let client = client.clone();
+                        let artist_id = detail.artist_id;
+                        Task::perform(
+                            async move {
+                                client
+                                    .client
+                                    .artist_detail(artist_id)
+                                    .await
+                                    .ok()
+                                    .map(|detail| (page_id, detail))
+                            },
+                            |result| {
+                                if let Some((page_id, detail)) = result {
+                                    Message::UserArtistDetailLoaded(page_id, detail)
+                                } else {
+                                    Message::NoOp
+                                }
+                            },
+                        )
+                    } else {
+                        Task::none()
+                    }
+                } else {
+                    self.ui.playlist_page.load_state =
+                        crate::app::update::page_loader::PlaylistLoadState::Ready;
+                    Task::none()
+                };
+
+                let playlist_task = if let Some(client) = &self.core.ncm_client {
+                    let client = client.clone();
+                    let user_id = detail.user_id;
+                    Task::perform(
+                        async move { client.client.user_song_list(user_id, 0, 30).await.ok() },
+                        move |result| {
+                            if let Some(playlists) = result {
+                                Message::UserPagePlaylistsLoaded(page_id, playlists)
+                            } else {
+                                Message::UserPagePlaylistsLoaded(page_id, Vec::new())
+                            }
+                        },
+                    )
+                } else {
+                    Task::none()
+                };
+
+                Some(Task::batch([avatar_task, artist_task, playlist_task]))
+            }
+
+            Message::UserPagePlaylistsLoaded(page_id, playlists) => {
+                if let Some(playlist) = &mut self.ui.playlist_page.current {
+                    if playlist.id == *page_id {
+                        playlist.user_playlists = playlists.clone();
+                    }
+                }
+
+                let Some(client) = &self.core.ncm_client else {
+                    return Some(Task::none());
+                };
+
+                let covers_dir = crate::utils::covers_cache_dir();
+                let mut tasks = Vec::new();
+                for playlist in playlists {
+                    if playlist.cover_img_url.is_empty() {
+                        continue;
+                    }
+
+                    let cover_stem = format!("playlist_{}", playlist.id);
+                    if let Some(path) = crate::utils::find_cached_image(&covers_dir, &cover_stem) {
+                        tasks.push(Task::done(Message::UserPlaylistCoverLoaded(
+                            *page_id,
+                            playlist.id,
+                            path.to_string_lossy().to_string(),
+                        )));
+                        continue;
+                    }
+
+                    let client = client.clone();
+                    let page_id = *page_id;
+                    let playlist_id = playlist.id;
+                    let cover_url = playlist.cover_img_url.clone();
+                    tasks.push(Task::perform(
+                        async move {
+                            crate::utils::download_playlist_cover(&client, playlist_id, &cover_url)
+                                .await
+                                .map(|path| {
+                                    (page_id, playlist_id, path.to_string_lossy().to_string())
+                                })
+                        },
+                        |result| {
+                            if let Some((page_id, playlist_id, path)) = result {
+                                Message::UserPlaylistCoverLoaded(page_id, playlist_id, path)
+                            } else {
+                                Message::NoOp
+                            }
+                        },
+                    ));
+                }
+
+                Some(if tasks.is_empty() {
+                    Task::none()
+                } else {
+                    Task::batch(tasks)
+                })
+            }
+
+            Message::UserPlaylistCoverLoaded(page_id, playlist_id, path) => {
+                if let Some(playlist) = &mut self.ui.playlist_page.current {
+                    if playlist.id == *page_id {
+                        if let Some(item) = playlist
+                            .user_playlists
+                            .iter_mut()
+                            .find(|item| item.id == *playlist_id)
+                        {
+                            item.cover_img_url = path.clone();
+                        }
+                    }
+                }
+                Some(Task::none())
+            }
+
+            Message::UserArtistDetailLoaded(page_id, detail) => {
+                let page_id = *page_id;
+                let total_secs: u64 = detail.hot_songs.iter().map(|s| s.duration / 1000).sum();
+                let total_mins = total_secs / 60;
+                let total_hours = total_mins / 60;
+                let remaining_mins = total_mins % 60;
+                let total_duration = if total_hours > 0 {
+                    format!("约 {} 小时 {} 分钟", total_hours, remaining_mins)
+                } else {
+                    format!("{} 分钟", total_mins)
+                };
+
+                if let Some(playlist) = &mut self.ui.playlist_page.current {
+                    if playlist.id == page_id {
+                        if playlist
+                            .description
+                            .as_deref()
+                            .unwrap_or("")
+                            .trim()
+                            .is_empty()
+                        {
+                            playlist.description = Some(format!(
+                                "{} 首热门单曲 · {} 张专辑",
+                                detail.music_size, detail.album_size
+                            ));
+                        }
+                        if playlist
+                            .profile_stats
+                            .as_deref()
+                            .unwrap_or("")
+                            .trim()
+                            .is_empty()
+                        {
+                            playlist.profile_stats = Some(format!(
+                                "{} 首热门单曲 · {} 张专辑",
+                                detail.music_size, detail.album_size
+                            ));
+                        }
+                        playlist.owner = "热门作品".to_string();
+                        playlist.owner_artist_id = Some(detail.id);
+                        playlist.song_count = detail.hot_songs.len() as u32;
+                        playlist.total_duration = total_duration;
+                        playlist.like_count = format!("{} 张专辑", detail.album_size);
+                    }
+                }
+
+                self.ui.home.current_ncm_playlist_songs = detail.hot_songs.clone();
+                self.ui.playlist_page.load_state =
+                    crate::app::update::page_loader::PlaylistLoadState::Ready;
+
+                let cover_cache_dir = crate::utils::covers_cache_dir();
+                let cover_stem = format!("artist_{}", detail.id);
+                let existing_cover = crate::utils::find_cached_image(&cover_cache_dir, &cover_stem)
+                    .map(|p| p.to_string_lossy().to_string());
+
+                let cover_task = if let Some(path) = existing_cover {
+                    Task::done(Message::ArtistCoverLoaded(page_id, path))
+                } else if !detail.pic_url.is_empty() {
+                    if let Some(client) = &self.core.ncm_client {
+                        let client = client.clone();
+                        let artist_id = detail.id;
+                        let cover_url = detail.pic_url.clone();
+                        Task::perform(
+                            async move {
+                                crate::utils::download_artist_cover(&client, artist_id, &cover_url)
+                                    .await
+                                    .map(|p| (page_id, p.to_string_lossy().to_string()))
+                            },
+                            |result| {
+                                if let Some((id, path)) = result {
+                                    Message::ArtistCoverLoaded(id, path)
+                                } else {
+                                    Message::NoOp
+                                }
+                            },
+                        )
+                    } else {
+                        Task::none()
+                    }
+                } else {
+                    Task::none()
+                };
+
+                let songs = detail.hot_songs.clone();
+                let songs_task = Task::perform(
+                    async move {
+                        tokio::task::spawn_blocking(move || {
+                            let cover_paths: Vec<(u64, Option<String>)> = songs
+                                .iter()
+                                .map(|song| {
+                                    let stem = format!("cover_{}", song.id);
+                                    let cover_path =
+                                        crate::utils::find_cached_image(&cover_cache_dir, &stem)
+                                            .map(|p| p.to_string_lossy().to_string());
+                                    (song.id, cover_path)
+                                })
+                                .collect();
+
+                            crate::app::update::page_loader::convert_ncm_songs_to_views(
+                                &songs,
+                                &cover_paths,
+                            )
+                        })
+                        .await
+                        .unwrap_or_default()
+                    },
+                    move |song_views| {
+                        Message::NcmPlaylistSongsReady(
+                            page_id,
+                            song_views,
+                            None,
+                            crate::utils::ColorPalette::default(),
+                            None,
+                        )
+                    },
+                );
+
+                Some(Task::batch([cover_task, songs_task]))
             }
 
             Message::CurrentSongCoverReady(song_id, path) => {
@@ -1310,42 +2097,91 @@ impl App {
                         }
                     }
                 }
-                Some(Task::none())
+
+                let mut next_requests: Vec<(i64, String)> = Vec::new();
+                if let Some(playlist) = self.ui.playlist_page.current.as_ref() {
+                    if playlist.id < 0 {
+                        let scroll_state = self.ui.playlist_page.scroll_state.borrow();
+                        let (start, end) = scroll_state.visible_range();
+                        drop(scroll_state);
+
+                        for idx in start..end.min(playlist.songs.len()) {
+                            let song = &playlist.songs[idx];
+                            if song.cover_handle.is_some() {
+                                continue;
+                            }
+                            let Some(pic_url) = song.pic_url.as_ref() else {
+                                continue;
+                            };
+                            if pic_url.is_empty() {
+                                continue;
+                            }
+                            if self
+                                .ui
+                                .playlist_page
+                                .pending_cover_downloads
+                                .contains(&song.id)
+                            {
+                                continue;
+                            }
+                            next_requests.push((song.id, pic_url.clone()));
+                            if next_requests.len() >= 5 {
+                                break;
+                            }
+                        }
+                    }
+                }
+
+                if next_requests.is_empty() {
+                    Some(Task::none())
+                } else {
+                    Some(Task::done(Message::RequestSongCoversLazy(next_requests)))
+                }
             }
 
             Message::RequestSongCoversLazy(requests) => {
-                // Filter out songs that are already being downloaded or have covers
-                let songs_to_download: Vec<_> = requests
-                    .iter()
-                    .filter(|(song_id, pic_url)| {
-                        // Skip if already pending
-                        if self
-                            .ui
-                            .playlist_page
-                            .pending_cover_downloads
-                            .contains(song_id)
-                        {
-                            return false;
-                        }
-                        // Skip if pic_url is empty
-                        if pic_url.is_empty() {
-                            return false;
-                        }
-                        // Skip if cover already exists locally
-                        let cover_cache_dir = crate::utils::covers_cache_dir();
-                        let ncm_id = if *song_id < 0 {
-                            (-*song_id) as u64
-                        } else {
-                            *song_id as u64
-                        };
-                        let stem = format!("cover_{}", ncm_id);
-                        crate::utils::find_cached_image(&cover_cache_dir, &stem).is_none()
-                    })
-                    .cloned()
-                    .collect();
+                let cover_cache_dir = crate::utils::covers_cache_dir();
+                let mut cached_results = Vec::new();
+                let mut songs_to_download = Vec::new();
+
+                for (song_id, pic_url) in requests.iter().cloned() {
+                    if self
+                        .ui
+                        .playlist_page
+                        .pending_cover_downloads
+                        .contains(&song_id)
+                    {
+                        continue;
+                    }
+
+                    if pic_url.is_empty() {
+                        continue;
+                    }
+
+                    let ncm_id = if song_id < 0 {
+                        (-song_id) as u64
+                    } else {
+                        song_id as u64
+                    };
+                    let stem = format!("cover_{}", ncm_id);
+
+                    if let Some(path) = crate::utils::find_cached_image(&cover_cache_dir, &stem) {
+                        cached_results.push((song_id, path.to_string_lossy().to_string()));
+                    } else {
+                        songs_to_download.push((song_id, pic_url));
+                    }
+                }
+
+                let cached_task = if cached_results.is_empty() {
+                    None
+                } else {
+                    Some(Task::done(Message::NcmPlaylistSongCoversBatchLoaded(
+                        cached_results,
+                    )))
+                };
 
                 if songs_to_download.is_empty() {
-                    return Some(Task::none());
+                    return Some(cached_task.unwrap_or_else(Task::none));
                 }
 
                 // Mark as pending
@@ -1359,7 +2195,7 @@ impl App {
                 // Start download task
                 if let Some(client) = &self.core.ncm_client {
                     let client = client.clone();
-                    return Some(Task::perform(
+                    let download_task = Task::perform(
                         async move {
                             let mut results = Vec::new();
                             for (song_id, pic_url) in songs_to_download {
@@ -1377,9 +2213,16 @@ impl App {
                             results
                         },
                         Message::NcmPlaylistSongCoversBatchLoaded,
-                    ));
+                    );
+
+                    return Some(if let Some(cached_task) = cached_task {
+                        Task::batch([cached_task, download_task])
+                    } else {
+                        download_task
+                    });
                 }
-                Some(Task::none())
+
+                Some(cached_task.unwrap_or_else(Task::none))
             }
 
             Message::NcmPlaylistCoverLoaded(playlist_id, path) => {
@@ -1417,6 +2260,34 @@ impl App {
                 if let Some(playlist) = &mut self.ui.playlist_page.current {
                     if playlist.id == *playlist_id {
                         playlist.owner_avatar_path = Some(path.clone());
+                        if playlist.kind == crate::ui::pages::playlist::DetailPageKind::User
+                            && playlist.cover_path.is_none()
+                        {
+                            playlist.cover_path = Some(path.clone());
+                            playlist.palette = crate::utils::ColorPalette::from_image_path(
+                                std::path::Path::new(path),
+                            );
+                        }
+                    }
+                }
+                Some(Task::none())
+            }
+
+            Message::ArtistCoverLoaded(artist_id, path) => {
+                if let Some(playlist) = &mut self.ui.playlist_page.current {
+                    if playlist.id == *artist_id {
+                        playlist.cover_path = Some(path.clone());
+                        playlist.palette =
+                            crate::utils::ColorPalette::from_image_path(std::path::Path::new(path));
+                    }
+                }
+                Some(Task::none())
+            }
+
+            Message::PlaylistCreatorDetailLoaded(playlist_id, detail) => {
+                if let Some(playlist) = &mut self.ui.playlist_page.current {
+                    if playlist.id == *playlist_id && detail.artist_id != 0 {
+                        playlist.owner_artist_id = Some(detail.artist_id);
                     }
                 }
                 Some(Task::none())

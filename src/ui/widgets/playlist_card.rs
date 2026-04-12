@@ -106,7 +106,7 @@ pub fn view<'a, Message: Clone + 'a>(
 
     // Playlist name (truncated)
     let name_text = text(truncate_text(name, 20))
-        .size(14)
+        .size(theme::TEXT_SIZE_BODY)
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         })
@@ -117,7 +117,7 @@ pub fn view<'a, Message: Clone + 'a>(
 
     // Author name
     let author_text = text(truncate_text(author, 25))
-        .size(12)
+        .size(theme::TEXT_SIZE_CAPTION)
         .color(theme::TEXT_MUTED);
 
     // Card content
@@ -196,7 +196,7 @@ pub fn view_with_custom_cover<'a, Message: Clone + 'a>(
 
     // Playlist name (truncated)
     let name_text = text(truncate_text(name, 20))
-        .size(14)
+        .size(theme::TEXT_SIZE_BODY)
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         })
@@ -207,7 +207,7 @@ pub fn view_with_custom_cover<'a, Message: Clone + 'a>(
 
     // Author name
     let author_text = text(truncate_text(author, 25))
-        .size(12)
+        .size(theme::TEXT_SIZE_CAPTION)
         .color(theme::TEXT_MUTED);
 
     // Card content

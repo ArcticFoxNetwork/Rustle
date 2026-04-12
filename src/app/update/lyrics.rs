@@ -71,11 +71,12 @@ impl App {
                 }
 
                 // Update discover page content width
-                // Content width = window width - sidebar (240) - padding (64)
-                const SIDEBAR_WIDTH: f32 = 240.0;
+                // Content width = window width - sidebar - padding
                 const CONTENT_PADDING: f32 = 64.0; // 32px on each side
-                self.ui.discover.content_width =
-                    (size.width - SIDEBAR_WIDTH - CONTENT_PADDING).max(200.0);
+                let content_width =
+                    (size.width - self.ui.sidebar_width - CONTENT_PADDING).max(200.0);
+                self.ui.discover.content_width = content_width;
+                self.ui.playlist_page.content_width = content_width;
 
                 Some(Task::none())
             }

@@ -187,10 +187,13 @@ pub fn view<'a>(
                 .style(|_theme, _status| svg::Style {
                     color: Some(Color::BLACK),
                 }),
-            text("Play").size(14).color(Color::BLACK).font(iced::Font {
-                weight: BOLD_WEIGHT,
-                ..Default::default()
-            }),
+            text("Play")
+                .size(theme::TEXT_SIZE_BODY)
+                .color(Color::BLACK)
+                .font(iced::Font {
+                    weight: BOLD_WEIGHT,
+                    ..Default::default()
+                }),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
@@ -325,7 +328,7 @@ fn view_placeholder(locale: Locale) -> Element<'static, Message> {
 
     let overlay_content = column![
         text(hero_title)
-            .size(36)
+            .size(theme::TEXT_SIZE_HERO)
             .font(iced::Font {
                 weight: BOLD_WEIGHT,
                 ..Default::default()
@@ -333,10 +336,12 @@ fn view_placeholder(locale: Locale) -> Element<'static, Message> {
             .style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
             }),
-        text(hero_subtitle).size(14).color(theme::TEXT_SECONDARY),
+        text(hero_subtitle)
+            .size(theme::TEXT_SIZE_BODY)
+            .color(theme::TEXT_SECONDARY),
         Space::new().height(20),
         text(locale.get(Key::Loading).to_string())
-            .size(14)
+            .size(theme::TEXT_SIZE_BODY)
             .color(theme::TEXT_SECONDARY),
     ]
     .spacing(8)

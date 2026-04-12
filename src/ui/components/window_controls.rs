@@ -205,7 +205,7 @@ fn search_bar_view(search_query: &str, locale: Locale) -> Element<'_, Message> {
         .on_input(Message::SearchChanged)
         .on_submit(Message::SearchSubmit)
         .padding(Padding::new(8.0).left(0.0))
-        .size(13)
+        .size(theme::TEXT_SIZE_LABEL)
         .style(|theme, _status| iced::widget::text_input::Style {
             background: iced::Background::Color(iced::Color::TRANSPARENT),
             border: iced::Border::default(),

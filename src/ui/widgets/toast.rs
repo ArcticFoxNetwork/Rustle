@@ -104,9 +104,11 @@ pub fn view_toast<'a, Message: 'a>(toast: &Toast) -> Element<'a, Message> {
         });
 
     // Message text
-    let message_widget = text(message).size(13).style(|theme| text::Style {
-        color: Some(theme::text_primary(theme)),
-    });
+    let message_widget = text(message)
+        .size(theme::TEXT_SIZE_LABEL)
+        .style(|theme| text::Style {
+            color: Some(theme::text_primary(theme)),
+        });
 
     // Toast content
     let content = row![

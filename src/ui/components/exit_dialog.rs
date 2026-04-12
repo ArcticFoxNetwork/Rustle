@@ -23,7 +23,7 @@ pub fn view(
 
     // Dialog content
     let title = text(locale.get(Key::ExitDialogTitle).to_string())
-        .size(18)
+        .size(theme::TEXT_SIZE_SUBTITLE)
         .color(theme::TEXT_PRIMARY)
         .font(iced::Font {
             weight: BOLD_WEIGHT,
@@ -31,13 +31,13 @@ pub fn view(
         });
 
     let message = text(locale.get(Key::ExitDialogMessage).to_string())
-        .size(14)
+        .size(theme::TEXT_SIZE_BODY)
         .color(theme::TEXT_SECONDARY);
 
     let remember_checkbox = checkbox(remember_choice)
         .label("记住我的选择")
         .on_toggle(Message::ExitDialogRememberChanged)
-        .text_size(13)
+        .text_size(theme::TEXT_SIZE_LABEL)
         .spacing(8)
         .style(|theme, status| {
             let is_checked = matches!(
@@ -64,7 +64,7 @@ pub fn view(
     // Buttons
     let exit_btn = button(
         text(locale.get(Key::ExitDialogExit).to_string())
-            .size(14)
+            .size(theme::TEXT_SIZE_BODY)
             .color(theme::TEXT_PRIMARY),
     )
     .padding([10, 24])
@@ -88,7 +88,7 @@ pub fn view(
 
     let minimize_btn = button(
         text(locale.get(Key::ExitDialogMinimize).to_string())
-            .size(14)
+            .size(theme::TEXT_SIZE_BODY)
             .color(theme::BLACK),
     )
     .padding([10, 24])
@@ -111,7 +111,7 @@ pub fn view(
 
     let cancel_btn = button(
         text(locale.get(Key::Cancel).to_string())
-            .size(14)
+            .size(theme::TEXT_SIZE_BODY)
             .color(theme::TEXT_SECONDARY),
     )
     .padding([10, 16])

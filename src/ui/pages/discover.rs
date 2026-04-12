@@ -96,7 +96,7 @@ fn view_all_recommended<'a>(state: &'a DiscoverPageState, locale: Locale) -> Ele
     let content_width = state.content_width;
 
     // Section title only - use global navigation for back
-    let header = text(locale.get(Key::DiscoverRecommended)).size(24);
+    let header = text(locale.get(Key::DiscoverRecommended)).size(theme::TEXT_SIZE_TITLE);
 
     let content = column![
         header,
@@ -130,7 +130,7 @@ fn view_all_hot<'a>(state: &'a DiscoverPageState, locale: Locale) -> Element<'a,
     let content_width = state.content_width;
 
     // Section title only - use global navigation for back
-    let header = text(locale.get(Key::DiscoverHot)).size(24);
+    let header = text(locale.get(Key::DiscoverHot)).size(theme::TEXT_SIZE_TITLE);
 
     let mut content_items: Vec<Element<'a, Message>> = vec![
         header.into(),
@@ -152,7 +152,7 @@ fn view_all_hot<'a>(state: &'a DiscoverPageState, locale: Locale) -> Element<'a,
             } else {
                 "加载更多"
             })
-            .size(14),
+            .size(theme::TEXT_SIZE_BODY),
         )
         .padding(Padding::new(12.0).left(24.0).right(24.0))
         .style(theme::secondary_button)

@@ -91,7 +91,7 @@ pub fn view(play_mode: PlayMode, size: ButtonSize, is_fm_mode: bool) -> Element<
             }
         })
         .on_press(on_press),
-        text(play_mode_tooltip).size(12),
+        text(play_mode_tooltip).size(theme::TEXT_SIZE_CAPTION),
         tooltip::Position::Top,
     )
     .gap(4)

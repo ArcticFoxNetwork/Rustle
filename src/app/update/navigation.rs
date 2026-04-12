@@ -40,7 +40,8 @@ impl App {
             Message::LibrarySelect(_)
             | Message::OpenSettings
             | Message::OpenSettingsWithCloseLyrics
-            | Message::OpenAudioEngine => {
+            | Message::OpenAudioEngine
+            | Message::OpenUser(_) => {
                 let Some(route) = self.route_for_message(message) else {
                     return Some(Task::none());
                 };
@@ -76,7 +77,13 @@ impl App {
                 if self.ui.sidebar_dragging {
                     const MIN_WIDTH: f32 = 200.0;
                     const MAX_WIDTH: f32 = 400.0;
+                    let old_sidebar_width = self.ui.sidebar_width;
                     self.ui.sidebar_width = position.x.clamp(MIN_WIDTH, MAX_WIDTH);
+                    let delta = old_sidebar_width - self.ui.sidebar_width;
+                    self.ui.discover.content_width =
+                        (self.ui.discover.content_width + delta).max(200.0);
+                    self.ui.playlist_page.content_width =
+                        (self.ui.playlist_page.content_width + delta).max(200.0);
                 }
                 Some(Task::none())
             }

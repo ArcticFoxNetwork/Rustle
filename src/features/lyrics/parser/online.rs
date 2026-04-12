@@ -90,6 +90,7 @@ pub async fn fetch_and_cache_lyrics(
         id: ncm_id,
         name: song_name.to_string(),
         singer: singer.to_string(),
+        singer_id: 0,
         album: album.to_string(),
         album_id: 0,
         pic_url: String::new(),

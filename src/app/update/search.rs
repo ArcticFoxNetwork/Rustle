@@ -139,9 +139,7 @@ impl App {
                     }
                     SearchTab::Artists => {
                         tracing::info!("Open artist: {}", id);
-                        return Some(Task::done(Message::ShowInfoToast(
-                            "歌手详情页暂未实现".to_string(),
-                        )));
+                        return Some(Task::done(Message::OpenArtist(*id)));
                     }
                     _ => {}
                 }

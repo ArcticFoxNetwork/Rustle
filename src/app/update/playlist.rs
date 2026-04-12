@@ -35,6 +35,8 @@ impl App {
         self.ui.playlist_page.search_expanded = false;
         self.ui.playlist_page.search_query.clear();
         self.ui.playlist_page.viewing_recently_played = false;
+        self.ui.playlist_page.pending_cover_downloads.clear();
+        self.ui.playlist_page.artist_album_covers.clear();
         self.ui.clear_playlist_animations();
 
         if self.ui.lyrics.is_open {

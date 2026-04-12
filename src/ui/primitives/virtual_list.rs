@@ -245,6 +245,31 @@ where
     Message: Clone + 'a,
     Renderer: renderer::Renderer,
 {
+    fn diff(&self, tree: &mut Tree) {
+        let (start, end) = {
+            let mut state = self.state.borrow_mut();
+            state.item_count = self.item_count;
+            state.item_height = self.item_height;
+            state.visible_range()
+        };
+
+        let visible_count = end.saturating_sub(start);
+        let internal_state = tree.state.downcast_mut::<VirtualListInternalState>();
+
+        internal_state
+            .visible_trees
+            .resize_with(visible_count, Tree::empty);
+        internal_state.cached_item_indices.resize(visible_count, 0);
+        internal_state.cached_visible_range = (start, end);
+        internal_state.last_visible_range = (start, end);
+
+        for (slot_idx, item_idx) in (start..end).enumerate() {
+            let element = (self.item_builder)(item_idx);
+            internal_state.visible_trees[slot_idx].diff(&element);
+            internal_state.cached_item_indices[slot_idx] = item_idx;
+        }
+    }
+
     fn size(&self) -> Size<Length> {
         Size::new(self.width, self.height)
     }

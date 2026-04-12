@@ -54,7 +54,7 @@ pub fn view(
 ) -> Element<'static, Message> {
     // Header with just title
     let header = text(locale.get(Key::AudioEngineTitle).to_string())
-        .size(28)
+        .size(theme::TEXT_SIZE_TITLE_LARGE)
         .style(|theme| text::Style {
             color: Some(theme::settings_title(theme)),
         });
@@ -137,17 +137,17 @@ fn equalizer_section(settings: &Settings, locale: Locale) -> Element<'static, Me
     // Section title row with toggle and preset
     let title_row = row![
         text(locale.get(Key::AudioEngineEqualizer).to_string())
-            .size(18)
+            .size(theme::TEXT_SIZE_SUBTITLE)
             .style(|theme| text::Style {
                 color: Some(theme::settings_title(theme))
             }),
         Space::new().width(24),
         toggler(eq_enabled)
             .on_toggle(Message::UpdateEqualizerEnabled)
-            .size(18),
+            .size(theme::TEXT_SIZE_SUBTITLE),
         Space::new().width(8),
         text(if eq_enabled { "ON" } else { "OFF" })
-            .size(13)
+            .size(theme::TEXT_SIZE_LABEL)
             .style(|theme| text::Style {
                 color: Some(theme::settings_desc(theme))
             }),
@@ -173,7 +173,7 @@ fn equalizer_section(settings: &Settings, locale: Locale) -> Element<'static, Me
     } else {
         container(
             text(locale.get(Key::AudioEngineEqualizerDisabled).to_string())
-                .size(14)
+                .size(theme::TEXT_SIZE_BODY)
                 .style(|theme| text::Style {
                     color: Some(theme::settings_desc(theme)),
                 }),
@@ -211,7 +211,7 @@ fn audio_visualization_section(
 
     // Section title
     let title = text(locale.get(Key::AudioEngineSpectrum).to_string())
-        .size(18)
+        .size(theme::TEXT_SIZE_SUBTITLE)
         .style(|theme| text::Style {
             color: Some(theme::settings_title(theme)),
         });
@@ -244,9 +244,11 @@ fn audio_visualization_section(
     .align_x(Alignment::Center);
 
     // Decay slider
-    let decay_label = text("Decay").size(11).style(|theme| text::Style {
-        color: Some(theme::settings_desc(theme)),
-    });
+    let decay_label = text("Decay")
+        .size(theme::TEXT_SIZE_CAPTION)
+        .style(|theme| text::Style {
+            color: Some(theme::settings_desc(theme)),
+        });
     let decay_slider = slider(0.0..=0.95, decay, Message::UpdateSpectrumDecay)
         .step(0.01)
         .width(Length::Fixed(120.0));
@@ -273,9 +275,11 @@ fn audio_visualization_section(
 /// Volume meter view for a single channel
 fn volume_meter_view(label: &'static str, level: f32, height: f32) -> Element<'static, Message> {
     column![
-        text(label).size(12).style(|theme| text::Style {
-            color: Some(theme::settings_desc(theme))
-        }),
+        text(label)
+            .size(theme::TEXT_SIZE_CAPTION)
+            .style(|theme| text::Style {
+                color: Some(theme::settings_desc(theme))
+            }),
         Space::new().height(8),
         Canvas::new(VolumeMeter { level })
             .width(Length::Fixed(24.0))
@@ -292,7 +296,7 @@ fn preset_picker(current: EqualizerPreset) -> Element<'static, Message> {
 
     pick_list(Some(current), presets, |preset| preset.to_string())
         .on_select(Message::UpdateEqualizerPreset)
-        .text_size(14)
+        .text_size(theme::TEXT_SIZE_BODY)
         .padding([8, 16])
         .style(theme::settings_pick_list)
         .menu_style(theme::settings_pick_list_menu)
@@ -326,7 +330,7 @@ fn spectrum_mode_picker(bars_mode: bool) -> Element<'static, Message> {
 
     pick_list(Some(current), modes, |mode| mode.to_string())
         .on_select(|mode| Message::UpdateSpectrumBarsMode(mode == SpectrumMode::Bars))
-        .text_size(14)
+        .text_size(theme::TEXT_SIZE_BODY)
         .padding([8, 16])
         .style(theme::settings_pick_list)
         .menu_style(theme::settings_pick_list_menu)
@@ -829,12 +833,14 @@ fn format_db(value: f32) -> String {
 fn sliders_with_preamp(eq_values: [f32; 10], preamp: f32) -> Element<'static, Message> {
     // Preamp slider with value display
     let preamp_slider = column![
-        text("PREAMP").size(11).style(|theme| text::Style {
-            color: Some(theme::settings_desc(theme))
-        }),
+        text("PREAMP")
+            .size(theme::TEXT_SIZE_CAPTION)
+            .style(|theme| text::Style {
+                color: Some(theme::settings_desc(theme))
+            }),
         Space::new().height(4),
         text(format_db(preamp))
-            .size(10)
+            .size(theme::TEXT_SIZE_MICRO)
             .style(move |theme| text::Style {
                 color: Some(if preamp != 0.0 {
                     theme::ACCENT_PINK
@@ -889,7 +895,7 @@ fn vertical_slider_band(
     column![
         // Value display above slider
         text(format_db(value))
-            .size(10)
+            .size(theme::TEXT_SIZE_MICRO)
             .style(move |theme| text::Style {
                 color: Some(if value != 0.0 {
                     theme::ACCENT_PINK
@@ -912,7 +918,7 @@ fn vertical_slider_band(
         Space::new().height(8),
         // Frequency label
         text(freq_label)
-            .size(12)
+            .size(theme::TEXT_SIZE_CAPTION)
             .style(|theme| text::Style {
                 color: Some(theme::settings_desc(theme))
             })

@@ -403,6 +403,7 @@ impl App {
 
                 // Create playlist view with special ID for recently played
                 let playlist_view = pages::PlaylistView {
+                    kind: pages::playlist::DetailPageKind::Playlist,
                     id: -1, // Special ID for recently played
                     name: self
                         .core
@@ -415,8 +416,13 @@ impl App {
                             .get(crate::i18n::Key::RecentlyPlayedDescription)
                             .to_string(),
                     ),
+                    profile_stats: None,
+                    artist_tab: pages::playlist::ArtistPageTab::TopSongs,
+                    artist_albums: Vec::new(),
+                    user_playlists: Vec::new(),
                     cover_path: None,
                     owner: "本地".to_string(),
+                    owner_artist_id: None,
                     owner_avatar_path: None,
                     creator_id: 0,
                     song_count: songs.len() as u32,

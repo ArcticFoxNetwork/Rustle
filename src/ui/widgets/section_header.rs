@@ -25,7 +25,7 @@ pub fn view<'a, Message: Clone + 'a>(
     on_see_all: Option<Message>,
 ) -> Element<'a, Message> {
     let title_text = text(title)
-        .size(22)
+        .size(theme::TEXT_SIZE_TITLE - 2.0)
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         })
@@ -37,7 +37,9 @@ pub fn view<'a, Message: Clone + 'a>(
     let see_all_btn: Element<'a, Message> = if let Some(msg) = on_see_all {
         button(
             row![
-                text(see_all_text).size(14).color(theme::TEXT_SECONDARY),
+                text(see_all_text)
+                    .size(theme::TEXT_SIZE_BODY)
+                    .color(theme::TEXT_SECONDARY),
                 Space::new().width(4),
                 svg(svg::Handle::from_memory(icons::CHEVRON_RIGHT.as_bytes()))
                     .width(16)

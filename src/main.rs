@@ -23,6 +23,10 @@ fn main() -> iced::Result {
     // Run the application as a daemon (keeps running when windows are closed)
     // This allows the app to run in the background with system tray
     iced::daemon(app::App::new, app::App::update, app::App::view)
+        .settings(iced::Settings {
+            default_text_size: iced::Pixels(17.0),
+            ..Default::default()
+        })
         .title(app::App::title)
         .theme(app::App::theme)
         .subscription(app::App::subscription)

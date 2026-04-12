@@ -28,6 +28,7 @@ use crate::ui::widgets::{self, ControlSize, PlayModeButtonSize, SliderSize};
 /// `is_fm_mode`: Whether in Personal FM mode
 pub fn view<'a>(
     song: &'a DbSong,
+    artist_id: Option<u64>,
     is_playing: bool,
     position: f32, // 0.0 to 1.0
     duration_secs: f32,
@@ -46,6 +47,7 @@ pub fn view<'a>(
 ) -> Element<'a, Message> {
     let left_panel = build_left_panel(
         song,
+        artist_id,
         is_playing,
         position,
         duration_secs,
@@ -265,6 +267,7 @@ pub fn view<'a>(
 /// Build the left panel with cover, song info, and controls
 fn build_left_panel<'a>(
     song: &'a DbSong,
+    artist_id: Option<u64>,
     is_playing: bool,
     position: f32,
     duration_secs: f32,
@@ -288,7 +291,7 @@ fn build_left_panel<'a>(
 
     // Song title
     let title = text(&song.title)
-        .size(28)
+        .size(theme::TEXT_SIZE_TITLE_LARGE)
         .color(theme::TEXT_PRIMARY)
         .font(iced::Font {
             weight: BOLD_WEIGHT,
@@ -296,16 +299,34 @@ fn build_left_panel<'a>(
         });
 
     // Artist name
-    let artist = text(&song.artist).size(18).color(theme::TEXT_SECONDARY);
+    let artist_action = artist_id
+        .map(Message::OpenArtist)
+        .or_else(|| Some(Message::OpenArtistByName(song.artist.clone())));
+    let artist: Element<'a, Message> = button(
+        text(&song.artist)
+            .size(theme::TEXT_SIZE_SUBTITLE)
+            .color(theme::TEXT_SECONDARY),
+    )
+    .padding(0)
+    .style(|_theme, _status| button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        ..Default::default()
+    })
+    .on_press_maybe(artist_action)
+    .into();
 
     // Progress bar - using unified widget with download progress
     let progress_slider =
         widgets::progress_slider::view_with_download(position, download_progress, SliderSize::Full);
 
     let time_row = row![
-        text(current_time).size(12).color(theme::TEXT_MUTED),
+        text(current_time)
+            .size(theme::TEXT_SIZE_CAPTION)
+            .color(theme::TEXT_MUTED),
         Space::new().width(Fill),
-        text(total_time).size(12).color(theme::TEXT_MUTED),
+        text(total_time)
+            .size(theme::TEXT_SIZE_CAPTION)
+            .color(theme::TEXT_MUTED),
     ]
     .width(Fill);
 
@@ -436,7 +457,9 @@ fn build_right_panel_engine<'a>(
                             color: Some(theme::icon_muted(&iced::Theme::Dark)),
                         }),
                     Space::new().height(16),
-                    text("纯音乐，请欣赏").size(18).color(theme::TEXT_MUTED),
+                    text("纯音乐，请欣赏")
+                        .size(theme::TEXT_SIZE_SUBTITLE)
+                        .color(theme::TEXT_MUTED),
                 ]
                 .align_x(Alignment::Center),
             )
@@ -507,7 +530,11 @@ fn build_simple_lyrics_panel_from_engine_lines(
             .into_iter()
             .map(|(is_active, line_text)| {
                 let opacity = if is_active { 1.0 } else { 0.5 };
-                let size = if is_active { 28 } else { 22 };
+                let size = if is_active {
+                    theme::TEXT_SIZE_TITLE_LARGE
+                } else {
+                    theme::TEXT_SIZE_TITLE - 2.0
+                };
 
                 text(line_text)
                     .size(size)
@@ -547,7 +574,9 @@ fn build_simple_lyrics_panel(
                             color: Some(theme::icon_muted(&iced::Theme::Dark)),
                         }),
                     Space::new().height(16),
-                    text("暂无歌词").size(18).color(theme::TEXT_MUTED),
+                    text("暂无歌词")
+                        .size(theme::TEXT_SIZE_SUBTITLE)
+                        .color(theme::TEXT_MUTED),
                 ]
                 .align_x(Alignment::Center),
             )
@@ -582,7 +611,11 @@ fn build_simple_lyrics_panel(
             .into_iter()
             .map(|(is_active, line_text, translated)| {
                 let opacity = if is_active { 1.0 } else { 0.35 };
-                let size = if is_active { 36 } else { 28 };
+                let size = if is_active {
+                    theme::TEXT_SIZE_HERO
+                } else {
+                    theme::TEXT_SIZE_TITLE_LARGE
+                };
                 let weight = if is_active {
                     BOLD_WEIGHT
                 } else {
@@ -601,7 +634,7 @@ fn build_simple_lyrics_panel(
                     column![
                         main_text,
                         text(trans)
-                            .size(18)
+                            .size(theme::TEXT_SIZE_SUBTITLE)
                             .color(Color::from_rgba(1.0, 1.0, 1.0, opacity * 0.7))
                     ]
                     .spacing(6)

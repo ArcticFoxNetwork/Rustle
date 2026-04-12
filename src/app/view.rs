@@ -9,6 +9,10 @@ use super::{App, Route};
 use crate::ui::{components, pages, theme, widgets};
 
 impl App {
+    fn current_song_artist_id(&self) -> Option<u64> {
+        self.playback.current_artist_id
+    }
+
     /// Build the view for a specific window
     pub fn view(&self, _window_id: iced::window::Id) -> Element<'_, Message> {
         // Check if lyrics page is open or animating
@@ -53,6 +57,7 @@ impl App {
 
                     pages::lyrics::view(
                         song,
+                        self.current_song_artist_id(),
                         is_playing,
                         display_position,
                         duration,
@@ -136,6 +141,47 @@ impl App {
                     Space::new().width(Fill).height(Fill).into()
                 }
             }
+            Route::User(_) => {
+                if let Some(playlist) = &self.ui.playlist_page.current {
+                    pages::user::view(
+                        playlist,
+                        &self.ui.playlist_page.song_animations,
+                        &self.ui.playlist_page.icon_animations,
+                        &self.ui.playlist_page.search_animation,
+                        self.ui.playlist_page.search_expanded,
+                        &self.ui.playlist_page.search_query,
+                        liked_songs,
+                        self.core.locale,
+                        self.ui.playlist_page.scroll_state.clone(),
+                        current_user_id,
+                        current_playing_id,
+                        self.ui.playlist_page.content_width,
+                    )
+                } else {
+                    Space::new().width(Fill).height(Fill).into()
+                }
+            }
+            Route::Artist(_) => {
+                if let Some(playlist) = &self.ui.playlist_page.current {
+                    pages::artist::view(
+                        playlist,
+                        &self.ui.playlist_page.artist_album_covers,
+                        &self.ui.playlist_page.song_animations,
+                        &self.ui.playlist_page.icon_animations,
+                        &self.ui.playlist_page.search_animation,
+                        self.ui.playlist_page.search_expanded,
+                        &self.ui.playlist_page.search_query,
+                        liked_songs,
+                        self.core.locale,
+                        self.ui.playlist_page.scroll_state.clone(),
+                        current_user_id,
+                        current_playing_id,
+                        self.ui.playlist_page.content_width,
+                    )
+                } else {
+                    Space::new().width(Fill).height(Fill).into()
+                }
+            }
             Route::Search { .. } => pages::search::view(&self.ui.search, self.core.locale),
             Route::Home => pages::home::view(
                 &self.ui.search_query,
@@ -179,6 +225,8 @@ impl App {
                 | Route::AudioEngine
                 | Route::Playlist(_)
                 | Route::NcmPlaylist(_)
+                | Route::User(_)
+                | Route::Artist(_)
                 | Route::RecentlyPlayed
                 | Route::Search { .. }
         );
@@ -265,6 +313,7 @@ impl App {
 
             let player_bar = components::player_bar::view(
                 self.playback.current_song.as_ref(),
+                self.current_song_artist_id(),
                 is_playing,
                 display_position,
                 duration,

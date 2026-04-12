@@ -27,7 +27,7 @@ pub fn view<'a>(state: &'a SearchPageState, locale: Locale) -> Element<'a, Messa
         // Header with keyword
         row![
             text(&state.keyword)
-                .size(28)
+                .size(theme::TEXT_SIZE_TITLE_LARGE)
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_primary(theme)),
                 })
@@ -36,7 +36,7 @@ pub fn view<'a>(state: &'a SearchPageState, locale: Locale) -> Element<'a, Messa
                     ..Default::default()
                 }),
             text(" 的相关搜索")
-                .size(28)
+                .size(theme::TEXT_SIZE_TITLE_LARGE)
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_muted(theme)),
                 }),
@@ -86,34 +86,38 @@ pub fn view<'a>(state: &'a SearchPageState, locale: Locale) -> Element<'a, Messa
                             let song_row = button(
                                 row![
                                     text(format!("{:02}", index_num))
-                                        .size(13)
+                                        .size(theme::TEXT_SIZE_LABEL)
                                         .style(|theme| iced::widget::text::Style {
                                             color: Some(theme::text_muted(theme)),
                                         })
                                         .width(40),
-                                    column![text(song.name.clone()).size(14).style(move |theme| {
-                                        iced::widget::text::Style {
-                                            color: Some(theme::animated_text(
-                                                theme,
-                                                hover_progress,
-                                            )),
-                                        }
-                                    }),]
+                                    column![
+                                        text(song.name.clone()).size(theme::TEXT_SIZE_BODY).style(
+                                            move |theme| {
+                                                iced::widget::text::Style {
+                                                    color: Some(theme::animated_text(
+                                                        theme,
+                                                        hover_progress,
+                                                    )),
+                                                }
+                                            }
+                                        ),
+                                    ]
                                     .width(Fill),
                                     text(song.singer.clone())
-                                        .size(13)
+                                        .size(theme::TEXT_SIZE_LABEL)
                                         .style(|theme| iced::widget::text::Style {
                                             color: Some(theme::text_secondary(theme)),
                                         })
                                         .width(Length::FillPortion(2)),
                                     text(song.album.clone())
-                                        .size(13)
+                                        .size(theme::TEXT_SIZE_LABEL)
                                         .style(|theme| iced::widget::text::Style {
                                             color: Some(theme::text_muted(theme)),
                                         })
                                         .width(Length::FillPortion(2)),
                                     text(duration_str)
-                                        .size(13)
+                                        .size(theme::TEXT_SIZE_LABEL)
                                         .style(|theme| iced::widget::text::Style {
                                             color: Some(theme::text_muted(theme)),
                                         })
@@ -236,7 +240,7 @@ fn search_tabs(active_tab: SearchTab) -> Element<'static, Message> {
 
             button(
                 text(*label)
-                    .size(14)
+                    .size(theme::TEXT_SIZE_BODY)
                     .style(move |theme| iced::widget::text::Style {
                         color: Some(if is_active {
                             theme::text_primary(theme)
@@ -302,31 +306,31 @@ fn tabs_container_style(theme: &iced::Theme) -> container::Style {
 fn search_table_header() -> Element<'static, Message> {
     row![
         text("#")
-            .size(12)
+            .size(theme::TEXT_SIZE_CAPTION)
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_muted(theme)),
             })
             .width(40),
         text("标题")
-            .size(12)
+            .size(theme::TEXT_SIZE_CAPTION)
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_muted(theme)),
             })
             .width(Fill),
         text("歌手")
-            .size(12)
+            .size(theme::TEXT_SIZE_CAPTION)
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_muted(theme)),
             })
             .width(Length::FillPortion(2)),
         text("专辑")
-            .size(12)
+            .size(theme::TEXT_SIZE_CAPTION)
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_muted(theme)),
             })
             .width(Length::FillPortion(2)),
         text("时长")
-            .size(12)
+            .size(theme::TEXT_SIZE_CAPTION)
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_muted(theme)),
             })
@@ -445,13 +449,13 @@ fn grid_card<'a>(
         cover,
         Space::new().height(8),
         text(&item.name)
-            .size(14)
+            .size(theme::TEXT_SIZE_BODY)
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_primary(theme)),
             })
             .width(CARD_WIDTH),
         text(&item.author)
-            .size(12)
+            .size(theme::TEXT_SIZE_CAPTION)
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_muted(theme)),
             })
@@ -527,7 +531,7 @@ fn pagination<'a>(state: &'a SearchPageState) -> Element<'a, Message> {
     let mut items: Vec<Element<'a, Message>> = Vec::new();
 
     // Previous button
-    let prev_btn = button(text("上一页").size(13))
+    let prev_btn = button(text("上一页").size(theme::TEXT_SIZE_LABEL))
         .padding(Padding::new(8.0).left(16.0).right(16.0))
         .style(theme::secondary_button)
         .on_press_maybe(if current_page > 0 {
@@ -540,7 +544,7 @@ fn pagination<'a>(state: &'a SearchPageState) -> Element<'a, Message> {
     // Page info
     items.push(
         text(format!("{} / {}", current_page + 1, total_pages))
-            .size(14)
+            .size(theme::TEXT_SIZE_BODY)
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_secondary(theme)),
             })
@@ -548,7 +552,7 @@ fn pagination<'a>(state: &'a SearchPageState) -> Element<'a, Message> {
     );
 
     // Next button
-    let next_btn = button(text("下一页").size(13))
+    let next_btn = button(text("下一页").size(theme::TEXT_SIZE_LABEL))
         .padding(Padding::new(8.0).left(16.0).right(16.0))
         .style(theme::secondary_button)
         .on_press_maybe(if current_page + 1 < total_pages {
@@ -568,7 +572,7 @@ fn pagination<'a>(state: &'a SearchPageState) -> Element<'a, Message> {
 fn loading_state<'a>() -> Element<'a, Message> {
     container(
         text("搜索中...")
-            .size(16)
+            .size(theme::TEXT_SIZE_BODY_LARGE)
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_muted(theme)),
             }),
@@ -584,10 +588,10 @@ fn loading_state<'a>() -> Element<'a, Message> {
 fn empty_search_state<'a>(_locale: Locale) -> Element<'a, Message> {
     container(
         column![
-            text("🔍").size(48),
+            text("🔍").size(theme::TEXT_SIZE_DISPLAY),
             Space::new().height(16),
             text("输入关键词开始搜索")
-                .size(16)
+                .size(theme::TEXT_SIZE_BODY_LARGE)
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_muted(theme)),
                 }),
@@ -606,10 +610,10 @@ fn empty_search_state<'a>(_locale: Locale) -> Element<'a, Message> {
 fn empty_results_state<'a>(keyword: &str) -> Element<'a, Message> {
     container(
         column![
-            text("🔍").size(48),
+            text("🔍").size(theme::TEXT_SIZE_DISPLAY),
             Space::new().height(16),
             text(format!("未找到 \"{}\" 的相关结果", keyword))
-                .size(16)
+                .size(theme::TEXT_SIZE_BODY_LARGE)
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_muted(theme)),
                 }),

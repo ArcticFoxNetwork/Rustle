@@ -26,7 +26,7 @@ pub fn view<'a>(
 
     let header = row![
         text(title)
-            .size(20)
+            .size(theme::TEXT_SIZE_TITLE)
             .font(iced::Font {
                 weight: BOLD_WEIGHT,
                 ..Default::default()
@@ -35,9 +35,13 @@ pub fn view<'a>(
                 color: Some(theme::text_primary(theme))
             }),
         Space::new().width(Fill),
-        button(text(locale.get(Key::SeeAll)).size(14).color(theme::ACCENT))
-            .style(theme::text_button)
-            .on_press(Message::OpenTrendingSongs),
+        button(
+            text(locale.get(Key::SeeAll))
+                .size(theme::TEXT_SIZE_BODY)
+                .color(theme::ACCENT),
+        )
+        .style(theme::text_button)
+        .on_press(Message::OpenTrendingSongs),
     ]
     .align_y(Alignment::Center)
     .padding(Padding::new(0.0).bottom(16.0));
@@ -47,7 +51,7 @@ pub fn view<'a>(
             header,
             container(
                 text(locale.get(Key::Loading).to_string())
-                    .size(14)
+                    .size(theme::TEXT_SIZE_BODY)
                     .color(theme::TEXT_SECONDARY),
             )
             .width(Fill)
@@ -94,7 +98,7 @@ fn view_song_item<'a>(
 
     // Song info
     let song_name = text(&song.name)
-        .size(14)
+        .size(theme::TEXT_SIZE_BODY)
         .font(iced::Font {
             weight: MEDIUM_WEIGHT,
             ..Default::default()
@@ -103,7 +107,9 @@ fn view_song_item<'a>(
             color: Some(theme::text_primary(theme)),
         });
 
-    let artist_text = text(&song.singer).size(12).color(theme::TEXT_SECONDARY);
+    let artist_text = text(&song.singer)
+        .size(theme::TEXT_SIZE_CAPTION)
+        .color(theme::TEXT_SECONDARY);
 
     let song_info = column![song_name, artist_text,].spacing(2);
 
@@ -124,7 +130,7 @@ fn view_song_item<'a>(
             (favorite_btn, 32.0)
         } else {
             let duration = text(format_duration(song.duration / 1000))
-                .size(12)
+                .size(theme::TEXT_SIZE_CAPTION)
                 .color(theme::TEXT_SECONDARY)
                 .into();
             (duration, 50.0)
@@ -178,7 +184,7 @@ fn view_song_item<'a>(
     } else {
         container(
             text(format!("{}", rank))
-                .size(15)
+                .size(theme::TEXT_SIZE_BODY_LARGE)
                 .style(move |theme| text::Style {
                     color: Some(theme::rank_color(rank, theme)),
                 })

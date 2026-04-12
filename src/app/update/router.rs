@@ -65,7 +65,7 @@ impl App {
                 self.ui.search.keyword.clear();
                 self.clear_playlist_route_markers();
             }
-            Route::Playlist(_) | Route::NcmPlaylist(_) => {
+            Route::Playlist(_) | Route::NcmPlaylist(_) | Route::User(_) | Route::Artist(_) => {
                 self.ui.search.keyword.clear();
                 self.ui.playlist_page.viewing_recently_played = false;
             }
@@ -136,6 +136,8 @@ impl App {
             ),
             Route::Playlist(id) => self.open_local_playlist_route(*id),
             Route::NcmPlaylist(id) => self.open_ncm_playlist_route(*id),
+            Route::User(id) => self.open_user_route(*id),
+            Route::Artist(id) => self.open_artist_route(*id),
             Route::RecentlyPlayed => {
                 if let Some(db) = &self.core.db {
                     let db = db.clone();
@@ -187,6 +189,8 @@ impl App {
             Message::OpenAudioEngine => Some(Route::AudioEngine),
             Message::OpenPlaylist(id) => Some(Route::Playlist(*id)),
             Message::OpenNcmPlaylist(id) => Some(Route::NcmPlaylist(*id)),
+            Message::OpenUser(id) => Some(Route::User(*id)),
+            Message::OpenArtist(id) => Some(Route::Artist(*id)),
             Message::ScrollToSection(section) => Some(Route::Settings(*section)),
             Message::SearchSubmit => {
                 let keyword = self.ui.search_query.trim().to_string();

@@ -1,6 +1,6 @@
 //! Bottom player bar component
 
-use iced::widget::{Space, button, column, container, image, mouse_area, opaque, row, svg, text};
+use iced::widget::{Space, button, column, container, image, opaque, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
 use crate::app::Message;
@@ -16,6 +16,7 @@ pub const PLAYER_BAR_HEIGHT: f32 = 80.0;
 /// Build the player bar
 pub fn view(
     current_song: Option<&DbSong>,
+    current_artist_id: Option<u64>,
     is_playing: bool,
     position: f32, // 0.0 to 1.0
     duration_secs: f32,
@@ -119,7 +120,7 @@ pub fn view(
         let title_btn = button(
             container(
                 text(song_clone.title.clone())
-                    .size(14)
+                    .size(theme::TEXT_SIZE_BODY)
                     .style(|theme| text::Style {
                         color: Some(theme::text_primary(theme)),
                     })
@@ -141,10 +142,13 @@ pub fn view(
         .on_press(Message::OpenLyricsPage);
 
         // Artist
+        let artist_action = current_artist_id
+            .map(Message::OpenArtist)
+            .or_else(|| Some(Message::OpenArtistByName(song_clone.artist.clone())));
         let artist_btn = button(
             container(
                 text(song_clone.artist.clone())
-                    .size(12)
+                    .size(theme::TEXT_SIZE_CAPTION)
                     .color(theme::TEXT_SECONDARY),
             )
             .max_width(TEXT_MAX_WIDTH)
@@ -155,7 +159,7 @@ pub fn view(
             background: Some(iced::Background::Color(Color::TRANSPARENT)),
             ..Default::default()
         })
-        .on_press(Message::Noop);
+        .on_press_maybe(artist_action);
 
         let song_details = column![title_btn, artist_btn].spacing(2);
 
@@ -165,9 +169,11 @@ pub fn view(
     } else {
         // Show placeholder when no song
         let placeholder = column![
-            text("No song playing").size(14).color(theme::TEXT_MUTED),
+            text("No song playing")
+                .size(theme::TEXT_SIZE_BODY)
+                .color(theme::TEXT_MUTED),
             text("Select a song to play")
-                .size(12)
+                .size(theme::TEXT_SIZE_CAPTION)
                 .color(theme::TEXT_MUTED),
         ]
         .spacing(2);
@@ -220,11 +226,15 @@ pub fn view(
     );
 
     let progress_row = row![
-        text(current_time).size(12).color(theme::TEXT_MUTED),
+        text(current_time)
+            .size(theme::TEXT_SIZE_CAPTION)
+            .color(theme::TEXT_MUTED),
         Space::new().width(8),
         progress_slider,
         Space::new().width(8),
-        text(total_time).size(12).color(theme::TEXT_MUTED),
+        text(total_time)
+            .size(theme::TEXT_SIZE_CAPTION)
+            .color(theme::TEXT_MUTED),
     ]
     .align_y(Alignment::Center);
 
@@ -295,7 +305,7 @@ pub fn view(
         .width(Fill)
         .height(1)
         .style(|theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(theme::divider(theme))),
+            background: Some(iced::Background::Color(theme::player_bar_border(theme))),
             ..Default::default()
         });
 
@@ -311,13 +321,7 @@ pub fn view(
         .width(Fill)
         .height(PLAYER_BAR_HEIGHT);
 
-    // Use opaque + mouse_area to block all events from reaching underlying widgets
-    let event_blocker = mouse_area(bar)
-        .on_press(Message::Noop)
-        .on_release(Message::Noop)
-        .on_enter(Message::Noop)
-        .on_exit(Message::Noop)
-        .on_move(|_| Message::Noop);
-
-    opaque(event_blocker).into()
+    // Use opaque to block events from reaching underlying widgets without swallowing
+    // interactions inside the player bar itself.
+    opaque(bar).into()
 }

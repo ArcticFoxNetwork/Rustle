@@ -19,7 +19,7 @@ pub fn view(playlist_name: &str, animation_progress: f32, locale: Locale) -> Ele
 
     // Dialog content
     let title = text(locale.get(Key::DeletePlaylistTitle).to_string())
-        .size(18)
+        .size(theme::TEXT_SIZE_SUBTITLE)
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         })
@@ -29,12 +29,14 @@ pub fn view(playlist_name: &str, animation_progress: f32, locale: Locale) -> Ele
         });
 
     let message_text = format!("确定要删除歌单「{}」吗？此操作无法撤销。", playlist_name);
-    let message = text(message_text).size(14).color(theme::TEXT_SECONDARY);
+    let message = text(message_text)
+        .size(theme::TEXT_SIZE_BODY)
+        .color(theme::TEXT_SECONDARY);
 
     // Buttons
     let delete_btn = button(
         text(locale.get(Key::Delete).to_string())
-            .size(14)
+            .size(theme::TEXT_SIZE_BODY)
             .color(Color::WHITE),
     )
     .padding([10, 24])
@@ -57,7 +59,7 @@ pub fn view(playlist_name: &str, animation_progress: f32, locale: Locale) -> Ele
 
     let cancel_btn = button(
         text(locale.get(Key::Cancel).to_string())
-            .size(14)
+            .size(theme::TEXT_SIZE_BODY)
             .color(theme::TEXT_PRIMARY),
     )
     .padding([10, 24])

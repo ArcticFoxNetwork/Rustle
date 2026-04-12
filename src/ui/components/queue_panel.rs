@@ -58,12 +58,14 @@ pub fn view(
     };
 
     let header = row![
-        text(header_title).size(16).style(move |theme| text::Style {
-            color: Some(theme::text_primary(theme))
-        }),
+        text(header_title)
+            .size(theme::TEXT_SIZE_BODY_LARGE)
+            .style(move |theme| text::Style {
+                color: Some(theme::text_primary(theme))
+            }),
         Space::new().width(Fill),
         text(format!("{}", queue.len()))
-            .size(12)
+            .size(theme::TEXT_SIZE_CAPTION)
             .style(|theme| text::Style {
                 color: Some(theme::text_muted(theme))
             }),
@@ -106,7 +108,7 @@ pub fn view(
     let song_list: Element<'static, Message> = if song_items.is_empty() {
         container(
             text(locale.get(Key::QueueEmpty).to_string())
-                .size(14)
+                .size(theme::TEXT_SIZE_BODY)
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme)),
                 }),
@@ -165,7 +167,7 @@ fn build_queue_item(song: DbSong, index: usize, is_current: bool) -> Element<'st
             .into()
     } else {
         text(format!("{}", index + 1))
-            .size(12)
+            .size(theme::TEXT_SIZE_CAPTION)
             .style(|theme| text::Style {
                 color: Some(theme::text_muted(theme)),
             })
@@ -175,7 +177,7 @@ fn build_queue_item(song: DbSong, index: usize, is_current: bool) -> Element<'st
     let indicator_container = container(indicator).width(24).center_x(24);
 
     let title = text(song.title.clone())
-        .size(13)
+        .size(theme::TEXT_SIZE_LABEL)
         .style(move |theme| text::Style {
             color: Some(if is_current {
                 theme::ACCENT_PINK
@@ -189,24 +191,28 @@ fn build_queue_item(song: DbSong, index: usize, is_current: bool) -> Element<'st
     } else {
         song.artist.clone()
     };
-    let artist = text(artist_text).size(11).style(move |theme| text::Style {
-        color: Some(if is_current {
-            Color::from_rgba(
-                theme::ACCENT_PINK.r,
-                theme::ACCENT_PINK.g,
-                theme::ACCENT_PINK.b,
-                0.7,
-            )
-        } else {
-            theme::text_muted(theme)
-        }),
-    });
+    let artist = text(artist_text)
+        .size(theme::TEXT_SIZE_CAPTION)
+        .style(move |theme| text::Style {
+            color: Some(if is_current {
+                Color::from_rgba(
+                    theme::ACCENT_PINK.r,
+                    theme::ACCENT_PINK.g,
+                    theme::ACCENT_PINK.b,
+                    0.7,
+                )
+            } else {
+                theme::text_muted(theme)
+            }),
+        });
 
     let info = column![title, artist].spacing(2).width(Fill);
 
-    let duration = text(duration_str).size(11).style(|theme| text::Style {
-        color: Some(theme::text_muted(theme)),
-    });
+    let duration = text(duration_str)
+        .size(theme::TEXT_SIZE_CAPTION)
+        .style(|theme| text::Style {
+            color: Some(theme::text_muted(theme)),
+        });
 
     let remove_btn = button(
         svg(svg::Handle::from_memory(icons::CLOSE.as_bytes()))

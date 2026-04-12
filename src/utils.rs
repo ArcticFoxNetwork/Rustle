@@ -555,6 +555,19 @@ pub async fn download_playlist_cover(
     download_img(client, cover_url, path, 300, 300).await
 }
 
+/// Download artist cover image
+pub async fn download_artist_cover(
+    client: &crate::api::NcmClient,
+    artist_id: u64,
+    cover_url: &str,
+) -> Option<PathBuf> {
+    if cover_url.is_empty() {
+        return None;
+    }
+    let path = covers_cache_dir().join(format!("artist_{}.jpg", artist_id));
+    download_img(client, cover_url, path, 300, 300).await
+}
+
 /// Download playlist creator avatar
 pub async fn download_playlist_creator_avatar(
     client: &crate::api::NcmClient,

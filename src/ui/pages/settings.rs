@@ -28,7 +28,7 @@ pub fn view(
     // Fixed header: title + tabs
     let header = column![
         text(locale.get(Key::SettingsTitle).to_string())
-            .size(32)
+            .size(theme::TEXT_SIZE_HERO)
             .style(|theme| text::Style {
                 color: Some(theme::settings_title(theme))
             }),
@@ -119,59 +119,58 @@ fn tab_bar(active_section: SettingsSection, locale: Locale) -> Element<'static, 
     ];
 
     // Build tab items (button + underline stacked vertically)
-    let tab_items: Vec<Element<'static, Message>> =
-        tabs.iter()
-            .map(|(section, label)| {
-                let is_active = *section == active_section;
+    let tab_items: Vec<Element<'static, Message>> = tabs
+        .iter()
+        .map(|(section, label)| {
+            let is_active = *section == active_section;
 
-                let tab_button =
-                    button(
-                        container(text(label.to_string()).size(14).style(move |theme| {
-                            text::Style {
-                                color: Some(if is_active {
-                                    theme::ACCENT_PINK
-                                } else {
-                                    theme::settings_inactive_tab(theme)
-                                }),
-                            }
-                        }))
-                        .width(Fill)
-                        .center_x(Fill),
-                    )
-                    .style(move |theme, status| {
-                        let hover_bg = match status {
-                            button::Status::Hovered => {
-                                Some(Background::Color(theme::hover_bg_alpha(theme, 0.05)))
-                            }
-                            _ => None,
-                        };
-                        button::Style {
-                            background: hover_bg,
-                            text_color: theme::text_primary(theme),
-                            border: Border::default(),
-                            ..Default::default()
-                        }
-                    })
-                    .on_press(Message::ScrollToSection(*section))
-                    .padding([12, 0])
-                    .width(Fill);
-
-                let underline = container(Space::new().height(2))
-                    .width(Fill)
-                    .style(move |theme| container::Style {
-                        background: Some(Background::Color(if is_active {
+            let tab_button = button(
+                container(text(label.to_string()).size(theme::TEXT_SIZE_BODY).style(
+                    move |theme| text::Style {
+                        color: Some(if is_active {
                             theme::ACCENT_PINK
                         } else {
-                            theme::settings_inactive_underline(theme)
-                        })),
-                        ..Default::default()
-                    });
-
-                container(column![tab_button, underline].spacing(0).width(Fill))
-                    .width(90)
-                    .into()
+                            theme::settings_inactive_tab(theme)
+                        }),
+                    },
+                ))
+                .width(Fill)
+                .center_x(Fill),
+            )
+            .style(move |theme, status| {
+                let hover_bg = match status {
+                    button::Status::Hovered => {
+                        Some(Background::Color(theme::hover_bg_alpha(theme, 0.05)))
+                    }
+                    _ => None,
+                };
+                button::Style {
+                    background: hover_bg,
+                    text_color: theme::text_primary(theme),
+                    border: Border::default(),
+                    ..Default::default()
+                }
             })
-            .collect();
+            .on_press(Message::ScrollToSection(*section))
+            .padding([12, 0])
+            .width(Fill);
+
+            let underline = container(Space::new().height(2))
+                .width(Fill)
+                .style(move |theme| container::Style {
+                    background: Some(Background::Color(if is_active {
+                        theme::ACCENT_PINK
+                    } else {
+                        theme::settings_inactive_underline(theme)
+                    })),
+                    ..Default::default()
+                });
+
+            container(column![tab_button, underline].spacing(0).width(Fill))
+                .width(90)
+                .into()
+        })
+        .collect();
 
     // All tabs in a row with horizontal scroll for narrow screens
     scrollable(row(tab_items).spacing(0))
@@ -285,12 +284,14 @@ fn account_section(
             };
 
             let vip_text = if info.vip_type > 0 {
-                text("VIP").size(12).style(|_theme| text::Style {
-                    color: Some(theme::ACCENT_PINK),
-                })
+                text("VIP")
+                    .size(theme::TEXT_SIZE_CAPTION)
+                    .style(|_theme| text::Style {
+                        color: Some(theme::ACCENT_PINK),
+                    })
             } else {
                 text(locale.get(Key::FreeAccount))
-                    .size(12)
+                    .size(theme::TEXT_SIZE_CAPTION)
                     .style(|theme| text::Style {
                         color: Some(theme::settings_desc(theme)),
                     })
@@ -305,7 +306,7 @@ fn account_section(
                         Space::new().width(12),
                         column![
                             text(info.nickname.clone())
-                                .size(16)
+                                .size(theme::TEXT_SIZE_BODY_LARGE)
                                 .style(|theme| text::Style {
                                     color: Some(theme::text_primary(theme))
                                 }),
@@ -319,11 +320,14 @@ fn account_section(
                 setting_row(
                     locale.get(Key::SettingsAccountLogout),
                     None,
-                    button(text(locale.get(Key::SettingsAccountLogout).to_string()).size(14))
-                        .style(theme::button_danger)
-                        .padding([8, 16])
-                        .on_press(Message::Logout)
-                        .into()
+                    button(
+                        text(locale.get(Key::SettingsAccountLogout).to_string())
+                            .size(theme::TEXT_SIZE_BODY)
+                    )
+                    .style(theme::button_danger)
+                    .padding([8, 16])
+                    .on_press(Message::Logout)
+                    .into()
                 ),
             ]
             .spacing(0)
@@ -335,7 +339,7 @@ fn account_section(
                     locale.get(Key::SettingsAccountLoggedInAs),
                     None,
                     text("Loading...")
-                        .size(14)
+                        .size(theme::TEXT_SIZE_BODY)
                         .style(|theme| text::Style {
                             color: Some(theme::text_primary(theme))
                         })
@@ -345,11 +349,14 @@ fn account_section(
                 setting_row(
                     locale.get(Key::SettingsAccountLogout),
                     None,
-                    button(text(locale.get(Key::SettingsAccountLogout).to_string()).size(14))
-                        .style(theme::button_danger)
-                        .padding([8, 16])
-                        .on_press(Message::Logout)
-                        .into()
+                    button(
+                        text(locale.get(Key::SettingsAccountLogout).to_string())
+                            .size(theme::TEXT_SIZE_BODY)
+                    )
+                    .style(theme::button_danger)
+                    .padding([8, 16])
+                    .on_press(Message::Logout)
+                    .into()
                 ),
             ]
             .spacing(0)
@@ -359,7 +366,7 @@ fn account_section(
         column![setting_row(
             locale.get(Key::SettingsAccountNotLoggedIn),
             None,
-            button(text(locale.get(Key::ClickToLogin).to_string()).size(14))
+            button(text(locale.get(Key::ClickToLogin).to_string()).size(theme::TEXT_SIZE_BODY))
                 .style(theme::primary_button)
                 .padding([8, 16])
                 .on_press(Message::ToggleLoginPopup)
@@ -372,7 +379,7 @@ fn account_section(
 
 fn section_header(title: &str) -> Element<'static, Message> {
     text(title.to_string())
-        .size(18)
+        .size(theme::TEXT_SIZE_SUBTITLE)
         .style(|theme| text::Style {
             color: Some(theme::settings_section_title(theme)),
         })
@@ -390,19 +397,27 @@ fn setting_row<'a>(
 
     let label_section: Element<'a, Message> = if let Some(desc) = desc_text {
         column![
-            text(label_text).size(15).style(|theme| text::Style {
-                color: Some(theme::settings_label(theme))
-            }),
-            text(desc).size(12).style(|theme| text::Style {
-                color: Some(theme::settings_desc(theme))
-            }),
+            text(label_text)
+                .size(theme::TEXT_SIZE_BODY_LARGE)
+                .style(|theme| text::Style {
+                    color: Some(theme::settings_label(theme))
+                }),
+            text(desc)
+                .size(theme::TEXT_SIZE_CAPTION)
+                .style(|theme| text::Style {
+                    color: Some(theme::settings_desc(theme))
+                }),
         ]
         .spacing(4)
         .into()
     } else {
-        column![text(label_text).size(15).style(|theme| text::Style {
-            color: Some(theme::settings_label(theme))
-        }),]
+        column![
+            text(label_text)
+                .size(theme::TEXT_SIZE_BODY_LARGE)
+                .style(|theme| text::Style {
+                    color: Some(theme::settings_label(theme))
+                }),
+        ]
         .into()
     };
 
@@ -448,7 +463,7 @@ fn playback_section(settings: &Settings, locale: Locale) -> Element<'static, Mes
             Some(locale.get(Key::SettingsFadeInOutDesc)),
             toggler(settings.playback.fade_in_out)
                 .on_toggle(Message::UpdateFadeInOut)
-                .size(24)
+                .size(theme::TEXT_SIZE_TITLE)
                 .into()
         ),
         divider(),
@@ -457,7 +472,7 @@ fn playback_section(settings: &Settings, locale: Locale) -> Element<'static, Mes
             Some(locale.get(Key::SettingsVolumeNormalizationDesc)),
             toggler(settings.playback.volume_normalization)
                 .on_toggle(Message::UpdateVolumeNormalization)
-                .size(24)
+                .size(theme::TEXT_SIZE_TITLE)
                 .into()
         ),
         divider(),
@@ -473,7 +488,7 @@ fn audio_engine_entry_row(locale: Locale) -> Element<'static, Message> {
     let content = row![
         // Title only
         text(locale.get(Key::AudioEngineTitle).to_string())
-            .size(15)
+            .size(theme::TEXT_SIZE_BODY_LARGE)
             .style(|theme| text::Style {
                 color: Some(theme::settings_label(theme))
             }),
@@ -535,7 +550,7 @@ fn display_section(settings: &Settings, locale: Locale) -> Element<'static, Mess
             None,
             toggler(settings.display.dark_mode)
                 .on_toggle(Message::UpdateDarkMode)
-                .size(24)
+                .size(theme::TEXT_SIZE_TITLE)
                 .into()
         ),
         divider(),
@@ -561,7 +576,7 @@ fn display_section(settings: &Settings, locale: Locale) -> Element<'static, Mess
             Some(locale.get(Key::SettingsPowerSavingModeDesc)),
             toggler(settings.display.power_saving_mode)
                 .on_toggle(Message::UpdatePowerSavingMode)
-                .size(24)
+                .size(theme::TEXT_SIZE_TITLE)
                 .into()
         ),
         divider(),
@@ -737,9 +752,13 @@ where
 
     container(
         row![
-            column![text(label_text).size(15).style(|theme| text::Style {
-                color: Some(theme::settings_label(theme))
-            }),],
+            column![
+                text(label_text)
+                    .size(theme::TEXT_SIZE_BODY_LARGE)
+                    .style(|theme| text::Style {
+                        color: Some(theme::settings_label(theme))
+                    }),
+            ],
             Space::new().width(Fill),
             text_input(&placeholder_text, &value_text)
                 .on_input(on_input)
@@ -796,7 +815,7 @@ fn storage_section(
             locale.get(Key::SettingsCacheLocation),
             None,
             text(cache_path_str)
-                .size(14)
+                .size(theme::TEXT_SIZE_BODY)
                 .style(|theme| text::Style {
                     color: Some(theme::settings_value(theme))
                 })
@@ -807,7 +826,7 @@ fn storage_section(
             locale.get(Key::SettingsCacheSize),
             None,
             text(cache_size_str)
-                .size(14)
+                .size(theme::TEXT_SIZE_BODY)
                 .style(|theme| text::Style {
                     color: Some(theme::settings_value(theme))
                 })
@@ -835,11 +854,13 @@ fn storage_section(
         setting_row(
             locale.get(Key::SettingsClearCache),
             Some(locale.get(Key::SettingsClearCacheDesc)),
-            button(text(locale.get(Key::SettingsClearButton).to_string()).size(14))
-                .style(theme::button_danger)
-                .padding([8, 16])
-                .on_press(Message::ClearCache)
-                .into()
+            button(
+                text(locale.get(Key::SettingsClearButton).to_string()).size(theme::TEXT_SIZE_BODY)
+            )
+            .style(theme::button_danger)
+            .padding([8, 16])
+            .on_press(Message::ClearCache)
+            .into()
         ),
     ]
     .spacing(0)
@@ -903,28 +924,32 @@ fn about_section(_locale: Locale) -> Element<'static, Message> {
     .clip(true);
 
     // App name
-    let app_name = text("Rustle").size(24).style(|theme| text::Style {
-        color: Some(theme::text_primary(theme)),
-    });
+    let app_name = text("Rustle")
+        .size(theme::TEXT_SIZE_TITLE)
+        .style(|theme| text::Style {
+            color: Some(theme::text_primary(theme)),
+        });
 
     // Version
     let version = text(format!("v{}", env!("CARGO_PKG_VERSION")))
-        .size(14)
+        .size(theme::TEXT_SIZE_BODY)
         .style(|theme| text::Style {
             color: Some(theme::settings_desc(theme)),
         });
 
     // Description
     let description = text("A modern music player built with Rust & Iced")
-        .size(13)
+        .size(theme::TEXT_SIZE_LABEL)
         .style(|theme| text::Style {
             color: Some(theme::settings_desc(theme)),
         });
 
     // Copyright
-    let copyright = text("2025-2026 FXS").size(12).style(|theme| text::Style {
-        color: Some(theme::settings_desc(theme)),
-    });
+    let copyright = text("2025-2026 FXS")
+        .size(theme::TEXT_SIZE_CAPTION)
+        .style(|theme| text::Style {
+            color: Some(theme::settings_desc(theme)),
+        });
 
     container(
         column![
@@ -1008,7 +1033,7 @@ fn shortcut_row(
     let shortcut_display: Element<'static, Message> = if is_editing {
         container(
             text("Press key...".to_string())
-                .size(13)
+                .size(theme::TEXT_SIZE_LABEL)
                 .color(theme::ACCENT_PINK),
         )
         .padding([4, 12])
@@ -1025,7 +1050,7 @@ fn shortcut_row(
     } else {
         container(
             text(shortcut.to_string())
-                .size(13)
+                .size(theme::TEXT_SIZE_LABEL)
                 .style(|theme| text::Style {
                     color: Some(theme::settings_value(theme)),
                 }),
@@ -1058,7 +1083,7 @@ fn shortcut_row(
     container(
         row![
             text(action_name.to_string())
-                .size(14)
+                .size(theme::TEXT_SIZE_BODY)
                 .style(|theme| text::Style {
                     color: Some(theme::settings_label(theme))
                 }),

@@ -492,6 +492,8 @@ impl Default for LibraryState {
 pub struct PlaybackSessionState {
     /// Current playing song reflected in UI/system integrations.
     pub current_song: Option<DbSong>,
+    /// Current playing song's artist id when available from NCM metadata.
+    pub current_artist_id: Option<u64>,
     /// Last saved playback snapshot loaded from the database.
     pub saved_state: Option<DbPlaybackState>,
     /// Active playback queue.
@@ -522,6 +524,7 @@ impl Default for PlaybackSessionState {
     fn default() -> Self {
         Self {
             current_song: None,
+            current_artist_id: None,
             saved_state: None,
             queue: Vec::new(),
             current_index: None,
@@ -572,6 +575,8 @@ pub enum Route {
     AudioEngine,
     Playlist(i64),
     NcmPlaylist(u64),
+    User(u64),
+    Artist(u64),
     RecentlyPlayed,
     Search {
         keyword: String,
@@ -590,6 +595,8 @@ impl Route {
             Self::AudioEngine => Some(NavItem::AudioEngine),
             Self::Playlist(_)
             | Self::NcmPlaylist(_)
+            | Self::User(_)
+            | Self::Artist(_)
             | Self::RecentlyPlayed
             | Self::Search { .. } => None,
         }
@@ -733,7 +740,7 @@ impl UiState {
             last_mpris_sync: None,
             importing_playlist: None,
             sidebar_animations: Default::default(),
-            sidebar_width: 240.0,
+            sidebar_width: 280.0,
             sidebar_dragging: false,
             cache_stats: None,
 
@@ -750,6 +757,8 @@ impl UiState {
                 )),
                 pending_cover_downloads: HashSet::new(),
                 load_state: Default::default(),
+                content_width: 976.0,
+                artist_album_covers: std::collections::HashMap::new(),
             },
 
             lyrics: LyricsState {
@@ -895,6 +904,10 @@ pub struct PlaylistPageState {
     pub pending_cover_downloads: HashSet<i64>,
     /// Loading state for async playlist loading
     pub load_state: crate::app::update::page_loader::PlaylistLoadState,
+    /// Main content width for responsive grid layouts
+    pub content_width: f32,
+    /// Cached cover handles for artist page album cards
+    pub artist_album_covers: std::collections::HashMap<u64, iced::widget::image::Handle>,
 }
 
 pub struct LyricsState {

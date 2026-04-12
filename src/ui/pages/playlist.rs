@@ -25,11 +25,17 @@ use crate::utils::ColorPalette;
 /// Playlist data for display
 #[derive(Debug, Clone)]
 pub struct PlaylistView {
+    pub kind: DetailPageKind,
     pub id: i64,
     pub name: String,
     pub description: Option<String>,
+    pub profile_stats: Option<String>,
+    pub artist_tab: ArtistPageTab,
+    pub artist_albums: Vec<crate::api::SongList>,
+    pub user_playlists: Vec<crate::api::SongList>,
     pub cover_path: Option<String>,
     pub owner: String,
+    pub owner_artist_id: Option<u64>,
     pub owner_avatar_path: Option<String>,
     /// Creator user ID (for NCM playlists, 0 for local)
     pub creator_id: u64,
@@ -43,6 +49,20 @@ pub struct PlaylistView {
     pub is_local: bool,
     /// Whether the current user has subscribed to this playlist
     pub is_subscribed: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetailPageKind {
+    Playlist,
+    User,
+    Artist,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ArtistPageTab {
+    #[default]
+    TopSongs,
+    Albums,
 }
 
 /// Song item in playlist (alias for SongItem)
@@ -199,8 +219,13 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
     };
 
     // Playlist type label - larger font
-    let type_label = text(locale.get(Key::PlaylistTypeLabel))
-        .size(14)
+    let type_label_text = match playlist.kind {
+        DetailPageKind::Playlist => locale.get(Key::PlaylistTypeLabel).to_string(),
+        DetailPageKind::User => "用户".to_string(),
+        DetailPageKind::Artist => "歌手".to_string(),
+    };
+    let type_label = text(type_label_text)
+        .size(theme::TEXT_SIZE_BODY)
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         });
@@ -208,7 +233,7 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
     // Playlist title - larger font for big screens
     // Use Inter or system sans-serif with bold weight
     let title = text(playlist.name.clone())
-        .size(72)
+        .size(theme::TEXT_SIZE_DISPLAY_LARGE)
         .line_height(iced::widget::text::LineHeight::Relative(1.0))
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
@@ -221,11 +246,13 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
 
     // Description (slightly muted but readable)
     let description = if let Some(desc) = &playlist.description {
-        text(desc.clone()).size(15).style(|theme| text::Style {
-            color: Some(theme::text_secondary(theme)),
-        })
+        text(desc.clone())
+            .size(theme::TEXT_SIZE_BODY_LARGE)
+            .style(|theme| text::Style {
+                color: Some(theme::text_secondary(theme)),
+            })
     } else {
-        text("").size(15)
+        text("").size(theme::TEXT_SIZE_BODY_LARGE)
     };
 
     // Owner avatar - use real avatar if available, otherwise show first letter
@@ -257,30 +284,59 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
     let duration = playlist.total_duration.clone();
     let is_local = playlist.is_local;
     let like_count = playlist.like_count.clone();
+    let owner_artist_id = playlist.owner_artist_id;
 
     // Build stats row - use proper dot separator with spacing
-    let mut stats_items: Vec<Element<'static, Message>> = vec![
-        owner_avatar.into(),
-        Space::new().width(8).into(),
-        // Owner name is bright white and bold
-        text(owner_name)
-            .size(14)
-            .style(|theme| text::Style {
-                color: Some(theme::text_primary(theme)),
+    let owner_label = text(owner_name.clone())
+        .size(theme::TEXT_SIZE_BODY)
+        .style(|theme| text::Style {
+            color: Some(theme::text_primary(theme)),
+        })
+        .font(iced::Font {
+            weight: BOLD_WEIGHT,
+            ..Default::default()
+        });
+
+    let owner_action =
+        if playlist.kind == DetailPageKind::Playlist && !is_local && playlist.creator_id != 0 {
+            Some(Message::OpenUser(playlist.creator_id))
+        } else {
+            owner_artist_id.map(Message::OpenArtist)
+        };
+
+    let owner_info: Element<'static, Message> = if let Some(action) = owner_action {
+        container(
+            button(
+                row![owner_avatar, Space::new().width(8), owner_label].align_y(Alignment::Center),
+            )
+            .padding(Padding::new(4.0).left(0.0).right(8.0))
+            .style(|_theme, _status| {
+                button::Style {
+                    background: Some(iced::Background::Color(Color::TRANSPARENT)),
+                    border: iced::Border {
+                        radius: 999.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }
             })
-            .font(iced::Font {
-                weight: BOLD_WEIGHT,
-                ..Default::default()
-            })
-            .into(),
-    ];
+            .on_press(action),
+        )
+        .into()
+    } else {
+        row![owner_avatar, Space::new().width(8), owner_label]
+            .align_y(Alignment::Center)
+            .into()
+    };
+
+    let mut stats_items: Vec<Element<'static, Message>> = vec![owner_info];
 
     // Only show like count for non-local playlists
     if !is_local && !like_count.is_empty() {
         stats_items.push(Space::new().width(6).into());
         stats_items.push(
             text("·")
-                .size(14)
+                .size(theme::TEXT_SIZE_BODY)
                 .style(|theme| text::Style {
                     color: Some(theme::header_text(theme)),
                 })
@@ -289,7 +345,7 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
         stats_items.push(Space::new().width(6).into());
         stats_items.push(
             text(format!("{} likes", like_count))
-                .size(14)
+                .size(theme::TEXT_SIZE_BODY)
                 .style(|theme| text::Style {
                     color: Some(theme::text_secondary(theme)),
                 })
@@ -301,7 +357,7 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
     stats_items.push(Space::new().width(6).into());
     stats_items.push(
         text("·")
-            .size(14)
+            .size(theme::TEXT_SIZE_BODY)
             .style(|theme| text::Style {
                 color: Some(theme::header_text(theme)),
             })
@@ -314,7 +370,7 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
                 .get(Key::PlaylistSongCount)
                 .replace("{}", &song_count.to_string()),
         )
-        .size(14)
+        .size(theme::TEXT_SIZE_BODY)
         .style(|theme| text::Style {
             color: Some(theme::text_secondary(theme)),
         })
@@ -323,7 +379,7 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
     stats_items.push(Space::new().width(6).into());
     stats_items.push(
         text("·")
-            .size(14)
+            .size(theme::TEXT_SIZE_BODY)
             .style(|theme| text::Style {
                 color: Some(theme::header_text(theme)),
             })
@@ -332,7 +388,7 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
     stats_items.push(Space::new().width(6).into());
     stats_items.push(
         text(duration)
-            .size(14)
+            .size(theme::TEXT_SIZE_BODY)
             .style(|theme| text::Style {
                 color: Some(theme::text_secondary(theme)),
             })
@@ -361,7 +417,7 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
 }
 
 /// Build the control buttons (play, like, download, etc.)
-fn build_controls<'a>(
+pub(crate) fn build_controls<'a>(
     playlist: &PlaylistView,
     icon_animations: &crate::ui::animation::HoverAnimations<crate::app::IconId>,
     search_animation: &crate::ui::animation::SingleHoverAnimation,
@@ -373,6 +429,8 @@ fn build_controls<'a>(
     use crate::app::IconId;
 
     let is_local = playlist.is_local;
+    let is_artist = playlist.kind == DetailPageKind::Artist;
+    let is_user = playlist.kind == DetailPageKind::User;
     let playlist_id = playlist.id;
     let is_own_playlist = current_user_id.map_or(false, |uid| uid == playlist.creator_id);
     let is_subscribed = playlist.is_subscribed;
@@ -458,7 +516,7 @@ fn build_controls<'a>(
         button(
             row![
                 text(locale.get(Key::PlaylistCustomSort))
-                    .size(14)
+                    .size(theme::TEXT_SIZE_BODY)
                     .color(sort_color),
                 Space::new().width(6),
                 svg(svg::Handle::from_memory(icons::LIST.as_bytes()))
@@ -480,7 +538,9 @@ fn build_controls<'a>(
     let mut control_items: Vec<Element<'a, Message>> =
         vec![play_btn.into(), Space::new().width(24).into()];
 
-    if is_local && playlist_id != -1 {
+    if is_artist || is_user {
+        // Artist page keeps only play and search controls.
+    } else if is_local && playlist_id != -1 {
         // For local playlists (but not recently played), show edit button with animated color
         let edit_color = get_icon_color(IconId::Edit);
         let edit_btn = mouse_area(
@@ -608,7 +668,7 @@ fn build_controls<'a>(
                 .on_input(Message::PlaylistSearchChanged)
                 .on_submit(Message::PlaylistSearchSubmit)
                 .padding(Padding::new(8.0).left(0.0).right(8.0))
-                .size(14)
+                .size(theme::TEXT_SIZE_BODY)
                 .width(Fill)
                 .style(move |_theme, _status| text_input::Style {
                     background: iced::Background::Color(Color::TRANSPARENT),
@@ -668,8 +728,11 @@ fn build_controls<'a>(
     };
 
     control_items.push(search_component);
-    control_items.push(Space::new().width(20).into());
-    control_items.push(sort_btn.into());
+
+    if !is_artist {
+        control_items.push(Space::new().width(20).into());
+        control_items.push(sort_btn.into());
+    }
 
     let controls = row(control_items)
         .align_y(Alignment::Center)
@@ -714,7 +777,7 @@ fn build_owner_avatar_placeholder(owner_name: &str) -> Element<'static, Message>
     let first_char = owner_name.chars().next().unwrap_or('R');
     container(
         text(first_char.to_string())
-            .size(10)
+            .size(theme::TEXT_SIZE_MICRO)
             .color(theme::BLACK)
             .font(iced::Font {
                 weight: BOLD_WEIGHT,

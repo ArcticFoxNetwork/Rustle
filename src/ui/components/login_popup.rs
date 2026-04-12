@@ -81,7 +81,7 @@ fn view_qr_login<'a>(
     locale: Locale,
 ) -> Element<'a, Message> {
     let title = text(locale.get(Key::LoginScanQr).to_string())
-        .size(24)
+        .size(theme::TEXT_SIZE_TITLE)
         .font(iced::Font {
             weight: BOLD_WEIGHT,
             ..Default::default()
@@ -109,7 +109,7 @@ fn view_qr_login<'a>(
     } else {
         container(
             text(locale.get(Key::LoginGeneratingQr).to_string())
-                .size(14)
+                .size(theme::TEXT_SIZE_BODY)
                 .color(theme::TEXT_SECONDARY),
         )
         .width(QR_SIZE)
@@ -128,7 +128,7 @@ fn view_qr_login<'a>(
     };
 
     let status_text = text(qr_status.unwrap_or("请使用网易云音乐App扫码"))
-        .size(14)
+        .size(theme::TEXT_SIZE_BODY)
         .color(theme::TEXT_SECONDARY);
 
     let refresh_button = button(
@@ -143,7 +143,7 @@ fn view_qr_login<'a>(
             }),
             Space::new().width(8),
             text(locale.get(Key::LoginRefreshQr).to_string())
-                .size(14)
+                .size(theme::TEXT_SIZE_BODY)
                 .style(|theme| text::Style {
                     color: Some(theme::text_primary(theme))
                 }),
@@ -172,7 +172,7 @@ fn view_qr_login<'a>(
 /// View for logged in user
 fn view_logged_in(user: &UserInfo, locale: Locale) -> Element<'_, Message> {
     let title = text(locale.get(Key::LoginLoggedIn).to_string())
-        .size(24)
+        .size(theme::TEXT_SIZE_TITLE)
         .font(iced::Font {
             weight: BOLD_WEIGHT,
             ..Default::default()
@@ -181,12 +181,14 @@ fn view_logged_in(user: &UserInfo, locale: Locale) -> Element<'_, Message> {
             color: Some(theme::text_primary(theme)),
         });
 
-    let username = text(&user.nickname).size(18).style(|theme| text::Style {
-        color: Some(theme::text_primary(theme)),
-    });
+    let username = text(&user.nickname)
+        .size(theme::TEXT_SIZE_SUBTITLE)
+        .style(|theme| text::Style {
+            color: Some(theme::text_primary(theme)),
+        });
 
     let uid_text = text(format!("UID: {}", user.user_id))
-        .size(14)
+        .size(theme::TEXT_SIZE_BODY)
         .color(theme::TEXT_SECONDARY);
 
     let logout_button = button(
@@ -201,7 +203,7 @@ fn view_logged_in(user: &UserInfo, locale: Locale) -> Element<'_, Message> {
             }),
             Space::new().width(8),
             text(locale.get(Key::LoginLogout).to_string())
-                .size(14)
+                .size(theme::TEXT_SIZE_BODY)
                 .color(Color::WHITE),
         ]
         .align_y(Alignment::Center),
