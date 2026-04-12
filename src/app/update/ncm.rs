@@ -70,6 +70,7 @@ impl App {
             play_count: 0,
             last_played: Some(now),
             last_modified: now,
+            is_missing: false,
             created_at: now,
         }
     }
@@ -185,6 +186,8 @@ impl App {
             palette: crate::utils::ColorPalette::default(),
             is_local: false,
             is_subscribed: false,
+            watched_folder_path: None,
+            watch_enabled: false,
         };
 
         self.ui.playlist_page.current = Some(skeleton_view);
@@ -378,6 +381,8 @@ impl App {
             palette,
             is_local: false,
             is_subscribed: false,
+            watched_folder_path: None,
+            watch_enabled: false,
         };
 
         self.ui.playlist_page.current = Some(skeleton_view);
@@ -475,6 +480,8 @@ impl App {
             palette: crate::utils::ColorPalette::default(),
             is_local: false,
             is_subscribed: false,
+            watched_folder_path: None,
+            watch_enabled: false,
         };
 
         self.ui.playlist_page.current = Some(skeleton_view);
@@ -537,6 +544,8 @@ impl App {
             palette: crate::utils::ColorPalette::default(),
             is_local: false,
             is_subscribed: false,
+            watched_folder_path: None,
+            watch_enabled: false,
         };
 
         self.ui.playlist_page.current = Some(skeleton_view);
@@ -1198,112 +1207,6 @@ impl App {
                 Some(self.play_song_at_index(0))
             }
 
-            Message::PlayNcmUrl(song_info, url, cover_override) => {
-                debug!("Preparing NCM song: {} - {}", song_info.name, url);
-                self.ui.home.current_ncm_playlist_songs = vec![song_info.clone()];
-
-                // Get cover path: use override, or check if cached cover exists
-                let cover_path = cover_override.clone().or_else(|| {
-                    let covers_dir = crate::utils::covers_cache_dir();
-                    let cached_path = covers_dir.join(format!("{}.jpg", song_info.id));
-                    if cached_path.exists() {
-                        Some(cached_path.to_string_lossy().to_string())
-                    } else {
-                        None
-                    }
-                });
-
-                let temp_song = crate::database::DbSong {
-                    id: -(song_info.id as i64),
-                    file_path: url.clone(),
-                    title: song_info.name.clone(),
-                    artist: song_info.singer.clone(),
-                    album: song_info.album.clone(),
-                    duration_secs: (song_info.duration / 1000) as i64,
-                    track_number: None,
-                    year: None,
-                    genre: None,
-                    cover_path: cover_path.clone(),
-                    file_hash: None,
-                    file_size: 0,
-                    format: Some("mp3".to_string()),
-                    normalization_gain: None,
-                    play_count: 0,
-                    last_played: Some(
-                        std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs() as i64,
-                    ),
-                    last_modified: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs() as i64,
-                    created_at: std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs() as i64,
-                };
-
-                if let Some(db) = &self.core.db {
-                    let db = db.clone();
-                    let song_clone = temp_song.clone();
-                    Some(Task::perform(
-                        async move {
-                            match db.upsert_ncm_song(&song_clone).await {
-                                Ok(id) => Some(id),
-                                Err(e) => {
-                                    error!("Failed to upsert NCM song: {}", e);
-                                    None
-                                }
-                            }
-                        },
-                        move |id_opt| {
-                            if let Some(id) = id_opt {
-                                let mut final_song = temp_song.clone();
-                                final_song.id = id;
-                                Message::PlayResolvedNcmSong(final_song)
-                            } else {
-                                Message::ShowErrorToast("数据库错误".to_string())
-                            }
-                        },
-                    ))
-                } else {
-                    Some(Task::done(Message::PlayResolvedNcmSong(temp_song)))
-                }
-            }
-
-            Message::PlayResolvedNcmSong(song) => {
-                self.playback.queue.clear();
-                self.playback.queue.push(song.clone());
-                self.persist_queue_snapshot();
-                let source = match Self::audio_path_source_for_song(song) {
-                    Ok(source) => source,
-                    Err(err) => {
-                        error!(
-                            "Failed to prepare resolved NCM song {}: {}",
-                            song.title, err
-                        );
-                        return Some(Task::done(Message::ShowErrorToast(
-                            "无法播放解析后的歌曲".to_string(),
-                        )));
-                    }
-                };
-
-                match self.start_queue_song_from_source(0, song.clone(), source) {
-                    Ok(task) => {
-                        info!("Started playing resolved NCM song: {}", song.title);
-                        Some(task)
-                    }
-                    Err(err) => {
-                        error!("Failed to start resolved NCM song {}: {}", song.title, err);
-                        Some(Task::done(Message::ShowErrorToast(
-                            "无法播放解析后的歌曲".to_string(),
-                        )))
-                    }
-                }
-            }
-
             Message::AddNcmPlaylist(songs, play_now) => {
                 debug!(
                     "Adding {} NCM songs to playlist, play_now: {}",
@@ -1336,6 +1239,7 @@ impl App {
                         play_count: 0,
                         last_played: None,
                         last_modified: 0,
+                        is_missing: false,
                         created_at: 0,
                     })
                     .collect();

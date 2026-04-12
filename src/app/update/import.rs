@@ -1,16 +1,126 @@
 // src/app/update/import.rs
 //! Import message handlers
 
-use iced::Task;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crate::app::helpers::{create_playlist_from_import, load_playlists, load_songs};
+use anyhow::{Context, Result};
+use iced::Task;
+
+use crate::app::helpers::{
+    create_playlist_from_import, load_playlist_view, load_playlists, load_songs,
+    sync_playlist_from_import,
+    load_watched_folders,
+};
 use crate::app::message::Message;
 use crate::app::state::App;
+use crate::database::{Database, NewSong, NewWatchedFolder};
 use crate::features::import::{
-    ScanConfig, ScanHandle, ScanProgress, ScanState, progress_channel, scan_and_import,
+    CoverCache, FolderWatcher, ScanConfig, ScanHandle, ScanProgress, ScanResult, ScanState,
+    WatchEvent, is_audio_file, progress_channel, scan_and_import, scan_audio_file,
+    spawn_debounced_processor, watch_channel,
 };
 use crate::ui::components::ImportingPlaylist;
+
+fn build_new_song(path: &Path, scan_result: ScanResult) -> NewSong {
+    let cover_path = scan_result
+        .cover_path
+        .as_ref()
+        .map(|cover| cover.to_string_lossy().to_string());
+
+    NewSong {
+        file_path: path.to_string_lossy().to_string(),
+        title: scan_result.metadata.title,
+        artist: scan_result.metadata.artist,
+        album: scan_result.metadata.album,
+        duration_secs: scan_result.metadata.duration_secs,
+        track_number: scan_result.metadata.track_number,
+        year: scan_result.metadata.year,
+        genre: scan_result.metadata.genre,
+        cover_path,
+        file_hash: scan_result.file_hash,
+        file_size: scan_result.file_size as i64,
+        format: Some(scan_result.metadata.format),
+        normalization_gain: scan_result.normalization_gain,
+    }
+}
+
+async fn sync_watched_file(
+    db: Arc<Database>,
+    cache: Arc<CoverCache>,
+    playlist_id: i64,
+    path: PathBuf,
+) -> Result<Option<i64>> {
+    if !path.exists() || !is_audio_file(&path) {
+        return Ok(None);
+    }
+
+    let scan_path = path.clone();
+    let scan_result = tokio::task::spawn_blocking(move || {
+        scan_audio_file(&scan_path, &ScanConfig::default(), Some(cache.as_ref()))
+    })
+    .await
+    .context("Failed to join file scan task")??;
+
+    let song_id = db.upsert_local_song(build_new_song(&path, scan_result)).await?;
+    db.add_song_to_playlist(playlist_id, song_id).await?;
+    let _ = db.touch_watched_folder_scan(playlist_id).await;
+    Ok(Some(playlist_id))
+}
+
+async fn delete_watched_file(
+    db: Arc<Database>,
+    playlist_id: Option<i64>,
+    path: PathBuf,
+) -> Result<Option<i64>> {
+    db.mark_song_missing_by_path(&path.to_string_lossy()).await?;
+    if let Some(playlist_id) = playlist_id {
+        let _ = db.touch_watched_folder_scan(playlist_id).await;
+    }
+    Ok(playlist_id)
+}
+
+async fn rename_watched_file(
+    db: Arc<Database>,
+    cache: Arc<CoverCache>,
+    old_playlist_id: Option<i64>,
+    new_playlist_id: Option<i64>,
+    old_path: PathBuf,
+    new_path: PathBuf,
+) -> Result<Option<i64>> {
+    let old_path_str = old_path.to_string_lossy().to_string();
+    let new_path_str = new_path.to_string_lossy().to_string();
+
+    match (old_playlist_id, new_playlist_id) {
+        (Some(old_id), Some(new_id)) if old_id == new_id => {
+            db.update_song_path(&old_path_str, &new_path_str).await?;
+            let _ = db.touch_watched_folder_scan(old_id).await;
+            Ok(Some(old_id))
+        }
+        (Some(old_id), Some(new_id)) => {
+            if let Some(song) = db.get_song_by_path(&old_path_str).await? {
+                db.update_song_path(&old_path_str, &new_path_str).await?;
+                let _ = db.remove_song_from_playlist(old_id, song.id).await;
+                db.add_song_to_playlist(new_id, song.id).await?;
+                let _ = db.touch_watched_folder_scan(old_id).await;
+                let _ = db.touch_watched_folder_scan(new_id).await;
+                Ok(Some(new_id))
+            } else {
+                sync_watched_file(db.clone(), cache, new_id, new_path).await?;
+                let _ = db.touch_watched_folder_scan(old_id).await;
+                Ok(Some(new_id))
+            }
+        }
+        (Some(old_id), None) => {
+            db.mark_song_missing_by_path(&old_path_str).await?;
+            let _ = db.touch_watched_folder_scan(old_id).await;
+            Ok(Some(old_id))
+        }
+        (None, Some(new_id)) => sync_watched_file(db, cache, new_id, new_path).await,
+        (None, None) => Ok(None),
+    }
+}
 
 impl App {
     /// Handle import-related messages
@@ -26,93 +136,74 @@ impl App {
 
             Message::StartScan(path) => Some(self.start_scan(path.clone())),
 
+            Message::CancelScan => {
+                if let Some(handle) = &self.library.scan_handle {
+                    handle.cancel();
+                    if let Some(playlist) = &mut self.ui.importing_playlist {
+                        playlist.begin_cancelling();
+                    }
+                }
+                Some(Task::none())
+            }
+
             Message::ScanProgressUpdate(progress) => {
                 Some(self.process_scan_progress(progress.clone()))
             }
 
-            Message::AddWatchedFolder(path) => {
-                if !self.library.watched_folders.contains(path) {
-                    self.library.watched_folders.push(path.clone());
-                    if let Some(watcher) = &mut self.library.folder_watcher {
-                        if let Err(e) = watcher.watch(path) {
-                            tracing::error!("Failed to watch folder: {}", e);
-                        }
+            Message::ImportedPlaylistCreated(result) => match result {
+                Ok(playlist_id) => {
+                    if let Some(playlist) = &mut self.ui.importing_playlist {
+                        playlist.playlist_id = Some(*playlist_id);
                     }
+
+                    if let Some(db) = &self.core.db {
+                        let db_for_playlists = db.clone();
+                        let db_for_watched = db.clone();
+                        return Some(Task::batch([
+                            Task::perform(load_playlists(db_for_playlists), Message::PlaylistsLoaded),
+                            Task::perform(
+                                load_watched_folders(db_for_watched),
+                                Message::WatchedFoldersLoaded,
+                            ),
+                        ]));
+                    }
+                    Some(Task::none())
                 }
-                Some(Task::none())
+                Err(err) => Some(Task::done(Message::ShowErrorToast(format!(
+                    "创建本地媒体库失败：{}",
+                    err
+                )))),
+            },
+
+            Message::WatchedFoldersLoaded(folders) => {
+                self.library.watched_folders = folders.clone();
+                Some(self.sync_folder_watcher())
             }
 
-            Message::RemoveWatchedFolder(path) => {
-                self.library.watched_folders.retain(|p| p != path);
-                if let Some(watcher) = &mut self.library.folder_watcher {
-                    if let Err(e) = watcher.unwatch(path) {
-                        tracing::error!("Failed to unwatch folder: {}", e);
-                    }
-                }
-                Some(Task::none())
-            }
+            Message::WatcherEvent(event) => Some(self.handle_watcher_event(event.clone())),
 
-            Message::WatcherEvent(event) => {
-                use crate::features::import::WatchEvent;
-                match event {
-                    WatchEvent::FileCreated(path) => {
-                        tracing::info!("New file detected: {:?}", path);
-                        // Could auto-import here if desired
-                    }
-                    WatchEvent::FileDeleted(path) => {
-                        tracing::info!("File deleted: {:?}", path);
-                        // Update database to mark song as unavailable or remove it
-                        if let Some(db) = &self.core.db {
-                            let db = db.clone();
-                            let path_str = path.to_string_lossy().to_string();
-                            tokio::spawn(async move {
-                                if let Err(e) = db.delete_song_by_path(&path_str).await {
-                                    tracing::error!("Failed to remove deleted song from db: {}", e);
-                                }
-                            });
-                        }
-                    }
-                    WatchEvent::FileModified(path) => {
-                        tracing::debug!("File modified: {:?}", path);
-                        // Could re-scan metadata here if desired
-                    }
-                    WatchEvent::FileRenamed(old, new) => {
-                        tracing::info!("File renamed: {:?} -> {:?}", old, new);
-                        // Update file path in database
-                        if let Some(db) = &self.core.db {
-                            let db = db.clone();
-                            let old_path = old.to_string_lossy().to_string();
-                            let new_path = new.to_string_lossy().to_string();
-                            tokio::spawn(async move {
-                                if let Err(e) = db.update_song_path(&old_path, &new_path).await {
-                                    tracing::error!("Failed to update renamed song path: {}", e);
-                                }
-                            });
-                        }
+            Message::WatchedFolderSyncCompleted(playlist_id) => {
+                if let Some(db) = &self.core.db {
+                    let db_for_songs = db.clone();
+                    let mut tasks = vec![Task::perform(load_songs(db_for_songs), Message::SongsLoaded)];
 
-                        // Also update in-memory state if the renamed file is currently playing
-                        if let Some(song) = &mut self.playback.current_song {
-                            if song.file_path == old.to_string_lossy() {
-                                song.file_path = new.to_string_lossy().to_string();
-                                tracing::info!("Updated current song path to: {}", song.file_path);
-                            }
-                        }
-
-                        // Update songs in db_songs cache
-                        for song in &mut self.library.db_songs {
-                            if song.file_path == old.to_string_lossy() {
-                                song.file_path = new.to_string_lossy().to_string();
-                            }
-                        }
-
-                        // Update songs in queue
-                        for song in &mut self.playback.queue {
-                            if song.file_path == old.to_string_lossy() {
-                                song.file_path = new.to_string_lossy().to_string();
-                            }
+                    if let Some(playlist_id) = playlist_id {
+                        if self.ui.playlist_page.current.as_ref().map(|playlist| playlist.id)
+                            == Some(*playlist_id)
+                        {
+                            let db_for_playlist = db.clone();
+                            let playlist_id = *playlist_id;
+                            tasks.push(Task::perform(
+                                load_playlist_view(db_for_playlist, playlist_id),
+                                |result| match result {
+                                    Some(view) => Message::PlaylistViewLoaded(view),
+                                    None => Message::DatabaseError("Playlist not found".into()),
+                                },
+                            ));
                         }
                     }
-                    WatchEvent::Error(e) => tracing::error!("Watcher error: {}", e),
+
+                    return Some(Task::batch(tasks));
                 }
                 Some(Task::none())
             }
@@ -120,7 +211,7 @@ impl App {
             Message::CoverCacheReady(cache) => {
                 tracing::info!("Cover cache initialized");
                 self.core.cover_cache = Some(cache.clone());
-                Some(Task::none())
+                Some(self.sync_folder_watcher())
             }
 
             Message::ClearImportingPlaylist => {
@@ -133,14 +224,15 @@ impl App {
     }
 
     /// Start a folder scan for importing music
-    fn start_scan(&mut self, path: std::path::PathBuf) -> Task<Message> {
+    fn start_scan(&mut self, path: PathBuf) -> Task<Message> {
         if let (Some(db), Some(cache)) = (&self.core.db, &self.core.cover_cache) {
-            let folder_name = path
+            let root_path = path.canonicalize().unwrap_or(path);
+            let folder_name = root_path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("导入的歌单")
                 .to_string();
-            self.ui.importing_playlist = Some(ImportingPlaylist::new(folder_name));
+            self.ui.importing_playlist = Some(ImportingPlaylist::new(folder_name, root_path.clone()));
 
             let db = db.clone();
             let cache = cache.clone();
@@ -152,11 +244,12 @@ impl App {
 
             let (tx, mut rx) = progress_channel();
             let config = ScanConfig::default();
-            let path_clone = path.clone();
+            let progress_tx = tx.clone();
 
             tokio::spawn(async move {
-                if let Err(e) = scan_and_import(db, path_clone, config, cache, state, tx).await {
+                if let Err(e) = scan_and_import(db, root_path, config, cache, state, tx).await {
                     tracing::error!("Scan error: {}", e);
+                    let _ = progress_tx.send(ScanProgress::Error(e.to_string()));
                 }
             });
 
@@ -172,6 +265,217 @@ impl App {
         Task::none()
     }
 
+    fn matching_watched_playlist(&self, path: &Path) -> Option<i64> {
+        self.library
+            .watched_folders
+            .iter()
+            .filter(|folder| folder.enabled)
+            .filter_map(|folder| {
+                let playlist_id = folder.playlist_id?;
+                let root = Path::new(&folder.path);
+                if path.starts_with(root) {
+                    Some((folder.path.len(), playlist_id))
+                } else {
+                    None
+                }
+            })
+            .max_by_key(|(path_len, _)| *path_len)
+            .map(|(_, playlist_id)| playlist_id)
+    }
+
+    fn start_folder_watcher_service(&mut self) -> Result<Task<Message>> {
+        let (raw_tx, raw_rx) = watch_channel();
+        let (debounced_tx, mut debounced_rx) = watch_channel();
+
+        tokio::spawn(async move {
+            spawn_debounced_processor(raw_rx, 750, debounced_tx).await;
+        });
+
+        self.library.folder_watcher = Some(FolderWatcher::new(raw_tx)?);
+
+        Ok(Task::run(
+            async_stream::stream! {
+                while let Some(event) = debounced_rx.recv().await {
+                    yield event;
+                }
+            },
+            Message::WatcherEvent,
+        ))
+    }
+
+    fn sync_folder_watcher(&mut self) -> Task<Message> {
+        if self.core.db.is_none() || self.core.cover_cache.is_none() {
+            return Task::none();
+        }
+
+        let desired_paths: HashSet<PathBuf> = self
+            .library
+            .watched_folders
+            .iter()
+            .filter(|folder| folder.enabled)
+            .filter_map(|folder| {
+                let path = PathBuf::from(&folder.path);
+                match path.canonicalize() {
+                    Ok(path) => Some(path),
+                    Err(err) => {
+                        tracing::warn!(
+                            "Skipping watched folder {} because it is unavailable: {}",
+                            folder.path,
+                            err
+                        );
+                        None
+                    }
+                }
+            })
+            .collect();
+
+        let mut tasks = Vec::new();
+        if self.library.folder_watcher.is_none() {
+            if desired_paths.is_empty() {
+                return Task::none();
+            }
+
+            match self.start_folder_watcher_service() {
+                Ok(task) => tasks.push(task),
+                Err(err) => {
+                    tracing::error!("Failed to start folder watcher service: {}", err);
+                    return Task::done(Message::ShowWarningToast(
+                        "本地媒体库监听启动失败".to_string(),
+                    ));
+                }
+            }
+        }
+
+        if let Some(watcher) = &mut self.library.folder_watcher {
+            let current_paths: HashSet<PathBuf> = watcher.watched_paths().into_iter().collect();
+
+            for path in desired_paths.difference(&current_paths) {
+                if let Err(err) = watcher.watch(path) {
+                    tracing::error!("Failed to watch folder {}: {}", path.display(), err);
+                }
+            }
+
+            for path in current_paths.difference(&desired_paths) {
+                if let Err(err) = watcher.unwatch(path) {
+                    tracing::error!("Failed to unwatch folder {}: {}", path.display(), err);
+                }
+            }
+        }
+
+        if tasks.is_empty() {
+            Task::none()
+        } else {
+            Task::batch(tasks)
+        }
+    }
+
+    fn handle_watcher_event(&mut self, event: WatchEvent) -> Task<Message> {
+        let Some(db) = self.core.db.clone() else {
+            return Task::none();
+        };
+
+        match event {
+            WatchEvent::FileCreated(path) | WatchEvent::FileModified(path) => {
+                let Some(playlist_id) = self.matching_watched_playlist(&path) else {
+                    return Task::none();
+                };
+                let Some(cache) = self.core.cover_cache.clone() else {
+                    return Task::none();
+                };
+
+                Task::perform(
+                    async move {
+                        match sync_watched_file(db, cache, playlist_id, path).await {
+                            Ok(playlist_id) => playlist_id,
+                            Err(err) => {
+                                tracing::error!("Failed to sync watched file: {}", err);
+                                None
+                            }
+                        }
+                    },
+                    Message::WatchedFolderSyncCompleted,
+                )
+            }
+            WatchEvent::FileDeleted(path) => {
+                let playlist_id = self.matching_watched_playlist(&path);
+                Task::perform(
+                    async move {
+                        match delete_watched_file(db, playlist_id, path).await {
+                            Ok(playlist_id) => playlist_id,
+                            Err(err) => {
+                                tracing::error!("Failed to remove deleted watched file: {}", err);
+                                None
+                            }
+                        }
+                    },
+                    Message::WatchedFolderSyncCompleted,
+                )
+            }
+            WatchEvent::FileRenamed(old_path, new_path) => {
+                let old_playlist_id = self.matching_watched_playlist(&old_path);
+                let new_playlist_id = self.matching_watched_playlist(&new_path);
+                if old_playlist_id.is_none() && new_playlist_id.is_none() {
+                    return Task::none();
+                }
+
+                let Some(cache) = self.core.cover_cache.clone() else {
+                    return Task::none();
+                };
+
+                self.update_renamed_paths_in_memory(&old_path, &new_path);
+
+                Task::perform(
+                    async move {
+                        match rename_watched_file(
+                            db,
+                            cache,
+                            old_playlist_id,
+                            new_playlist_id,
+                            old_path,
+                            new_path,
+                        )
+                        .await
+                        {
+                            Ok(playlist_id) => playlist_id,
+                            Err(err) => {
+                                tracing::error!("Failed to handle watched rename: {}", err);
+                                None
+                            }
+                        }
+                    },
+                    Message::WatchedFolderSyncCompleted,
+                )
+            }
+            WatchEvent::Error(err) => Task::done(Message::ShowWarningToast(format!(
+                "本地媒体库监听出错：{}",
+                err
+            ))),
+        }
+    }
+
+    fn update_renamed_paths_in_memory(&mut self, old_path: &Path, new_path: &Path) {
+        let old_path_str = old_path.to_string_lossy().to_string();
+        let new_path_str = new_path.to_string_lossy().to_string();
+
+        if let Some(song) = &mut self.playback.current_song {
+            if song.file_path == old_path_str {
+                song.file_path = new_path_str.clone();
+            }
+        }
+
+        for song in &mut self.library.db_songs {
+            if song.file_path == old_path_str {
+                song.file_path = new_path_str.clone();
+            }
+        }
+
+        for song in &mut self.playback.queue {
+            if song.file_path == old_path_str {
+                song.file_path = new_path_str.clone();
+            }
+        }
+    }
+
     /// Process scan progress updates
     fn process_scan_progress(&mut self, progress: ScanProgress) -> Task<Message> {
         match &progress {
@@ -179,6 +483,18 @@ impl App {
                 tracing::info!("Scan started: {} files", total_files);
                 if let Some(playlist) = &mut self.ui.importing_playlist {
                     playlist.total = *total_files;
+                    playlist.set_status("扫描中...");
+                }
+            }
+            ScanProgress::Processing {
+                current,
+                total,
+                file_name,
+            } => {
+                if let Some(playlist) = &mut self.ui.importing_playlist {
+                    playlist.current = *current;
+                    playlist.total = *total;
+                    playlist.set_status(format!("正在处理 {}", file_name));
                 }
             }
             ScanProgress::Imported {
@@ -191,15 +507,32 @@ impl App {
                 tracing::debug!("Imported ({}/{}): {} - {}", current, total, artist, title);
                 if let Some(playlist) = &mut self.ui.importing_playlist {
                     playlist.update_progress(*current, *total);
+                    playlist.set_status(format!("{}/{}", current, total));
                     if let Some(cover) = cover_path {
                         playlist.set_cover(cover.clone());
                     }
                 }
             }
-            ScanProgress::Skipped { current, total, .. } => {
+            ScanProgress::Skipped {
+                current,
+                total,
+                file_name,
+                reason,
+            } => {
                 if let Some(playlist) = &mut self.ui.importing_playlist {
                     playlist.update_progress(*current, *total);
+                    playlist.set_status(format!("跳过 {}", file_name));
                 }
+                tracing::debug!("Skipped file {}: {:?}", file_name, reason);
+            }
+            ScanProgress::Error(err) => {
+                tracing::error!("Scan error: {}", err);
+                self.library.scan_state = None;
+                self.library.scan_handle = None;
+                if let Some(playlist) = &mut self.ui.importing_playlist {
+                    playlist.set_status("导入失败");
+                }
+                return Task::done(Message::ShowErrorToast(format!("导入失败：{}", err)));
             }
             ScanProgress::Completed {
                 imported,
@@ -215,7 +548,6 @@ impl App {
                     duration_secs
                 );
 
-                // Extract scanned paths before clearing state
                 let scanned_paths = self
                     .library
                     .scan_state
@@ -227,7 +559,6 @@ impl App {
                 self.library.scan_handle = None;
 
                 let is_success = *imported > 0 || *skipped > 0;
-
                 let total_processed = *imported + *skipped + *errors;
                 let (toast_task, clear_delay_secs) = if total_processed == 0 {
                     self.ui.importing_playlist = None;
@@ -258,37 +589,63 @@ impl App {
                 if is_success {
                     if let (Some(db), Some(playlist)) = (&self.core.db, &self.ui.importing_playlist)
                     {
-                        let db = db.clone();
+                        let db_for_library = db.clone();
+                        let db_for_songs = db.clone();
                         let name = playlist.name.clone();
                         let cover_path = playlist.cover_path.clone();
+                        let root_path = playlist.root_path.clone();
 
-                        if let Some(p) = &mut self.ui.importing_playlist {
-                            p.complete();
+                        if let Some(playlist) = &mut self.ui.importing_playlist {
+                            playlist.complete();
                         }
 
-                        let db_for_reload = db.clone();
                         let mut tasks = vec![
                             toast_task,
                             Task::perform(
                                 async move {
-                                    let result = create_playlist_from_import(
-                                        db.clone(),
-                                        name,
-                                        cover_path,
-                                        scanned_paths,
-                                    )
-                                    .await;
-                                    let playlists = load_playlists(db).await;
-                                    (result, playlists)
-                                },
-                                |(result, playlists)| {
-                                    if let Err(e) = result {
-                                        tracing::error!("Failed to create playlist: {}", e);
+                                    let create_result = async {
+                                        let watched_path =
+                                            root_path.canonicalize().unwrap_or(root_path);
+                                        let watched_path_str =
+                                            watched_path.to_string_lossy().to_string();
+                                        let playlist_id = if let Some(existing) = db_for_library
+                                            .get_watched_folder_by_path(&watched_path_str)
+                                            .await?
+                                            .and_then(|folder| folder.playlist_id)
+                                        {
+                                            sync_playlist_from_import(
+                                                db_for_library.clone(),
+                                                existing,
+                                                name,
+                                                cover_path,
+                                                scanned_paths,
+                                            )
+                                            .await?
+                                        } else {
+                                            create_playlist_from_import(
+                                                db_for_library.clone(),
+                                                name,
+                                                cover_path,
+                                                scanned_paths,
+                                            )
+                                            .await?
+                                        };
+                                        db_for_library
+                                            .upsert_watched_folder(NewWatchedFolder {
+                                                path: watched_path_str,
+                                                playlist_id: Some(playlist_id),
+                                                enabled: true,
+                                            })
+                                            .await?;
+                                        Result::<i64>::Ok(playlist_id)
                                     }
-                                    Message::PlaylistsLoaded(playlists)
+                                    .await;
+
+                                    create_result.map_err(|err| err.to_string())
                                 },
+                                Message::ImportedPlaylistCreated,
                             ),
-                            Task::perform(load_songs(db_for_reload), Message::SongsLoaded),
+                            Task::perform(load_songs(db_for_songs), Message::SongsLoaded),
                         ];
 
                         if let Some(secs) = clear_delay_secs {
@@ -316,12 +673,9 @@ impl App {
 
                 return Task::done(Message::ShowWarningToast("导入已取消".to_string()));
             }
-            ScanProgress::Error(e) => {
-                tracing::error!("Scan error: {}", e);
-                return Task::done(Message::ShowErrorToast(format!("导入失败：{}", e)));
-            }
             _ => {}
         }
+
         self.library.scan_progress = Some(progress);
         Task::none()
     }

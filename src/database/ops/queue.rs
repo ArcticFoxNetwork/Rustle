@@ -17,48 +17,6 @@ pub async fn clear_queue_tx(conn: &mut SqliteConnection) -> Result<()> {
     Ok(())
 }
 
-/// Add song to queue
-pub async fn add_to_queue(
-    pool: &Pool<Sqlite>,
-    song_id: i64,
-    source_playlist_id: Option<i64>,
-) -> Result<()> {
-    let max_pos: Option<i64> = sqlx::query_scalar("SELECT MAX(position) FROM queue")
-        .fetch_one(pool)
-        .await?;
-
-    let position = max_pos.unwrap_or(-1) + 1;
-
-    sqlx::query("INSERT INTO queue (song_id, position, source_playlist_id) VALUES (?, ?, ?)")
-        .bind(song_id)
-        .bind(position)
-        .bind(source_playlist_id)
-        .execute(pool)
-        .await?;
-
-    Ok(())
-}
-
-/// Set queue from a list of song ids (replaces current queue)
-pub async fn set_queue(
-    pool: &Pool<Sqlite>,
-    song_ids: &[i64],
-    source_playlist_id: Option<i64>,
-) -> Result<()> {
-    clear_queue(pool).await?;
-
-    for (position, song_id) in song_ids.iter().enumerate() {
-        sqlx::query("INSERT INTO queue (song_id, position, source_playlist_id) VALUES (?, ?, ?)")
-            .bind(song_id)
-            .bind(position as i64)
-            .bind(source_playlist_id)
-            .execute(pool)
-            .await?;
-    }
-
-    Ok(())
-}
-
 /// Set queue from a list of song ids (transaction version)
 pub async fn set_queue_tx(
     conn: &mut SqliteConnection,
@@ -86,6 +44,7 @@ pub async fn get_queue(pool: &Pool<Sqlite>) -> Result<Vec<DbSong>> {
         r#"
         SELECT s.* FROM songs s
         INNER JOIN queue q ON s.id = q.song_id
+        WHERE s.is_missing = 0
         ORDER BY q.position
         "#,
     )

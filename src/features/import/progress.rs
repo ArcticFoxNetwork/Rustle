@@ -23,7 +23,7 @@ pub enum ScanProgress {
         artist: String,
         cover_path: Option<String>,
     },
-    /// A file was skipped (already exists or error)
+    /// A file was skipped because it could not be imported
     Skipped {
         current: u64,
         total: u64,
@@ -46,8 +46,6 @@ pub enum ScanProgress {
 /// Reason why a file was skipped
 #[derive(Debug, Clone)]
 pub enum SkipReason {
-    /// File already exists in database
-    AlreadyExists,
     /// File is corrupted or unreadable
     Corrupted,
     /// Not a valid audio file
@@ -100,10 +98,6 @@ impl ScanState {
 
     pub fn increment_imported(&self) {
         self.imported.fetch_add(1, Ordering::SeqCst);
-    }
-
-    pub fn increment_skipped(&self) {
-        self.skipped.fetch_add(1, Ordering::SeqCst);
     }
 
     pub fn increment_errors(&self) {
@@ -164,16 +158,6 @@ impl ScanHandle {
     /// Cancel the ongoing scan
     pub fn cancel(&self) {
         self.state.cancel();
-    }
-
-    /// Check if scan is cancelled
-    pub fn is_cancelled(&self) -> bool {
-        self.state.is_cancelled()
-    }
-
-    /// Get current progress stats
-    pub fn get_stats(&self) -> (u64, u64, u64, u64, u64) {
-        self.state.get_stats()
     }
 }
 

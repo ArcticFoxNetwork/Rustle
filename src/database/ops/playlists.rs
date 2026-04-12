@@ -85,7 +85,7 @@ pub async fn get_playlist_songs(pool: &Pool<Sqlite>, playlist_id: i64) -> Result
         r#"
         SELECT s.* FROM songs s
         INNER JOIN playlist_songs ps ON s.id = ps.song_id
-        WHERE ps.playlist_id = ?
+        WHERE ps.playlist_id = ? AND s.is_missing = 0
         ORDER BY ps.position
         "#,
     )
@@ -104,7 +104,7 @@ pub async fn get_playlist_songs_with_date(
         r#"
         SELECT s.*, ps.added_at FROM songs s
         INNER JOIN playlist_songs ps ON s.id = ps.song_id
-        WHERE ps.playlist_id = ?
+        WHERE ps.playlist_id = ? AND s.is_missing = 0
         ORDER BY ps.position
         "#,
     )
@@ -131,24 +131,6 @@ pub async fn remove_song_from_playlist(
 /// Delete playlist
 pub async fn delete_playlist(pool: &Pool<Sqlite>, id: i64) -> Result<()> {
     sqlx::query("DELETE FROM playlists WHERE id = ?")
-        .bind(id)
-        .execute(pool)
-        .await?;
-    Ok(())
-}
-
-/// Update playlist name and description
-pub async fn update_playlist(
-    pool: &Pool<Sqlite>,
-    id: i64,
-    name: &str,
-    description: Option<&str>,
-) -> Result<()> {
-    let now = current_timestamp();
-    sqlx::query("UPDATE playlists SET name = ?, description = ?, updated_at = ? WHERE id = ?")
-        .bind(name)
-        .bind(description)
-        .bind(now)
         .bind(id)
         .execute(pool)
         .await?;

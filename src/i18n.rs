@@ -267,6 +267,8 @@ pub enum Key {
     EditPlaylistNamePlaceholder,
     EditPlaylistDesc,
     EditPlaylistDescPlaceholder,
+    EditPlaylistWatchLibrary,
+    EditPlaylistWatchLibraryDesc,
 
     // Exit Dialog
     ExitDialogTitle,

@@ -66,29 +66,3 @@ pub async fn update_volume(pool: &Pool<Sqlite>, volume: f64) -> Result<()> {
 
     Ok(())
 }
-
-/// Update shuffle mode
-pub async fn update_shuffle(pool: &Pool<Sqlite>, shuffle: bool) -> Result<()> {
-    let now = current_timestamp();
-
-    sqlx::query("UPDATE playback_state SET shuffle = ?, updated_at = ? WHERE id = 1")
-        .bind(shuffle)
-        .bind(now)
-        .execute(pool)
-        .await?;
-
-    Ok(())
-}
-
-/// Update repeat mode (0=off, 1=all, 2=one)
-pub async fn update_repeat_mode(pool: &Pool<Sqlite>, mode: i64) -> Result<()> {
-    let now = current_timestamp();
-
-    sqlx::query("UPDATE playback_state SET repeat_mode = ?, updated_at = ? WHERE id = 1")
-        .bind(mode)
-        .bind(now)
-        .execute(pool)
-        .await?;
-
-    Ok(())
-}

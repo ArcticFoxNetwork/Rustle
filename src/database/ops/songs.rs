@@ -6,18 +6,53 @@ use sqlx::{Pool, Sqlite};
 use super::current_timestamp;
 use crate::database::{DbSong, NewSong};
 
-/// Insert a new song, returns the new song id
-pub async fn insert_song(pool: &Pool<Sqlite>, song: NewSong) -> Result<i64> {
+/// Upsert a local song by storage path while preserving the existing row id.
+pub async fn upsert_local_song(pool: &Pool<Sqlite>, song: NewSong) -> Result<i64> {
     let now = current_timestamp();
+
+    if let Some(existing_id) =
+        sqlx::query_scalar::<_, i64>("SELECT id FROM songs WHERE file_path = ?")
+            .bind(&song.file_path)
+            .fetch_optional(pool)
+            .await?
+    {
+        sqlx::query(
+            r#"
+            UPDATE songs SET
+                title = ?, artist = ?, album = ?, duration_secs = ?, track_number = ?,
+                year = ?, genre = ?, cover_path = ?, file_hash = ?, file_size = ?,
+                format = ?, normalization_gain = ?, last_modified = ?, is_missing = 0
+            WHERE id = ?
+            "#,
+        )
+        .bind(&song.title)
+        .bind(&song.artist)
+        .bind(&song.album)
+        .bind(song.duration_secs)
+        .bind(song.track_number)
+        .bind(song.year)
+        .bind(&song.genre)
+        .bind(&song.cover_path)
+        .bind(&song.file_hash)
+        .bind(song.file_size)
+        .bind(&song.format)
+        .bind(song.normalization_gain)
+        .bind(now)
+        .bind(existing_id)
+        .execute(pool)
+        .await?;
+
+        return Ok(existing_id);
+    }
 
     let result = sqlx::query(
         r#"
         INSERT INTO songs (
             file_path, title, artist, album, duration_secs, track_number, year, genre,
             cover_path, file_hash, file_size, format, normalization_gain,
-            last_modified, created_at
+            last_modified, is_missing, created_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         "#,
     )
     .bind(&song.file_path)
@@ -34,20 +69,12 @@ pub async fn insert_song(pool: &Pool<Sqlite>, song: NewSong) -> Result<i64> {
     .bind(&song.format)
     .bind(song.normalization_gain)
     .bind(now)
+    .bind(false)
     .bind(now)
     .execute(pool)
     .await?;
 
     Ok(result.last_insert_rowid())
-}
-
-/// Get song by id
-pub async fn get_song(pool: &Pool<Sqlite>, id: i64) -> Result<Option<DbSong>> {
-    let song = sqlx::query_as::<_, DbSong>("SELECT * FROM songs WHERE id = ?")
-        .bind(id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(song)
 }
 
 /// Get song by file path
@@ -61,6 +88,16 @@ pub async fn get_song_by_path(pool: &Pool<Sqlite>, path: &str) -> Result<Option<
 
 /// Get all songs
 pub async fn get_all_songs(pool: &Pool<Sqlite>) -> Result<Vec<DbSong>> {
+    let songs = sqlx::query_as::<_, DbSong>(
+        "SELECT * FROM songs WHERE is_missing = 0 ORDER BY artist, album, track_number",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(songs)
+}
+
+/// Get all songs including rows whose local file is currently missing.
+pub async fn get_all_songs_including_missing(pool: &Pool<Sqlite>) -> Result<Vec<DbSong>> {
     let songs =
         sqlx::query_as::<_, DbSong>("SELECT * FROM songs ORDER BY artist, album, track_number")
             .fetch_all(pool)
@@ -68,32 +105,22 @@ pub async fn get_all_songs(pool: &Pool<Sqlite>) -> Result<Vec<DbSong>> {
     Ok(songs)
 }
 
-/// Search songs by title, artist, or album
-pub async fn search_songs(pool: &Pool<Sqlite>, query: &str) -> Result<Vec<DbSong>> {
-    let pattern = format!("%{}%", query);
-    let songs = sqlx::query_as::<_, DbSong>(
-        "SELECT * FROM songs WHERE title LIKE ? OR artist LIKE ? OR album LIKE ? ORDER BY title",
-    )
-    .bind(&pattern)
-    .bind(&pattern)
-    .bind(&pattern)
-    .fetch_all(pool)
-    .await?;
-    Ok(songs)
-}
-
-/// Delete song by id
-pub async fn delete_song(pool: &Pool<Sqlite>, id: i64) -> Result<()> {
-    sqlx::query("DELETE FROM songs WHERE id = ?")
-        .bind(id)
+/// Mark a local song as temporarily unavailable without deleting history.
+pub async fn mark_song_missing_by_path(pool: &Pool<Sqlite>, path: &str) -> Result<()> {
+    let now = current_timestamp();
+    sqlx::query("UPDATE songs SET is_missing = 1, last_modified = ? WHERE file_path = ?")
+        .bind(now)
+        .bind(path)
         .execute(pool)
         .await?;
     Ok(())
 }
 
-/// Delete song by file path
-pub async fn delete_song_by_path(pool: &Pool<Sqlite>, path: &str) -> Result<()> {
-    sqlx::query("DELETE FROM songs WHERE file_path = ?")
+/// Mark a local song as available again when the file reappears.
+pub async fn mark_song_available_by_path(pool: &Pool<Sqlite>, path: &str) -> Result<()> {
+    let now = current_timestamp();
+    sqlx::query("UPDATE songs SET is_missing = 0, last_modified = ? WHERE file_path = ?")
+        .bind(now)
         .bind(path)
         .execute(pool)
         .await?;
@@ -103,7 +130,7 @@ pub async fn delete_song_by_path(pool: &Pool<Sqlite>, path: &str) -> Result<()> 
 /// Update song file path (for handling file renames)
 pub async fn update_song_path(pool: &Pool<Sqlite>, old_path: &str, new_path: &str) -> Result<()> {
     let now = super::current_timestamp();
-    sqlx::query("UPDATE songs SET file_path = ?, last_modified = ? WHERE file_path = ?")
+    sqlx::query("UPDATE songs SET file_path = ?, last_modified = ?, is_missing = 0 WHERE file_path = ?")
         .bind(new_path)
         .bind(now)
         .bind(old_path)

@@ -271,6 +271,11 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
         Key::EditPlaylistDescPlaceholder,
         "Enter description (optional)...",
     );
+    m.insert(Key::EditPlaylistWatchLibrary, "Auto-sync this library");
+    m.insert(
+        Key::EditPlaylistWatchLibraryDesc,
+        "Keep this local library playlist updated when files change in the folder below.",
+    );
 
     // Exit Dialog
     m.insert(Key::ExitDialogTitle, "Exit Application");

@@ -49,6 +49,10 @@ pub struct PlaylistView {
     pub is_local: bool,
     /// Whether the current user has subscribed to this playlist
     pub is_subscribed: bool,
+    /// Root folder backing this local library playlist, if any.
+    pub watched_folder_path: Option<String>,
+    /// Whether the local library root is actively monitored.
+    pub watch_enabled: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

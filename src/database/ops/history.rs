@@ -65,6 +65,7 @@ pub async fn get_recently_played(pool: &Pool<Sqlite>, limit: i64) -> Result<Vec<
             ORDER BY last_played_at DESC
             LIMIT ?
         ) ph ON s.id = ph.song_id
+        WHERE s.is_missing = 0
         ORDER BY ph.last_played_at DESC
         "#,
     )
@@ -82,13 +83,4 @@ pub async fn get_recently_played(pool: &Pool<Sqlite>, limit: i64) -> Result<Vec<
     }
 
     Ok(songs)
-}
-
-/// Get play count for a song
-pub async fn get_play_count(pool: &Pool<Sqlite>, song_id: i64) -> Result<i64> {
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM play_history WHERE song_id = ?")
-        .bind(song_id)
-        .fetch_one(pool)
-        .await?;
-    Ok(count)
 }

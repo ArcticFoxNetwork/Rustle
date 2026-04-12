@@ -5,12 +5,14 @@ mod playback;
 mod playlists;
 mod queue;
 mod songs;
+mod watched_folders;
 
 pub use history::*;
 pub use playback::*;
 pub use playlists::*;
 pub use queue::*;
 pub use songs::*;
+pub use watched_folders::*;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

@@ -3,6 +3,7 @@
 use iced::mouse::Interaction;
 use iced::widget::{
     Space, button, column, container, image, mouse_area, opaque, row, stack, svg, text, text_input,
+    toggler,
 };
 use iced::{Alignment, Color, Element, Fill, Padding};
 
@@ -16,6 +17,9 @@ pub fn view<'a>(
     name: &str,
     description: &str,
     cover_path: Option<&str>,
+    watch_available: bool,
+    watch_enabled: bool,
+    watch_path: Option<&str>,
     animation_progress: f32,
     locale: Locale,
 ) -> Element<'a, Message> {
@@ -150,6 +154,54 @@ pub fn view<'a>(
             selection: theme::ACCENT_PINK,
         });
 
+    let watch_section: Element<'a, Message> = if watch_available {
+        container(
+            column![
+                row![
+                    column![
+                        text(locale.get(Key::EditPlaylistWatchLibrary).to_string())
+                            .size(theme::TEXT_SIZE_BODY)
+                            .color(theme::TEXT_SECONDARY),
+                        Space::new().height(4),
+                        text(locale.get(Key::EditPlaylistWatchLibraryDesc).to_string())
+                            .size(theme::TEXT_SIZE_CAPTION)
+                            .color(theme::TEXT_MUTED),
+                    ]
+                    .spacing(0)
+                    .width(Fill),
+                    toggler(watch_enabled)
+                        .on_toggle(Message::EditPlaylistWatchEnabledChanged)
+                        .size(theme::TEXT_SIZE_TITLE)
+                ]
+                .align_y(Alignment::Center),
+                Space::new().height(8),
+                text(watch_path.unwrap_or_default().to_string())
+                    .size(theme::TEXT_SIZE_CAPTION)
+                    .color(theme::TEXT_MUTED),
+            ]
+            .spacing(0),
+        )
+        .padding(12)
+        .style(|theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(theme::surface_container(theme))),
+            border: iced::Border {
+                color: theme::divider(theme),
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..Default::default()
+        })
+        .into()
+    } else {
+        Space::new().height(0).into()
+    };
+
+    let watch_spacing: Element<'a, Message> = if watch_available {
+        Space::new().height(12).into()
+    } else {
+        Space::new().height(0).into()
+    };
+
     // Buttons with smooth hover transitions
     let cancel_btn = button(
         text(locale.get(Key::Cancel).to_string())
@@ -211,6 +263,8 @@ pub fn view<'a>(
         desc_label,
         Space::new().height(8),
         desc_input,
+        watch_spacing,
+        watch_section,
     ]
     .width(Fill);
 

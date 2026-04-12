@@ -26,6 +26,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
             play_count INTEGER NOT NULL DEFAULT 0,
             last_played INTEGER,
             last_modified INTEGER NOT NULL,
+            is_missing INTEGER NOT NULL DEFAULT 0,
             created_at INTEGER NOT NULL
         );
         
@@ -141,6 +142,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
         CREATE TABLE IF NOT EXISTS watched_folders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             path TEXT NOT NULL UNIQUE,
+            playlist_id INTEGER,
             enabled INTEGER NOT NULL DEFAULT 1,
             last_scanned INTEGER,
             created_at INTEGER NOT NULL
@@ -167,6 +169,18 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
     let _ = sqlx::query("ALTER TABLE songs ADD COLUMN normalization_gain REAL")
         .execute(pool)
         .await;
+    let _ = sqlx::query("ALTER TABLE songs ADD COLUMN is_missing INTEGER NOT NULL DEFAULT 0")
+        .execute(pool)
+        .await;
+    let _ = sqlx::query("ALTER TABLE watched_folders ADD COLUMN playlist_id INTEGER")
+        .execute(pool)
+        .await;
+
+    sqlx::query(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_watched_folders_playlist ON watched_folders(playlist_id) WHERE playlist_id IS NOT NULL",
+    )
+    .execute(pool)
+    .await?;
 
     Ok(())
 }

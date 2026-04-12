@@ -51,12 +51,8 @@ impl Database {
 
     // ============ Song Operations ============
 
-    pub async fn insert_song(&self, song: NewSong) -> Result<i64> {
-        ops::insert_song(&self.pool, song).await
-    }
-
-    pub async fn get_song(&self, id: i64) -> Result<Option<DbSong>> {
-        ops::get_song(&self.pool, id).await
+    pub async fn upsert_local_song(&self, song: NewSong) -> Result<i64> {
+        ops::upsert_local_song(&self.pool, song).await
     }
 
     pub async fn get_song_by_path(&self, path: &str) -> Result<Option<DbSong>> {
@@ -67,16 +63,16 @@ impl Database {
         ops::get_all_songs(&self.pool).await
     }
 
-    pub async fn search_songs(&self, query: &str) -> Result<Vec<DbSong>> {
-        ops::search_songs(&self.pool, query).await
+    pub async fn get_all_songs_including_missing(&self) -> Result<Vec<DbSong>> {
+        ops::get_all_songs_including_missing(&self.pool).await
     }
 
-    pub async fn delete_song(&self, id: i64) -> Result<()> {
-        ops::delete_song(&self.pool, id).await
+    pub async fn mark_song_missing_by_path(&self, path: &str) -> Result<()> {
+        ops::mark_song_missing_by_path(&self.pool, path).await
     }
 
-    pub async fn delete_song_by_path(&self, path: &str) -> Result<()> {
-        ops::delete_song_by_path(&self.pool, path).await
+    pub async fn mark_song_available_by_path(&self, path: &str) -> Result<()> {
+        ops::mark_song_available_by_path(&self.pool, path).await
     }
 
     pub async fn update_song_path(&self, old_path: &str, new_path: &str) -> Result<()> {
@@ -133,15 +129,6 @@ impl Database {
         ops::delete_playlist(&self.pool, id).await
     }
 
-    pub async fn update_playlist(
-        &self,
-        id: i64,
-        name: &str,
-        description: Option<&str>,
-    ) -> Result<()> {
-        ops::update_playlist(&self.pool, id, name, description).await
-    }
-
     pub async fn update_playlist_full(
         &self,
         id: i64,
@@ -156,14 +143,6 @@ impl Database {
 
     pub async fn clear_queue(&self) -> Result<()> {
         ops::clear_queue(&self.pool).await
-    }
-
-    pub async fn add_to_queue(&self, song_id: i64, source_playlist_id: Option<i64>) -> Result<()> {
-        ops::add_to_queue(&self.pool, song_id, source_playlist_id).await
-    }
-
-    pub async fn set_queue(&self, song_ids: &[i64], source_playlist_id: Option<i64>) -> Result<()> {
-        ops::set_queue(&self.pool, song_ids, source_playlist_id).await
     }
 
     /// Save queue with full song data, handling NCM songs properly
@@ -225,14 +204,6 @@ impl Database {
         ops::update_volume(&self.pool, volume).await
     }
 
-    pub async fn update_shuffle(&self, shuffle: bool) -> Result<()> {
-        ops::update_shuffle(&self.pool, shuffle).await
-    }
-
-    pub async fn update_repeat_mode(&self, mode: i64) -> Result<()> {
-        ops::update_repeat_mode(&self.pool, mode).await
-    }
-
     // ============ Play History Operations ============
 
     pub async fn record_play(
@@ -248,7 +219,36 @@ impl Database {
         ops::get_recently_played(&self.pool, limit).await
     }
 
-    pub async fn get_play_count(&self, song_id: i64) -> Result<i64> {
-        ops::get_play_count(&self.pool, song_id).await
+    // ============ Watched Folder Operations ============
+
+    pub async fn get_all_watched_folders(&self) -> Result<Vec<DbWatchedFolder>> {
+        ops::get_all_watched_folders(&self.pool).await
+    }
+
+    pub async fn get_watched_folder_by_playlist(
+        &self,
+        playlist_id: i64,
+    ) -> Result<Option<DbWatchedFolder>> {
+        ops::get_watched_folder_by_playlist(&self.pool, playlist_id).await
+    }
+
+    pub async fn get_watched_folder_by_path(&self, path: &str) -> Result<Option<DbWatchedFolder>> {
+        ops::get_watched_folder_by_path(&self.pool, path).await
+    }
+
+    pub async fn upsert_watched_folder(&self, folder: NewWatchedFolder) -> Result<i64> {
+        ops::upsert_watched_folder(&self.pool, folder).await
+    }
+
+    pub async fn set_watched_folder_enabled(&self, playlist_id: i64, enabled: bool) -> Result<()> {
+        ops::set_watched_folder_enabled(&self.pool, playlist_id, enabled).await
+    }
+
+    pub async fn touch_watched_folder_scan(&self, playlist_id: i64) -> Result<()> {
+        ops::touch_watched_folder_scan(&self.pool, playlist_id).await
+    }
+
+    pub async fn delete_watched_folder_by_playlist(&self, playlist_id: i64) -> Result<()> {
+        ops::delete_watched_folder_by_playlist(&self.pool, playlist_id).await
     }
 }

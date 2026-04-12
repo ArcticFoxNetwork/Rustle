@@ -60,6 +60,7 @@ impl App {
                             play_count: 0,
                             last_played: None,
                             last_modified: 0,
+                            is_missing: false,
                             created_at: 0,
                         };
                         self.playback.queue.push(db_song);

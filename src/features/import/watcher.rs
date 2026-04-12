@@ -78,7 +78,11 @@ impl FolderWatcher {
 
     /// Stop watching a directory
     pub fn unwatch(&mut self, path: &Path) -> Result<()> {
-        let path = path.canonicalize().context("Failed to canonicalize path")?;
+        let path = path
+            .canonicalize()
+            .ok()
+            .or_else(|| self.watched_paths.iter().find(|candidate| candidate.as_path() == path).cloned())
+            .unwrap_or_else(|| path.to_path_buf());
 
         if !self.watched_paths.contains(&path) {
             return Ok(()); // Not watching
@@ -97,14 +101,6 @@ impl FolderWatcher {
         self.watched_paths.iter().cloned().collect()
     }
 
-    /// Check if a path is being watched
-    pub fn is_watching(&self, path: &Path) -> bool {
-        if let Ok(canonical) = path.canonicalize() {
-            self.watched_paths.contains(&canonical)
-        } else {
-            false
-        }
-    }
 }
 
 /// Process a notify event and convert to WatchEvent if relevant
@@ -183,43 +179,6 @@ pub type WatchEventReceiver = mpsc::UnboundedReceiver<WatchEvent>;
 /// Create a new watch event channel
 pub fn watch_channel() -> (mpsc::UnboundedSender<WatchEvent>, WatchEventReceiver) {
     mpsc::unbounded_channel()
-}
-
-/// 防抖文件夹监视器，批量处理快速变化
-///
-/// 避免文件分块写入时重复处理
-pub struct DebouncedWatcher {
-    inner: FolderWatcher,
-    debounce_duration: Duration,
-}
-
-impl DebouncedWatcher {
-    /// Create a new debounced watcher
-    pub fn new(
-        event_tx: mpsc::UnboundedSender<WatchEvent>,
-        debounce_duration: Duration,
-    ) -> Result<Self> {
-        let inner = FolderWatcher::new(event_tx)?;
-        Ok(Self {
-            inner,
-            debounce_duration,
-        })
-    }
-
-    /// Start watching a directory
-    pub fn watch(&mut self, path: &Path) -> Result<()> {
-        self.inner.watch(path)
-    }
-
-    /// Stop watching a directory
-    pub fn unwatch(&mut self, path: &Path) -> Result<()> {
-        self.inner.unwatch(path)
-    }
-
-    /// Get debounce duration
-    pub fn debounce_duration(&self) -> Duration {
-        self.debounce_duration
-    }
 }
 
 /// Spawn a background task that processes watch events with debouncing

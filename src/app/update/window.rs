@@ -150,8 +150,6 @@ impl App {
 
             Message::ShowWindow => Some(self.begin_show_window()),
 
-            Message::FocusWindow => Some(window::focus_window()),
-
             Message::ShowOrFocusWindow => Some(self.begin_show_or_focus_window()),
 
             Message::WindowShown => {

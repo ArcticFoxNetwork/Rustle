@@ -4,7 +4,7 @@
 use iced::Task;
 use iced::time::Instant;
 
-use crate::app::helpers::load_playlist_view;
+use crate::app::helpers::{load_playlist_view, load_watched_folders};
 use crate::app::message::Message;
 use crate::app::state::{App, Route};
 
@@ -72,6 +72,7 @@ impl App {
                         let db = db.clone();
                         return Some(Task::perform(
                             async move {
+                                let _ = db.delete_watched_folder_by_playlist(playlist_id).await;
                                 db.delete_playlist(playlist_id).await.ok();
                                 playlist_id
                             },
@@ -96,6 +97,13 @@ impl App {
                 // Clear current playlist if it was the deleted one
                 if self.ui.playlist_page.current.as_ref().map(|p| p.id) == Some(*id) {
                     self.ui.playlist_page.current = None;
+                }
+                if let Some(db) = &self.core.db {
+                    let db = db.clone();
+                    return Some(Task::batch([
+                        Task::done(Message::ShowSuccessToast("歌单已删除".to_string())),
+                        Task::perform(load_watched_folders(db), Message::WatchedFoldersLoaded),
+                    ]));
                 }
                 Some(Task::done(Message::ShowSuccessToast(
                     "歌单已删除".to_string(),
@@ -169,6 +177,9 @@ impl App {
                     self.ui.dialogs.edit_description =
                         playlist.description.clone().unwrap_or_default();
                     self.ui.dialogs.edit_cover = playlist.cover_path.clone();
+                    self.ui.dialogs.edit_watch_available = playlist.watched_folder_path.is_some();
+                    self.ui.dialogs.edit_watch_enabled = playlist.watch_enabled;
+                    self.ui.dialogs.edit_watch_path = playlist.watched_folder_path.clone();
                     self.ui.dialogs.edit_animation.start();
                 }
                 Some(Task::none())
@@ -178,6 +189,9 @@ impl App {
                 self.ui.dialogs.edit_animation.stop();
                 self.ui.dialogs.edit_open = false;
                 self.ui.dialogs.editing_playlist_id = None;
+                self.ui.dialogs.edit_watch_available = false;
+                self.ui.dialogs.edit_watch_enabled = false;
+                self.ui.dialogs.edit_watch_path = None;
                 Some(Task::none())
             }
 
@@ -188,6 +202,11 @@ impl App {
 
             Message::EditPlaylistDescriptionChanged(desc) => {
                 self.ui.dialogs.edit_description = desc.clone();
+                Some(Task::none())
+            }
+
+            Message::EditPlaylistWatchEnabledChanged(enabled) => {
+                self.ui.dialogs.edit_watch_enabled = *enabled;
                 Some(Task::none())
             }
 
@@ -221,10 +240,15 @@ impl App {
                         Some(self.ui.dialogs.edit_description.clone())
                     };
                     let cover = self.ui.dialogs.edit_cover.clone();
+                    let watch_available = self.ui.dialogs.edit_watch_available;
+                    let watch_enabled = self.ui.dialogs.edit_watch_enabled;
 
                     self.ui.dialogs.edit_animation.stop();
                     self.ui.dialogs.edit_open = false;
                     self.ui.dialogs.editing_playlist_id = None;
+                    self.ui.dialogs.edit_watch_available = false;
+                    self.ui.dialogs.edit_watch_enabled = false;
+                    self.ui.dialogs.edit_watch_path = None;
 
                     return Some(Task::perform(
                         async move {
@@ -236,6 +260,11 @@ impl App {
                             )
                             .await
                             .ok();
+                            if watch_available {
+                                let _ = db
+                                    .set_watched_folder_enabled(playlist_id, watch_enabled)
+                                    .await;
+                            }
                             playlist_id
                         },
                         |id| Message::PlaylistUpdated(id),
@@ -248,6 +277,7 @@ impl App {
                 if let Some(db) = &self.core.db {
                     let db1 = db.clone();
                     let db2 = db.clone();
+                    let db3 = db.clone();
                     let id = *playlist_id;
                     return Some(Task::batch([
                         Task::perform(load_playlist_view(db1, id), |result| match result {
@@ -258,6 +288,7 @@ impl App {
                             async move { db2.get_all_playlists().await.unwrap_or_default() },
                             Message::PlaylistsLoaded,
                         ),
+                        Task::perform(load_watched_folders(db3), Message::WatchedFoldersLoaded),
                     ]));
                 }
                 Some(Task::none())

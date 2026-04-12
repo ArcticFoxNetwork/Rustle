@@ -11,7 +11,7 @@ use crate::api::{
 };
 use crate::app::state::UserInfo;
 use crate::app::update::preload_manager::PreloadDirection;
-use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong};
+use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong, DbWatchedFolder};
 use crate::features::Action;
 use crate::features::import::{CoverCache, ScanProgress, WatchEvent};
 use crate::ui::components::{LibraryItem, NavItem};
@@ -122,7 +122,6 @@ pub enum Message {
     EnforceCacheLimit,
     /// Update system settings
     UpdateAudioOutputDevice(Option<String>),
-    UpdateAudioBufferSize(u32),
     /// Update network settings
     UpdateProxyType(crate::features::ProxyType),
     UpdateProxyHost(String),
@@ -168,20 +167,24 @@ pub enum Message {
     QueueLoaded(Vec<DbSong>),
     /// Recently played loaded
     RecentlyPlayedLoaded(Vec<DbSong>),
+    /// Watched local library folders restored from database
+    WatchedFoldersLoaded(Vec<DbWatchedFolder>),
 
     // ============ Import ============
     /// Cover cache ready
     CoverCacheReady(Arc<CoverCache>),
     /// Start scanning a folder
     StartScan(PathBuf),
+    /// Cancel the active folder scan
+    CancelScan,
     /// Scan progress update
     ScanProgressUpdate(ScanProgress),
-    /// Add folder to watch list
-    AddWatchedFolder(PathBuf),
-    /// Remove folder from watch list
-    RemoveWatchedFolder(PathBuf),
+    /// Import completed and local library playlist was created
+    ImportedPlaylistCreated(Result<i64, String>),
     /// File watcher event
     WatcherEvent(WatchEvent),
+    /// Background watcher mutation completed for a local playlist
+    WatchedFolderSyncCompleted(Option<i64>),
     /// Show info toast notification
     ShowInfoToast(String),
     /// Show success toast notification
@@ -245,6 +248,8 @@ pub enum Message {
     EditPlaylistNameChanged(String),
     /// Edit form: description changed
     EditPlaylistDescriptionChanged(String),
+    /// Edit form: watched library toggle changed
+    EditPlaylistWatchEnabledChanged(bool),
     /// Pick cover image
     PickCoverImage,
     /// Cover image picked
@@ -389,8 +394,6 @@ pub enum Message {
     MprisCommand(crate::platform::media_controls::MediaCommand),
     /// Show window from tray
     ShowWindow,
-    /// Focus the existing visible window
-    FocusWindow,
     /// Show hidden window or focus the existing visible window
     ShowOrFocusWindow,
     /// Toggle window visibility
@@ -455,8 +458,6 @@ pub enum Message {
     FavoriteStatusChanged(u64, bool),
     /// Play NCM song
     PlayNcmSong(SongInfo),
-    /// Play NCM song by URL with optional cover path
-    PlayNcmUrl(SongInfo, String, Option<String>),
     /// Add NCM songs to queue
     AddNcmPlaylist(Vec<SongInfo>, bool),
     /// Open NCM playlist detail page
@@ -469,8 +470,6 @@ pub enum Message {
     OpenAlbum(u64),
     /// Resolve artist by name then open detail page
     OpenArtistByName(String),
-    /// Play resolved NCM song (with real DB ID)
-    PlayResolvedNcmSong(DbSong),
     /// Toggle favorite status for banner item
     ToggleBannerFavorite(usize),
 
@@ -731,6 +730,9 @@ impl std::fmt::Debug for Message {
             }
             Self::PlaybackStateLoaded(_) => simple!("PlaybackStateLoaded"),
             Self::ScanProgressUpdate(_) => simple!("ScanProgressUpdate"),
+            Self::WatchedFoldersLoaded(v) => {
+                simple!("WatchedFoldersLoaded", "{} folders", v.len())
+            }
             Self::LoginSuccess(_) => simple!("LoginSuccess"),
             Self::UserInfoLoaded(_) => simple!("UserInfoLoaded"),
             Self::AutoLoginResult(r, retry) => simple!(
@@ -740,8 +742,6 @@ impl std::fmt::Debug for Message {
                 retry
             ),
             Self::PlayNcmSong(s) => simple!("PlayNcmSong", "id={}", s.id),
-            Self::PlayNcmUrl(s, _, _) => simple!("PlayNcmUrl", "id={}", s.id),
-            Self::PlayResolvedNcmSong(s) => simple!("PlayResolvedNcmSong", "id={}", s.id),
 
             // Navigation
             Self::Navigate(nav) => simple!("Navigate", "{:?}", nav),
@@ -784,7 +784,6 @@ impl std::fmt::Debug for Message {
             Self::RefreshCacheStats => simple!("RefreshCacheStats"),
             Self::EnforceCacheLimit => simple!("EnforceCacheLimit"),
             Self::UpdateAudioOutputDevice(_) => simple!("UpdateAudioOutputDevice"),
-            Self::UpdateAudioBufferSize(s) => simple!("UpdateAudioBufferSize", "{}", s),
             Self::UpdateProxyType(t) => simple!("UpdateProxyType", "{:?}", t),
             Self::UpdateProxyHost(_) => simple!("UpdateProxyHost"),
             Self::UpdateProxyPort(_) => simple!("UpdateProxyPort"),
@@ -803,9 +802,14 @@ impl std::fmt::Debug for Message {
 
             // Import
             Self::StartScan(_) => simple!("StartScan"),
-            Self::AddWatchedFolder(_) => simple!("AddWatchedFolder"),
-            Self::RemoveWatchedFolder(_) => simple!("RemoveWatchedFolder"),
+            Self::CancelScan => simple!("CancelScan"),
+            Self::ImportedPlaylistCreated(result) => {
+                simple!("ImportedPlaylistCreated", "success={}", result.is_ok())
+            }
             Self::WatcherEvent(_) => simple!("WatcherEvent"),
+            Self::WatchedFolderSyncCompleted(id) => {
+                simple!("WatchedFolderSyncCompleted", "{:?}", id)
+            }
             Self::ShowInfoToast(_) => simple!("ShowInfoToast"),
             Self::ShowSuccessToast(_) => simple!("ShowSuccessToast"),
             Self::ShowWarningToast(_) => simple!("ShowWarningToast"),
@@ -833,6 +837,9 @@ impl std::fmt::Debug for Message {
             Self::CloseEditDialog => simple!("CloseEditDialog"),
             Self::EditPlaylistNameChanged(_) => simple!("EditPlaylistNameChanged"),
             Self::EditPlaylistDescriptionChanged(_) => simple!("EditPlaylistDescriptionChanged"),
+            Self::EditPlaylistWatchEnabledChanged(enabled) => {
+                simple!("EditPlaylistWatchEnabledChanged", "{}", enabled)
+            }
             Self::PickCoverImage => simple!("PickCoverImage"),
             Self::CoverImagePicked(_) => simple!("CoverImagePicked"),
             Self::SavePlaylistEdits => simple!("SavePlaylistEdits"),
@@ -928,7 +935,6 @@ impl std::fmt::Debug for Message {
             Self::MprisCommand(c) => simple!("MprisCommand", "{:?}", c),
             Self::MprisStartedWithHandle(_, _) => simple!("MprisStartedWithHandle"),
             Self::ShowWindow => simple!("ShowWindow"),
-            Self::FocusWindow => simple!("FocusWindow"),
             Self::ShowOrFocusWindow => simple!("ShowOrFocusWindow"),
             Self::ToggleWindow => simple!("ToggleWindow"),
             Self::WindowShown => simple!("WindowShown"),

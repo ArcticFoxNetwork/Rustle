@@ -10,7 +10,7 @@ use std::time::Duration;
 use crate::api::{BannersInfo, NcmClient, SongInfo, SongList, TopList};
 use crate::app::SettingsSection;
 use crate::audio::{AudioAnalysisData, AudioProcessingChain, PlaybackInfo, PlaybackStatus};
-use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong};
+use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong, DbWatchedFolder};
 use crate::features::import::{CoverCache, FolderWatcher, ScanHandle, ScanProgress, ScanState};
 use crate::i18n::Locale;
 use crate::platform::media_controls::{MediaCommand, MediaHandle};
@@ -467,7 +467,7 @@ pub struct LibraryState {
     pub scan_handle: Option<ScanHandle>,
     pub scan_progress: Option<ScanProgress>,
     pub folder_watcher: Option<FolderWatcher>,
-    pub watched_folders: Vec<PathBuf>,
+    pub watched_folders: Vec<DbWatchedFolder>,
 }
 
 impl Default for LibraryState {
@@ -798,6 +798,9 @@ impl UiState {
                 edit_name: String::new(),
                 edit_description: String::new(),
                 edit_cover: None,
+                edit_watch_enabled: false,
+                edit_watch_available: false,
+                edit_watch_path: None,
                 edit_animation: Default::default(),
                 delete_pending_id: None,
                 delete_animation: Default::default(),
@@ -966,6 +969,9 @@ pub struct DialogState {
     pub edit_name: String,
     pub edit_description: String,
     pub edit_cover: Option<String>,
+    pub edit_watch_enabled: bool,
+    pub edit_watch_available: bool,
+    pub edit_watch_path: Option<String>,
     pub edit_animation: SingleHoverAnimation,
 
     // Delete

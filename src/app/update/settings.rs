@@ -314,11 +314,6 @@ impl App {
                 self.switch_audio_output_device(device.clone());
                 Some(Task::perform(async { Message::SaveSettings }, |m| m))
             }
-            Message::UpdateAudioBufferSize(size) => {
-                self.core.settings.system.audio_buffer_size = *size;
-                tracing::info!("Audio buffer size changed to: {}", size);
-                Some(Task::perform(async { Message::SaveSettings }, |m| m))
-            }
             Message::UpdateProxyType(proxy_type) => {
                 self.core.settings.network.proxy_type = *proxy_type;
                 tracing::info!("Proxy type changed to: {:?}", proxy_type);

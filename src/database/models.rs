@@ -41,6 +41,8 @@ pub struct DbSong {
     pub last_played: Option<i64>,
     /// Last modified timestamp
     pub last_modified: i64,
+    /// Whether the local file is currently unavailable
+    pub is_missing: bool,
     /// Created timestamp
     pub created_at: i64,
 }
@@ -64,29 +66,6 @@ pub struct DbPlaylist {
     pub updated_at: i64,
 }
 
-/// Junction table for playlist songs with ordering
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
-pub struct DbPlaylistSong {
-    pub id: i64,
-    pub playlist_id: i64,
-    pub song_id: i64,
-    /// Position in playlist (for ordering)
-    pub position: i64,
-    /// When added to playlist
-    pub added_at: i64,
-}
-
-/// Current playback queue item
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
-pub struct DbQueueItem {
-    pub id: i64,
-    pub song_id: i64,
-    /// Position in queue
-    pub position: i64,
-    /// Source playlist id (if from a playlist)
-    pub source_playlist_id: Option<i64>,
-}
-
 /// Playback state for resuming
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct DbPlaybackState {
@@ -106,19 +85,6 @@ pub struct DbPlaybackState {
     pub repeat_mode: i64,
     /// Last updated timestamp
     pub updated_at: i64,
-}
-
-/// Play history entry
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
-pub struct DbPlayHistory {
-    pub id: i64,
-    pub song_id: i64,
-    /// When played
-    pub played_at: i64,
-    /// How long listened (seconds)
-    pub listened_secs: i64,
-    /// Did user complete the song
-    pub completed: bool,
 }
 
 // ============ Input structs for creating new records ============
@@ -146,6 +112,7 @@ pub struct NewSong {
 pub struct DbWatchedFolder {
     pub id: i64,
     pub path: String,
+    pub playlist_id: Option<i64>,
     pub enabled: bool,
     pub last_scanned: Option<i64>,
     pub created_at: i64,
@@ -155,6 +122,8 @@ pub struct DbWatchedFolder {
 #[derive(Debug, Clone)]
 pub struct NewWatchedFolder {
     pub path: String,
+    pub playlist_id: Option<i64>,
+    pub enabled: bool,
 }
 
 /// Input for creating a new playlist
@@ -187,6 +156,7 @@ pub struct DbPlaylistSongWithDate {
     pub play_count: i64,
     pub last_played: Option<i64>,
     pub last_modified: i64,
+    pub is_missing: bool,
     pub created_at: i64,
     // Playlist-specific field
     pub added_at: i64,

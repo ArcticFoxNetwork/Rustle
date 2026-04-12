@@ -402,6 +402,9 @@ impl App {
                     &self.ui.dialogs.edit_name,
                     &self.ui.dialogs.edit_description,
                     self.ui.dialogs.edit_cover.as_deref(),
+                    self.ui.dialogs.edit_watch_available,
+                    self.ui.dialogs.edit_watch_enabled,
+                    self.ui.dialogs.edit_watch_path.as_deref(),
                     dialog_progress,
                     self.core.locale,
                 )

@@ -7,7 +7,9 @@ use iced::Task;
 
 use crate::app::Message;
 use crate::audio::chain::AudioProcessingChain;
-use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong, NewPlaylist};
+use crate::database::{
+    Database, DbPlaybackState, DbPlaylist, DbSong, DbWatchedFolder, NewPlaylist,
+};
 use crate::features::PlayMode;
 use crate::features::import::{CoverCache, default_cache_dir};
 use crate::platform::media_controls::{MediaCommand, MediaHandle, start_media_controls};
@@ -101,11 +103,16 @@ pub async fn load_queue(db: Arc<Database>) -> Vec<DbSong> {
     db.get_queue().await.unwrap_or_default()
 }
 
-/// Validate all songs in database and remove entries for missing files
-/// Returns the number of invalid songs removed
+/// Load all watched local library folders from database.
+pub async fn load_watched_folders(db: Arc<Database>) -> Vec<DbWatchedFolder> {
+    db.get_all_watched_folders().await.unwrap_or_default()
+}
+
+/// Validate all songs in database and mark unavailable local files as missing.
+/// Returns the number of songs whose availability state changed.
 /// NCM songs (file_path starts with "ncm://") are skipped as they are cloud songs
 pub async fn validate_songs(db: Arc<Database>) -> u32 {
-    let songs = match db.get_all_songs().await {
+    let songs = match db.get_all_songs_including_missing().await {
         Ok(songs) => songs,
         Err(e) => {
             tracing::error!("Failed to load songs for validation: {}", e);
@@ -113,7 +120,7 @@ pub async fn validate_songs(db: Arc<Database>) -> u32 {
         }
     };
 
-    let mut removed_count = 0u32;
+    let mut changed_count = 0u32;
 
     for song in songs {
         // Skip NCM cloud songs - they don't have local files
@@ -123,20 +130,29 @@ pub async fn validate_songs(db: Arc<Database>) -> u32 {
 
         let path = std::path::Path::new(&song.file_path);
         if !path.exists() {
-            tracing::info!("Removing invalid song (file not found): {}", song.file_path);
-            if let Err(e) = db.delete_song(song.id).await {
-                tracing::error!("Failed to delete invalid song {}: {}", song.id, e);
+            if !song.is_missing {
+                tracing::info!("Marking song missing (file not found): {}", song.file_path);
+                if let Err(e) = db.mark_song_missing_by_path(&song.file_path).await {
+                    tracing::error!("Failed to mark song missing {}: {}", song.id, e);
+                } else {
+                    changed_count += 1;
+                }
+            }
+        } else if song.is_missing {
+            tracing::info!("Marking song available again: {}", song.file_path);
+            if let Err(e) = db.mark_song_available_by_path(&song.file_path).await {
+                tracing::error!("Failed to mark song available {}: {}", song.id, e);
             } else {
-                removed_count += 1;
+                changed_count += 1;
             }
         }
     }
 
-    if removed_count > 0 {
-        tracing::info!("Removed {} invalid songs from database", removed_count);
+    if changed_count > 0 {
+        tracing::info!("Updated availability for {} songs", changed_count);
     }
 
-    removed_count
+    changed_count
 }
 
 /// Initialize cover cache
@@ -304,6 +320,27 @@ pub async fn create_playlist_from_import(
     Ok(playlist_id)
 }
 
+/// Sync an existing local-library playlist to the latest import scan.
+pub async fn sync_playlist_from_import(
+    db: Arc<Database>,
+    playlist_id: i64,
+    name: String,
+    cover_path: Option<String>,
+    scanned_paths: Vec<std::path::PathBuf>,
+) -> anyhow::Result<i64> {
+    db.update_playlist_full(playlist_id, &name, None, cover_path.as_deref())
+        .await?;
+
+    for path in scanned_paths {
+        let path_str = path.to_string_lossy().to_string();
+        if let Some(song) = db.get_song_by_path(&path_str).await? {
+            db.add_song_to_playlist(playlist_id, song.id).await?;
+        }
+    }
+
+    Ok(playlist_id)
+}
+
 /// Load playlist view data from database
 pub async fn load_playlist_view(
     db: Arc<Database>,
@@ -311,6 +348,11 @@ pub async fn load_playlist_view(
 ) -> Option<pages::PlaylistView> {
     // Get playlist info
     let playlist = db.get_playlist(playlist_id).await.ok()??;
+    let watched_folder = db
+        .get_watched_folder_by_playlist(playlist_id)
+        .await
+        .ok()
+        .flatten();
 
     // Get songs in playlist with added_at date
     let songs = db
@@ -390,6 +432,8 @@ pub async fn load_playlist_view(
         palette,
         is_local: true,
         is_subscribed: false,
+        watched_folder_path: watched_folder.as_ref().map(|folder| folder.path.clone()),
+        watch_enabled: watched_folder.as_ref().map(|folder| folder.enabled).unwrap_or(false),
     })
 }
 

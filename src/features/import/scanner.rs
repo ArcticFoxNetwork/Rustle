@@ -3,7 +3,6 @@
 //! Scans directories for audio files, extracts metadata in parallel,
 //! and reports progress via channels.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -140,8 +139,8 @@ fn check_external_cover(audio_path: &Path) -> (Option<String>, Option<PathBuf>) 
     (None, None)
 }
 
-/// Process a single audio file
-fn process_file(
+/// Process a single audio file.
+pub fn scan_audio_file(
     path: &Path,
     config: &ScanConfig,
     cover_cache: Option<&CoverCache>,
@@ -244,14 +243,6 @@ pub async fn scan_and_import(
         return Ok(());
     }
 
-    // Get existing file paths from database for deduplication
-    let existing_paths: HashSet<String> = db
-        .get_all_songs()
-        .await?
-        .into_iter()
-        .map(|s| s.file_path)
-        .collect();
-
     // Process files in parallel batches
     let batch_size = 100;
     for batch in files.chunks(batch_size) {
@@ -263,14 +254,13 @@ pub async fn scan_and_import(
         let batch: Vec<PathBuf> = batch.to_vec();
         let config = config.clone();
         let cover_cache = cover_cache.clone();
-        let existing_paths = existing_paths.clone();
 
         // Process batch in parallel using rayon
         let results: Vec<(PathBuf, Result<ScanResult>)> = tokio::task::spawn_blocking(move || {
             batch
                 .par_iter()
                 .map(|path| {
-                    let result = process_file(path, &config, Some(&cover_cache));
+                    let result = scan_audio_file(path, &config, Some(&cover_cache));
                     (path.clone(), result)
                 })
                 .collect()
@@ -292,17 +282,11 @@ pub async fn scan_and_import(
                 .unwrap_or("unknown")
                 .to_string();
 
-            // Check if already exists
-            if existing_paths.contains(&path_str) {
-                state.increment_skipped();
-                let _ = progress_tx.send(ScanProgress::Skipped {
-                    current,
-                    total: total_files,
-                    file_name,
-                    reason: SkipReason::AlreadyExists,
-                });
-                continue;
-            }
+            let _ = progress_tx.send(ScanProgress::Processing {
+                current,
+                total: total_files,
+                file_name: file_name.clone(),
+            });
 
             match result {
                 Ok(scan_result) => {
@@ -327,7 +311,7 @@ pub async fn scan_and_import(
                         normalization_gain: scan_result.normalization_gain,
                     };
 
-                    match db.insert_song(new_song).await {
+                    match db.upsert_local_song(new_song).await {
                         Ok(_) => {
                             state.increment_imported();
                             let _ = progress_tx.send(ScanProgress::Imported {
@@ -376,12 +360,4 @@ pub async fn scan_and_import(
     });
 
     Ok(())
-}
-
-/// Quick scan to count files without importing
-pub async fn count_audio_files(root: PathBuf, config: ScanConfig) -> Result<u64> {
-    let count =
-        tokio::task::spawn_blocking(move || discover_audio_files(&root, &config).len() as u64)
-            .await?;
-    Ok(count)
 }

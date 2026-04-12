@@ -241,6 +241,11 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::EditPlaylistNamePlaceholder, "输入歌单名称...");
     m.insert(Key::EditPlaylistDesc, "歌单描述");
     m.insert(Key::EditPlaylistDescPlaceholder, "输入歌单描述（可选）...");
+    m.insert(Key::EditPlaylistWatchLibrary, "持续监听本地媒体库");
+    m.insert(
+        Key::EditPlaylistWatchLibraryDesc,
+        "监听下面这个文件夹的变化，并自动同步到这个本地歌单。",
+    );
 
     // Exit Dialog
     m.insert(Key::ExitDialogTitle, "退出应用");

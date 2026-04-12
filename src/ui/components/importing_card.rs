@@ -3,6 +3,8 @@
 //! Shows a playlist card during import with circular progress indicator.
 //! This is a business-specific component that uses the generic ProgressRing widget.
 
+use std::path::PathBuf;
+
 use iced::widget::{Space, button, column, container, row, text};
 use iced::{Alignment, Element, Fill, Padding};
 
@@ -25,12 +27,18 @@ pub struct ImportingPlaylist {
     pub total: u64,
     /// Is import complete
     pub completed: bool,
+    /// Whether cancellation has been requested
+    pub cancelling: bool,
     /// Database ID of created playlist (set after completion)
     pub playlist_id: Option<i64>,
+    /// Root folder being imported into the local library playlist
+    pub root_path: PathBuf,
+    /// Optional in-progress status message
+    pub status_text: Option<String>,
 }
 
 impl ImportingPlaylist {
-    pub fn new(name: String) -> Self {
+    pub fn new(name: String, root_path: PathBuf) -> Self {
         Self {
             name,
             cover_path: None,
@@ -38,7 +46,10 @@ impl ImportingPlaylist {
             current: 0,
             total: 0,
             completed: false,
+            cancelling: false,
             playlist_id: None,
+            root_path,
+            status_text: None,
         }
     }
 
@@ -61,10 +72,17 @@ impl ImportingPlaylist {
     pub fn complete(&mut self) {
         self.completed = true;
         self.progress = 1.0;
+        self.cancelling = false;
+        self.status_text = Some("导入完成".to_string());
     }
-
-    pub fn is_in_progress(&self) -> bool {
-        !self.completed && self.total > 0
+    
+    pub fn begin_cancelling(&mut self) {
+        self.cancelling = true;
+        self.status_text = Some("正在取消...".to_string());
+    }
+    
+    pub fn set_status(&mut self, status: impl Into<String>) {
+        self.status_text = Some(status.into());
     }
 }
 
@@ -118,6 +136,10 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
     // Playlist info
     let status_text = if playlist.completed {
         "导入完成".to_string()
+    } else if playlist.cancelling {
+        "正在取消...".to_string()
+    } else if let Some(status) = &playlist.status_text {
+        status.clone()
     } else if playlist.total > 0 {
         format!("{}/{}", playlist.current, playlist.total)
     } else {
@@ -141,16 +163,46 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
     ]
     .spacing(2);
 
-    let content = row![progress_indicator, Space::new().width(12), info,]
+    let trailing: Element<'static, Message> = if !playlist.completed {
+        if playlist.cancelling {
+            text("取消中")
+                .size(theme::TEXT_SIZE_CAPTION)
+                .color(theme::TEXT_MUTED)
+                .into()
+        } else {
+            button(
+                text("取消")
+                    .size(theme::TEXT_SIZE_CAPTION)
+                    .color(theme::TEXT_MUTED),
+            )
+            .style(theme::text_button)
+            .on_press(Message::CancelScan)
+            .into()
+        }
+    } else {
+        Space::new().width(1).into()
+    };
+
+    let content = row![
+        progress_indicator,
+        Space::new().width(12),
+        info,
+        Space::new().width(Fill),
+        trailing,
+    ]
         .align_y(Alignment::Center)
         .padding(Padding::new(10.0).left(14.0).right(14.0));
 
     // Make it a button only if completed
     if playlist.completed {
+        let on_press = playlist
+            .playlist_id
+            .map(Message::OpenPlaylist)
+            .unwrap_or(Message::PlayHero);
         button(content)
             .width(Fill)
             .style(theme::nav_item)
-            .on_press(Message::PlayHero)
+            .on_press(on_press)
             .into()
     } else {
         // Non-clickable during import

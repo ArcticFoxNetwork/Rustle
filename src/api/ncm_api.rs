@@ -9,16 +9,13 @@ use anyhow::{Result, anyhow};
 use encrypt::Crypto;
 pub use model::*;
 use parking_lot::RwLock;
-use regex::Regex;
 use reqwest::{Client, header};
 use std::fmt;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::{collections::HashMap, path::PathBuf, time::Duration};
 
 // Re-export cookie jar for compatibility
 pub use reqwest::cookie::Jar as CookieJar;
-
-static _CSRF: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"_csrf=(?P<csrf>[^(;|$)]+)").unwrap());
 
 static BASE_URL: &str = "https://music.163.com";
 
@@ -68,7 +65,6 @@ enum CryptoApi {
 
 enum Method {
     Post,
-    Get,
 }
 
 impl Default for MusicApi {
@@ -142,15 +138,6 @@ impl MusicApi {
         *self.csrf.write() = csrf;
     }
 
-    /// 从 cookie 字符串提取 CSRF token
-    pub fn set_csrf_from_cookies(&self, cookies_str: &str) {
-        if let Some(caps) = _CSRF.captures(cookies_str) {
-            if let Some(csrf) = caps.name("csrf") {
-                *self.csrf.write() = csrf.as_str().to_string();
-            }
-        }
-    }
-
     async fn request(
         &self,
         method: Method,
@@ -208,18 +195,6 @@ impl MusicApi {
                     .header(header::REFERER, "https://music.163.com")
                     .header(header::USER_AGENT, user_agent)
                     .body(body)
-                    .send()
-                    .await
-                    .map_err(|e| anyhow!("Request failed: {}", e))?;
-                response
-                    .text()
-                    .await
-                    .map_err(|e| anyhow!("Failed to read response: {}", e))
-            }
-            Method::Get => {
-                let response = self
-                    .client
-                    .get(&url)
                     .send()
                     .await
                     .map_err(|e| anyhow!("Request failed: {}", e))?;
@@ -585,21 +560,6 @@ impl MusicApi {
             let url = url.into();
             let image_url = format!("{}?param={}y{}", url, width, height);
             let response = self.client.get(&image_url).send().await?;
-            if response.status().is_success() {
-                let bytes = response.bytes().await?;
-                std::fs::write(&path, bytes)?;
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn download_file<I>(&self, url: I, path: PathBuf) -> Result<()>
-    where
-        I: Into<String>,
-    {
-        if !path.exists() {
-            let url = url.into();
-            let response = self.client.get(&url).send().await?;
             if response.status().is_success() {
                 let bytes = response.bytes().await?;
                 std::fs::write(&path, bytes)?;
