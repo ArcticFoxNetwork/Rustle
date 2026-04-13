@@ -81,7 +81,12 @@ impl FolderWatcher {
         let path = path
             .canonicalize()
             .ok()
-            .or_else(|| self.watched_paths.iter().find(|candidate| candidate.as_path() == path).cloned())
+            .or_else(|| {
+                self.watched_paths
+                    .iter()
+                    .find(|candidate| candidate.as_path() == path)
+                    .cloned()
+            })
             .unwrap_or_else(|| path.to_path_buf());
 
         if !self.watched_paths.contains(&path) {
@@ -100,7 +105,6 @@ impl FolderWatcher {
     pub fn watched_paths(&self) -> Vec<PathBuf> {
         self.watched_paths.iter().cloned().collect()
     }
-
 }
 
 /// Process a notify event and convert to WatchEvent if relevant

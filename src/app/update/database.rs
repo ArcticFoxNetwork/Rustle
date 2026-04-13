@@ -244,7 +244,10 @@ impl App {
                     // Load data (will run in parallel, but validation is fast)
                     Task::perform(load_songs(db.clone()), Message::SongsLoaded),
                     Task::perform(load_playlists(db.clone()), Message::PlaylistsLoaded),
-                    Task::perform(load_watched_folders(db.clone()), Message::WatchedFoldersLoaded),
+                    Task::perform(
+                        load_watched_folders(db.clone()),
+                        Message::WatchedFoldersLoaded,
+                    ),
                     Task::perform(load_playback_state(db.clone()), |state| match state {
                         Some(state) => Message::PlaybackStateLoaded(state),
                         None => Message::DatabaseError("No playback state".into()),

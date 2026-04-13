@@ -433,7 +433,10 @@ pub async fn load_playlist_view(
         is_local: true,
         is_subscribed: false,
         watched_folder_path: watched_folder.as_ref().map(|folder| folder.path.clone()),
-        watch_enabled: watched_folder.as_ref().map(|folder| folder.enabled).unwrap_or(false),
+        watch_enabled: watched_folder
+            .as_ref()
+            .map(|folder| folder.enabled)
+            .unwrap_or(false),
     })
 }
 

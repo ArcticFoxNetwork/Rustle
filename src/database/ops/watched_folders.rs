@@ -45,10 +45,7 @@ pub async fn get_watched_folder_by_path(
 }
 
 /// Insert or update a watched folder binding.
-pub async fn upsert_watched_folder(
-    pool: &Pool<Sqlite>,
-    folder: NewWatchedFolder,
-) -> Result<i64> {
+pub async fn upsert_watched_folder(pool: &Pool<Sqlite>, folder: NewWatchedFolder) -> Result<i64> {
     let now = current_timestamp();
 
     let result = sqlx::query(

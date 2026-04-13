@@ -75,12 +75,12 @@ impl ImportingPlaylist {
         self.cancelling = false;
         self.status_text = Some("导入完成".to_string());
     }
-    
+
     pub fn begin_cancelling(&mut self) {
         self.cancelling = true;
         self.status_text = Some("正在取消...".to_string());
     }
-    
+
     pub fn set_status(&mut self, status: impl Into<String>) {
         self.status_text = Some(status.into());
     }
@@ -190,8 +190,8 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
         Space::new().width(Fill),
         trailing,
     ]
-        .align_y(Alignment::Center)
-        .padding(Padding::new(10.0).left(14.0).right(14.0));
+    .align_y(Alignment::Center)
+    .padding(Padding::new(10.0).left(14.0).right(14.0));
 
     // Make it a button only if completed
     if playlist.completed {

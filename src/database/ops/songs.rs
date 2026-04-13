@@ -130,12 +130,14 @@ pub async fn mark_song_available_by_path(pool: &Pool<Sqlite>, path: &str) -> Res
 /// Update song file path (for handling file renames)
 pub async fn update_song_path(pool: &Pool<Sqlite>, old_path: &str, new_path: &str) -> Result<()> {
     let now = super::current_timestamp();
-    sqlx::query("UPDATE songs SET file_path = ?, last_modified = ?, is_missing = 0 WHERE file_path = ?")
-        .bind(new_path)
-        .bind(now)
-        .bind(old_path)
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "UPDATE songs SET file_path = ?, last_modified = ?, is_missing = 0 WHERE file_path = ?",
+    )
+    .bind(new_path)
+    .bind(now)
+    .bind(old_path)
+    .execute(pool)
+    .await?;
     Ok(())
 }
 

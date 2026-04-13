@@ -10,8 +10,7 @@ use iced::Task;
 
 use crate::app::helpers::{
     create_playlist_from_import, load_playlist_view, load_playlists, load_songs,
-    sync_playlist_from_import,
-    load_watched_folders,
+    load_watched_folders, sync_playlist_from_import,
 };
 use crate::app::message::Message;
 use crate::app::state::App;
@@ -63,7 +62,9 @@ async fn sync_watched_file(
     .await
     .context("Failed to join file scan task")??;
 
-    let song_id = db.upsert_local_song(build_new_song(&path, scan_result)).await?;
+    let song_id = db
+        .upsert_local_song(build_new_song(&path, scan_result))
+        .await?;
     db.add_song_to_playlist(playlist_id, song_id).await?;
     let _ = db.touch_watched_folder_scan(playlist_id).await;
     Ok(Some(playlist_id))
@@ -74,7 +75,8 @@ async fn delete_watched_file(
     playlist_id: Option<i64>,
     path: PathBuf,
 ) -> Result<Option<i64>> {
-    db.mark_song_missing_by_path(&path.to_string_lossy()).await?;
+    db.mark_song_missing_by_path(&path.to_string_lossy())
+        .await?;
     if let Some(playlist_id) = playlist_id {
         let _ = db.touch_watched_folder_scan(playlist_id).await;
     }
@@ -160,7 +162,10 @@ impl App {
                         let db_for_playlists = db.clone();
                         let db_for_watched = db.clone();
                         return Some(Task::batch([
-                            Task::perform(load_playlists(db_for_playlists), Message::PlaylistsLoaded),
+                            Task::perform(
+                                load_playlists(db_for_playlists),
+                                Message::PlaylistsLoaded,
+                            ),
                             Task::perform(
                                 load_watched_folders(db_for_watched),
                                 Message::WatchedFoldersLoaded,
@@ -185,10 +190,18 @@ impl App {
             Message::WatchedFolderSyncCompleted(playlist_id) => {
                 if let Some(db) = &self.core.db {
                     let db_for_songs = db.clone();
-                    let mut tasks = vec![Task::perform(load_songs(db_for_songs), Message::SongsLoaded)];
+                    let mut tasks = vec![Task::perform(
+                        load_songs(db_for_songs),
+                        Message::SongsLoaded,
+                    )];
 
                     if let Some(playlist_id) = playlist_id {
-                        if self.ui.playlist_page.current.as_ref().map(|playlist| playlist.id)
+                        if self
+                            .ui
+                            .playlist_page
+                            .current
+                            .as_ref()
+                            .map(|playlist| playlist.id)
                             == Some(*playlist_id)
                         {
                             let db_for_playlist = db.clone();
@@ -232,7 +245,8 @@ impl App {
                 .and_then(|n| n.to_str())
                 .unwrap_or("导入的歌单")
                 .to_string();
-            self.ui.importing_playlist = Some(ImportingPlaylist::new(folder_name, root_path.clone()));
+            self.ui.importing_playlist =
+                Some(ImportingPlaylist::new(folder_name, root_path.clone()));
 
             let db = db.clone();
             let cache = cache.clone();
