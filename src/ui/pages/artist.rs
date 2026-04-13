@@ -116,10 +116,7 @@ fn build_header(artist: &PlaylistView) -> Element<'static, Message> {
         .style(|theme| iced::widget::text::Style {
             color: Some(theme::text_primary(theme)),
         })
-        .font(iced::Font {
-            weight: BOLD_WEIGHT,
-            ..Default::default()
-        });
+        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     let stats_text = artist
         .profile_stats
@@ -398,10 +395,7 @@ fn circular_avatar(
             .style(move |_theme| iced::widget::text::Style {
                 color: Some(fallback_text_color),
             })
-            .font(iced::Font {
-                weight: BOLD_WEIGHT,
-                ..Default::default()
-            }),
+            .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
     )
     .width(Length::Fixed(size))
     .height(Length::Fixed(size))

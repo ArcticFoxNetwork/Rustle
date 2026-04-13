@@ -124,10 +124,7 @@ pub fn view(
                     .style(|theme| text::Style {
                         color: Some(theme::text_primary(theme)),
                     })
-                    .font(iced::Font {
-                        weight: MEDIUM_WEIGHT,
-                        ..Default::default()
-                    })
+                    .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT))
                     .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
             )
             .max_width(TEXT_MAX_WIDTH)

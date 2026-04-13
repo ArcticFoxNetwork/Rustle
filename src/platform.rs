@@ -17,6 +17,8 @@ pub mod tray;
 pub mod window;
 
 pub fn init() {
+    theme::configure_iced_font_system();
+
     #[cfg(target_os = "windows")]
     window::initialize_process();
 }

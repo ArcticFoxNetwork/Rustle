@@ -25,10 +25,7 @@ pub fn view(
     let title = text(locale.get(Key::ExitDialogTitle).to_string())
         .size(theme::TEXT_SIZE_SUBTITLE)
         .color(theme::TEXT_PRIMARY)
-        .font(iced::Font {
-            weight: BOLD_WEIGHT,
-            ..Default::default()
-        });
+        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     let message = text(locale.get(Key::ExitDialogMessage).to_string())
         .size(theme::TEXT_SIZE_BODY)

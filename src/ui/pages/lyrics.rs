@@ -293,10 +293,7 @@ fn build_left_panel<'a>(
     let title = text(&song.title)
         .size(theme::TEXT_SIZE_TITLE_LARGE)
         .color(theme::TEXT_PRIMARY)
-        .font(iced::Font {
-            weight: BOLD_WEIGHT,
-            ..Default::default()
-        });
+        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     // Artist name
     let artist_action = artist_id
@@ -625,10 +622,7 @@ fn build_simple_lyrics_panel(
                 let main_text = text(line_text)
                     .size(size)
                     .color(Color::from_rgba(1.0, 1.0, 1.0, opacity))
-                    .font(iced::Font {
-                        weight,
-                        ..Default::default()
-                    });
+                    .font(iced::Font::DEFAULT.weight(weight));
 
                 if let Some(trans) = translated {
                     column![

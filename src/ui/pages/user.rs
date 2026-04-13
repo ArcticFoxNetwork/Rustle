@@ -73,10 +73,7 @@ fn build_header(user: &PlaylistView) -> Element<'static, Message> {
         .style(|theme| iced::widget::text::Style {
             color: Some(theme::text_primary(theme)),
         })
-        .font(iced::Font {
-            weight: BOLD_WEIGHT,
-            ..Default::default()
-        });
+        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     let stats = text(
         user.profile_stats
@@ -140,10 +137,7 @@ fn build_playlist_grid<'a>(user: &PlaylistView, content_width: f32) -> Element<'
         .style(|theme| iced::widget::text::Style {
             color: Some(theme::text_primary(theme)),
         })
-        .font(iced::Font {
-            weight: BOLD_WEIGHT,
-            ..Default::default()
-        });
+        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     let mut rows = column![title, Space::new().height(20)]
         .spacing(18)
@@ -286,10 +280,7 @@ fn circular_avatar(
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_primary(theme)),
             })
-            .font(iced::Font {
-                weight: BOLD_WEIGHT,
-                ..Default::default()
-            }),
+            .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
     )
     .width(Length::Fixed(size))
     .height(Length::Fixed(size))

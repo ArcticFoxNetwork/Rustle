@@ -43,10 +43,7 @@ pub fn view<'a>(
     let title = text(locale.get(Key::EditPlaylistTitle).to_string())
         .size(theme::TEXT_SIZE_TITLE)
         .color(theme::TEXT_PRIMARY)
-        .font(iced::Font {
-            weight: BOLD_WEIGHT,
-            ..Default::default()
-        });
+        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     // Cover image section
     let cover_content: Element<'a, Message> = if let Some(path) = cover_path {
