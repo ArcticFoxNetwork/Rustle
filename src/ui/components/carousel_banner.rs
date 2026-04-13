@@ -190,10 +190,7 @@ pub fn view<'a>(
             text("Play")
                 .size(theme::TEXT_SIZE_BODY)
                 .color(Color::BLACK)
-                .font(iced::Font {
-                    weight: BOLD_WEIGHT,
-                    ..Default::default()
-                }),
+                .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
         ]
         .spacing(8)
         .align_y(Alignment::Center),
@@ -329,10 +326,7 @@ fn view_placeholder(locale: Locale) -> Element<'static, Message> {
     let overlay_content = column![
         text(hero_title)
             .size(theme::TEXT_SIZE_HERO)
-            .font(iced::Font {
-                weight: BOLD_WEIGHT,
-                ..Default::default()
-            })
+            .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
             .style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
             }),

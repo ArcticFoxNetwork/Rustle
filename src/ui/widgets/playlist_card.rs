@@ -110,10 +110,7 @@ pub fn view<'a, Message: Clone + 'a>(
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         })
-        .font(iced::Font {
-            weight: MEDIUM_WEIGHT,
-            ..Default::default()
-        });
+        .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT));
 
     // Author name
     let author_text = text(truncate_text(author, 25))
@@ -200,10 +197,7 @@ pub fn view_with_custom_cover<'a, Message: Clone + 'a>(
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         })
-        .font(iced::Font {
-            weight: MEDIUM_WEIGHT,
-            ..Default::default()
-        });
+        .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT));
 
     // Author name
     let author_text = text(truncate_text(author, 25))

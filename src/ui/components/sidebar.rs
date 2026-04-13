@@ -94,10 +94,7 @@ pub fn view(
             .style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
             })
-            .font(iced::Font {
-                weight: BOLD_WEIGHT,
-                ..Default::default()
-            })
+            .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
     ]
     .align_y(Alignment::Center)
     .padding(Padding::new(24.0).bottom(34.0));
@@ -213,10 +210,7 @@ pub fn view(
                             .style(|theme| text::Style {
                                 color: Some(theme::text_primary(theme))
                             })
-                            .font(iced::Font {
-                                weight: MEDIUM_WEIGHT,
-                                ..Default::default()
-                            }),
+                            .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT)),
                         Space::new().height(2),
                         vip_text,
                     ],
@@ -266,10 +260,7 @@ pub fn view(
                             .style(|theme| text::Style {
                                 color: Some(theme::text_primary(theme))
                             })
-                            .font(iced::Font {
-                                weight: MEDIUM_WEIGHT,
-                                ..Default::default()
-                            }),
+                            .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT)),
                         Space::new().height(2),
                         text(click_to_login)
                             .size(theme::TEXT_SIZE_LABEL)
@@ -321,10 +312,7 @@ pub fn view(
                         .style(|theme| text::Style {
                             color: Some(theme::text_primary(theme))
                         })
-                        .font(iced::Font {
-                            weight: MEDIUM_WEIGHT,
-                            ..Default::default()
-                        }),
+                        .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT)),
                     Space::new().height(2),
                     text(click_to_login)
                         .size(theme::TEXT_SIZE_LABEL)

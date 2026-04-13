@@ -29,10 +29,7 @@ pub fn view<'a, Message: Clone + 'a>(
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         })
-        .font(iced::Font {
-            weight: BOLD_WEIGHT,
-            ..Default::default()
-        });
+        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     let see_all_btn: Element<'a, Message> = if let Some(msg) = on_see_all {
         button(

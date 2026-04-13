@@ -8,6 +8,7 @@ use iced::{Alignment, Element, Fill, Length, Padding};
 
 use crate::app::{ContentWidthTarget, Message, SearchPageState, SearchTab};
 use crate::i18n::Locale;
+use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{theme, widgets};
 
 use crate::ui::primitives::virtual_list::VirtualList;
@@ -31,10 +32,7 @@ pub fn view<'a>(state: &'a SearchPageState, locale: Locale) -> Element<'a, Messa
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_primary(theme)),
                 })
-                .font(iced::Font {
-                    weight: iced::font::Weight::Bold,
-                    ..Default::default()
-                }),
+                .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
             text(" 的相关搜索")
                 .size(theme::TEXT_SIZE_TITLE_LARGE)
                 .style(|theme| iced::widget::text::Style {

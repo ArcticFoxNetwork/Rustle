@@ -410,10 +410,7 @@ fn build_song_row(
                     theme::text_primary(theme)
                 })
             })
-            .font(iced::Font {
-                weight: BOLD_WEIGHT,
-                ..Default::default()
-            }),
+            .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
         text(display_artist)
             .size(theme::TEXT_SIZE_LABEL)
             .style(move |theme| text::Style {

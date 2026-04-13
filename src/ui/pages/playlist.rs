@@ -244,11 +244,7 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         })
-        .font(iced::Font {
-            family: iced::font::Family::SansSerif,
-            weight: BOLD_WEIGHT,
-            ..Default::default()
-        });
+        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     // Description (slightly muted but readable)
     let description = if let Some(desc) = &playlist.description {
@@ -298,10 +294,7 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         })
-        .font(iced::Font {
-            weight: BOLD_WEIGHT,
-            ..Default::default()
-        });
+        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     let owner_action =
         if playlist.kind == DetailPageKind::Playlist && !is_local && playlist.creator_id != 0 {
@@ -784,10 +777,7 @@ fn build_owner_avatar_placeholder(owner_name: &str) -> Element<'static, Message>
         text(first_char.to_string())
             .size(theme::TEXT_SIZE_MICRO)
             .color(theme::BLACK)
-            .font(iced::Font {
-                weight: BOLD_WEIGHT,
-                ..Default::default()
-            }),
+            .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
     )
     .width(24)
     .height(24)

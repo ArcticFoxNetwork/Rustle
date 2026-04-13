@@ -10,6 +10,7 @@ use iced::{Color, Element, Fill};
 use crate::api::SongList;
 use crate::app::Message;
 use crate::ui::animation::HoverAnimations;
+use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::widgets::playlist_card;
 use crate::ui::{theme, widgets};
 
@@ -25,10 +26,7 @@ fn daily_recommend_cover<'a>(hover_progress: f32) -> Element<'a, Message> {
         text(day)
             .size(theme::TEXT_SIZE_DISPLAY)
             .color(Color::WHITE)
-            .font(iced::Font {
-                weight: iced::font::Weight::Bold,
-                ..Default::default()
-            }),
+            .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
     )
     .width(CARD_WIDTH)
     .height(CARD_WIDTH)

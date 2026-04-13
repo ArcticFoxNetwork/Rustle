@@ -23,10 +23,7 @@ pub fn view(playlist_name: &str, animation_progress: f32, locale: Locale) -> Ele
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         })
-        .font(iced::Font {
-            weight: BOLD_WEIGHT,
-            ..Default::default()
-        });
+        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     let message_text = format!("确定要删除歌单「{}」吗？此操作无法撤销。", playlist_name);
     let message = text(message_text)

@@ -27,10 +27,7 @@ pub fn view<'a>(
     let header = row![
         text(title)
             .size(theme::TEXT_SIZE_TITLE)
-            .font(iced::Font {
-                weight: BOLD_WEIGHT,
-                ..Default::default()
-            })
+            .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
             .style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
             }),
@@ -99,10 +96,7 @@ fn view_song_item<'a>(
     // Song info
     let song_name = text(&song.name)
         .size(theme::TEXT_SIZE_BODY)
-        .font(iced::Font {
-            weight: MEDIUM_WEIGHT,
-            ..Default::default()
-        })
+        .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT))
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         });
@@ -188,10 +182,7 @@ fn view_song_item<'a>(
                 .style(move |theme| text::Style {
                     color: Some(theme::rank_color(rank, theme)),
                 })
-                .font(iced::Font {
-                    weight: BOLD_WEIGHT,
-                    ..Default::default()
-                }),
+                .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
         )
         .width(48)
         .center_x(48)

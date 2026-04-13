@@ -82,10 +82,7 @@ fn view_qr_login<'a>(
 ) -> Element<'a, Message> {
     let title = text(locale.get(Key::LoginScanQr).to_string())
         .size(theme::TEXT_SIZE_TITLE)
-        .font(iced::Font {
-            weight: BOLD_WEIGHT,
-            ..Default::default()
-        })
+        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         });
@@ -173,10 +170,7 @@ fn view_qr_login<'a>(
 fn view_logged_in(user: &UserInfo, locale: Locale) -> Element<'_, Message> {
     let title = text(locale.get(Key::LoginLoggedIn).to_string())
         .size(theme::TEXT_SIZE_TITLE)
-        .font(iced::Font {
-            weight: BOLD_WEIGHT,
-            ..Default::default()
-        })
+        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         });
