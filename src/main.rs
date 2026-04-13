@@ -27,7 +27,6 @@ fn main() -> iced::Result {
             default_text_size: iced::Pixels(17.0),
             ..Default::default()
         })
-        .default_font(crate::platform::theme::default_ui_font())
         .title(app::App::title)
         .theme(app::App::theme)
         .subscription(app::App::subscription)

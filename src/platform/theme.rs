@@ -30,27 +30,6 @@ pub const MEDIUM_WEIGHT: Weight = Weight::Normal;
 #[cfg(target_arch = "wasm32")]
 pub const MEDIUM_WEIGHT: Weight = Weight::Normal;
 
-/// Returns the default UI font family for the current platform.
-pub fn default_ui_font() -> iced::Font {
-    #[cfg(target_os = "windows")]
-    {
-        return iced::Font::with_family(iced::font::Family::Name("Segoe UI"));
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        return iced::Font::with_family(iced::font::Family::Name(".SF NS"));
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        return iced::Font::with_family(iced::font::Family::SansSerif);
-    }
-
-    #[allow(unreachable_code)]
-    iced::Font::DEFAULT
-}
-
 /// Configures the global `iced` font database so generic sans-serif text
 /// resolves to the intended platform UI family.
 pub fn configure_iced_font_system() {
