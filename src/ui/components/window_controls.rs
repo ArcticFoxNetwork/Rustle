@@ -2,12 +2,13 @@
 //! Positioned at top of the application with navigation on left, search in center, and controls on right
 
 use iced::border::Radius;
-use iced::widget::{Space, button, container, row, svg, text_input, tooltip};
+use iced::widget::{Space, button, container, row, svg, tooltip};
 use iced::{Alignment, Element, Fill, Padding};
 
 use crate::app::Message;
 use crate::i18n::{Key, Locale};
 use crate::ui::theme;
+use crate::ui::components::search_bar::{self, SearchBarStyle};
 
 /// Build the complete top bar with navigation buttons on left, search bar in center, and window controls on right
 pub fn view<'a>(
@@ -176,7 +177,7 @@ pub fn view<'a>(
     .padding(Padding::new(12.0));
 
     // Search bar (left, after nav buttons)
-    let search_bar = search_bar_view(search_query, locale);
+    let search_bar = search_bar::view(search_query, locale, SearchBarStyle::top_bar());
 
     // Complete top bar layout: nav + search on left, window controls on right
     row![
@@ -188,56 +189,6 @@ pub fn view<'a>(
     ]
     .align_y(Alignment::Center)
     .into()
-}
-
-/// Build the search bar component for the top bar
-fn search_bar_view(search_query: &str, locale: Locale) -> Element<'_, Message> {
-    let search_icon = svg(svg::Handle::from_memory(
-        crate::ui::icons::SEARCH.as_bytes(),
-    ))
-    .width(16)
-    .height(16)
-    .style(|_theme, _status| svg::Style {
-        color: Some(theme::TEXT_MUTED),
-    });
-
-    let input = text_input(locale.get(Key::SearchPlaceholder), search_query)
-        .on_input(Message::SearchChanged)
-        .on_submit(Message::SearchSubmit)
-        .padding(Padding::new(8.0).left(0.0))
-        .size(theme::TEXT_SIZE_LABEL)
-        .style(|theme, _status| iced::widget::text_input::Style {
-            background: iced::Background::Color(iced::Color::TRANSPARENT),
-            border: iced::Border::default(),
-            icon: theme::TEXT_MUTED,
-            placeholder: theme::TEXT_MUTED,
-            value: theme::text_primary(theme),
-            selection: theme::ACCENT_PINK,
-        });
-
-    let content = row![
-        Space::new().width(12),
-        search_icon,
-        Space::new().width(8),
-        input,
-        Space::new().width(12),
-    ]
-    .align_y(Alignment::Center);
-
-    container(content)
-        .width(320)
-        .style(|theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(iced::Color::from_rgba(
-                1.0, 1.0, 1.0, 0.08,
-            ))),
-            border: iced::Border {
-                radius: 20.0.into(),
-                width: 1.0,
-                color: theme::border_color(theme),
-            },
-            ..Default::default()
-        })
-        .into()
 }
 
 /// Navigation group container style (rounded border)

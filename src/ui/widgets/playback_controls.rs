@@ -213,13 +213,8 @@ pub fn next_button(size: ControlSize) -> Element<'static, Message> {
     .into()
 }
 
-/// Build the complete playback controls row (prev, play, next)
-pub fn view(is_playing: bool, size: ControlSize) -> Element<'static, Message> {
-    view_with_buffering(is_playing, false, size, false, false)
-}
-
 /// Build the complete playback controls row with buffering state
-pub fn view_with_buffering(
+pub fn view(
     is_playing: bool,
     is_buffering: bool,
     size: ControlSize,
@@ -238,4 +233,9 @@ pub fn view_with_buffering(
     ]
     .align_y(Alignment::Center)
     .into()
+}
+
+/// Build the complete playback controls row (prev, play, next)
+pub fn view_simple(is_playing: bool, size: ControlSize) -> Element<'static, Message> {
+    view(is_playing, false, size, false, false)
 }

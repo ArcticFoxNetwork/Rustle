@@ -314,7 +314,7 @@ fn build_left_panel<'a>(
 
     // Progress bar - using unified widget with download progress
     let progress_slider =
-        widgets::progress_slider::view_with_download(position, download_progress, SliderSize::Full);
+        widgets::progress_slider::view(position, download_progress, SliderSize::Full);
 
     let time_row = row![
         text(current_time)
@@ -328,7 +328,8 @@ fn build_left_panel<'a>(
     .width(Fill);
 
     // Playback controls - using unified widgets
-    let playback_controls = widgets::playback_controls::view(is_playing, ControlSize::Large);
+    let playback_controls =
+        widgets::playback_controls::view_simple(is_playing, ControlSize::Large);
 
     // Play mode button - using unified widget
     let play_mode_btn =

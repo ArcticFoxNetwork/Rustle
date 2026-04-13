@@ -74,9 +74,10 @@ impl App {
             Action::GoHome => {
                 return self.navigate_to_route(Route::Home, true);
             }
-            Action::GoSearch => {
-                // TODO: Implement search page navigation
-                tracing::info!("Go to search - not yet implemented");
+            Action::FocusSearch => {
+                return iced::widget::operation::focus(iced::widget::Id::new(
+                    crate::ui::components::search_bar::TOP_BAR_SEARCH_INPUT_ID,
+                ));
             }
             Action::ToggleQueue => {
                 self.ui.queue_visible = !self.ui.queue_visible;

@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::api::{BannersInfo, NcmClient, SongInfo, SongList, TopList};
+use crate::api::{BannersInfo, NcmClient, SongInfo, SongList};
 use crate::app::SettingsSection;
 use crate::audio::{AudioAnalysisData, AudioProcessingChain, PlaybackInfo, PlaybackStatus};
 use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong, DbWatchedFolder};
@@ -814,14 +814,12 @@ impl UiState {
                 banner_images: std::collections::HashMap::new(),
                 current_banner: 0,
                 top_picks: Vec::new(),
-                toplists: Vec::new(),
                 trending_songs: Vec::new(),
                 song_covers: std::collections::HashMap::new(),
                 login_popup_open: false,
                 qr_code_path: None,
                 qr_unikey: None,
                 qr_status: None,
-                cloud_songs: Vec::new(),
                 user_playlists: Vec::new(),
                 current_ncm_playlist_songs: Vec::new(),
                 song_hover_animations: Default::default(),
@@ -1136,7 +1134,6 @@ pub struct HomePageState {
 
     // Content sections
     pub top_picks: Vec<SongList>,
-    pub toplists: Vec<TopList>,
     pub trending_songs: Vec<SongInfo>,
     /// Song cover handles cache: song_id -> Handle
     /// Using Handle instead of PathBuf for instant rendering (no disk IO in render loop)
@@ -1148,8 +1145,6 @@ pub struct HomePageState {
     pub qr_unikey: Option<String>,
     pub qr_status: Option<String>,
 
-    // Cloud playlist
-    pub cloud_songs: Vec<SongInfo>,
     pub user_playlists: Vec<SongList>,
     /// Current NCM playlist songs (for playback)
     pub current_ncm_playlist_songs: Vec<SongInfo>,

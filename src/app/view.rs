@@ -322,7 +322,6 @@ impl App {
                 display_position,
                 duration,
                 volume,
-                self.ui.seek_preview_position.is_some(),
                 self.core.settings.play_mode,
                 is_buffering,
                 self.playback_buffer_progress(),

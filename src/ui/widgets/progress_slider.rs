@@ -25,7 +25,7 @@ pub enum SliderSize {
 /// * `position` - Current playback position (0.0 to 1.0)
 /// * `download_progress` - Download progress (0.0 to 1.0), None if not streaming
 /// * `size` - Size variant
-pub fn view_with_download(
+pub fn view(
     position: f32,
     download_progress: Option<f32>,
     size: SliderSize,

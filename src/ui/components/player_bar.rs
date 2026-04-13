@@ -21,7 +21,6 @@ pub fn view(
     position: f32, // 0.0 to 1.0
     duration_secs: f32,
     volume: f32,       // 0.0 to 1.0
-    _is_seeking: bool, // Whether user is dragging the slider (reserved for future use)
     play_mode: PlayMode,
     is_buffering: bool,             // Whether streaming is buffering
     download_progress: Option<f32>, // Download progress 0.0 to 1.0 (None if not streaming)
@@ -208,7 +207,7 @@ pub fn view(
         .align_y(Alignment::Center);
 
     // Center section: Playback controls + progress (using unified widgets)
-    let controls = widgets::playback_controls::view_with_buffering(
+    let controls = widgets::playback_controls::view(
         is_playing,
         is_buffering,
         ControlSize::Small,
@@ -216,7 +215,7 @@ pub fn view(
         is_first_song,
     );
 
-    let progress_slider = widgets::progress_slider::view_with_download(
+    let progress_slider = widgets::progress_slider::view(
         position,
         download_progress,
         SliderSize::Standard,

@@ -47,12 +47,12 @@ impl App {
                 self.ui.discover.recommended_loading = false;
 
                 // Pre-populate covers from local cache (sync check) and request GPU allocations
-                let allocation_task = self.preload_cached_covers(playlists);
+                let preload_task = self.preload_covers(playlists);
 
                 // Download missing covers asynchronously
-                let download_task = self.download_discover_covers(playlists);
+                let download_task = self.download_covers(playlists);
 
-                Some(Task::batch([allocation_task, download_task]))
+                Some(Task::batch([preload_task, download_task]))
             }
 
             Message::HotPlaylistsLoaded(playlists, has_more) => {
@@ -84,12 +84,12 @@ impl App {
                 }
 
                 // Pre-populate covers from local cache (sync check) and request GPU allocations
-                let allocation_task = self.preload_cached_covers(playlists);
+                let preload_task = self.preload_covers(playlists);
 
                 // Download missing covers asynchronously
-                let download_task = self.download_discover_covers(playlists);
+                let download_task = self.download_covers(playlists);
 
-                Some(Task::batch([allocation_task, download_task]))
+                Some(Task::batch([preload_task, download_task]))
             }
 
             Message::DiscoverPlaylistCoverLoaded(playlist_id, path) => {
@@ -255,7 +255,7 @@ impl App {
     }
 
     /// Download covers for discover playlists
-    fn download_discover_covers(&self, playlists: &[SongList]) -> Task<Message> {
+    fn download_covers(&self, playlists: &[SongList]) -> Task<Message> {
         if let Some(client) = &self.core.ncm_client {
             let mut tasks = Vec::new();
             let covers_dir = crate::utils::covers_cache_dir();
@@ -266,7 +266,7 @@ impl App {
                     continue;
                 }
 
-                // Skip if already cached on disk (will be loaded by preload_cached_covers)
+                // Skip if already cached on disk (will be loaded by preload_covers)
                 let cover_stem = format!("playlist_{}", playlist.id);
                 if crate::utils::find_cached_image(&covers_dir, &cover_stem).is_some() {
                     continue;
@@ -304,7 +304,7 @@ impl App {
 
     /// Pre-populate covers from local disk cache (synchronous)
     /// Returns a task to allocate the images in GPU memory
-    fn preload_cached_covers(&mut self, playlists: &[SongList]) -> Task<Message> {
+    fn preload_covers(&mut self, playlists: &[SongList]) -> Task<Message> {
         let covers_dir = crate::utils::covers_cache_dir();
         let mut allocation_tasks = Vec::new();
 

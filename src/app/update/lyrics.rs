@@ -955,17 +955,9 @@ impl App {
         Task::batch([image_task, colors_task])
     }
 
-    /// 更新歌词页面背景（切歌时调用）
-    ///
-    /// 返回一个 Task 用于异步加载歌词和背景
-    pub fn update_lyrics_background(&mut self, song: &crate::database::DbSong) -> Task<Message> {
-        // Use the new async loading
-        self.load_lyrics_async(song)
-    }
-
     /// 只更新歌词页面背景（封面下载完成后调用）
     /// 不重新加载歌词
-    pub fn update_lyrics_background_only(
+    pub fn update_lyrics_background(
         &mut self,
         song: &crate::database::DbSong,
     ) -> Task<Message> {

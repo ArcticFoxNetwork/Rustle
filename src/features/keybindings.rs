@@ -24,7 +24,7 @@ pub enum Action {
 
     // Navigation
     GoHome,
-    GoSearch,
+    FocusSearch,
 
     // UI controls
     ToggleQueue,
@@ -443,7 +443,7 @@ impl Default for KeyBindings {
         // Navigation
         bindings.insert(Action::GoHome, vec![KeyBinding::new(KeyCode::H).primary()]);
         bindings.insert(
-            Action::GoSearch,
+            Action::FocusSearch,
             vec![KeyBinding::new(KeyCode::K).primary()],
         );
 

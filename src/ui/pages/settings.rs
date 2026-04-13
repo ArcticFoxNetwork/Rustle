@@ -990,7 +990,7 @@ fn shortcuts_section(
         (Action::SeekForward, Key::ActionSeekForward),
         (Action::SeekBackward, Key::ActionSeekBackward),
         (Action::GoHome, Key::ActionGoHome),
-        (Action::GoSearch, Key::ActionGoSearch),
+        (Action::FocusSearch, Key::ActionGoSearch),
         (Action::ToggleQueue, Key::ActionToggleQueue),
         (Action::ToggleFullscreen, Key::ActionToggleFullscreen),
     ];

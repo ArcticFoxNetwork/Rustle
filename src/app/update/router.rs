@@ -164,7 +164,7 @@ impl App {
             }
             Route::Search { keyword, tab, page } => {
                 let fetch_task = if should_reload_search {
-                    self.fetch_search_results(keyword.clone(), *tab, *page)
+                    self.fetch_results(keyword.clone(), *tab, *page)
                 } else {
                     Task::none()
                 };

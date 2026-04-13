@@ -441,12 +441,6 @@ impl SharedPlaybackState {
         self.inner.write().position = position;
     }
 
-    /// Update duration
-    #[allow(dead_code)] // Reserved for future use
-    pub fn set_duration(&self, duration: Duration) {
-        self.inner.write().duration = duration;
-    }
-
     /// Update volume
     pub fn set_volume(&self, volume: f32) {
         self.inner.write().volume = volume;

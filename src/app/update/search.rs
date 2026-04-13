@@ -48,12 +48,12 @@ impl App {
                     SearchTab::Artists | SearchTab::Albums => {
                         self.ui.search.albums = payload.albums.clone();
                         self.ui.search.total_count = payload.total_count;
-                        self.load_search_covers(payload.tab, &payload.albums)
+                        self.load_result_covers(payload.tab, &payload.albums)
                     }
                     SearchTab::Playlists => {
                         self.ui.search.playlists = payload.playlists.clone();
                         self.ui.search.total_count = payload.total_count;
-                        self.load_search_covers(payload.tab, &payload.playlists)
+                        self.load_result_covers(payload.tab, &payload.playlists)
                     }
                 };
 
@@ -149,7 +149,7 @@ impl App {
     }
 
     /// Fetch search results from NCM API
-    pub(super) fn fetch_search_results(
+    pub(super) fn fetch_results(
         &self,
         keyword: String,
         tab: SearchTab,
@@ -198,13 +198,13 @@ impl App {
         )
     }
 
-    fn load_search_covers(&mut self, tab: SearchTab, items: &[SongList]) -> Task<Message> {
-        let preload_task = self.preload_cached_search_covers(tab, items);
-        let download_task = self.download_search_covers(tab, items);
+    fn load_result_covers(&mut self, tab: SearchTab, items: &[SongList]) -> Task<Message> {
+        let preload_task = self.preload_cached_result_covers(tab, items);
+        let download_task = self.download_result_covers(tab, items);
         Task::batch([preload_task, download_task])
     }
 
-    fn preload_cached_search_covers(
+    fn preload_cached_result_covers(
         &mut self,
         tab: SearchTab,
         items: &[SongList],
@@ -240,7 +240,7 @@ impl App {
         }
     }
 
-    fn download_search_covers(&self, tab: SearchTab, items: &[SongList]) -> Task<Message> {
+    fn download_result_covers(&self, tab: SearchTab, items: &[SongList]) -> Task<Message> {
         let Some(client) = &self.core.ncm_client else {
             return Task::none();
         };
