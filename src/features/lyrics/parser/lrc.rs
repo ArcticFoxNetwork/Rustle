@@ -103,6 +103,111 @@ fn strip_background_text(text: &str) -> (String, bool) {
     (trimmed.to_string(), false)
 }
 
+fn split_trailing_background_text(text: &str) -> Option<(String, String)> {
+    let trimmed = text.trim();
+    let last_char = trimmed.chars().next_back()?;
+    if !matches!(last_char, ')' | '）') {
+        return None;
+    }
+
+    let mut depth = 0usize;
+    let mut open_index = None;
+    let mut open_len = 0usize;
+
+    for (idx, ch) in trimmed.char_indices().rev() {
+        match ch {
+            ')' | '）' => depth += 1,
+            '(' | '（' => {
+                if depth == 0 {
+                    return None;
+                }
+                depth -= 1;
+                if depth == 0 {
+                    open_index = Some(idx);
+                    open_len = ch.len_utf8();
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let open_index = open_index?;
+    let prefix = trimmed[..open_index].trim_end();
+    if prefix.is_empty() {
+        return None;
+    }
+
+    let bg = trimmed[open_index + open_len..trimmed.len() - last_char.len_utf8()].trim();
+    if bg.is_empty() {
+        return None;
+    }
+
+    Some((prefix.to_string(), bg.to_string()))
+}
+
+fn split_line_level_attr_text(text: &str) -> (String, Option<String>) {
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return (String::new(), None);
+    }
+
+    if let Some((main, bg)) = split_trailing_background_text(trimmed) {
+        return (main, Some(bg));
+    }
+
+    (trimmed.to_string(), None)
+}
+
+fn set_line_text(line: &mut LyricLineOwned, text: String) {
+    if let Some(first_word) = line.words.first_mut() {
+        first_word.word = text;
+    } else {
+        line.words.push(LyricWordOwned {
+            start_time: line.start_time,
+            end_time: line.end_time,
+            word: text,
+            roman_word: String::new(),
+        });
+    }
+}
+
+fn expand_trailing_background_lines(lines: Vec<LyricLineOwned>) -> Vec<LyricLineOwned> {
+    let mut expanded = Vec::with_capacity(lines.len());
+
+    for line in lines {
+        if line.is_bg {
+            expanded.push(line);
+            continue;
+        }
+
+        let text = line_text(&line);
+        let Some((main_text, bg_text)) = split_trailing_background_text(&text) else {
+            expanded.push(line);
+            continue;
+        };
+
+        let (main_translated, bg_translated) = split_line_level_attr_text(&line.translated_lyric);
+        let (main_romanized, bg_romanized) = split_line_level_attr_text(&line.roman_lyric);
+
+        let mut main_line = line.clone();
+        set_line_text(&mut main_line, main_text);
+        main_line.translated_lyric = main_translated;
+        main_line.roman_lyric = main_romanized;
+
+        let mut bg_line = line;
+        bg_line.is_bg = true;
+        set_line_text(&mut bg_line, bg_text);
+        bg_line.translated_lyric = bg_translated.unwrap_or_default();
+        bg_line.roman_lyric = bg_romanized.unwrap_or_default();
+
+        expanded.push(main_line);
+        expanded.push(bg_line);
+    }
+
+    expanded
+}
+
 fn line_text(line: &LyricLineOwned) -> String {
     line.words
         .iter()
@@ -271,6 +376,7 @@ pub fn parse_lrc(src: &str) -> Vec<LyricLineOwned> {
     indexed.sort_by_key(|(source_index, line)| (line.start_time, *source_index));
     result = indexed.into_iter().map(|(_, line)| line).collect();
     result = merge_duplicate_timestamp_attrs(result);
+    result = expand_trailing_background_lines(result);
 
     // Calculate end times based on the next distinct timestamp.
     // This preserves simultaneous same-timestamp main lines instead of collapsing
@@ -489,6 +595,39 @@ mod tests {
         assert!(lines[1].is_bg);
         assert_eq!(lines[0].words[0].word, "Hello");
         assert_eq!(lines[1].words[0].word, "World");
+    }
+
+    #[test]
+    fn test_trailing_parenthesized_suffix_becomes_background_line() {
+        let lines = parse_lrc("[00:01.000]No (Woo-ohh)\n[00:03.000]Next");
+        assert_eq!(lines.len(), 3);
+        assert!(!lines[0].is_bg);
+        assert_eq!(lines[0].words[0].word, "No");
+        assert!(lines[1].is_bg);
+        assert_eq!(lines[1].words[0].word, "Woo-ohh");
+        assert_eq!(lines[0].start_time, lines[1].start_time);
+        assert_eq!(lines[0].end_time, lines[1].end_time);
+    }
+
+    #[test]
+    fn test_trailing_mixed_parentheses_suffix_becomes_background_line() {
+        let lines = parse_lrc("[00:01.000]原文（bg)");
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].words[0].word, "原文");
+        assert!(!lines[0].is_bg);
+        assert_eq!(lines[1].words[0].word, "bg");
+        assert!(lines[1].is_bg);
+    }
+
+    #[test]
+    fn test_duplicate_timestamp_translation_survives_trailing_background_split() {
+        let lines = parse_lrc("[00:01.000]No (Woo-ohh)\n[00:01.000]不 (呜哦)\n[00:03.000]Next");
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].words[0].word, "No");
+        assert_eq!(lines[0].translated_lyric, "不");
+        assert_eq!(lines[1].words[0].word, "Woo-ohh");
+        assert!(lines[1].is_bg);
+        assert_eq!(lines[1].translated_lyric, "呜哦");
     }
 
     #[test]

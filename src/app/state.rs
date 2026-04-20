@@ -506,6 +506,8 @@ pub struct PlaybackSessionState {
     pub shuffle_cache: crate::app::update::queue_navigator::ShuffleCache,
     /// Preload state machine for adjacent tracks.
     pub preload_manager: crate::app::update::preload_manager::PreloadManager,
+    /// Background lyrics cache warmup state.
+    pub lyrics_cache_manager: crate::app::lyrics_cache_manager::LyricsCacheManagerState,
     /// Track index currently being resolved before playback starts.
     pub pending_resolution_index: Option<usize>,
     /// Playback request waiting for audio thread confirmation.
@@ -531,6 +533,7 @@ impl Default for PlaybackSessionState {
             personal_fm_mode: false,
             shuffle_cache: Default::default(),
             preload_manager: Default::default(),
+            lyrics_cache_manager: Default::default(),
             pending_resolution_index: None,
             pending_playback_request: None,
             active_streaming_buffer: None,
@@ -766,6 +769,8 @@ impl UiState {
             lyrics: LyricsState {
                 is_open: false,
                 animation: Default::default(),
+                displayed_song_id: None,
+                pending_song_id: None,
                 lines: Vec::new(),
                 current_line_idx: None,
                 last_update: None,
@@ -787,7 +792,6 @@ impl UiState {
                 shaped_content_width: 0.0,
                 shaped_font_size: 0.0,
                 shape_generation: 0,
-                loading_song_id: None,
                 is_loading: false,
                 load_error: None,
             },
@@ -917,6 +921,10 @@ pub struct PlaylistPageState {
 pub struct LyricsState {
     pub is_open: bool,
     pub animation: SingleHoverAnimation,
+    /// Song currently displayed in the lyrics page.
+    pub displayed_song_id: Option<i64>,
+    /// Song currently being loaded for display.
+    pub pending_song_id: Option<i64>,
     pub lines: Vec<crate::ui::pages::LyricLine>,
     pub current_line_idx: Option<usize>,
     pub last_update: Option<Instant>,
@@ -953,12 +961,10 @@ pub struct LyricsState {
     /// Monotonic generation for async lyrics shaping requests.
     pub shape_generation: u64,
 
-    // Online lyrics loading
-    /// Song ID currently loading lyrics for (to avoid duplicate requests)
-    pub loading_song_id: Option<i64>,
-    /// Whether lyrics are currently being loaded
+    // Display loading state
+    /// Whether lyrics for the current display target are currently being loaded.
     pub is_loading: bool,
-    /// Error message if lyrics loading failed
+    /// Error message for the current display target.
     pub load_error: Option<String>,
 }
 

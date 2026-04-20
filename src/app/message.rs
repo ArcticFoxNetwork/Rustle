@@ -276,8 +276,12 @@ pub enum Message {
     LyricsLoaded(i64, Vec<crate::ui::pages::LyricLine>),
     /// Lyrics loading failed
     LyricsLoadFailed(i64, String),
-    /// Preload lyrics for a song (song_id, ncm_id, song_name, singer, album)
-    PreloadLyrics(i64, u64, String, String, String),
+    /// Start online lyrics fetch for display loading (song_id, ncm_id)
+    FetchLyricsOnline(i64, u64),
+    /// Warm lyrics cache for a song in the background (song_id, ncm_id)
+    WarmLyricsCache(i64, u64),
+    /// Background lyrics cache warmup completed
+    LyricsWarmupFinished(i64, Result<(), String>),
     /// Local/cached lyrics loaded asynchronously (song_id, lyrics_lines)
     LocalLyricsReady(i64, Vec<crate::ui::pages::LyricLine>),
     /// Engine lines pre-computed asynchronously (song_id, engine_lines)
@@ -863,7 +867,14 @@ impl std::fmt::Debug for Message {
                 simple!("LyricsLoaded", "id={}, {} lines", id, lines.len())
             }
             Self::LyricsLoadFailed(id, _) => simple!("LyricsLoadFailed", "id={}", id),
-            Self::PreloadLyrics(id, _, _, _, _) => simple!("PreloadLyrics", "id={}", id),
+            Self::FetchLyricsOnline(id, _) => simple!("FetchLyricsOnline", "id={}", id),
+            Self::WarmLyricsCache(id, _) => simple!("WarmLyricsCache", "id={}", id),
+            Self::LyricsWarmupFinished(id, result) => simple!(
+                "LyricsWarmupFinished",
+                "id={}, status={}",
+                id,
+                if result.is_ok() { "ok" } else { "err" }
+            ),
             Self::LocalLyricsReady(id, lines) => {
                 simple!("LocalLyricsReady", "id={}, {} lines", id, lines.len())
             }

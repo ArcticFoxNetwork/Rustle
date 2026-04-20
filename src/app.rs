@@ -1,6 +1,7 @@
 //! Main application module
 
 pub mod helpers;
+mod lyrics_cache_manager;
 mod message;
 mod state;
 mod update;

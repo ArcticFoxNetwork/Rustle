@@ -8,6 +8,7 @@
 
 use iced::Task;
 
+use crate::app::lyrics_cache_manager::DisplayFetchAction;
 use crate::app::message::Message;
 use crate::app::state::App;
 use crate::ui::effects::background::color_to_array;
@@ -22,15 +23,10 @@ impl App {
                     self.ui.lyrics.is_open = true;
                     self.ui.lyrics.animation.start();
 
-                    // 智能加载歌词：
-                    // 检查当前歌词是否属于当前歌曲
-                    // 注意：loading_song_id 表示"正在加载或已加载的歌曲ID"
-                    // 如果 loading_song_id 不匹配当前歌曲，需要重新加载
-                    let lyrics_need_load = self.ui.lyrics.loading_song_id != Some(song.id);
+                    let lyrics_need_load = self.should_load_lyrics_for_song(song.id);
 
                     if lyrics_need_load {
                         tracing::debug!("Loading lyrics for song: {} (id={})", song.title, song.id);
-                        // Use async loading
                         return Some(self.load_lyrics_async(&song));
                     } else {
                         tracing::debug!(
@@ -136,199 +132,155 @@ impl App {
                 Some(self.request_lyrics_shaping_for_current_viewport())
             }
 
-            Message::PreloadLyrics(song_id, ncm_id, _song_name, _singer, _album) => {
+            Message::FetchLyricsOnline(song_id, ncm_id) => {
                 let song_id = *song_id;
                 let ncm_id = *ncm_id;
 
-                if self.ui.lyrics.loading_song_id == Some(song_id) && self.ui.lyrics.is_loading {
+                if self.ui.lyrics.pending_song_id != Some(song_id) {
                     return Some(Task::none());
                 }
 
-                self.ui.lyrics.loading_song_id = Some(song_id);
-                self.ui.lyrics.is_loading = true;
+                match self
+                    .playback
+                    .lyrics_cache_manager
+                    .register_display_fetch(song_id, ncm_id)
+                {
+                    DisplayFetchAction::UseCache => {
+                        Some(self.resume_display_load_from_cache(song_id))
+                    }
+                    DisplayFetchAction::AwaitExisting => Some(Task::none()),
+                    DisplayFetchAction::StartFetch => {
+                        if let Some(client) = self.core.ncm_client.clone() {
+                            Some(Task::perform(
+                                async move {
+                                    match crate::features::lyrics::fetch_lyrics(&client, ncm_id)
+                                        .await
+                                    {
+                                        Ok(lines) => {
+                                            let ui_lines =
+                                                crate::features::lyrics::to_ui_lyrics(lines);
+                                            Message::LyricsLoaded(song_id, ui_lines)
+                                        }
+                                        Err(e) => Message::LyricsLoadFailed(
+                                            song_id,
+                                            e.to_string(),
+                                        ),
+                                    }
+                                },
+                                |msg| msg,
+                            ))
+                        } else {
+                            self.playback.lyrics_cache_manager.finish_warmup(
+                                song_id,
+                                Err("No NCM client".to_string()),
+                            );
+                            Some(Task::done(Message::LyricsLoadFailed(
+                                song_id,
+                                "No NCM client".to_string(),
+                            )))
+                        }
+                    }
+                }
+            }
+
+            Message::WarmLyricsCache(song_id, ncm_id) => {
+                let song_id = *song_id;
+                let ncm_id = *ncm_id;
+
+                if !self
+                    .playback
+                    .lyrics_cache_manager
+                    .begin_warmup(song_id, ncm_id)
+                {
+                    return Some(Task::none());
+                }
 
                 if let Some(client) = self.core.ncm_client.clone() {
                     Some(Task::perform(
                         async move {
-                            match crate::features::lyrics::fetch_lyrics(&client, ncm_id).await {
-                                Ok(lines) => {
-                                    let ui_lines = crate::features::lyrics::to_ui_lyrics(lines);
-                                    Message::LyricsLoaded(song_id, ui_lines)
-                                }
-                                Err(e) => Message::LyricsLoadFailed(song_id, e.to_string()),
-                            }
+                            crate::features::lyrics::fetch_lyrics(&client, ncm_id)
+                                .await
+                                .map(|_| ())
+                                .map_err(|err| err.to_string())
                         },
-                        |msg| msg,
+                        move |result| Message::LyricsWarmupFinished(song_id, result),
                     ))
                 } else {
-                    self.ui.lyrics.is_loading = false;
-                    Some(Task::none())
+                    Some(Task::done(Message::LyricsWarmupFinished(
+                        song_id,
+                        Err("No NCM client".to_string()),
+                    )))
                 }
             }
 
+            Message::LyricsWarmupFinished(song_id, result) => {
+                match result {
+                    Ok(()) => tracing::debug!("Lyrics warmup completed for song {}", song_id),
+                    Err(error) => tracing::debug!(
+                        "Lyrics warmup failed for song {}: {}",
+                        song_id,
+                        error
+                    ),
+                }
+                self.playback
+                    .lyrics_cache_manager
+                    .finish_warmup(*song_id, result.clone());
+
+                if self.ui.lyrics.pending_song_id == Some(*song_id) {
+                    return Some(match result {
+                        Ok(()) => self.resume_display_load_from_cache(*song_id),
+                        Err(error) => Task::done(Message::LyricsLoadFailed(*song_id, error.clone())),
+                    });
+                }
+                Some(Task::none())
+            }
+
             Message::LyricsLoaded(song_id, lines) => {
-                if self.ui.lyrics.loading_song_id == Some(*song_id) {
-                    // Apply lyrics lines (fast, just stores data)
-                    self.apply_lyrics_lines(lines.clone());
+                if self.ui.lyrics.pending_song_id == Some(*song_id) {
+                    self.note_lyrics_cache_ready_if_available(*song_id);
+                    self.apply_lyrics_lines(*song_id, lines.clone());
                     tracing::info!(
                         "Loaded {} online lyrics lines for song {}",
                         lines.len(),
                         song_id
                     );
 
-                    // Trigger async engine line preparation
-                    let lines_for_task = lines.clone();
-                    let song_id = *song_id;
-                    return Some(Task::perform(
-                        async move {
-                            tokio::task::spawn_blocking(move || {
-                                // Pre-compute engine lines in background thread
-                                let engine_lines: Vec<
-                                    crate::features::lyrics::engine::LyricLineData,
-                                > = lines_for_task
-                                    .iter()
-                                    .map(|line| {
-                                        let word_count = line.words.len();
-                                        let line_data =
-                                            crate::features::lyrics::engine::LyricLineData {
-                                                text: line.text.clone(),
-                                                words: line
-                                                    .words
-                                                    .iter()
-                                                    .enumerate()
-                                                    .map(|(i, w)| {
-                                                        crate::features::lyrics::engine::WordData {
-                                                            text: w.word.clone(),
-                                                            start_ms: w.start_ms,
-                                                            end_ms: w.end_ms,
-                                                            emphasize: false,
-                                                            is_last_word: i
-                                                                == word_count.saturating_sub(1),
-                                                        }
-                                                    })
-                                                    .collect(),
-                                                translated: line.translated.clone(),
-                                                romanized: line.romanized.clone(),
-                                                start_ms: line.start_ms,
-                                                end_ms: line.end_ms,
-                                                is_duet: line.is_duet,
-                                                is_bg: line.is_background,
-                                            };
-                                        line_data
-                                    })
-                                    .collect();
-                                (song_id, std::sync::Arc::new(engine_lines))
-                            })
-                            .await
-                            .ok()
-                        },
-                        |result| {
-                            if let Some((song_id, engine_lines)) = result {
-                                Message::LyricsEngineLinesReady(song_id, engine_lines)
-                            } else {
-                                Message::Noop
-                            }
-                        },
-                    ));
+                    return Some(Self::prepare_engine_lines_task(*song_id, lines.clone()));
                 }
                 Some(Task::none())
             }
 
             Message::LyricsLoadFailed(song_id, error) => {
-                if self.ui.lyrics.loading_song_id == Some(*song_id) {
-                    // Clear old lyrics when loading fails (e.g., no lyrics found)
-                    self.ui.lyrics.lines.clear();
-                    self.ui.lyrics.cached_engine_lines = None;
-                    self.ui.lyrics.cached_shaped_lines = None;
-                    self.ui.lyrics.shaped_content_width = 0.0;
-                    self.ui.lyrics.shaped_font_size = 0.0;
-                    self.ui.lyrics.shape_generation =
-                        self.ui.lyrics.shape_generation.wrapping_add(1);
-                    self.ui.lyrics.is_loading = false;
-                    self.ui.lyrics.load_error = Some(error.clone());
-                    self.ui.lyrics.current_line_idx = None;
-
-                    // Clear engine's cached data
-                    if let Some(engine_cell) = &self.ui.lyrics.engine {
-                        let mut engine = engine_cell.borrow_mut();
-                        engine.set_cached_shaped_lines(Vec::new());
+                if self.ui.lyrics.pending_song_id == Some(*song_id) {
+                    if *song_id < 0 {
+                        self.playback
+                            .lyrics_cache_manager
+                            .finish_warmup(*song_id, Err(error.clone()));
                     }
-
+                    self.apply_lyrics_error(*song_id, error.clone());
                     tracing::warn!("Failed to load lyrics for song {}: {}", song_id, error);
                 }
                 Some(Task::none())
             }
 
-            // NEW: Handle async local/cached lyrics
             Message::LocalLyricsReady(song_id, lines) => {
-                if self.ui.lyrics.loading_song_id == Some(*song_id) {
-                    self.apply_lyrics_lines(lines.clone());
+                if self.ui.lyrics.pending_song_id == Some(*song_id) {
+                    self.note_lyrics_cache_ready_if_available(*song_id);
+                    self.apply_lyrics_lines(*song_id, lines.clone());
                     tracing::info!(
                         "Loaded {} local/cached lyrics lines for song {}",
                         lines.len(),
                         song_id
                     );
 
-                    // Trigger async engine line preparation (same as LyricsLoaded)
-                    let lines_for_task = lines.clone();
-                    let song_id = *song_id;
-                    return Some(Task::perform(
-                        async move {
-                            tokio::task::spawn_blocking(move || {
-                                let engine_lines: Vec<
-                                    crate::features::lyrics::engine::LyricLineData,
-                                > = lines_for_task
-                                    .iter()
-                                    .map(|line| {
-                                        let word_count = line.words.len();
-                                        let line_data =
-                                            crate::features::lyrics::engine::LyricLineData {
-                                                text: line.text.clone(),
-                                                words: line
-                                                    .words
-                                                    .iter()
-                                                    .enumerate()
-                                                    .map(|(i, w)| {
-                                                        crate::features::lyrics::engine::WordData {
-                                                            text: w.word.clone(),
-                                                            start_ms: w.start_ms,
-                                                            end_ms: w.end_ms,
-                                                            emphasize: false,
-                                                            is_last_word: i
-                                                                == word_count.saturating_sub(1),
-                                                        }
-                                                    })
-                                                    .collect(),
-                                                translated: line.translated.clone(),
-                                                romanized: line.romanized.clone(),
-                                                start_ms: line.start_ms,
-                                                end_ms: line.end_ms,
-                                                is_duet: line.is_duet,
-                                                is_bg: line.is_background,
-                                            };
-                                        line_data
-                                    })
-                                    .collect();
-                                (song_id, std::sync::Arc::new(engine_lines))
-                            })
-                            .await
-                            .ok()
-                        },
-                        |result| {
-                            if let Some((song_id, engine_lines)) = result {
-                                Message::LyricsEngineLinesReady(song_id, engine_lines)
-                            } else {
-                                Message::Noop
-                            }
-                        },
-                    ));
+                    return Some(Self::prepare_engine_lines_task(*song_id, lines.clone()));
                 }
                 Some(Task::none())
             }
 
             // Handle pre-computed engine lines
             Message::LyricsEngineLinesReady(song_id, engine_lines) => {
-                if self.ui.lyrics.loading_song_id == Some(*song_id) {
+                if self.ui.lyrics.displayed_song_id == Some(*song_id) {
                     self.ui.lyrics.cached_engine_lines = Some(engine_lines.clone());
                     tracing::info!(
                         "Engine lines ready for song {}: {} lines",
@@ -350,7 +302,7 @@ impl App {
                 content_width,
                 font_size,
             ) => {
-                if self.ui.lyrics.loading_song_id == Some(*song_id)
+                if self.ui.lyrics.displayed_song_id == Some(*song_id)
                     && self.ui.lyrics.shape_generation == *generation
                 {
                     self.ui.lyrics.cached_shaped_lines = Some(shaped_lines.clone());
@@ -470,7 +422,7 @@ impl App {
         let Some(font_system) = self.ui.lyrics.shared_font_system.clone() else {
             return Task::none();
         };
-        let Some(song_id) = self.ui.lyrics.loading_song_id else {
+        let Some(song_id) = self.ui.lyrics.displayed_song_id else {
             return Task::none();
         };
         let Some((content_width, font_size)) = self.current_lyrics_shape_metrics() else {
@@ -636,11 +588,38 @@ impl App {
         )
     }
 
-    /// Apply lyrics lines to state (shared by online and local loading)
-    fn apply_lyrics_lines(&mut self, lines: Vec<crate::ui::pages::LyricLine>) {
+    fn should_load_lyrics_for_song(&self, song_id: i64) -> bool {
+        (self.ui.lyrics.displayed_song_id != Some(song_id)
+            && self.ui.lyrics.pending_song_id != Some(song_id))
+            || self.ui.lyrics.load_error.is_some()
+    }
+
+    fn prepare_display_lyrics_load(&mut self, song_id: i64) {
+        self.ui.lyrics.displayed_song_id = None;
+        self.ui.lyrics.pending_song_id = Some(song_id);
+        self.ui.lyrics.lines.clear();
+        self.ui.lyrics.cached_engine_lines = None;
+        self.ui.lyrics.cached_shaped_lines = None;
+        self.ui.lyrics.shaped_content_width = 0.0;
+        self.ui.lyrics.shaped_font_size = 0.0;
+        self.ui.lyrics.shape_generation = self.ui.lyrics.shape_generation.wrapping_add(1);
+        self.ui.lyrics.current_line_idx = None;
+        self.ui.lyrics.is_loading = true;
+        self.ui.lyrics.load_error = None;
+
+        if let Some(engine_cell) = &self.ui.lyrics.engine {
+            let mut engine = engine_cell.borrow_mut();
+            engine.reset_for_new_lyrics();
+            engine.set_cached_shaped_lines(Vec::new());
+        }
+    }
+
+    fn apply_lyrics_lines(&mut self, song_id: i64, lines: Vec<crate::ui::pages::LyricLine>) {
+        self.ui.lyrics.displayed_song_id = Some(song_id);
+        self.ui.lyrics.pending_song_id = None;
         self.ui.lyrics.lines = lines;
         self.ui.lyrics.cached_engine_lines = None;
-        self.ui.lyrics.cached_shaped_lines = None; // Clear shaped lines cache
+        self.ui.lyrics.cached_shaped_lines = None;
         self.ui.lyrics.shaped_content_width = 0.0;
         self.ui.lyrics.shaped_font_size = 0.0;
         self.ui.lyrics.is_loading = false;
@@ -654,6 +633,103 @@ impl App {
             engine.reset_for_new_lyrics();
             engine.set_cached_shaped_lines(Vec::new());
         }
+    }
+
+    fn apply_lyrics_error(&mut self, song_id: i64, error: String) {
+        if self.ui.lyrics.pending_song_id != Some(song_id) {
+            return;
+        }
+
+        self.ui.lyrics.displayed_song_id = None;
+        self.ui.lyrics.pending_song_id = None;
+        self.ui.lyrics.lines.clear();
+        self.ui.lyrics.cached_engine_lines = None;
+        self.ui.lyrics.cached_shaped_lines = None;
+        self.ui.lyrics.shaped_content_width = 0.0;
+        self.ui.lyrics.shaped_font_size = 0.0;
+        self.ui.lyrics.shape_generation = self.ui.lyrics.shape_generation.wrapping_add(1);
+        self.ui.lyrics.is_loading = false;
+        self.ui.lyrics.load_error = Some(error);
+        self.ui.lyrics.current_line_idx = None;
+
+        if let Some(engine_cell) = &self.ui.lyrics.engine {
+            let mut engine = engine_cell.borrow_mut();
+            engine.set_cached_shaped_lines(Vec::new());
+        }
+    }
+
+    fn note_lyrics_cache_ready_if_available(&mut self, song_id: i64) {
+        if song_id < 0 {
+            let ncm_id = (-song_id) as u64;
+            if crate::features::lyrics::is_lyrics_cached(ncm_id) {
+                self.playback
+                    .lyrics_cache_manager
+                    .mark_ready(song_id, ncm_id);
+            }
+        }
+    }
+
+    fn resume_display_load_from_cache(&mut self, song_id: i64) -> Task<Message> {
+        let Some(song) = self
+            .playback
+            .current_song
+            .clone()
+            .filter(|song| song.id == song_id) else
+        {
+            return Task::none();
+        };
+
+        self.load_lyrics_async(&song)
+    }
+
+    fn prepare_engine_lines_task(
+        song_id: i64,
+        lines_for_task: Vec<crate::ui::pages::LyricLine>,
+    ) -> Task<Message> {
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let engine_lines: Vec<crate::features::lyrics::engine::LyricLineData> =
+                        lines_for_task
+                            .iter()
+                            .map(|line| {
+                                let word_count = line.words.len();
+                                crate::features::lyrics::engine::LyricLineData {
+                                    text: line.text.clone(),
+                                    words: line
+                                        .words
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, w)| crate::features::lyrics::engine::WordData {
+                                            text: w.word.clone(),
+                                            start_ms: w.start_ms,
+                                            end_ms: w.end_ms,
+                                            emphasize: false,
+                                            is_last_word: i == word_count.saturating_sub(1),
+                                        })
+                                        .collect(),
+                                    translated: line.translated.clone(),
+                                    romanized: line.romanized.clone(),
+                                    start_ms: line.start_ms,
+                                    end_ms: line.end_ms,
+                                    is_duet: line.is_duet,
+                                    is_bg: line.is_background,
+                                }
+                            })
+                            .collect();
+                    (song_id, std::sync::Arc::new(engine_lines))
+                })
+                .await
+                .ok()
+            },
+            |result| {
+                if let Some((song_id, engine_lines)) = result {
+                    Message::LyricsEngineLinesReady(song_id, engine_lines)
+                } else {
+                    Message::Noop
+                }
+            },
+        )
     }
 
     /// Check if lyrics page should be fully closed (animation complete)
@@ -836,25 +912,7 @@ impl App {
             song.title,
             song.id
         );
-
-        // Clear current state immediately (non-blocking)
-        self.ui.lyrics.lines.clear();
-        self.ui.lyrics.cached_engine_lines = None;
-        self.ui.lyrics.cached_shaped_lines = None;
-        self.ui.lyrics.shaped_content_width = 0.0;
-        self.ui.lyrics.shaped_font_size = 0.0;
-        self.ui.lyrics.shape_generation = self.ui.lyrics.shape_generation.wrapping_add(1);
-        self.ui.lyrics.current_line_idx = None;
-        self.ui.lyrics.load_error = None;
-        self.ui.lyrics.loading_song_id = Some(song.id);
-        self.ui.lyrics.is_loading = true;
-
-        // Clear engine's cached data for re-layout, but keep the engine instance
-        if let Some(engine_cell) = &self.ui.lyrics.engine {
-            let mut engine = engine_cell.borrow_mut();
-            engine.reset_for_new_lyrics();
-            engine.set_cached_shaped_lines(Vec::new());
-        }
+        self.prepare_display_lyrics_load(song.id);
 
         let song_id = song.id;
         let file_path = song.file_path.clone();
@@ -905,19 +963,11 @@ impl App {
                 match result {
                     Some((song_id, lines, needs_online)) => {
                         if needs_online {
-                            // Trigger online fetch via PreloadLyrics
                             let ncm_id = (-song_id) as u64;
-                            Message::PreloadLyrics(
-                                song_id,
-                                ncm_id,
-                                String::new(),
-                                String::new(),
-                                String::new(),
-                            )
+                            Message::FetchLyricsOnline(song_id, ncm_id)
                         } else if !lines.is_empty() {
                             Message::LocalLyricsReady(song_id, lines)
                         } else {
-                            // No lyrics found, just mark as not loading
                             Message::LyricsLoadFailed(song_id, "No lyrics found".to_string())
                         }
                     }

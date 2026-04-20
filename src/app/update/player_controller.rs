@@ -3,6 +3,7 @@
 //!
 //! Uses QueueNavigator as Single Source of Truth for index calculations.
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -578,20 +579,7 @@ impl App {
         let (song, needs_cover_download) = self.ensure_local_cover_path_with_download(idx, song);
         self.commit_current_song_playback_state(Some(idx), song.clone(), false);
         self.cache_shuffle_indices();
-
-        let preload_task = self.preload_adjacent_tracks_with_ncm();
-        let cover_task = if let Some((ncm_id, cover_url)) = needs_cover_download {
-            self.download_current_song_cover(song.id, ncm_id, cover_url)
-        } else {
-            Task::none()
-        };
-        let lyrics_task = if self.ui.lyrics.is_open {
-            self.load_lyrics_for_current_song(&song)
-        } else {
-            self.preload_lyrics_for_song(&song)
-        };
-
-        Task::batch([preload_task, cover_task, lyrics_task])
+        self.schedule_post_switch_side_effects(&song, needs_cover_download)
     }
 
     pub fn handle_audio_started_event(
@@ -891,36 +879,59 @@ impl App {
 
         // Pre-calculate shuffle indices for consistent preloading
         self.cache_shuffle_indices();
-
-        // ============ 统一的歌曲切换副作用 ============
-        // 无论歌词页面是否打开，都执行相同的逻辑
-
-        // 1. 预加载相邻曲目（音频）
-        let preload_task = self.preload_adjacent_tracks_with_ncm();
-
-        // 2. 下载封面（如果需要）
-        let cover_task = if let Some((ncm_id, cover_url)) = needs_cover_download {
-            self.download_current_song_cover(song.id, ncm_id, cover_url)
-        } else {
-            Task::none()
-        };
-
-        // 3. 歌词页面相关更新
-        let lyrics_task = if self.ui.lyrics.is_open {
-            // 歌词页面已打开：加载歌词 + 更新背景
-            self.load_lyrics_for_current_song(&song)
-        } else {
-            // 歌词页面未打开：只预加载歌词（后台）
-            self.preload_lyrics_for_song(&song)
-        };
-
-        Task::batch([preload_task, cover_task, lyrics_task])
+        self.schedule_post_switch_side_effects(&song, needs_cover_download)
     }
 
     /// 为当前歌曲加载歌词和背景（歌词页面打开时调用）
     fn load_lyrics_for_current_song(&mut self, song: &DbSong) -> Task<Message> {
         // 使用统一的异步加载方法
         self.load_lyrics_async(song)
+    }
+
+    /// Playback-side prefetch coordinator after a track switch completes.
+    fn schedule_post_switch_side_effects(
+        &mut self,
+        song: &DbSong,
+        needs_cover_download: Option<(u64, String)>,
+    ) -> Task<Message> {
+        let audio_task = self.preload_adjacent_tracks_with_ncm();
+        let cover_task = if let Some((ncm_id, cover_url)) = needs_cover_download {
+            self.download_current_song_cover(song.id, ncm_id, cover_url)
+        } else {
+            Task::none()
+        };
+        let lyrics_task = self.schedule_lyrics_prefetches(song);
+
+        Task::batch([audio_task, cover_task, lyrics_task])
+    }
+
+    /// Schedule current-song lyrics display loading plus background cache warmup.
+    fn schedule_lyrics_prefetches(&mut self, current_song: &DbSong) -> Task<Message> {
+        let mut tasks = Vec::new();
+
+        if self.ui.lyrics.is_open {
+            tasks.push(self.load_lyrics_for_current_song(current_song));
+        } else {
+            tasks.push(self.warm_lyrics_cache_for_song(current_song));
+        }
+
+        let nav = self.queue_navigator();
+        let adjacent = nav.adjacent_indices();
+        let mut scheduled_song_ids = HashSet::from([current_song.id]);
+
+        for idx in [adjacent.next, adjacent.prev].into_iter().flatten() {
+            let Some(candidate) = self.playback.queue.get(idx).cloned() else {
+                continue;
+            };
+
+            if !scheduled_song_ids.insert(candidate.id) {
+                continue;
+            }
+
+            tasks.push(self.warm_lyrics_cache_for_song(&candidate));
+        }
+
+        Task::batch(tasks)
     }
 
     /// Ensure song has local cover path instead of remote URL
@@ -1353,8 +1364,8 @@ impl App {
         }
     }
 
-    /// Preload lyrics for a song (triggers online fetch for NCM songs)
-    pub fn preload_lyrics_for_song(&mut self, song: &DbSong) -> Task<Message> {
+    /// Warm remote lyrics cache for an NCM song without touching display state.
+    pub fn warm_lyrics_cache_for_song(&mut self, song: &DbSong) -> Task<Message> {
         // Only preload for NCM songs (negative ID)
         if song.id >= 0 {
             return Task::none();
@@ -1362,18 +1373,14 @@ impl App {
 
         let ncm_id = (-song.id) as u64;
 
-        // Check if already cached
-        if crate::features::lyrics::is_lyrics_cached(ncm_id) {
+        if !self
+            .playback
+            .lyrics_cache_manager
+            .should_schedule_warmup(song.id, ncm_id)
+        {
             return Task::none();
         }
 
-        // Trigger preload
-        Task::done(Message::PreloadLyrics(
-            song.id,
-            ncm_id,
-            song.title.clone(),
-            song.artist.clone(),
-            String::new(), // album not always available
-        ))
+        Task::done(Message::WarmLyricsCache(song.id, ncm_id))
     }
 }

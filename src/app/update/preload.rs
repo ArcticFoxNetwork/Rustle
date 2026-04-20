@@ -28,7 +28,7 @@ impl App {
     }
 
     /// Create a QueueNavigator for the current state
-    fn queue_navigator(&self) -> QueueNavigator<'_> {
+    pub(super) fn queue_navigator(&self) -> QueueNavigator<'_> {
         QueueNavigator::new(
             self.playback.queue.len(),
             self.playback.current_index,
