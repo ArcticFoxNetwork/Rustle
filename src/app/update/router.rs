@@ -20,6 +20,7 @@ impl App {
         if self.ui.lyrics.is_open {
             self.ui.lyrics.is_open = false;
             self.ui.lyrics.animation.stop();
+            self.clear_lyrics_page_cache();
         }
     }
 
@@ -35,8 +36,17 @@ impl App {
     }
 
     fn sync_route_state(&mut self, route: &Route) -> bool {
+        let previous_route = self.ui.current_route.clone();
         self.close_route_overlays();
         self.reset_route_transient_state();
+
+        if matches!(previous_route, Route::Search { .. }) && !matches!(route, Route::Search { .. }) {
+            self.clear_search_cover_cache();
+        }
+
+        if matches!(previous_route, Route::Discover(_)) && !matches!(route, Route::Discover(_)) {
+            self.clear_discover_cover_cache();
+        }
 
         let should_reload_search = self.should_reload_search(route);
         self.ui.current_route = route.clone();
@@ -89,6 +99,7 @@ impl App {
                     self.ui.search.songs.clear();
                     self.ui.search.albums.clear();
                     self.ui.search.playlists.clear();
+                    self.clear_search_cover_cache();
                 }
             }
         }
@@ -109,11 +120,13 @@ impl App {
                 } else {
                     Task::none()
                 };
+                let restore_cover_task = self.restore_discover_cover_cache();
                 Task::batch([
                     iced::widget::operation::snap_to(
                         iced::widget::Id::new("discover_scroll"),
                         iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
                     ),
+                    restore_cover_task,
                     load_task,
                 ])
             }

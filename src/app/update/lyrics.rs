@@ -14,6 +14,27 @@ use crate::app::state::App;
 use crate::ui::effects::background::color_to_array;
 
 impl App {
+    pub(super) fn clear_lyrics_page_cache(&mut self) {
+        self.ui.lyrics.displayed_song_id = None;
+        self.ui.lyrics.pending_song_id = None;
+        self.ui.lyrics.lines.clear();
+        self.ui.lyrics.cached_engine_lines = None;
+        self.ui.lyrics.cached_shaped_lines = None;
+        self.ui.lyrics.current_line_idx = None;
+        self.ui.lyrics.last_update = None;
+        self.ui.lyrics.shaped_content_width = 0.0;
+        self.ui.lyrics.shaped_font_size = 0.0;
+        self.ui.lyrics.shape_generation = self.ui.lyrics.shape_generation.wrapping_add(1);
+        self.ui.lyrics.is_loading = false;
+        self.ui.lyrics.load_error = None;
+
+        if let Some(engine_cell) = &self.ui.lyrics.engine {
+            let mut engine = engine_cell.borrow_mut();
+            engine.reset_for_new_lyrics();
+            engine.set_cached_shaped_lines(Vec::new());
+        }
+    }
+
     /// Handle lyrics page related messages
     pub fn handle_lyrics(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
@@ -752,6 +773,7 @@ impl App {
         let progress = self.ui.lyrics.animation.progress();
         if progress < 0.01 && !self.ui.lyrics.animation.is_animating() && self.ui.lyrics.is_open {
             self.ui.lyrics.is_open = false;
+            self.clear_lyrics_page_cache();
         }
     }
 

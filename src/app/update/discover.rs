@@ -3,6 +3,7 @@
 use iced::Task;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
+use std::collections::HashSet;
 use tracing::{debug, error};
 
 use crate::api::SongList;
@@ -28,6 +29,43 @@ fn shuffle_daily(playlists: &mut [SongList]) {
 }
 
 impl App {
+    pub(super) fn clear_discover_cover_cache(&mut self) {
+        self.ui.discover.playlist_covers.clear();
+        self.ui.discover.playlist_cover_allocations.clear();
+    }
+
+    pub(super) fn restore_discover_cover_cache(&mut self) -> Task<Message> {
+        let mut seen = HashSet::new();
+        let playlists: Vec<SongList> = self
+            .ui
+            .discover
+            .recommended_playlists
+            .iter()
+            .chain(self.ui.discover.hot_playlists.iter())
+            .filter(|playlist| seen.insert(playlist.id))
+            .cloned()
+            .collect();
+
+        if playlists.is_empty() {
+            Task::none()
+        } else {
+            let preload_task = self.preload_covers(&playlists);
+            let download_task = self.download_covers(&playlists);
+            Task::batch([preload_task, download_task])
+        }
+    }
+
+    fn has_active_discover_playlist(&self, playlist_id: u64) -> bool {
+        matches!(self.ui.current_route, Route::Discover(_))
+            && self
+                .ui
+                .discover
+                .recommended_playlists
+                .iter()
+                .chain(self.ui.discover.hot_playlists.iter())
+                .any(|playlist| playlist.id == playlist_id)
+    }
+
     /// Handle discover page related messages
     pub fn handle_discover(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
@@ -93,6 +131,9 @@ impl App {
             }
 
             Message::DiscoverPlaylistCoverLoaded(playlist_id, path) => {
+                if !self.has_active_discover_playlist(*playlist_id) {
+                    return Some(Task::none());
+                }
                 // Create image handle from path for instant rendering
                 let handle = iced::widget::image::Handle::from_path(path);
                 self.ui
@@ -110,6 +151,9 @@ impl App {
             }
 
             Message::DiscoverCoverAllocated(playlist_id, result) => {
+                if !self.has_active_discover_playlist(*playlist_id) {
+                    return Some(Task::none());
+                }
                 // Store the allocation to keep the image in GPU memory
                 if let Ok(allocation) = result.clone() {
                     self.ui

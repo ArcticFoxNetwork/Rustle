@@ -12,6 +12,22 @@ use crate::app::state::{App, Route, SearchTab};
 const PAGE_SIZE: u32 = 50;
 
 impl App {
+    pub(super) fn clear_search_cover_cache(&mut self) {
+        self.ui.search.result_covers.clear();
+        self.ui.search.result_cover_allocations.clear();
+    }
+
+    fn is_active_search_cover(&self, tab: SearchTab, id: u64) -> bool {
+        matches!(self.ui.current_route, Route::Search { .. })
+            && match tab {
+                SearchTab::Albums | SearchTab::Artists => {
+                    self.ui.search.albums.iter().any(|item| item.id == id)
+                }
+                SearchTab::Playlists => self.ui.search.playlists.iter().any(|item| item.id == id),
+                SearchTab::Songs => false,
+            }
+    }
+
     /// Handle search-related messages
     pub fn handle_search(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
@@ -38,6 +54,7 @@ impl App {
 
             Message::SearchResultsLoaded(payload) => {
                 self.ui.search.loading = false;
+                self.clear_search_cover_cache();
 
                 let cover_task = match payload.tab {
                     SearchTab::Songs => {
@@ -94,6 +111,9 @@ impl App {
 
             Message::SearchCoverLoaded(tab, id, path) => {
                 let key = (*tab, *id);
+                if !self.is_active_search_cover(*tab, *id) {
+                    return Some(Task::none());
+                }
                 let handle = iced::widget::image::Handle::from_path(path);
                 self.ui.search.result_covers.insert(key, handle.clone());
                 let tab = *tab;
@@ -106,6 +126,9 @@ impl App {
             }
 
             Message::SearchCoverAllocated(tab, id, result) => {
+                if !self.is_active_search_cover(*tab, *id) {
+                    return Some(Task::none());
+                }
                 if let Ok(allocation) = result.clone() {
                     self.ui
                         .search
