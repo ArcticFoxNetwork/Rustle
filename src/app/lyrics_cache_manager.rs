@@ -27,8 +27,12 @@ pub struct LyricsCacheManagerState {
 }
 
 impl LyricsCacheManagerState {
+    fn has_usable_cache(ncm_id: u64) -> bool {
+        crate::features::lyrics::load_cached_lyrics(ncm_id).is_some()
+    }
+
     pub fn should_schedule_warmup(&mut self, song_id: i64, ncm_id: u64) -> bool {
-        if crate::features::lyrics::is_lyrics_cached(ncm_id) {
+        if Self::has_usable_cache(ncm_id) {
             self.mark_ready(song_id, ncm_id);
             return false;
         }
@@ -49,7 +53,7 @@ impl LyricsCacheManagerState {
     }
 
     pub fn begin_warmup(&mut self, song_id: i64, ncm_id: u64) -> bool {
-        if crate::features::lyrics::is_lyrics_cached(ncm_id) {
+        if Self::has_usable_cache(ncm_id) {
             self.mark_ready(song_id, ncm_id);
             return false;
         }
@@ -81,27 +85,21 @@ impl LyricsCacheManagerState {
     }
 
     pub fn register_display_fetch(&mut self, song_id: i64, ncm_id: u64) -> DisplayFetchAction {
-        if crate::features::lyrics::is_lyrics_cached(ncm_id) {
-            self.mark_ready(song_id, ncm_id);
-            return DisplayFetchAction::UseCache;
+        match self.entries.get(&song_id).map(|entry| entry.status) {
+            Some(LyricsCacheStatus::Ready) if Self::has_usable_cache(ncm_id) => {
+                DisplayFetchAction::UseCache
+            }
+            Some(LyricsCacheStatus::Ready) => {
+                self.entries.remove(&song_id);
+                self.begin_fetch_entry(song_id, ncm_id);
+                DisplayFetchAction::StartFetch
+            }
+            Some(LyricsCacheStatus::Fetching) => DisplayFetchAction::AwaitExisting,
+            Some(LyricsCacheStatus::Failed) | None => {
+                self.begin_fetch_entry(song_id, ncm_id);
+                DisplayFetchAction::StartFetch
+            }
         }
-
-        if matches!(
-            self.entries.get(&song_id).map(|entry| entry.status),
-            Some(LyricsCacheStatus::Fetching)
-        ) {
-            return DisplayFetchAction::AwaitExisting;
-        }
-
-        self.entries.insert(
-            song_id,
-            LyricsCacheEntry {
-                ncm_id,
-                status: LyricsCacheStatus::Fetching,
-                last_error: None,
-            },
-        );
-        DisplayFetchAction::StartFetch
     }
 
     pub fn finish_warmup(&mut self, song_id: i64, result: Result<(), String>) {
@@ -111,7 +109,7 @@ impl LyricsCacheManagerState {
 
         match result {
             Ok(()) => {
-                if crate::features::lyrics::is_lyrics_cached(entry.ncm_id) {
+                if Self::has_usable_cache(entry.ncm_id) {
                     entry.status = LyricsCacheStatus::Ready;
                     entry.last_error = None;
                 } else {
@@ -132,6 +130,17 @@ impl LyricsCacheManagerState {
             LyricsCacheEntry {
                 ncm_id,
                 status: LyricsCacheStatus::Ready,
+                last_error: None,
+            },
+        );
+    }
+
+    fn begin_fetch_entry(&mut self, song_id: i64, ncm_id: u64) {
+        self.entries.insert(
+            song_id,
+            LyricsCacheEntry {
+                ncm_id,
+                status: LyricsCacheStatus::Fetching,
                 last_error: None,
             },
         );

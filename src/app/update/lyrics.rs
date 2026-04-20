@@ -146,7 +146,7 @@ impl App {
                     .register_display_fetch(song_id, ncm_id)
                 {
                     DisplayFetchAction::UseCache => {
-                        Some(self.resume_display_load_from_cache(song_id))
+                        Some(self.resume_display_lyrics_load_from_cache(song_id))
                     }
                     DisplayFetchAction::AwaitExisting => Some(Task::none()),
                     DisplayFetchAction::StartFetch => {
@@ -228,7 +228,7 @@ impl App {
 
                 if self.ui.lyrics.pending_song_id == Some(*song_id) {
                     return Some(match result {
-                        Ok(()) => self.resume_display_load_from_cache(*song_id),
+                        Ok(()) => self.resume_display_lyrics_load_from_cache(*song_id),
                         Err(error) => Task::done(Message::LyricsLoadFailed(*song_id, error.clone())),
                     });
                 }
@@ -661,7 +661,7 @@ impl App {
     fn note_lyrics_cache_ready_if_available(&mut self, song_id: i64) {
         if song_id < 0 {
             let ncm_id = (-song_id) as u64;
-            if crate::features::lyrics::is_lyrics_cached(ncm_id) {
+            if crate::features::lyrics::load_cached_lyrics(ncm_id).is_some() {
                 self.playback
                     .lyrics_cache_manager
                     .mark_ready(song_id, ncm_id);
@@ -669,17 +669,32 @@ impl App {
         }
     }
 
-    fn resume_display_load_from_cache(&mut self, song_id: i64) -> Task<Message> {
-        let Some(song) = self
-            .playback
-            .current_song
-            .clone()
-            .filter(|song| song.id == song_id) else
-        {
-            return Task::none();
-        };
+    fn resume_display_lyrics_load_from_cache(&mut self, song_id: i64) -> Task<Message> {
+        let ncm_id = if song_id < 0 { (-song_id) as u64 } else { 0 };
 
-        self.load_lyrics_async(&song)
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    if song_id < 0 {
+                        crate::features::lyrics::load_cached_lyrics(ncm_id).map(|cached_lines| {
+                            crate::features::lyrics::to_ui_lyrics(cached_lines)
+                        })
+                    } else {
+                        None
+                    }
+                })
+                .await
+                .ok()
+                .flatten()
+            },
+            move |lines| match lines {
+                Some(lines) => Message::LocalLyricsReady(song_id, lines),
+                None => Message::LyricsLoadFailed(
+                    song_id,
+                    "Cached lyrics unavailable after warmup".to_string(),
+                ),
+            },
+        )
     }
 
     fn prepare_engine_lines_task(
