@@ -2,9 +2,69 @@
 //!
 //! Supports the common [mm:ss.xx]text format with line-level synchronization.
 
-use super::types::{LyricLineOwned, LyricWordOwned, process_lyrics};
+use super::types::{LyricLineOwned, LyricWordOwned, MAX_LRC_TIMESTAMP, process_lyrics};
 
-/// Parse timestamp from LRC format: [mm:ss.xx] or [mm:ss:xx]
+fn parse_time_text(time_str: &str) -> Option<u64> {
+    fn parse_component(part: &str) -> Option<f64> {
+        if part.is_empty() {
+            return None;
+        }
+        let value: f64 = part.parse().ok()?;
+        if !value.is_finite() || value < 0.0 {
+            return None;
+        }
+        Some(value)
+    }
+
+    fn parse_fraction(part: &str) -> Option<f64> {
+        if part.is_empty() {
+            return None;
+        }
+        let frac_value: f64 = format!("0.{part}").parse().ok()?;
+        if !frac_value.is_finite() || frac_value < 0.0 {
+            return None;
+        }
+        Some(frac_value)
+    }
+
+    let (whole, dot_fraction) = match time_str.split_once('.') {
+        Some((whole, fraction)) => (whole, Some(fraction)),
+        None => (time_str, None),
+    };
+
+    let parts: Vec<&str> = whole.split(':').collect();
+    if parts.is_empty() {
+        return None;
+    }
+
+    let mut total_seconds = if dot_fraction.is_none() && parts.len() == 3 {
+        // Some local LRC files use `mm:ss:ff` instead of `mm:ss.ff`.
+        let minutes = parse_component(parts[0])?;
+        let seconds = parse_component(parts[1])?;
+        let fraction = parse_fraction(parts[2])?;
+        minutes * 60.0 + seconds + fraction
+    } else {
+        let mut total_seconds = 0.0_f64;
+        for part in &parts {
+            let value = parse_component(part)?;
+            total_seconds = total_seconds * 60.0 + value;
+        }
+        total_seconds
+    };
+
+    if let Some(fraction) = dot_fraction {
+        total_seconds += parse_fraction(fraction)?;
+    }
+
+    let time_ms = (total_seconds * 1000.0).round();
+    if !time_ms.is_finite() || time_ms < 0.0 {
+        return None;
+    }
+
+    Some((time_ms as u64).min(MAX_LRC_TIMESTAMP))
+}
+
+/// Parse timestamp from LRC format: `[mm:ss.xx]`.
 fn parse_time(src: &str) -> Option<(usize, u64)> {
     if !src.starts_with('[') {
         return None;
@@ -22,37 +82,130 @@ fn parse_time(src: &str) -> Option<(usize, u64)> {
         }
     }
 
-    // Parse mm:ss.xx or mm:ss:xx
-    let parts: Vec<&str> = time_str.split(|c| c == ':' || c == '.').collect();
-
-    let time_ms = match parts.len() {
-        2 => {
-            // mm:ss format
-            let min: u64 = parts[0].parse().ok()?;
-            let sec: u64 = parts[1].parse().ok()?;
-            min * 60 * 1000 + sec * 1000
-        }
-        3 => {
-            // mm:ss.xx or mm:ss:xx format
-            let min: u64 = parts[0].parse().ok()?;
-            let sec: u64 = parts[1].parse().ok()?;
-            let ms_str = parts[2];
-            let mut ms: u64 = ms_str.parse().ok()?;
-
-            // Handle different precision: xx (centiseconds) vs xxx (milliseconds)
-            match ms_str.len() {
-                1 => ms *= 100,
-                2 => ms *= 10,
-                3 => {}
-                _ => return None,
-            }
-
-            min * 60 * 1000 + sec * 1000 + ms
-        }
-        _ => return None,
-    };
+    let time_ms = parse_time_text(time_str)?;
 
     Some((end_bracket + 1, time_ms))
+}
+
+fn strip_background_text(text: &str) -> (String, bool) {
+    let trimmed = text.trim();
+
+    let mut chars = trimmed.chars();
+    if let (Some(open), Some(close)) = (chars.next(), trimmed.chars().next_back()) {
+        let is_open = matches!(open, '(' | '（');
+        let is_close = matches!(close, ')' | '）');
+        if is_open && is_close && trimmed.len() >= open.len_utf8() + close.len_utf8() {
+            let inner = &trimmed[open.len_utf8()..trimmed.len() - close.len_utf8()];
+            return (inner.trim().to_string(), true);
+        }
+    }
+
+    (trimmed.to_string(), false)
+}
+
+fn line_text(line: &LyricLineOwned) -> String {
+    line.words
+        .iter()
+        .map(|word| word.word.as_str())
+        .collect::<String>()
+        .trim()
+        .to_string()
+}
+
+fn text_script_mask(text: &str) -> u8 {
+    let mut mask = 0u8;
+
+    for ch in text.chars() {
+        if ch.is_whitespace() || ch.is_ascii_punctuation() || ch.is_ascii_digit() {
+            continue;
+        }
+
+        mask |= match ch {
+            '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '\u{F900}'..='\u{FAFF}' => 1,
+            '\u{3040}'..='\u{309F}' => 1 << 1,
+            '\u{30A0}'..='\u{30FF}' => 1 << 2,
+            '\u{AC00}'..='\u{D7AF}' => 1 << 3,
+            'A'..='Z' | 'a'..='z' | '\u{00C0}'..='\u{024F}' => 1 << 4,
+            '\u{0400}'..='\u{04FF}' => 1 << 5,
+            _ if ch.is_alphabetic() => 1 << 6,
+            _ => 0,
+        };
+    }
+
+    mask
+}
+
+fn should_merge_duplicate_group(group: &[LyricLineOwned]) -> bool {
+    if !(2..=3).contains(&group.len()) {
+        return false;
+    }
+
+    let first_is_bg = group[0].is_bg;
+    if group.iter().any(|line| line.is_bg != first_is_bg) {
+        return false;
+    }
+
+    let mut seen_masks = Vec::with_capacity(group.len());
+    let mut seen_texts = Vec::with_capacity(group.len());
+
+    for line in group {
+        let text = line_text(line);
+        if text.is_empty() {
+            return false;
+        }
+        if seen_texts.iter().any(|existing| existing == &text) {
+            return false;
+        }
+
+        let mask = text_script_mask(&text);
+        if mask == 0 {
+            return false;
+        }
+
+        seen_texts.push(text);
+        if !seen_masks.contains(&mask) {
+            seen_masks.push(mask);
+        }
+    }
+
+    seen_masks.len() >= 2
+}
+
+fn merge_duplicate_timestamp_attrs(lines: Vec<LyricLineOwned>) -> Vec<LyricLineOwned> {
+    let mut merged: Vec<LyricLineOwned> = Vec::with_capacity(lines.len());
+    let mut index = 0usize;
+
+    while index < lines.len() {
+        let start_time = lines[index].start_time;
+        let mut end = index + 1;
+        while end < lines.len() && lines[end].start_time == start_time {
+            end += 1;
+        }
+
+        let group = &lines[index..end];
+        if should_merge_duplicate_group(group) {
+            let mut main = group[0].clone();
+
+            if let Some(translation) = group.get(1).map(line_text) {
+                if main.translated_lyric.is_empty() {
+                    main.translated_lyric = translation;
+                }
+            }
+            if let Some(romanization) = group.get(2).map(line_text) {
+                if main.roman_lyric.is_empty() {
+                    main.roman_lyric = romanization;
+                }
+            }
+
+            merged.push(main);
+        } else {
+            merged.extend(group.iter().cloned());
+        }
+
+        index = end;
+    }
+
+    merged
 }
 
 /// Parse a single LRC line, which may have multiple timestamps
@@ -77,7 +230,7 @@ fn parse_line(line: &str) -> Vec<LyricLineOwned> {
     }
 
     // Get the text after all timestamps
-    let text = line[pos..].trim().to_string();
+    let (text, is_bg) = strip_background_text(&line[pos..]);
 
     // Create a LyricLine for each timestamp
     for start_time in timestamps {
@@ -90,6 +243,7 @@ fn parse_line(line: &str) -> Vec<LyricLineOwned> {
             }],
             start_time,
             end_time: 0,
+            is_bg,
             ..Default::default()
         });
     }
@@ -101,31 +255,50 @@ fn parse_line(line: &str) -> Vec<LyricLineOwned> {
 pub fn parse_lrc(src: &str) -> Vec<LyricLineOwned> {
     let lines = src.lines();
     let mut result = Vec::with_capacity(lines.size_hint().1.unwrap_or(128).min(1024));
+    let mut line_order: Vec<usize> =
+        Vec::with_capacity(lines.size_hint().1.unwrap_or(128).min(1024));
 
-    for line in lines {
+    for (line_index, line) in lines.enumerate() {
         let parsed = parse_line(line);
+        line_order.extend(std::iter::repeat_n(line_index, parsed.len()));
         result.extend(parsed);
     }
 
-    // Sort by start time
-    result.sort_unstable_by_key(|x| x.start_time);
+    // Sort by time but preserve source order for equal timestamps so duplicate
+    // timestamp translation/romanization lines remain attached to the intended
+    // main line.
+    let mut indexed: Vec<(usize, LyricLineOwned)> = line_order.into_iter().zip(result).collect();
+    indexed.sort_by_key(|(source_index, line)| (line.start_time, *source_index));
+    result = indexed.into_iter().map(|(_, line)| line).collect();
+    result = merge_duplicate_timestamp_attrs(result);
 
-    // Calculate end times based on next line's start time
-    let mut last_end_time = u64::MAX;
-    for line in result.iter_mut().rev() {
-        line.end_time = last_end_time;
-        if let Some(first_word) = line.words.first_mut() {
-            first_word.end_time = last_end_time;
+    // Calculate end times based on the next distinct timestamp.
+    // This preserves simultaneous same-timestamp main lines instead of collapsing
+    // their duration to zero.
+    let mut next_distinct_start = MAX_LRC_TIMESTAMP;
+    for idx in (0..result.len()).rev() {
+        let end_time = next_distinct_start;
+
+        result[idx].end_time = end_time;
+        if let Some(first_word) = result[idx].words.first_mut() {
+            first_word.end_time = end_time;
         }
-        last_end_time = line.start_time;
+
+        let previous_has_same_timestamp =
+            idx > 0 && result[idx - 1].start_time == result[idx].start_time;
+        if !previous_has_same_timestamp {
+            next_distinct_start = result[idx].start_time;
+        }
     }
 
     process_lyrics(&mut result);
+    result.retain(|line| line.words.first().is_some_and(|word| !word.word.is_empty()));
 
     result
 }
 
 /// Write timestamp in LRC format
+#[cfg(test)]
 pub fn write_timestamp(result: &mut String, time: u64) {
     use std::fmt::Write;
     let ms = time % 1000;
@@ -135,19 +308,31 @@ pub fn write_timestamp(result: &mut String, time: u64) {
 }
 
 /// Convert lyrics to LRC format string
+#[cfg(test)]
 pub fn stringify_lrc(lines: &[LyricLineOwned]) -> String {
-    let capacity: usize = lines
+    let visible_lines: Vec<&LyricLineOwned> =
+        lines.iter().filter(|line| !line.words.is_empty()).collect();
+    let capacity: usize = visible_lines
         .iter()
         .map(|x| x.words.iter().map(|y| y.word.len()).sum::<usize>() + 13)
         .sum();
     let mut result = String::with_capacity(capacity);
 
-    for line in lines {
-        if !line.words.is_empty() {
-            write_timestamp(&mut result, line.words[0].start_time);
-            for word in line.words.iter() {
-                result.push_str(&word.word);
-            }
+    for (index, line) in visible_lines.iter().enumerate() {
+        write_timestamp(&mut result, line.words[0].start_time);
+        let text = line
+            .words
+            .iter()
+            .map(|word| word.word.as_str())
+            .collect::<String>();
+        if line.is_bg {
+            result.push('(');
+            result.push_str(&text);
+            result.push(')');
+        } else {
+            result.push_str(&text);
+        }
+        if index + 1 < visible_lines.len() {
             result.push('\n');
         }
     }
@@ -165,6 +350,9 @@ mod tests {
         assert_eq!(parse_time("[00:10.254]"), Some((11, 10254)));
         assert_eq!(parse_time("[01:10.1]"), Some((9, 70100)));
         assert_eq!(parse_time("[00:00.00]"), Some((10, 0)));
+        assert_eq!(parse_time("[1:2:3.123]"), Some((11, 3723123)));
+        assert_eq!(parse_time("[00:14:91]"), Some((10, 14910)));
+        assert_eq!(parse_time("[00:02:31]"), Some((10, 2310)));
     }
 
     #[test]
@@ -173,6 +361,25 @@ mod tests {
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].start_time, 1120);
         assert_eq!(lines[0].words[0].word, "test LyRiC");
+    }
+
+    #[test]
+    fn test_parse_lrc_colon_fraction_keeps_credit_lines_short() {
+        let lines = parse_lrc(
+            "[00:00.00] 作词 : z²\n\
+[00:01.00] 作曲 : z²/yume.\n\
+[00:02:31]♪\n\
+[00:14:91]「死ぬまで一緒だから」\n",
+        );
+
+        assert_eq!(lines.len(), 4);
+        assert_eq!(lines[0].start_time, 0);
+        assert_eq!(lines[0].end_time, 1000);
+        assert_eq!(lines[1].start_time, 1000);
+        assert_eq!(lines[1].end_time, 2310);
+        assert_eq!(lines[2].start_time, 2310);
+        assert_eq!(lines[2].end_time, 14910);
+        assert_eq!(lines[3].start_time, 14910);
     }
 
     #[test]
@@ -194,10 +401,109 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_background_lines() {
+        let lines = parse_lrc("[00:01.120](Hello)\n[00:03.000]（Hi）\n[00:05.000]World");
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].is_bg);
+        assert_eq!(lines[0].words[0].word, "Hello");
+        assert!(lines[1].is_bg);
+        assert_eq!(lines[1].words[0].word, "Hi");
+        assert!(!lines[2].is_bg);
+    }
+
+    #[test]
+    fn test_empty_lines_are_filtered_but_preserve_end_times() {
+        let lines = parse_lrc(
+            "[00:00.000]\n[00:01.000]   \n[00:01.120] Hello   \n[00:02.333]\n[00:03.000] World \n[00:05.000]   \n",
+        );
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].words[0].word, "Hello");
+        assert_eq!(lines[0].end_time, 2333);
+        assert_eq!(lines[0].words[0].end_time, 2333);
+        assert_eq!(lines[1].words[0].word, "World");
+        assert_eq!(lines[1].end_time, 5000);
+    }
+
+    #[test]
+    fn test_same_timestamp_lines_become_translation() {
+        let lines = parse_lrc("[00:01.000]Hello\n[00:01.000]你好\n[00:03.000]World");
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].words[0].word, "Hello");
+        assert_eq!(lines[0].translated_lyric, "你好");
+        assert_eq!(lines[0].end_time, 3000);
+        assert_eq!(lines[1].words[0].word, "World");
+    }
+
+    #[test]
+    fn test_third_same_timestamp_line_becomes_romanization() {
+        let lines =
+            parse_lrc("[00:01.000]Hello\n[00:01.000]你好\n[00:01.000]ni hao\n[00:03.000]World");
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].translated_lyric, "你好");
+        assert_eq!(lines[0].roman_lyric, "ni hao");
+    }
+
+    #[test]
+    fn test_same_timestamp_preserves_source_order() {
+        let lines = parse_lrc("[00:01.000]你好\n[00:01.000]Hello\n[00:03.000]World");
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].words[0].word, "你好");
+        assert_eq!(lines[0].translated_lyric, "Hello");
+    }
+
+    #[test]
+    fn test_same_timestamp_same_script_lines_stay_separate() {
+        let lines = parse_lrc("[00:01.000]Hello\n[00:01.000]World\n[00:03.000]After");
+        assert_eq!(lines.len(), 3);
+        assert!(lines[0].translated_lyric.is_empty());
+        assert!(lines[1].translated_lyric.is_empty());
+        assert_eq!(lines[0].end_time, 3000);
+        assert_eq!(lines[1].end_time, 3000);
+    }
+
+    #[test]
+    fn test_same_timestamp_background_lines_merge_translation() {
+        let lines = parse_lrc("[00:01.000](Hello)\n[00:01.000](你好)\n[00:03.000]After");
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].is_bg);
+        assert_eq!(lines[0].words[0].word, "Hello");
+        assert_eq!(lines[0].translated_lyric, "你好");
+        assert_eq!(lines[0].end_time, 3000);
+    }
+
+    #[test]
+    fn test_same_timestamp_mixed_main_and_background_stay_separate() {
+        let lines = parse_lrc("[00:01.000]Hello\n[00:01.000](你好)\n[00:03.000]After");
+        assert_eq!(lines.len(), 3);
+        assert!(!lines[0].is_bg);
+        assert!(lines[1].is_bg);
+        assert!(lines[0].translated_lyric.is_empty());
+        assert!(lines[1].translated_lyric.is_empty());
+    }
+
+    #[test]
+    fn test_mixed_parentheses_are_background_lines() {
+        let lines = parse_lrc("[00:01.000](Hello）\n[00:02.000]（World)");
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].is_bg);
+        assert!(lines[1].is_bg);
+        assert_eq!(lines[0].words[0].word, "Hello");
+        assert_eq!(lines[1].words[0].word, "World");
+    }
+
+    #[test]
     fn test_stringify_lrc() {
         let lines = parse_lrc("[00:01.12] test LyRiC\n[00:10.254] sssxxx");
         let output = stringify_lrc(&lines);
         assert!(output.contains("[00:01.120]"));
         assert!(output.contains("[00:10.254]"));
+    }
+
+    #[test]
+    fn test_stringify_background_lines() {
+        let lines = parse_lrc("[00:01.120](Hello)\n[00:03.000]World");
+        let output = stringify_lrc(&lines);
+        assert!(output.contains("[00:01.120](Hello)"));
+        assert!(output.contains("[00:03.000]World"));
     }
 }

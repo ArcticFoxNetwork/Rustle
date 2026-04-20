@@ -1,6 +1,6 @@
 //! Bicubic Hermite Patch (BHP) 网格系统 - 基于 实现
 //!
-//! 用于生成 Apple Music 风格的网格渐变背景
+//! 用于生成网格渐变背景
 
 use rand::Rng;
 

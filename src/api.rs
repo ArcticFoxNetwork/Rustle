@@ -8,5 +8,5 @@ pub mod ncm_api;
 pub use ncm::NcmClient;
 pub use ncm_api::model::{
     AlbumDetail, ArtistDetail, BannersInfo, LoginInfo, PlayListDetail, SongCopyright, SongInfo,
-    SongList, TargetType, TopList, UserDetail,
+    SongList, TargetType, UserDetail,
 };

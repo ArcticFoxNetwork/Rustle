@@ -7,11 +7,12 @@
 //!
 //! - Per-character animation data for wave effects
 //! - Gradient mask parameters for word highlighting
-//! - Translation and romanized text support (per-word and per-line)
+//! - Translation and romanized text support (per-line)
 //! - Virtualization support (isInSight)
-//! - Pre-computed mask animation keyframes
 
 use cosmic_text::Weight;
+
+pub const SUB_LINE_HEIGHT_MULTIPLIER: f32 = 1.5;
 
 /// Font configuration for lyrics rendering
 ///
@@ -22,7 +23,7 @@ pub struct FontConfig {
     /// Font family name (e.g., "Noto Sans CJK SC")
     /// When None, falls back to system sans-serif
     pub font_family: Option<String>,
-    /// Font weight (e.g., Weight::MEDIUM)
+    /// Font weight (e.g., Weight::SEMIBOLD)
     pub font_weight: Weight,
     /// Enable debug logging for font metrics
     pub debug_logging: bool,
@@ -31,11 +32,8 @@ pub struct FontConfig {
 impl Default for FontConfig {
     fn default() -> Self {
         Self {
-            // Use Inter as default font (loaded from assets/fonts/)
-            // Falls back to system sans-serif if not found
-            font_family: Some("Inter".to_string()),
-            // Use NORMAL weight to match Regular font files
-            font_weight: Weight::NORMAL,
+            font_family: None,
+            font_weight: Weight::SEMIBOLD,
             debug_logging: false,
         }
     }
@@ -43,6 +41,7 @@ impl Default for FontConfig {
 
 impl FontConfig {
     /// Create a new FontConfig with a specific font family
+    #[cfg(test)]
     pub fn with_family(family: impl Into<String>) -> Self {
         Self {
             font_family: Some(family.into()),
@@ -51,12 +50,14 @@ impl FontConfig {
     }
 
     /// Set the font weight
+    #[cfg(test)]
     pub fn weight(mut self, weight: Weight) -> Self {
         self.font_weight = weight;
         self
     }
 
     /// Enable debug logging
+    #[cfg(test)]
     pub fn with_debug(mut self) -> Self {
         self.debug_logging = true;
         self
@@ -65,36 +66,31 @@ impl FontConfig {
 
 /// Font size configuration for lyrics rendering
 ///
-/// Controls font size calculation parameters including min/max bounds,
-/// multiplier, and ratios for translation/romanized text.
+/// Controls main font size calculation parameters including min/max bounds
+/// and the global multiplier.
 #[derive(Debug, Clone)]
 pub struct FontSizeConfig {
-    /// Minimum font size in logical pixels (default: 36.0)
+    /// Minimum font size in logical pixels (default: 12.0)
     pub min_font_size: f32,
-    /// Maximum font size in logical pixels (default: 72.0)
+    /// Maximum font size in logical pixels (default: 96.0)
     pub max_font_size: f32,
-    /// Font size multiplier (default: 1.0)
+    /// Font size multiplier (default: 1.12)
     pub font_size_multiplier: f32,
-    /// Translation text size ratio relative to main text (default: 0.55)
-    pub translation_ratio: f32,
-    /// Romanized text size ratio relative to main text (default: 0.45)
-    pub romanized_ratio: f32,
 }
 
 impl Default for FontSizeConfig {
     fn default() -> Self {
         Self {
-            min_font_size: 48.0,
+            min_font_size: 12.0,
             max_font_size: 96.0,
-            font_size_multiplier: 1.5,
-            translation_ratio: 0.55,
-            romanized_ratio: 0.45,
+            font_size_multiplier: 1.12,
         }
     }
 }
 
 impl FontSizeConfig {
     /// Create a new FontSizeConfig with custom min/max font sizes
+    #[cfg(test)]
     pub fn with_bounds(min: f32, max: f32) -> Self {
         Self {
             min_font_size: min,
@@ -104,37 +100,23 @@ impl FontSizeConfig {
     }
 
     /// Set the font size multiplier
+    #[cfg(test)]
     pub fn multiplier(mut self, multiplier: f32) -> Self {
         self.font_size_multiplier = if multiplier > 0.0 { multiplier } else { 1.0 };
         self
     }
 
-    /// Set the translation text ratio
-    pub fn translation_ratio(mut self, ratio: f32) -> Self {
-        self.translation_ratio = ratio.clamp(0.3, 0.8);
-        self
-    }
-
-    /// Set the romanized text ratio
-    pub fn romanized_ratio(mut self, ratio: f32) -> Self {
-        self.romanized_ratio = ratio.clamp(0.3, 0.8);
-        self
-    }
-
-    /// Calculate the main font size for a given viewport height
-    pub fn calculate_font_size(&self, viewport_height: f32) -> f32 {
-        let base_size = viewport_height * 0.055;
-        base_size.clamp(self.min_font_size, self.max_font_size) * self.font_size_multiplier
-    }
-
-    /// Calculate the translation font size
-    pub fn calculate_translation_size(&self, main_font_size: f32) -> f32 {
-        main_font_size * self.translation_ratio
-    }
-
-    /// Calculate the romanized font size
-    pub fn calculate_romanized_size(&self, main_font_size: f32) -> f32 {
-        main_font_size * self.romanized_ratio
+    /// Calculate the main font size for a given viewport size.
+    ///
+    /// - desktop: `max(max(5vh, 2.5vw), 12px)`
+    /// - narrow/mobile: `max(8vw, 12px)`
+    pub fn calculate_font_size(&self, viewport_width: f32, viewport_height: f32) -> f32 {
+        let base_size = if viewport_width <= 768.0 {
+            viewport_width * 0.08
+        } else {
+            (viewport_height * 0.05).max(viewport_width * 0.025)
+        };
+        (base_size * self.font_size_multiplier).clamp(self.min_font_size, self.max_font_size)
     }
 }
 
@@ -157,8 +139,6 @@ pub struct LyricLineData {
     pub is_duet: bool,
     /// Whether this is a background vocal
     pub is_bg: bool,
-    /// Pre-computed mask animation data (calculated once when lyrics are set)
-    pub mask_animation: Option<LineMaskAnimation>,
 }
 
 impl LyricLineData {
@@ -195,205 +175,14 @@ impl Default for LyricLineData {
             end_ms: 0,
             is_duet: false,
             is_bg: false,
-            mask_animation: None,
         }
     }
 }
 
-impl LyricLineData {
-    /// Calculate and cache mask animation data for this line
-    /// Call this after setting words and before rendering
-    pub fn compute_mask_animation(&mut self) {
-        self.mask_animation = Some(LineMaskAnimation::compute(
-            &self.words,
-            self.start_ms,
-            self.end_ms,
-        ));
-    }
-
-    /// 获取总淡入时长（用于 mask 动画）
-    /// 从行开始到最后一个词结束的时间
-    pub fn total_fade_duration(&self) -> u64 {
-        let word_end = self
-            .words
-            .iter()
-            .map(|w| w.end_ms)
-            .max()
-            .unwrap_or(self.end_ms);
-        word_end.max(self.end_ms).saturating_sub(self.start_ms)
-    }
-}
-
-/// Pre-computed mask animation data for a line
-///
-/// 预计算每个词的 mask 位置动画关键帧
-/// 避免实时计算，确保平滑准确的动画
-#[derive(Debug, Clone)]
-pub struct LineMaskAnimation {
-    /// Total duration of the fade animation (ms)
-    pub total_duration: f32,
-    /// Per-word animation keyframes
-    pub word_keyframes: Vec<WordMaskKeyframes>,
-}
-
-impl LineMaskAnimation {
-    /// Compute mask animation data from words
-    pub fn compute(words: &[WordData], line_start_ms: u64, line_end_ms: u64) -> Self {
-        // Total fade duration: max of all word end times or line end
-        let total_duration = words
-            .iter()
-            .map(|w| w.end_ms)
-            .max()
-            .unwrap_or(line_end_ms)
-            .max(line_end_ms)
-            .saturating_sub(line_start_ms) as f32;
-
-        let word_keyframes = words
-            .iter()
-            .enumerate()
-            .map(|(i, word)| {
-                WordMaskKeyframes::compute(i, word, words, line_start_ms, total_duration)
-            })
-            .collect();
-
-        Self {
-            total_duration,
-            word_keyframes,
-        }
-    }
-}
-
-/// Pre-computed keyframes for a single word's mask animation
-///
-/// Generates keyframes that account for:
-/// - Static periods (gaps between words)
-/// - Movement periods (during word playback)
-/// - Proper clamping at boundaries
-#[derive(Debug, Clone)]
-pub struct WordMaskKeyframes {
-    /// Keyframes: (time_offset 0-1, mask_position in pixels)
-    pub frames: Vec<MaskKeyframe>,
-}
-
-/// A single keyframe in the mask animation
-#[derive(Debug, Clone, Copy)]
-pub struct MaskKeyframe {
-    /// Time offset (0.0 to 1.0, relative to total_duration)
-    pub offset: f32,
-    /// Mask position in pixels (negative = not yet revealed, 0 = fully revealed)
-    pub mask_position: f32,
-}
-
-impl WordMaskKeyframes {
-    /// Compute keyframes for a word (the generateWebAnimationBasedMaskImage logic)
-    fn compute(
-        word_idx: usize,
-        word: &WordData,
-        all_words: &[WordData],
-        line_start_ms: u64,
-        total_duration: f32,
-    ) -> Self {
-        if total_duration <= 0.0 {
-            return Self { frames: vec![] };
-        }
-
-        let word_width = word.x_end - word.x_start;
-        let fade_width = 0.5; // In em units, will be converted to pixels during rendering
-
-        // Calculate width before this word (for initial mask position)
-        let width_before: f32 = all_words[..word_idx]
-            .iter()
-            .map(|w| w.x_end - w.x_start)
-            .sum();
-
-        // Initial mask position (fully hidden)
-        // min_offset is the leftmost position (fully hidden)
-        let min_offset = -(word_width + fade_width);
-
-        // Current position starts at the left edge
-        let mut cur_pos = -width_before - word_width - fade_width;
-        let mut time_offset = 0.0f32;
-        let mut frames = Vec::new();
-
-        // Helper to clamp mask position
-        let clamp_offset = |x: f32| x.max(min_offset).min(0.0);
-
-        // Initial frame
-        frames.push(MaskKeyframe {
-            offset: 0.0,
-            mask_position: clamp_offset(cur_pos),
-        });
-
-        let mut last_timestamp = 0u64;
-
-        // Generate keyframes for each word's timing
-        for (j, other_word) in all_words.iter().enumerate() {
-            // Static period (gap before this word)
-            let cur_timestamp = other_word.start_ms.saturating_sub(line_start_ms);
-            let static_duration = cur_timestamp.saturating_sub(last_timestamp);
-
-            if static_duration > 0 {
-                time_offset += static_duration as f32 / total_duration;
-                let time = time_offset.clamp(0.0, 1.0);
-                frames.push(MaskKeyframe {
-                    offset: time,
-                    mask_position: clamp_offset(cur_pos),
-                });
-            }
-            last_timestamp = cur_timestamp;
-
-            // Movement period (during word playback)
-            let fade_duration = other_word.end_ms.saturating_sub(other_word.start_ms);
-            if fade_duration > 0 {
-                time_offset += fade_duration as f32 / total_duration;
-                let other_width = other_word.x_end - other_word.x_start;
-                cur_pos += other_width;
-
-                // Add extra fade width at boundaries
-                if j == 0 {
-                    cur_pos += fade_width * 1.5;
-                }
-                if j == all_words.len() - 1 {
-                    cur_pos += fade_width * 0.5;
-                }
-
-                let time = time_offset.clamp(0.0, 1.0);
-                frames.push(MaskKeyframe {
-                    offset: time,
-                    mask_position: clamp_offset(cur_pos),
-                });
-
-                last_timestamp += fade_duration;
-            }
-        }
-
-        Self { frames }
-    }
-
-    /// Interpolate mask position at a given time (0-1)
-    pub fn interpolate(&self, time: f32) -> f32 {
-        if self.frames.is_empty() {
-            return 0.0;
-        }
-
-        // Find surrounding keyframes
-        let mut prev = &self.frames[0];
-        for frame in &self.frames {
-            if frame.offset > time {
-                // Interpolate between prev and frame
-                let t = if frame.offset > prev.offset {
-                    (time - prev.offset) / (frame.offset - prev.offset)
-                } else {
-                    0.0
-                };
-                return prev.mask_position + t * (frame.mask_position - prev.mask_position);
-            }
-            prev = frame;
-        }
-
-        // Past the last keyframe
-        prev.mask_position
-    }
+/// Treats lyrics as non-dynamic when every line has at most one word.
+#[inline]
+pub fn lyrics_are_non_dynamic(lines: &[LyricLineData]) -> bool {
+    lines.iter().all(|line| line.words.len() <= 1)
 }
 
 /// Data for a single word within a lyric line
@@ -405,22 +194,14 @@ pub struct WordData {
     pub start_ms: u64,
     /// End time in milliseconds
     pub end_ms: u64,
-    /// 逐词罗马音（romanWord）
-    /// 强调时显示在词下方
-    pub roman_word: Option<String>,
     /// 是否强调（发光效果）
-    /// 由 chunk_and_split_words 根据时长和长度计算
+    /// 由当前时长和文本长度规则计算
     pub emphasize: bool,
-    /// X position start (normalized 0-1, calculated during layout)
-    pub x_start: f32,
-    /// X position end (normalized 0-1, calculated during layout)
-    pub x_end: f32,
     /// Whether this is the last word in the line (for emphasis boost)
     /// Applies 1.6x amount, 1.5x blur, 1.2x duration for last word
     pub is_last_word: bool,
 }
 
-#[allow(dead_code)]
 impl WordData {
     /// Check if this word should have emphasis effect (style)
     ///
@@ -446,40 +227,8 @@ impl WordData {
     }
 
     /// Get word duration in milliseconds
-    pub fn duration_ms(&self) -> u64 {
+    fn duration_ms(&self) -> u64 {
         self.end_ms.saturating_sub(self.start_ms)
-    }
-
-    /// Calculate per-character animation delay (style)
-    ///
-    /// Formula: wordDe = de + (du / 2.5 / arr.length) * i
-    /// where:
-    /// - de: base delay (word start time - line start time)
-    /// - du: word duration
-    /// - arr.length: character count
-    /// - i: character index
-    pub fn char_delay(&self, char_index: usize, line_start_ms: u64) -> f32 {
-        let de = self.start_ms.saturating_sub(line_start_ms) as f32;
-        let du = self.duration_ms() as f32;
-        let char_count = self.text.chars().count().max(1) as f32;
-        de + (du / 2.5 / char_count) * char_index as f32
-    }
-
-    /// Calculate per-character X offset for wave effect (style)
-    ///
-    /// Formula: offsetX = -transX * 0.03 * amount * (arr.length / 2 - i)
-    /// where:
-    /// - transX: emphasis easing value (0-1)
-    /// - amount: emphasis amount based on duration
-    /// - arr.length: character count
-    /// - i: character index
-    ///
-    /// Returns offset in em units
-    pub fn char_x_offset(&self, char_index: usize, emphasis_progress: f32) -> f32 {
-        let char_count = self.text.chars().count().max(1) as f32;
-        let amount = self.emphasis_amount();
-        let emp = emphasis_easing(emphasis_progress);
-        -emp * 0.03 * amount * (char_count / 2.0 - char_index as f32)
     }
 
     /// Calculate emphasis amount based on word duration
@@ -533,20 +282,9 @@ impl WordData {
         }
         blur.min(0.8)
     }
-
-    /// Get effective duration for emphasis calculations
-    /// default: Last word gets 1.2x duration
-    pub fn effective_duration_ms(&self) -> u64 {
-        let du = self.duration_ms();
-        if self.is_last_word {
-            (du as f32 * 1.2) as u64
-        } else {
-            du
-        }
-    }
 }
 
-/// Apple Music-style emphasis easing function
+/// Emphasis easing function
 ///
 /// Uses bezier-easing library with:
 /// - bezIn: cubic-bezier(0.2, 0.4, 0.58, 1.0)
@@ -555,7 +293,6 @@ impl WordData {
 /// The easing function:
 /// - First half (0 to 0.5): bezIn(x / 0.5) - ramps up
 /// - Second half (0.5 to 1): 1 - bezOut((x - 0.5) / 0.5) - ramps down
-#[allow(dead_code)]
 pub fn emphasis_easing(x: f32) -> f32 {
     const EMP_EASING_MID: f32 = 0.5;
 
@@ -651,37 +388,13 @@ pub fn is_cjk_text(text: &str) -> bool {
     })
 }
 
-/// Check if text contains any CJK characters
-#[allow(dead_code)]
-fn contains_cjk(text: &str) -> bool {
-    text.chars().any(|c| {
-        matches!(c,
-            '\u{4E00}'..='\u{9FFF}' |  // CJK Unified Ideographs
-            '\u{3400}'..='\u{4DBF}' |  // CJK Unified Ideographs Extension A
-            '\u{20000}'..='\u{2A6DF}' | // CJK Unified Ideographs Extension B
-            '\u{2A700}'..='\u{2B73F}' | // CJK Unified Ideographs Extension C
-            '\u{2B740}'..='\u{2B81F}' | // CJK Unified Ideographs Extension D
-            '\u{2B820}'..='\u{2CEAF}' | // CJK Unified Ideographs Extension E
-            '\u{F900}'..='\u{FAFF}' |   // CJK Compatibility Ideographs
-            '\u{2F800}'..='\u{2FA1F}' | // CJK Compatibility Ideographs Supplement
-            '\u{3000}'..='\u{303F}' |   // CJK Symbols and Punctuation
-            '\u{3040}'..='\u{309F}' |   // Hiragana
-            '\u{30A0}'..='\u{30FF}' |   // Katakana
-            '\u{AC00}'..='\u{D7AF}'     // Hangul Syllables
-        )
-    })
-}
-
 impl Default for WordData {
     fn default() -> Self {
         Self {
             text: String::new(),
             start_ms: 0,
             end_ms: 0,
-            roman_word: None,
             emphasize: false,
-            x_start: 0.0,
-            x_end: 0.0,
             is_last_word: false,
         }
     }
@@ -729,6 +442,7 @@ impl Default for ComputedLineStyle {
 /// This controls the brightness of the highlighted (played) portion of lyrics.
 /// - At scale 1.0 (active line): bright_alpha = 1.0
 /// - At scale 0.97 or below (inactive line): bright_alpha = 0.2
+#[cfg(test)]
 pub fn calculate_bright_mask_alpha(scale: f32) -> f32 {
     let normalized = ((scale - 0.97) / 0.03).clamp(0.0, 1.0);
     normalized * 0.8 + 0.2
@@ -741,6 +455,7 @@ pub fn calculate_bright_mask_alpha(scale: f32) -> f32 {
 /// This controls the brightness of the unhighlighted (unplayed) portion of lyrics.
 /// - At scale 1.0 (active line): dark_alpha = 0.4
 /// - At scale 0.97 or below (inactive line): dark_alpha = 0.2
+#[cfg(test)]
 pub fn calculate_dark_mask_alpha(scale: f32) -> f32 {
     let normalized = ((scale - 0.97) / 0.03).clamp(0.0, 1.0);
     normalized * 0.2 + 0.2
@@ -756,6 +471,7 @@ pub fn calculate_dark_mask_alpha(scale: f32) -> f32 {
 /// - highlight: Highlight progress (0.0 = unplayed, 1.0 = fully played)
 ///
 /// Returns: Final brightness value (0.0 - 1.0)
+#[cfg(test)]
 pub fn interpolate_brightness(scale: f32, highlight: f32) -> f32 {
     let bright_alpha = calculate_bright_mask_alpha(scale);
     let dark_alpha = calculate_dark_mask_alpha(scale);
@@ -763,9 +479,9 @@ pub fn interpolate_brightness(scale: f32, highlight: f32) -> f32 {
     dark_alpha * (1.0 - highlight) + bright_alpha * highlight
 }
 
-// ========== Highlight Glow Calculation (Apple Music-style) ==========
+// ========== Highlight Glow Calculation ==========
 
-/// Check if highlight glow should be applied (Apple Music-style)
+/// Check if highlight glow should be applied
 ///
 /// Triggers highlight glow when:
 /// - highlight progress > 0.3
@@ -776,11 +492,12 @@ pub fn interpolate_brightness(scale: f32, highlight: f32) -> f32 {
 /// - is_active: Whether the line is currently active
 ///
 /// Returns: true if highlight glow should be applied
+#[cfg(test)]
 pub fn should_apply_highlight_glow(highlight: f32, is_active: bool) -> bool {
     highlight > 0.3 && is_active
 }
 
-/// Calculate highlight glow strength (Apple Music-style)
+/// Calculate highlight glow strength
 ///
 /// Formula: `glow_strength = (highlight - 0.3) / 0.7`
 ///
@@ -788,6 +505,7 @@ pub fn should_apply_highlight_glow(highlight: f32, is_active: bool) -> bool {
 /// - highlight: Highlight progress (0.0 - 1.0)
 ///
 /// Returns: Glow strength (0.0 - 1.0), or 0.0 if highlight <= 0.3
+#[cfg(test)]
 pub fn calculate_highlight_glow_strength(highlight: f32) -> f32 {
     if highlight <= 0.3 {
         0.0
@@ -796,7 +514,7 @@ pub fn calculate_highlight_glow_strength(highlight: f32) -> f32 {
     }
 }
 
-/// Calculate highlight glow color addition (Apple Music-style)
+/// Calculate highlight glow color addition
 ///
 /// Adds `(0.15, 0.15, 0.2) * glow_strength * 0.5` to the base color
 ///
@@ -804,6 +522,7 @@ pub fn calculate_highlight_glow_strength(highlight: f32) -> f32 {
 /// - glow_strength: Glow strength from calculate_highlight_glow_strength
 ///
 /// Returns: (r, g, b) color values to add to base color
+#[cfg(test)]
 pub fn calculate_highlight_glow_color(glow_strength: f32) -> (f32, f32, f32) {
     let factor = glow_strength * 0.5;
     (0.15 * factor, 0.15 * factor, 0.2 * factor)
@@ -816,8 +535,8 @@ mod tests {
     #[test]
     fn test_font_config_default() {
         let config = FontConfig::default();
-        assert_eq!(config.font_family, Some("Inter".to_string()));
-        assert_eq!(config.font_weight, Weight::NORMAL);
+        assert_eq!(config.font_family, None);
+        assert_eq!(config.font_weight, Weight::SEMIBOLD);
         assert!(!config.debug_logging);
     }
 
@@ -825,7 +544,7 @@ mod tests {
     fn test_font_config_with_family() {
         let config = FontConfig::with_family("Noto Sans CJK SC");
         assert_eq!(config.font_family, Some("Noto Sans CJK SC".to_string()));
-        assert_eq!(config.font_weight, Weight::NORMAL); // Default weight
+        assert_eq!(config.font_weight, Weight::SEMIBOLD); // Default weight
         assert!(!config.debug_logging);
     }
 
@@ -855,10 +574,7 @@ mod tests {
             text: "test".to_string(),
             start_ms,
             end_ms,
-            roman_word: None,
             emphasize: true,
-            x_start: 0.0,
-            x_end: 1.0,
             is_last_word,
         }
     }
@@ -973,10 +689,6 @@ mod tests {
         assert!(blur <= 0.8, "Blur should be capped at 0.8, got {}", blur);
     }
 
-    // ========== Property 7: Mask alpha calculation ==========
-    // **Feature: amll-blur-glow-effects, Property 7: Mask alpha calculation**
-    // **Validates: Requirements 3.1, 3.2**
-
     #[test]
     fn test_bright_mask_alpha_at_full_scale() {
         // At scale 1.0: normalized = (1.0 - 0.97) / 0.03 = 1.0
@@ -1040,10 +752,6 @@ mod tests {
         let alpha = super::calculate_dark_mask_alpha(0.985);
         assert!((alpha - 0.3).abs() < 0.001, "Expected 0.3, got {}", alpha);
     }
-
-    // ========== Property 8: Brightness interpolation ==========
-    // **Feature: amll-blur-glow-effects, Property 8: Brightness interpolation**
-    // **Validates: Requirements 3.3**
 
     #[test]
     fn test_brightness_interpolation_at_zero_highlight() {
@@ -1118,10 +826,6 @@ mod tests {
             brightness
         );
     }
-
-    // ========== Property 9: Highlight glow trigger and calculation ==========
-    // **Feature: amll-blur-glow-effects, Property 9: Highlight glow trigger and calculation**
-    // **Validates: Requirements 5.1, 5.2, 5.3, 5.4**
 
     #[test]
     fn test_highlight_glow_trigger_active_above_threshold() {
@@ -1241,11 +945,9 @@ mod tests {
     #[test]
     fn test_font_size_config_default() {
         let config = super::FontSizeConfig::default();
-        assert!((config.min_font_size - 36.0).abs() < 0.001);
-        assert!((config.max_font_size - 72.0).abs() < 0.001);
-        assert!((config.font_size_multiplier - 1.0).abs() < 0.001);
-        assert!((config.translation_ratio - 0.55).abs() < 0.001);
-        assert!((config.romanized_ratio - 0.45).abs() < 0.001);
+        assert!((config.min_font_size - 12.0).abs() < 0.001);
+        assert!((config.max_font_size - 96.0).abs() < 0.001);
+        assert!((config.font_size_multiplier - 1.12).abs() < 0.001);
     }
 
     #[test]
@@ -1270,53 +972,30 @@ mod tests {
     #[test]
     fn test_font_size_config_calculate_font_size() {
         let config = super::FontSizeConfig::default();
-        // viewport_height = 1080, base = 1080 * 0.055 = 59.4
-        // clamped to [36, 72] = 59.4, * 1.0 = 59.4
-        let size = config.calculate_font_size(1080.0);
-        assert!((size - 59.4).abs() < 0.1, "Expected ~59.4, got {}", size);
+        // 1920x1080 => max(54, 48) = 54, * 1.12 = 60.48
+        let size = config.calculate_font_size(1920.0, 1080.0);
+        assert!((size - 60.48).abs() < 0.1, "Expected ~60.48, got {}", size);
     }
 
     #[test]
     fn test_font_size_config_calculate_font_size_min_clamp() {
         let config = super::FontSizeConfig::default();
-        // viewport_height = 400, base = 400 * 0.055 = 22
-        // clamped to [36, 72] = 36
-        let size = config.calculate_font_size(400.0);
-        assert!((size - 36.0).abs() < 0.001, "Expected 36.0, got {}", size);
+        let size = config.calculate_font_size(100.0, 100.0);
+        assert!((size - 12.0).abs() < 0.001, "Expected 12.0, got {}", size);
     }
 
     #[test]
     fn test_font_size_config_calculate_font_size_max_clamp() {
         let config = super::FontSizeConfig::default();
-        // viewport_height = 2000, base = 2000 * 0.055 = 110
-        // clamped to [36, 72] = 72
-        let size = config.calculate_font_size(2000.0);
-        assert!((size - 72.0).abs() < 0.001, "Expected 72.0, got {}", size);
+        let size = config.calculate_font_size(5000.0, 4000.0);
+        assert!((size - 96.0).abs() < 0.001, "Expected 96.0, got {}", size);
     }
 
     #[test]
-    fn test_font_size_config_calculate_translation_size() {
+    fn test_font_size_config_calculate_font_size_mobile_branch() {
         let config = super::FontSizeConfig::default();
-        let main_size = 60.0;
-        let trans_size = config.calculate_translation_size(main_size);
-        // 60 * 0.55 = 33
-        assert!(
-            (trans_size - 33.0).abs() < 0.001,
-            "Expected 33.0, got {}",
-            trans_size
-        );
-    }
-
-    #[test]
-    fn test_font_size_config_calculate_romanized_size() {
-        let config = super::FontSizeConfig::default();
-        let main_size = 60.0;
-        let roman_size = config.calculate_romanized_size(main_size);
-        // 60 * 0.45 = 27
-        assert!(
-            (roman_size - 27.0).abs() < 0.001,
-            "Expected 27.0, got {}",
-            roman_size
-        );
+        // 375x812 => 30, * 1.12 = 33.6
+        let size = config.calculate_font_size(375.0, 812.0);
+        assert!((size - 33.6).abs() < 0.1, "Expected ~33.6, got {}", size);
     }
 }

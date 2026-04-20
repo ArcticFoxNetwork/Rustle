@@ -40,8 +40,7 @@ pub fn load_cached_lyrics(ncm_id: u64) -> Option<Vec<LyricLineOwned>> {
                 let tlrc_path = get_cache_path(ncm_id, ".tlrc");
                 if tlrc_path.exists() {
                     if let Ok(trans_content) = std::fs::read_to_string(&tlrc_path) {
-                        let trans_lines =
-                            parse_lyrics_with_format(&trans_content, LyricsFormat::Lrc);
+                        let trans_lines = super::parse_lrc_sidecar(&trans_content);
                         merge_translation(&mut lines, &trans_lines);
                     }
                 }
@@ -60,8 +59,7 @@ pub fn load_cached_lyrics(ncm_id: u64) -> Option<Vec<LyricLineOwned>> {
                 let tlrc_path = get_cache_path(ncm_id, ".tlrc");
                 if tlrc_path.exists() {
                     if let Ok(trans_content) = std::fs::read_to_string(&tlrc_path) {
-                        let trans_lines =
-                            parse_lyrics_with_format(&trans_content, LyricsFormat::Lrc);
+                        let trans_lines = super::parse_lrc_sidecar(&trans_content);
                         merge_translation(&mut lines, &trans_lines);
                     }
                 }
@@ -71,86 +69,6 @@ pub fn load_cached_lyrics(ncm_id: u64) -> Option<Vec<LyricLineOwned>> {
     }
 
     None
-}
-
-/// Fetch lyrics from NCM API and cache them
-pub async fn fetch_and_cache_lyrics(
-    client: &NcmClient,
-    ncm_id: u64,
-    song_name: &str,
-    singer: &str,
-    album: &str,
-) -> Result<Vec<LyricLineOwned>> {
-    // Create cache directory
-    let cache_dir = lyrics_cache_dir();
-    std::fs::create_dir_all(&cache_dir)?;
-
-    // Fetch lyrics from API
-    let song_info = crate::api::SongInfo {
-        id: ncm_id,
-        name: song_name.to_string(),
-        singer: singer.to_string(),
-        singer_id: 0,
-        album: album.to_string(),
-        album_id: 0,
-        pic_url: String::new(),
-        duration: 0,
-        song_url: String::new(),
-        copyright: crate::api::SongCopyright::Unknown,
-    };
-
-    // Use the existing get_lyrics method which handles caching
-    let lyrics_data = client.get_lyrics(&song_info).await?;
-
-    if lyrics_data.is_empty() {
-        anyhow::bail!("No lyrics found for song {}", ncm_id);
-    }
-
-    // Convert to LyricLineOwned format
-    // The get_lyrics method returns Vec<(u64, String)> where u64 is timestamp
-    let mut lines: Vec<LyricLineOwned> = Vec::new();
-    let mut current_time = 0u64;
-
-    for (time, text) in lyrics_data {
-        // Skip if same timestamp (translation line)
-        if time == current_time && !lines.is_empty() {
-            // 可能是翻译行
-            if let Some(last_line) = lines.last_mut() {
-                if last_line.translated_lyric.is_empty() {
-                    last_line.translated_lyric = text.trim().to_string();
-                }
-            }
-            continue;
-        }
-
-        current_time = time;
-        lines.push(LyricLineOwned {
-            words: vec![super::LyricWordOwned {
-                start_time: time,
-                end_time: 0,
-                word: text.trim().to_string(),
-                roman_word: String::new(),
-            }],
-            start_time: time,
-            end_time: 0,
-            ..Default::default()
-        });
-    }
-
-    // Calculate end times
-    for i in 0..lines.len() {
-        let end_time = if i + 1 < lines.len() {
-            lines[i + 1].start_time
-        } else {
-            lines[i].start_time + 5000 // Default 5 seconds for last line
-        };
-        lines[i].end_time = end_time;
-        if let Some(word) = lines[i].words.first_mut() {
-            word.end_time = end_time;
-        }
-    }
-
-    Ok(lines)
 }
 
 /// Fetch YRC (word-level) lyrics from NCM API
@@ -225,7 +143,7 @@ pub async fn fetch_lyrics(client: &NcmClient, ncm_id: u64) -> Result<Vec<LyricLi
 
     // Merge translation if available
     if let Some(trans) = &trans_lyric {
-        let trans_lines = parse_lyrics_with_format(trans, LyricsFormat::Lrc);
+        let trans_lines = super::parse_lrc_sidecar(trans);
         merge_translation(&mut lines, &trans_lines);
     }
 

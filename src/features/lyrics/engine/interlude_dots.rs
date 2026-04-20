@@ -2,8 +2,6 @@
 //!
 //! Shows animated dots during instrumental interludes.
 
-#![allow(dead_code)]
-
 /// Easing function: easeInOutBack
 fn ease_in_out_back(x: f32) -> f32 {
     const C1: f32 = 1.70158;
@@ -27,6 +25,58 @@ fn ease_out_expo(x: f32) -> f32 {
 
 fn clamp(min: f32, cur: f32, max: f32) -> f32 {
     cur.max(min).min(max)
+}
+
+pub fn dot_size(font_size: f32, viewport_height: f32) -> f32 {
+    (viewport_height * 0.01).clamp(font_size * 0.5, font_size * 3.0)
+}
+
+pub fn dot_padding_x(font_size: f32) -> f32 {
+    font_size * 0.75
+}
+
+pub fn dot_padding_y(viewport_width: f32) -> f32 {
+    viewport_width * 0.025
+}
+
+pub fn dot_spacing(font_size: f32) -> f32 {
+    font_size * 0.25 + 4.0
+}
+
+pub fn dot_margin(font_size: f32) -> f32 {
+    font_size * 0.4
+}
+
+fn dot_gap(font_size: f32) -> f32 {
+    font_size * 0.25
+}
+
+fn dot_trailing_margin() -> f32 {
+    4.0
+}
+
+pub fn dot_trailing_margin_px() -> f32 {
+    dot_trailing_margin()
+}
+
+pub fn dot_container_width(font_size: f32, _viewport_width: f32, viewport_height: f32) -> f32 {
+    let dot_size = dot_size(font_size, viewport_height);
+    let pad_x = dot_padding_x(font_size);
+    let gap = dot_gap(font_size);
+    let trailing_margin = dot_trailing_margin();
+
+    pad_x * 2.0 + dot_size * 3.0 + gap * 2.0 + trailing_margin * 3.0
+}
+
+pub fn dot_container_height(font_size: f32, viewport_width: f32, viewport_height: f32) -> f32 {
+    let dot_size = dot_size(font_size, viewport_height);
+    let pad_y = dot_padding_y(viewport_width);
+    dot_size + pad_y * 2.0
+}
+
+pub fn dot_total_height(font_size: f32, viewport_width: f32, viewport_height: f32) -> f32 {
+    let dot_margin = dot_margin(font_size);
+    dot_container_height(font_size, viewport_width, viewport_height) + dot_margin * 2.0
 }
 
 /// State of an interlude (start_time_ms, end_time_ms)
@@ -85,7 +135,20 @@ impl InterludeDots {
     }
 
     /// Set the current interlude range
+    /// Only resets animation state when the range actually changes,
+    /// to avoid resetting the animation every frame.
     pub fn set_interlude(&mut self, interlude: Option<InterludeRange>) {
+        // Only reset if the interlude range actually changed
+        let changed = match (self.current_interlude, interlude) {
+            (None, None) => false,
+            (Some(_), None) | (None, Some(_)) => true,
+            (Some((s1, e1)), Some((s2, e2))) => (s1 - s2).abs() > 0.5 || (e1 - e2).abs() > 0.5,
+        };
+
+        if !changed {
+            return;
+        }
+
         self.current_interlude = interlude;
         self.current_time = interlude.map(|(start, _)| start).unwrap_or(0.0);
         self.enabled = interlude.is_some();
@@ -94,6 +157,11 @@ impl InterludeDots {
             self.scale = 0.0;
             self.dot_opacities = [0.0, 0.0, 0.0];
         }
+    }
+
+    /// Sync the internal time to real playback time (used during seeks)
+    pub fn sync_time(&mut self, time_ms: f32) {
+        self.current_time = time_ms;
     }
 
     /// Pause animation
@@ -188,12 +256,6 @@ impl InterludeDots {
             self.scale = 0.0;
             self.dot_opacities = [0.0, 0.0, 0.0];
         }
-    }
-
-    /// Check if interlude should be shown based on duration
-    /// Shows interlude dots only if duration >= 4000ms
-    pub fn should_show_for_duration(duration_ms: f32) -> bool {
-        duration_ms >= 4000.0
     }
 }
 

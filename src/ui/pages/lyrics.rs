@@ -1,4 +1,4 @@
-//! Lyrics page - full screen lyrics display with Apple Music-like styling
+//! Lyrics page - full screen lyrics display
 //!
 //! Layout:
 //! - Left panel: Cover art, song title, artist, progress bar, playback controls
@@ -6,7 +6,9 @@
 
 use std::sync::Arc;
 
-use iced::widget::{Space, button, column, container, mouse_area, opaque, row, shader, svg, text};
+use iced::widget::{
+    Sensor, Space, button, column, container, mouse_area, opaque, row, shader, svg, text,
+};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
 use crate::app::Message;
@@ -76,7 +78,7 @@ pub fn view<'a>(
         container(right_panel)
             .width(Length::FillPortion(6))
             .height(Fill)
-            .padding(Padding::new(40.0).left(20.0)),
+            .padding(Padding::new(0.0).left(20.0).right(40.0)),
     ]
     .width(Fill)
     .height(Fill);
@@ -328,8 +330,7 @@ fn build_left_panel<'a>(
     .width(Fill);
 
     // Playback controls - using unified widgets
-    let playback_controls =
-        widgets::playback_controls::view_simple(is_playing, ControlSize::Large);
+    let playback_controls = widgets::playback_controls::view_simple(is_playing, ControlSize::Large);
 
     // Play mode button - using unified widget
     let play_mode_btn =
@@ -434,7 +435,7 @@ fn build_left_panel<'a>(
     .into()
 }
 
-/// Build the right panel with the Apple Music-style engine
+/// Build the right panel with the engine
 /// Uses pre-computed cached_engine_lines to avoid per-frame conversion
 fn build_right_panel_engine<'a>(
     cached_engine_lines: Option<&Arc<Vec<LyricLineData>>>,
@@ -480,10 +481,13 @@ fn build_right_panel_engine<'a>(
                 current_time_ms,
             );
 
-        let content =
+        let content = Sensor::new(
             shader(crate::features::lyrics::engine::program::LyricsEngineProgram::new(primitive))
                 .width(Length::Fill)
-                .height(Length::Fill);
+                .height(Length::Fill),
+        )
+        .on_show(Message::LyricsViewportResized)
+        .on_resize(Message::LyricsViewportResized);
 
         mouse_area(content)
             .on_scroll(|delta| {

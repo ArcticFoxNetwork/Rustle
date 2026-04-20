@@ -18,13 +18,11 @@
 //!     └─ 实际的 wgpu 渲染实现
 //! ```
 
-#![allow(dead_code)]
-
 use super::{LyricsEngine, LyricsEngineConfig};
 use crate::features::lyrics::engine::{
     CachedShapedLine,
     gpu_pipeline::LyricsGpuPipeline,
-    types::{ComputedLineStyle, LyricLineData},
+    types::{ComputedLineStyle, LyricLineData, lyrics_are_non_dynamic},
 };
 use iced::Rectangle;
 use iced::wgpu;
@@ -38,8 +36,6 @@ pub struct LyricsEnginePipeline {
     gpu_pipeline: Option<LyricsGpuPipeline>,
     /// Whether the pipeline is initialized
     initialized: bool,
-    /// Current format
-    format: Option<wgpu::TextureFormat>,
     /// Cached render parameters for blur pass
     cached_render_params: Option<CachedRenderParams>,
 }
@@ -49,8 +45,6 @@ pub struct LyricsEnginePipeline {
 struct CachedRenderParams {
     viewport_width: u32,
     viewport_height: u32,
-    current_time_ms: f32,
-    font_size: f32,
     enable_blur: bool,
 }
 
@@ -60,7 +54,6 @@ impl LyricsEnginePipeline {
         Self {
             gpu_pipeline: None,
             initialized: false,
-            format: None,
             cached_render_params: None,
         }
     }
@@ -78,7 +71,6 @@ impl Pipeline for LyricsEnginePipeline {
         Self {
             gpu_pipeline: Some(gpu_pipeline),
             initialized: true,
-            format: Some(format),
             cached_render_params: None,
         }
     }
@@ -89,7 +81,7 @@ impl Pipeline for LyricsEnginePipeline {
 /// 包含一帧渲染所需的所有数据，由 `LyricsEngineProgram::draw()` 创建，
 /// 传递给 `LyricsEnginePipeline::prepare()` 进行 GPU 数据准备。
 ///
-/// Apple Music-style features:
+/// Features:
 /// - Per-line spring animations for Y position and scale
 /// - Distance-based blur levels
 /// - Staggered animation delays
@@ -126,7 +118,7 @@ pub struct LyricsEnginePrimitive {
     pub line_positions: Vec<f32>,
     /// Per-line animated scales (0.0 - 1.0)
     pub line_scales: Vec<f32>,
-    /// Per-line blur levels (Apple Music-style distance-based blur)
+    /// Per-line blur levels (distance-based blur)
     pub line_blur_levels: Vec<f32>,
     /// Per-line opacities
     pub line_opacities: Vec<f32>,
@@ -136,6 +128,7 @@ pub struct LyricsEnginePrimitive {
 #[derive(Debug, Clone)]
 pub struct InterludeDotsState {
     pub enabled: bool,
+    pub left: f32,
     pub scale: f32,
     pub dot_opacities: [f32; 3],
     pub top: f32,
@@ -147,7 +140,7 @@ impl LyricsEnginePrimitive {
     /// Captures all animation state including:
     /// - Per-line Y positions (from spring animations)
     /// - Per-line scales (from spring animations)
-    /// - Per-line blur levels (Apple Music-style distance-based)
+    /// - Per-line blur levels (distance-based)
     /// - Per-line opacities
     /// - Interlude dots state
     /// - Cached shaped lines (Single Source of Truth for text layout)
@@ -162,6 +155,7 @@ impl LyricsEnginePrimitive {
         current_time_ms: f32,
     ) -> Self {
         let line_count = lines.len();
+        let is_non_dynamic = lyrics_are_non_dynamic(&lines);
 
         // Get pre-allocated animation buffers (updated in-place during engine.update())
         // This avoids calling individual getters that create new Vecs each frame
@@ -180,7 +174,7 @@ impl LyricsEnginePrimitive {
         let default_y = config.align_position * 800.0 * 2.0; // 屏幕外
         let default_scale = config.inactive_scale; // 0.97
         let default_blur = 3.0; // 中等模糊
-        let default_opacity = 1.0;
+        let default_opacity = if is_non_dynamic { 0.2 } else { 1.0 };
 
         while line_positions.len() < line_count {
             line_positions.push(default_y + (line_positions.len() as f32 * 100.0));
@@ -203,6 +197,7 @@ impl LyricsEnginePrimitive {
         let interlude_dots = if dots.enabled {
             Some(InterludeDotsState {
                 enabled: true,
+                left: dots.left,
                 scale: dots.scale,
                 dot_opacities: dots.dot_opacities,
                 top: dots.top,
@@ -229,111 +224,12 @@ impl LyricsEnginePrimitive {
         }
     }
 
-    /// Create a new primitive (legacy constructor)
-    pub fn new(
-        lines: Vec<LyricLineData>,
-        scroll_position: f32,
-        active_line: Option<usize>,
-        current_time_ms: f32,
-        config: LyricsEngineConfig,
-    ) -> Self {
-        let mut buffered_lines = HashSet::new();
-        if let Some(idx) = active_line {
-            buffered_lines.insert(idx);
-        }
-        let line_count = lines.len();
-        Self {
-            lines: Arc::new(lines),
-            shaped_lines: Arc::new(Vec::new()), // Empty for legacy constructor
-            scroll_position,
-            buffered_lines,
-            scroll_to_index: active_line.unwrap_or(0),
-            current_time_ms,
-            config,
-            is_playing: true,
-            interlude_dots: None,
-            cached_line_heights: Vec::new(),
-            line_positions: vec![0.0; line_count],
-            line_scales: vec![1.0; line_count],
-            line_blur_levels: vec![0.0; line_count],
-            line_opacities: vec![1.0; line_count],
-        }
-    }
-
-    /// Compute line styles for rendering
-    pub fn compute_line_styles(&self, viewport: &Rectangle<f32>) -> Vec<ComputedLineStyle> {
-        use crate::features::lyrics::engine::layout::LayoutMetrics;
-
-        let mut styles = Vec::with_capacity(self.lines.len());
-        let mut y_position = 0.0;
-
-        // Calculate alignment position (default: 0.35 from top)
-        let align_y = viewport.height * self.config.align_position;
-
-        // Create lens model with config
-        let mut lens = crate::features::lyrics::engine::LensModel::new();
-        lens.set_edge_scale_factor(self.config.inactive_scale);
-
-        // Calculate layout metrics
-        let layout = LayoutMetrics::new(viewport.width, viewport.height, 1.0);
-
-        for (idx, line) in self.lines.iter().enumerate() {
-            // Calculate total height for this line (main + translation + romanized)
-            let has_translation = line.translated.is_some();
-            let has_romanized = line.romanized.is_some();
-            let total_line_height = layout.total_line_height(has_translation, has_romanized);
-
-            // Distance from alignment point
-            let distance_from_center = y_position - self.scroll_position - align_y;
-
-            // Use lens model to compute style
-            let is_active = self.buffered_lines.contains(&idx);
-            // velocity 为 0，primitive 中无法访问物理状态
-            let (mut scale, blur) = lens.calculate(distance_from_center, viewport.height, 0.0);
-            let opacity = lens.calculate_opacity(distance_from_center, viewport.height);
-            let glow = lens.calculate_glow(distance_from_center, viewport.height, is_active);
-
-            // Apply background line scale if applicable
-            if line.is_bg && !is_active {
-                scale *= self.config.bg_line_scale;
-            }
-
-            // Apply scale effect only if enabled
-            if !self.config.enable_scale && !is_active {
-                scale = 1.0;
-            }
-
-            // Apply hide passed lines (style)
-            let final_opacity =
-                if self.config.hide_passed_lines && idx < self.scroll_to_index && self.is_playing {
-                    0.00001 // Nearly invisible but not zero
-                } else if is_active {
-                    0.85
-                } else {
-                    opacity
-                };
-
-            styles.push(ComputedLineStyle {
-                y_position: y_position - self.scroll_position,
-                scale,
-                blur: if self.config.enable_blur { blur } else { 0.0 },
-                opacity: final_opacity,
-                glow,
-                is_active,
-            });
-
-            y_position += total_line_height + self.config.line_spacing;
-        }
-
-        styles
-    }
-
     /// Compute line styles for rendering using physical pixels
     ///
     /// This version uses per-line animated positions from LineAnimationManager
     /// instead of calculating positions from scroll offset.
     ///
-    /// Apple Music-style features:
+    /// Features:
     /// - Per-line spring animations for Y position and scale
     /// - Distance-based blur (increases with distance from active line)
     /// - Staggered animation delays for "waterfall" effect
@@ -344,8 +240,10 @@ impl LyricsEnginePrimitive {
         scale: f32,
     ) -> Vec<ComputedLineStyle> {
         let mut styles = Vec::with_capacity(self.lines.len());
+        let is_non_dynamic = lyrics_are_non_dynamic(&self.lines);
 
         // Convert to physical pixels
+        let logical_width = viewport.width;
         let physical_height = viewport.height * scale;
 
         // Calculate alignment position for lens calculations
@@ -382,7 +280,7 @@ impl LyricsEnginePrimitive {
             let is_active = self.buffered_lines.contains(&idx);
 
             // Use pre-computed blur from LineAnimationManager if available
-            // Otherwise calculate Apple Music-style distance-based blur
+            // Otherwise calculate distance-based blur
             let blur = if !self.config.enable_blur {
                 0.0
             } else if idx < self.line_blur_levels.len() {
@@ -401,7 +299,7 @@ impl LyricsEnginePrimitive {
                         (idx as i32 - latest_index.max(self.scroll_to_index) as i32).abs() as f32;
                 }
                 // Scale blur for smaller screens (default: window.innerWidth <= 1024 ? blur * 0.8 : blur)
-                if physical_height <= 1024.0 {
+                if logical_width <= 1024.0 {
                     level * 0.8
                 } else {
                     level
@@ -412,7 +310,7 @@ impl LyricsEnginePrimitive {
             let glow = if is_active { 0.5 } else { 0.0 };
 
             // Use pre-computed opacity from LineAnimationManager if available
-            // This includes proper Apple Music-style handling for:
+            // This includes proper handling for:
             // - Background lines: 0.0001 (inactive), 0.4 (active or not playing)
             // - Normal lines: 0.85 (active), 1.0 (inactive), 0.2 (non-dynamic)
             let final_opacity = if idx < self.line_opacities.len() {
@@ -435,6 +333,8 @@ impl LyricsEnginePrimitive {
                     // .lyricBgLine.active { opacity: 0.4; }
                     // :not(.playing) > .lyricBgLine { opacity: 0.4; }
                     if !self.is_playing { 0.4 } else { 0.0001 }
+                } else if is_non_dynamic {
+                    0.2
                 } else {
                     1.0
                 }
@@ -451,18 +351,6 @@ impl LyricsEnginePrimitive {
         }
 
         styles
-    }
-
-    /// Calculate X position for a line based on duet status
-    pub fn line_x_position(
-        &self,
-        line: &LyricLineData,
-        line_width: f32,
-        container_width: f32,
-    ) -> f32 {
-        use crate::features::lyrics::engine::layout::LayoutMetrics;
-        let layout = LayoutMetrics::new(container_width, 800.0, 1.0);
-        layout.line_x_position(line.is_duet, line_width, container_width)
     }
 }
 
@@ -504,7 +392,7 @@ impl Primitive for LyricsEnginePrimitive {
         let font_size = self
             .config
             .font_size_config
-            .calculate_font_size(bounds.height)
+            .calculate_font_size(bounds.width, bounds.height)
             * scale;
 
         // Compute line styles based on scroll position (using physical pixels)
@@ -535,14 +423,19 @@ impl Primitive for LyricsEnginePrimitive {
             self.scroll_position,
             font_size,
             self.config.word_fade_width,
+            self.config.overscan_px,
             scale, // Scale factor for logical to physical conversion
+            self.config.trans_height_ratio,
+            self.config.roman_height_ratio,
         );
+
+        gpu_pipeline.clear_interlude_dots();
 
         // Prepare interlude dots if present
         if let Some(ref dots) = self.interlude_dots {
             let mut dots_state = crate::features::lyrics::engine::InterludeDots::new();
-            dots_state.left = bounds_width * 0.5; // Centered horizontally
-            dots_state.top = dots.top * scale;
+            dots_state.left = dots.left;
+            dots_state.top = dots.top;
             dots_state.enabled = dots.enabled;
             dots_state.scale = dots.scale;
             dots_state.dot_opacities = dots.dot_opacities;
@@ -556,19 +449,17 @@ impl Primitive for LyricsEnginePrimitive {
                 bounds_x,
                 bounds_y,
                 scale,
+                font_size / scale,
             );
         }
 
         // Prepare blur rendering resources
-        let enable_blur = self.config.enable_blur && gpu_pipeline.is_blur_enabled();
+        let enable_blur = self.config.enable_blur;
         if enable_blur {
             gpu_pipeline.prepare_blur(
                 device,
-                queue,
                 viewport.physical_width(),
                 viewport.physical_height(),
-                self.current_time_ms,
-                font_size,
             );
         }
 
@@ -576,8 +467,6 @@ impl Primitive for LyricsEnginePrimitive {
         pipeline.cached_render_params = Some(CachedRenderParams {
             viewport_width: viewport.physical_width(),
             viewport_height: viewport.physical_height(),
-            current_time_ms: self.current_time_ms,
-            font_size,
             enable_blur,
         });
     }
@@ -605,7 +494,7 @@ impl Primitive for LyricsEnginePrimitive {
             .unwrap_or(false);
 
         if use_blur {
-            // 逐行模糊渲染模式 (正确的 Apple Music 风格)
+            // 逐行模糊渲染模式
             // 每行歌词独立渲染和模糊，避免不同行之间的模糊混合
             if let Some(ref params) = pipeline.cached_render_params {
                 gpu_pipeline.render_with_per_line_blur(

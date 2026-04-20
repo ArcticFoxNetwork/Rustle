@@ -5,12 +5,9 @@
 //!
 //! ## 使用方式
 //!
-//! ```ignore
-//! let generator = SdfGenerator::new(72, 4);
-//! let bitmap = generator.generate_char(&font_data, 'A')?;
-//! ```
-
-use ab_glyph::{Font, FontRef, GlyphId, PxScale, ScaleFont};
+#[cfg(test)]
+use ab_glyph::{Font, FontRef, GlyphId, PxScale};
+use cosmic_text::{SwashContent, SwashImage};
 use sdf_glyph_renderer::{BitmapGlyph, clamp_to_u8};
 
 /// SDF 生成器配置
@@ -53,8 +50,6 @@ pub struct SdfBitmap {
     pub bearing_x: i32,
     /// 字形相对于基线的垂直偏移（考虑 buffer）
     pub bearing_y: i32,
-    /// 字形的水平前进宽度
-    pub advance: f32,
 }
 
 /// SDF 生成器
@@ -74,34 +69,37 @@ impl SdfGenerator {
         }
     }
 
-    /// 使用自定义配置创建生成器
-    pub fn with_config(config: SdfConfig) -> Self {
-        Self { config }
-    }
-
     /// 获取配置
     pub fn config(&self) -> &SdfConfig {
         &self.config
     }
 
-    /// 为指定字形生成 SDF 位图
-    pub fn generate(&self, font_data: &[u8], glyph_id: u16) -> Option<SdfBitmap> {
-        let font = FontRef::try_from_slice(font_data).ok()?;
-        let glyph_id = GlyphId(glyph_id);
-        self.generate_from_font(&font, glyph_id)
-    }
+    /// Build an SDF bitmap from a swash-rasterized glyph image.
+    ///
+    /// `placement_left/top/width/height` must come from the same swash image.
+    /// The returned metrics keep our configured SDF buffer around that image.
+    pub fn generate_from_swash_image(&self, image: &SwashImage) -> Option<SdfBitmap> {
+        let width = image.placement.width as usize;
+        let height = image.placement.height as usize;
 
-    /// 为字符生成 SDF 位图
-    pub fn generate_char(&self, font_data: &[u8], c: char) -> Option<SdfBitmap> {
-        let font = FontRef::try_from_slice(font_data).ok()?;
-        let glyph_id = font.glyph_id(c);
-        self.generate_from_font(&font, glyph_id)
+        if width == 0 || height == 0 {
+            return None;
+        }
+
+        let alpha = swash_to_alpha(image)?;
+        self.generate_from_alpha_bitmap(
+            &alpha,
+            width,
+            height,
+            image.placement.left - self.config.buffer as i32,
+            image.placement.top + self.config.buffer as i32,
+        )
     }
 
     /// 从已加载的字体生成 SDF
+    #[cfg(test)]
     fn generate_from_font(&self, font: &FontRef, glyph_id: GlyphId) -> Option<SdfBitmap> {
         let scale = PxScale::from(self.config.base_size as f32);
-        let scaled_font = font.as_scaled(scale);
 
         // 获取字形轮廓
         let glyph = glyph_id.with_scale(scale);
@@ -126,49 +124,114 @@ impl SdfGenerator {
             }
         });
 
-        // 创建带 buffer 的 BitmapGlyph
+        self.generate_from_alpha_bitmap(
+            &alpha,
+            glyph_width,
+            glyph_height,
+            bounds.min.x.floor() as i32 - self.config.buffer as i32,
+            -bounds.min.y.floor() as i32 + self.config.buffer as i32,
+        )
+    }
+
+    fn generate_from_alpha_bitmap(
+        &self,
+        alpha: &[u8],
+        glyph_width: usize,
+        glyph_height: usize,
+        bearing_x: i32,
+        bearing_y: i32,
+    ) -> Option<SdfBitmap> {
+        if glyph_width == 0 || glyph_height == 0 {
+            return None;
+        }
+
         let bitmap =
-            BitmapGlyph::from_unbuffered(&alpha, glyph_width, glyph_height, self.config.buffer)
+            BitmapGlyph::from_unbuffered(alpha, glyph_width, glyph_height, self.config.buffer)
                 .ok()?;
-
-        // 生成 SDF
         let sdf_f64 = bitmap.render_sdf(self.config.radius);
-
-        // 转换为 u8
         let data = clamp_to_u8(&sdf_f64, self.config.cutoff).ok()?;
-
-        // 计算最终尺寸（包含 buffer）
-        let width = (glyph_width + self.config.buffer * 2) as u32;
-        let height = (glyph_height + self.config.buffer * 2) as u32;
-
-        // 计算度量信息
-        // bearing_x: 纹理左边缘相对于笔触原点的 X 偏移
-        // bounds.min.x 是字形左边缘，减去 buffer 得到纹理左边缘
-        let bearing_x = bounds.min.x.floor() as i32 - self.config.buffer as i32;
-
-        // bearing_y: 纹理顶边缘相对于基线的 Y 偏移
-        // ab_glyph 的 bounds.min.y 是字形顶部（Y 向下为正，所以 min.y 是顶部）
-        // 需要取负值并加上 buffer
-        // 注意：ab_glyph 的坐标系是 Y 向下，所以 bounds.max.y 是底部，bounds.min.y 是顶部
-        // 但 bounds.min.y 通常是负数（基线以上），所以 -bounds.min.y 是正数
-        let bearing_y = -bounds.min.y.floor() as i32 + self.config.buffer as i32;
-
-        let advance = scaled_font.h_advance(glyph_id);
 
         Some(SdfBitmap {
             data,
-            width,
-            height,
+            width: (glyph_width + self.config.buffer * 2) as u32,
+            height: (glyph_height + self.config.buffer * 2) as u32,
             bearing_x,
             bearing_y,
-            advance,
         })
+    }
+}
+
+fn swash_to_alpha(image: &SwashImage) -> Option<Vec<u8>> {
+    let width = image.placement.width as usize;
+    let height = image.placement.height as usize;
+
+    match image.content {
+        SwashContent::Mask => Some(image.data.clone()),
+        SwashContent::Color => {
+            if image.data.len() != width * height * 4 {
+                return None;
+            }
+            Some(
+                image
+                    .data
+                    .chunks_exact(4)
+                    .map(|px| px[3])
+                    .collect::<Vec<u8>>(),
+            )
+        }
+        SwashContent::SubpixelMask => {
+            if image.data.len() != width * height * 3 {
+                return None;
+            }
+            Some(
+                image
+                    .data
+                    .chunks_exact(3)
+                    .map(|px| px[0].max(px[1]).max(px[2]))
+                    .collect::<Vec<u8>>(),
+            )
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, SwashCache};
+
+    fn load_test_font() -> (Vec<u8>, u32) {
+        let mut font_system = FontSystem::new();
+        crate::platform::theme::configure_cosmic_font_system(&mut font_system);
+        let db = font_system.db();
+
+        for family in [
+            "Noto Sans SC",
+            "Noto Sans CJK SC",
+            "Source Han Sans CN",
+            "Noto Sans",
+            "Arial",
+        ] {
+            if let Some(face) = db.faces().find(|face| {
+                face.families
+                    .iter()
+                    .any(|(name, _)| name.eq_ignore_ascii_case(family))
+            }) {
+                let data = match &face.source {
+                    cosmic_text::fontdb::Source::Binary(data) => data.as_ref().as_ref().to_vec(),
+                    cosmic_text::fontdb::Source::File(path) => {
+                        std::fs::read(path).expect("read system font file")
+                    }
+                    cosmic_text::fontdb::Source::SharedFile(_, data) => {
+                        data.as_ref().as_ref().to_vec()
+                    }
+                };
+
+                return (data, face.index);
+            }
+        }
+
+        panic!("No suitable system sans-serif font found for SDF tests");
+    }
 
     #[test]
     fn test_default_config() {
@@ -176,7 +239,7 @@ mod tests {
         assert_eq!(config.base_size, 64);
         assert_eq!(config.buffer, 4);
         assert_eq!(config.radius, 8);
-        assert!((config.cutoff - 0.25).abs() < 0.001);
+        assert!((config.cutoff - 0.5).abs() < 0.001);
     }
 
     #[test]
@@ -188,9 +251,10 @@ mod tests {
 
     #[test]
     fn test_generate_char_a() {
-        let font_data = std::fs::read("assets/fonts/Inter-Regular.ttf").unwrap();
+        let (font_data, face_index) = load_test_font();
+        let font = FontRef::try_from_slice_and_index(&font_data, face_index).unwrap();
         let generator = SdfGenerator::new(64, 4);
-        let bitmap = generator.generate_char(&font_data, 'A');
+        let bitmap = generator.generate_from_font(&font, font.glyph_id('A'));
 
         assert!(bitmap.is_some());
         let bitmap = bitmap.unwrap();
@@ -201,11 +265,47 @@ mod tests {
 
     #[test]
     fn test_space_returns_none() {
-        let font_data = std::fs::read("assets/fonts/Inter-Regular.ttf").unwrap();
+        let (font_data, face_index) = load_test_font();
+        let font = FontRef::try_from_slice_and_index(&font_data, face_index).unwrap();
         let generator = SdfGenerator::new(64, 4);
-        let bitmap = generator.generate_char(&font_data, ' ');
+        let bitmap = generator.generate_from_font(&font, font.glyph_id(' '));
 
         // 空格没有轮廓，应该返回 None
         assert!(bitmap.is_none());
+    }
+
+    #[test]
+    fn test_generate_from_swash_image_keeps_swash_placement() {
+        let mut font_system = FontSystem::new();
+        crate::platform::theme::configure_cosmic_font_system(&mut font_system);
+
+        let metrics = Metrics::new(64.0, 64.0 * 1.4);
+        let mut buffer = Buffer::new(&mut font_system, metrics);
+        buffer.set_size(&mut font_system, Some(1024.0), None);
+
+        let attrs = Attrs::new().family(Family::SansSerif);
+        buffer.set_text(&mut font_system, "A你あ", &attrs, Shaping::Advanced, None);
+        buffer.shape_until_scroll(&mut font_system, false);
+
+        let generator = SdfGenerator::new(64, 12);
+        let mut swash_cache = SwashCache::new();
+
+        for run in buffer.layout_runs() {
+            for glyph in run.glyphs.iter() {
+                let key = glyph.physical((0.0, 0.0), 1.0).cache_key;
+                let swash = swash_cache
+                    .get_image_uncached(&mut font_system, key)
+                    .expect("swash image");
+
+                let bitmap = generator
+                    .generate_from_swash_image(&swash)
+                    .expect("sdf bitmap");
+
+                assert_eq!(bitmap.bearing_x, swash.placement.left - 12);
+                assert_eq!(bitmap.bearing_y, swash.placement.top + 12);
+                assert_eq!(bitmap.width, swash.placement.width + 24);
+                assert_eq!(bitmap.height, swash.placement.height + 24);
+            }
+        }
     }
 }

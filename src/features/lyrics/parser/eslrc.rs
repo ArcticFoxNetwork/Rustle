@@ -5,6 +5,7 @@
 //! Format: [mm:ss.xx]word[mm:ss.xx]word[mm:ss.xx]...
 //! Each timestamp marks the END time of the preceding word.
 
+#[cfg(test)]
 use super::lrc;
 use super::types::{LyricLineOwned, LyricWordOwned, process_lyrics};
 
@@ -134,6 +135,7 @@ pub fn parse_eslrc(src: &str) -> Vec<LyricLineOwned> {
 }
 
 /// Convert lyrics to ESLrc format string
+#[cfg(test)]
 pub fn stringify_eslrc(lines: &[LyricLineOwned]) -> String {
     let capacity: usize = lines
         .iter()

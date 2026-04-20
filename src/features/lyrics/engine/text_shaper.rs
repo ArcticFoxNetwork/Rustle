@@ -17,7 +17,7 @@ use parking_lot::Mutex;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use super::types::{FontConfig, WordData};
+use super::types::{FontConfig, SUB_LINE_HEIGHT_MULTIPLIER, WordData};
 
 /// Cache key for shaped lines
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -39,14 +39,18 @@ pub struct ShapedGlyph {
     pub x: f32,
     /// Y position relative to line baseline
     pub y: f32,
+    /// Additional glyph X offset in logical pixels.
+    /// This must be applied before glyph raster placement to match `cosmic-text`.
+    pub x_offset_px: f32,
+    /// Additional glyph Y offset in logical pixels.
+    /// This must be applied before glyph raster placement to match `cosmic-text`.
+    pub y_offset_px: f32,
     /// Glyph advance width
     pub advance: f32,
     /// Word index this glyph belongs to
     pub word_index: usize,
     /// Position within word (0.0 to 1.0)
     pub pos_in_word: f32,
-    /// Character index in text
-    pub char_index: usize,
     /// Visual line index within the logical line (0-based)
     /// 0 = first visual line, 1 = second visual line after wrap, etc.
     pub visual_line_index: u32,
@@ -65,8 +69,6 @@ pub struct ShapedLine {
     pub width: f32,
     /// Line height
     pub height: f32,
-    /// Ascent (distance from baseline to top)
-    pub ascent: f32,
     /// Word boundaries (start_x, end_x) for each word
     pub word_bounds: Vec<(f32, f32)>,
 }
@@ -84,6 +86,23 @@ pub struct TextShaper {
 }
 
 impl TextShaper {
+    fn resolve_font_config(
+        font_system: &Arc<Mutex<FontSystem>>,
+        mut config: FontConfig,
+    ) -> FontConfig {
+        if config.font_family.is_some() {
+            return config;
+        }
+
+        let font_system = font_system.lock();
+        if let Some(family) = crate::platform::theme::preferred_lyrics_font_family(font_system.db())
+        {
+            config.font_family = Some(family.to_string());
+        }
+
+        config
+    }
+
     /// Create a new text shaper with default font config
     pub fn new(font_system: Arc<Mutex<FontSystem>>) -> Self {
         Self::with_config(font_system, FontConfig::default())
@@ -91,6 +110,8 @@ impl TextShaper {
 
     /// Create a new text shaper with custom font config
     pub fn with_config(font_system: Arc<Mutex<FontSystem>>, config: FontConfig) -> Self {
+        let config = Self::resolve_font_config(&font_system, config);
+
         if config.debug_logging {
             if let Some(ref family) = config.font_family {
                 tracing::debug!("[TextShaper] Using font family: {}", family);
@@ -141,7 +162,6 @@ impl TextShaper {
                 glyphs: Vec::new(),
                 width: 0.0,
                 height: font_size * 1.4,
-                ascent: font_size,
                 word_bounds: Vec::new(),
             };
         }
@@ -206,16 +226,8 @@ impl TextShaper {
         let mut word_bounds: Vec<(f32, f32)> = vec![(f32::MAX, f32::MIN); words.len()];
         let mut total_width = 0.0f32;
         let single_line_height = font_size * 1.4;
-        let mut first_line_ascent = font_size;
-        let mut first_run = true;
 
         for run in buffer.layout_runs() {
-            // First line's ascent
-            if first_run {
-                first_line_ascent = run.line_y;
-                first_run = false;
-            }
-
             for glyph in run.glyphs.iter() {
                 let char_idx = glyph.start;
                 let word_idx = char_to_word.get(char_idx).copied().unwrap_or(0);
@@ -250,10 +262,11 @@ impl TextShaper {
                     cache_key,
                     x: glyph.x,
                     y: run.line_y, // 该行的基线 Y
+                    x_offset_px: glyph.font_size * glyph.x_offset,
+                    y_offset_px: glyph.font_size * glyph.y_offset,
                     advance: glyph.w,
                     word_index: word_idx,
                     pos_in_word,
-                    char_index: char_idx,
                     // Visual line info will be calculated after all glyphs are collected
                     visual_line_index: 0,
                     visual_line_count: 1,
@@ -340,7 +353,6 @@ impl TextShaper {
             glyphs: shaped_glyphs,
             width: total_width,
             height: final_height,
-            ascent: first_line_ascent,
             word_bounds,
         }
     }
@@ -388,8 +400,7 @@ impl TextShaper {
             return ShapedLine {
                 glyphs: Vec::new(),
                 width: 0.0,
-                height: font_size * 1.3,
-                ascent: font_size,
+                height: font_size * SUB_LINE_HEIGHT_MULTIPLIER,
                 word_bounds: Vec::new(),
             };
         }
@@ -423,26 +434,24 @@ impl TextShaper {
     fn shape_simple_uncached(&self, text: &str, font_size: f32, max_width: f32) -> ShapedLine {
         let mut font_system = self.font_system.lock();
 
-        let metrics = Metrics::new(font_size, font_size * 1.3);
+        let metrics = Metrics::new(font_size, font_size * SUB_LINE_HEIGHT_MULTIPLIER);
         let mut buffer = Buffer::new(&mut font_system, metrics);
         buffer.set_size(&mut font_system, Some(max_width), None);
 
-        // Use configured font family
-        let attrs = Attrs::new().family(self.get_font_family());
+        let attrs = Attrs::new()
+            .family(self.get_font_family())
+            .weight(self.config.font_weight);
         buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut font_system, false);
 
         // Get visual line count from layout_runs (same as shape_line_uncached)
         let visual_line_count = buffer.layout_runs().count().max(1) as u32;
-        let single_line_height = font_size * 1.3;
+        let single_line_height = font_size * SUB_LINE_HEIGHT_MULTIPLIER;
 
         let mut shaped_glyphs = Vec::new();
         let mut total_width = 0.0f32;
-        let mut ascent = font_size;
 
         for run in buffer.layout_runs() {
-            ascent = run.line_y;
-
             for glyph in run.glyphs.iter() {
                 let cache_key = glyph.physical((0.0, 0.0), 1.0).cache_key;
 
@@ -450,10 +459,11 @@ impl TextShaper {
                     cache_key,
                     x: glyph.x,
                     y: run.line_y,
+                    x_offset_px: glyph.font_size * glyph.x_offset,
+                    y_offset_px: glyph.font_size * glyph.y_offset,
                     advance: glyph.w,
                     word_index: 0,
                     pos_in_word: 0.0,
-                    char_index: glyph.start,
                     // Simple shaping doesn't need visual line tracking
                     visual_line_index: 0,
                     visual_line_count: 1,
@@ -471,98 +481,9 @@ impl TextShaper {
             glyphs: shaped_glyphs,
             width: total_width,
             height: final_height,
-            ascent,
             word_bounds: vec![(0.0, total_width)],
         }
     }
-
-    /// Calculate word positions (x_start, x_end) for a line
-    /// This fills in the WordData.x_start and x_end fields
-    pub fn calculate_word_positions(
-        &self,
-        text: &str,
-        words: &mut [WordData],
-        font_size: f32,
-        max_width: f32,
-    ) {
-        let shaped = self.shape_line(text, words, font_size, max_width);
-
-        // Update word positions from shaped bounds
-        for (i, word) in words.iter_mut().enumerate() {
-            if i < shaped.word_bounds.len() {
-                let (start, end) = shaped.word_bounds[i];
-                // Normalize to 0-1 range
-                if shaped.width > 0.0 {
-                    word.x_start = start / shaped.width;
-                    word.x_end = end / shaped.width;
-                } else {
-                    word.x_start = 0.0;
-                    word.x_end = 1.0;
-                }
-            }
-        }
-    }
-}
-
-/// Check if a character is CJK
-pub fn is_cjk_char(c: char) -> bool {
-    matches!(c,
-        '\u{4E00}'..='\u{9FFF}' |  // CJK Unified Ideographs
-        '\u{3400}'..='\u{4DBF}' |  // CJK Extension A
-        '\u{20000}'..='\u{2A6DF}' | // CJK Extension B
-        '\u{3040}'..='\u{309F}' |  // Hiragana
-        '\u{30A0}'..='\u{30FF}' |  // Katakana
-        '\u{AC00}'..='\u{D7AF}'    // Hangul Syllables
-    )
-}
-
-/// Check if text is primarily CJK
-pub fn is_cjk_text(text: &str) -> bool {
-    let cjk_count = text.chars().filter(|c| is_cjk_char(*c)).count();
-    let total_count = text.chars().filter(|c| !c.is_whitespace()).count();
-
-    if total_count == 0 {
-        return false;
-    }
-
-    cjk_count as f32 / total_count as f32 > 0.5
-}
-
-/// Split CJK text into per-character words
-pub fn split_cjk_to_words(text: &str, start_ms: u64, end_ms: u64) -> Vec<WordData> {
-    let chars: Vec<char> = text.chars().collect();
-    let char_count = chars.len();
-
-    if char_count == 0 {
-        return Vec::new();
-    }
-
-    let duration = end_ms.saturating_sub(start_ms);
-    let char_duration = duration / char_count as u64;
-
-    chars
-        .into_iter()
-        .enumerate()
-        .map(|(i, c)| {
-            let char_start = start_ms + (i as u64 * char_duration);
-            let char_end = if i == char_count - 1 {
-                end_ms
-            } else {
-                char_start + char_duration
-            };
-
-            WordData {
-                text: c.to_string(),
-                start_ms: char_start,
-                end_ms: char_end,
-                roman_word: None,
-                emphasize: false,
-                x_start: 0.0,
-                x_end: 0.0,
-                is_last_word: i == char_count - 1,
-            }
-        })
-        .collect()
 }
 
 #[cfg(test)]
@@ -594,10 +515,7 @@ mod tests {
             text: "Hello".to_string(),
             start_ms: 0,
             end_ms: 1000,
-            roman_word: None,
             emphasize: false,
-            x_start: 0.0,
-            x_end: 0.0,
             is_last_word: true,
         }];
 
@@ -648,6 +566,11 @@ mod tests {
             shaped_simple.glyphs.is_empty(),
             "Empty simple text should produce no glyphs"
         );
+        assert_eq!(
+            shaped_simple.height,
+            24.0 * SUB_LINE_HEIGHT_MULTIPLIER,
+            "Empty sub-lines should still reserve 1.5em line height"
+        );
     }
 
     /// Test font weight configuration
@@ -656,7 +579,7 @@ mod tests {
         let font_system = Arc::new(Mutex::new(FontSystem::new()));
 
         let config_normal = FontConfig::default();
-        assert_eq!(config_normal.font_weight, Weight::NORMAL);
+        assert_eq!(config_normal.font_weight, Weight::SEMIBOLD);
 
         let config_bold = FontConfig::default().weight(Weight::BOLD);
         assert_eq!(config_bold.font_weight, Weight::BOLD);

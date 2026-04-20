@@ -26,6 +26,13 @@
 
 use super::spring::{Spring, SpringParams};
 
+/// Manual scroll bounds for the lyrics viewport.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScrollBounds {
+    pub min: f32,
+    pub max: f32,
+}
+
 // ============================================================================
 // AnimationBuffers - Pre-allocated buffers for animation state
 // ============================================================================
@@ -49,7 +56,7 @@ pub struct AnimationBuffers {
     positions: Vec<f32>,
     /// Scale values (0.0 - 1.0)
     scales: Vec<f32>,
-    /// Blur levels (Apple Music-style distance-based)
+    /// Blur levels
     blur_levels: Vec<f32>,
     /// Opacity values (0.0 - 1.0)
     opacities: Vec<f32>,
@@ -70,16 +77,6 @@ impl AnimationBuffers {
     /// Create new empty buffers
     pub fn new() -> Self {
         Self::default()
-    }
-
-    /// Create buffers with pre-allocated capacity
-    pub fn with_capacity(capacity: usize) -> Self {
-        Self {
-            positions: Vec::with_capacity(capacity),
-            scales: Vec::with_capacity(capacity),
-            blur_levels: Vec::with_capacity(capacity),
-            opacities: Vec::with_capacity(capacity),
-        }
     }
 
     /// Ensure buffers have enough capacity for the given line count
@@ -140,18 +137,6 @@ impl AnimationBuffers {
         &self.opacities
     }
 
-    /// Get current capacity (number of lines)
-    #[inline]
-    pub fn len(&self) -> usize {
-        self.positions.len()
-    }
-
-    /// Check if buffers are empty
-    #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.positions.is_empty()
-    }
-
     /// Clear all buffers
     pub fn clear(&mut self) {
         self.positions.clear();
@@ -178,7 +163,7 @@ pub struct LineAnimation {
     pub opacity: f32,
     /// Target blur level - will be smoothly interpolated
     pub target_blur: f32,
-    /// Current animated blur level (Apple Music-style distance-based blur)
+    /// Current animated blur level
     pub blur: f32,
     /// Whether this line is currently active
     pub is_active: bool,
@@ -217,7 +202,7 @@ impl LineAnimation {
         }
     }
 
-    /// Set target Y position with optional delay (Apple Music-style staggered animation)
+    /// Set target Y position with optional delay
     /// delay is in seconds
     pub fn set_target_y(&mut self, target: f32, delay: f32) {
         self.delay = delay;
@@ -262,19 +247,9 @@ impl LineAnimation {
         self.scale.position() as f32 / 100.0
     }
 
-    /// Check if animation has arrived at target
-    pub fn arrived(&self) -> bool {
-        self.pos_y.arrived() && self.scale.arrived()
-    }
-
     /// Update spring parameters (for runtime configuration)
     pub fn update_pos_y_params(&mut self, params: SpringParams) {
         self.pos_y.update_params(params);
-    }
-
-    /// Update scale spring parameters
-    pub fn update_scale_params(&mut self, params: SpringParams) {
-        self.scale.update_params(params);
     }
 
     /// 更新弹簧和平滑过渡 - 每帧调用
@@ -317,7 +292,7 @@ pub enum AlignAnchor {
 
 /// Manager for all line animations
 ///
-/// Implements Apple Music-style layout calculation with:
+/// Implements layout calculation with:
 /// - Per-line spring animations for Y position and scale
 /// - Staggered delays for "waterfall" effect
 /// - Distance-based blur calculation
@@ -336,10 +311,12 @@ pub struct LineAnimationManager {
     hide_passed_lines: bool,
     /// Custom position Y spring parameters (optional override)
     pos_y_params: Option<SpringParams>,
-    /// Custom scale spring parameters (optional override)
-    scale_params: Option<SpringParams>,
-    /// Custom scale spring parameters for BG lines (optional override)
-    scale_bg_params: Option<SpringParams>,
+    /// Interlude insertion point from the latest layout pass.
+    interlude_insert_after: Option<usize>,
+    /// Reserved interlude height from the latest layout pass.
+    interlude_extra_height: f32,
+    /// Top margin inside the reserved interlude slot.
+    interlude_top_margin: f32,
 }
 
 impl LineAnimationManager {
@@ -352,8 +329,9 @@ impl LineAnimationManager {
             align_anchor: AlignAnchor::Center,
             hide_passed_lines: false,
             pos_y_params: None,
-            scale_params: None,
-            scale_bg_params: None,
+            interlude_insert_after: None,
+            interlude_extra_height: 0.0,
+            interlude_top_margin: 0.0,
         }
     }
 
@@ -389,26 +367,6 @@ impl LineAnimationManager {
         }
     }
 
-    /// Set custom scale spring parameters
-    pub fn set_scale_spring_params(&mut self, params: SpringParams) {
-        self.scale_params = Some(params);
-        for anim in &mut self.animations {
-            if !anim.is_bg {
-                anim.update_scale_params(params);
-            }
-        }
-    }
-
-    /// Set custom scale spring parameters for background lines
-    pub fn set_scale_bg_spring_params(&mut self, params: SpringParams) {
-        self.scale_bg_params = Some(params);
-        for anim in &mut self.animations {
-            if anim.is_bg {
-                anim.update_scale_params(params);
-            }
-        }
-    }
-
     /// Ensure we have enough animations for the given line count
     /// Returns true if animations were reset (new song)
     pub fn ensure_capacity(&mut self, line_count: usize, is_bg_flags: &[bool]) -> bool {
@@ -425,39 +383,12 @@ impl LineAnimationManager {
                 if let Some(params) = self.pos_y_params {
                     anim.update_pos_y_params(params);
                 }
-                if is_bg {
-                    if let Some(params) = self.scale_bg_params {
-                        anim.update_scale_params(params);
-                    }
-                } else if let Some(params) = self.scale_params {
-                    anim.update_scale_params(params);
-                }
 
                 self.animations.push(anim);
             }
             return true;
         }
         false
-    }
-
-    /// Get animation for a specific line
-    pub fn get(&self, index: usize) -> Option<&LineAnimation> {
-        self.animations.get(index)
-    }
-
-    /// Get mutable animation for a specific line
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut LineAnimation> {
-        self.animations.get_mut(index)
-    }
-
-    /// Get current Y positions for all lines (for rendering)
-    pub fn current_positions(&self) -> Vec<f32> {
-        self.animations.iter().map(|a| a.current_y()).collect()
-    }
-
-    /// Get current scales for all lines (for rendering)
-    pub fn current_scales(&self) -> Vec<f32> {
-        self.animations.iter().map(|a| a.current_scale()).collect()
     }
 
     /// 更新所有弹簧 - 每帧调用
@@ -469,14 +400,17 @@ impl LineAnimationManager {
         }
     }
 
-    /// Get current blur levels for all lines (Apple Music-style distance-based blur)
-    pub fn current_blur_levels(&self) -> Vec<f32> {
-        self.animations.iter().map(|a| a.blur).collect()
-    }
+    /// Get the current animated interlude top derived from lyric line springs.
+    pub fn current_interlude_top(&self) -> Option<f32> {
+        let insert_after = self.interlude_insert_after?;
+        let next_line_idx = if insert_after == usize::MAX {
+            0
+        } else {
+            insert_after.saturating_add(1)
+        };
+        let next_line = self.animations.get(next_line_idx)?;
 
-    /// Get current opacities for all lines
-    pub fn current_opacities(&self) -> Vec<f32> {
-        self.animations.iter().map(|a| a.opacity).collect()
+        Some(next_line.current_y() - self.interlude_extra_height + self.interlude_top_margin)
     }
 
     /// Calculate and set target positions for all lines (the calcLayout)
@@ -496,73 +430,6 @@ impl LineAnimationManager {
     /// - enable_scale: Whether to apply scale effect
     /// - inactive_scale: Scale factor for inactive lines (default: 0.97)
     /// - bg_line_scale: Scale factor for background lines (default: 0.75)
-    #[allow(clippy::too_many_arguments)]
-    pub fn calc_layout(
-        &mut self,
-        line_heights: &[f32],
-        line_spacing: f32,
-        scroll_to_index: usize,
-        buffered_lines: &std::collections::HashSet<usize>,
-        is_playing: bool,
-        is_seek: bool,
-        enable_scale: bool,
-        inactive_scale: f32,
-        bg_line_scale: f32,
-    ) {
-        self.calc_layout_with_stagger(
-            line_heights,
-            line_spacing,
-            scroll_to_index,
-            buffered_lines,
-            is_playing,
-            is_seek,
-            enable_scale,
-            inactive_scale,
-            bg_line_scale,
-            0.05, // default base delay
-            1.05, // default reduction factor
-        )
-    }
-
-    /// 使用自定义 stagger 参数计算布局
-    ///
-    /// 完整实现，支持可配置的 stagger 动画
-    ///
-    /// Apple Music-style features:
-    /// - isNonDynamic: Different opacity for non-dynamic lyrics (all lines have only 1 word)
-    /// - Small screen blur: blur * 0.8 when viewport_width <= 1024
-    #[allow(clippy::too_many_arguments)]
-    pub fn calc_layout_with_stagger(
-        &mut self,
-        line_heights: &[f32],
-        line_spacing: f32,
-        scroll_to_index: usize,
-        buffered_lines: &std::collections::HashSet<usize>,
-        is_playing: bool,
-        is_seek: bool,
-        enable_scale: bool,
-        inactive_scale: f32,
-        bg_line_scale: f32,
-        stagger_base_delay: f32,
-        stagger_reduction_factor: f32,
-    ) {
-        self.calc_layout_full(
-            line_heights,
-            line_spacing,
-            scroll_to_index,
-            buffered_lines,
-            is_playing,
-            is_seek,
-            enable_scale,
-            inactive_scale,
-            bg_line_scale,
-            stagger_base_delay,
-            stagger_reduction_factor,
-            false,  // is_non_dynamic
-            2000.0, // viewport_width (default large)
-        )
-    }
-
     /// 完整布局计算
     ///
     /// 移植自 `lyric-player/base.ts` 的 `calcLayout`
@@ -586,10 +453,22 @@ impl LineAnimationManager {
         stagger_reduction_factor: f32,
         is_non_dynamic: bool,
         viewport_width: f32,
-    ) {
+        manual_scroll_offset: f32,
+        disable_blur: bool,
+        interlude_insert_after: Option<usize>,
+        interlude_extra_height: f32,
+        interlude_top_margin: f32,
+    ) -> ScrollBounds {
         if self.animations.is_empty() {
-            return;
+            self.interlude_insert_after = None;
+            self.interlude_extra_height = 0.0;
+            self.interlude_top_margin = 0.0;
+            return ScrollBounds { min: 0.0, max: 0.0 };
         }
+
+        self.interlude_insert_after = interlude_insert_after;
+        self.interlude_extra_height = interlude_extra_height;
+        self.interlude_top_margin = interlude_top_margin;
 
         // default: LINE_HEIGHT_FALLBACK = size[1] / 5
         let line_height_fallback = self.viewport_height / 5.0;
@@ -603,6 +482,14 @@ impl LineAnimationManager {
 
         // default: Calculate scroll offset (sum of heights before target line, excluding BG lines when playing)
         // scrollOffset = currentLyricLineObjects.slice(0, targetAlignIndex).reduce(...)
+        let interlude_before_line = |line_idx: usize| -> bool {
+            match interlude_insert_after {
+                Some(insert_after) if insert_after == usize::MAX => line_idx == 0,
+                Some(insert_after) => insert_after.saturating_add(1) == line_idx,
+                None => false,
+            }
+        };
+
         let mut scroll_offset = 0.0f32;
         for idx in 0..target_align_index.min(self.animations.len()) {
             let is_bg = self.animations.get(idx).map(|a| a.is_bg).unwrap_or(false);
@@ -616,9 +503,17 @@ impl LineAnimationManager {
             scroll_offset += height + line_spacing;
         }
 
-        // default: curPos = -scrollOffset + size[1] * alignPosition
-        // Also has -this.scrollOffset at the start, but that's for manual scroll offset
-        let mut cur_pos = -scroll_offset + self.viewport_height * self.align_position;
+        // when dots are inserted after an existing line, the whole layout is lifted first,
+        // then the dots height is added back right before the following line.
+        let initial_interlude_offset = match interlude_insert_after {
+            Some(insert_after) if insert_after != usize::MAX => interlude_extra_height,
+            _ => 0.0,
+        };
+
+        // curPos = -scrollOffset + size[1] * alignPosition - manualScrollOffset
+        let mut cur_pos = -scroll_offset - initial_interlude_offset
+            + self.viewport_height * self.align_position
+            - manual_scroll_offset;
 
         // default: Apply alignAnchor adjustment to curPos
         if let Some(cur_line_height) = line_heights.get(target_align_index) {
@@ -644,6 +539,10 @@ impl LineAnimationManager {
         let mut base_delay = if is_seek { 0.0 } else { stagger_base_delay };
 
         for (idx, anim) in self.animations.iter_mut().enumerate() {
+            if interlude_before_line(idx) {
+                cur_pos += interlude_extra_height;
+            }
+
             let height = line_heights
                 .get(idx)
                 .copied()
@@ -680,7 +579,7 @@ impl LineAnimationManager {
             };
 
             // default: Calculate blur level (distance-based)
-            let blur_level = if is_active {
+            let blur_level = if disable_blur || is_active {
                 0.0
             } else {
                 let mut level = 1.0;
@@ -695,6 +594,9 @@ impl LineAnimationManager {
             };
             // Set target blur (will be smoothly interpolated in update())
             anim.target_blur = blur_level;
+            if disable_blur {
+                anim.blur = 0.0;
+            }
 
             // default: Calculate opacity
             // hidePassedLines logic + normal opacity logic
@@ -774,21 +676,16 @@ impl LineAnimationManager {
                 }
             }
         }
+
+        ScrollBounds {
+            min: -scroll_offset,
+            max: cur_pos + manual_scroll_offset - self.viewport_height / 2.0,
+        }
     }
 
     /// Get number of animations
     pub fn len(&self) -> usize {
         self.animations.len()
-    }
-
-    /// Check if empty
-    pub fn is_empty(&self) -> bool {
-        self.animations.is_empty()
-    }
-
-    /// Get all animations (for advanced access)
-    pub fn animations(&self) -> &[LineAnimation] {
-        &self.animations
     }
 
     /// Get animations slice (for AnimationBuffers)
@@ -797,9 +694,12 @@ impl LineAnimationManager {
         &self.animations
     }
 
-    /// Get mutable access to all animations
-    pub fn animations_mut(&mut self) -> &mut [LineAnimation] {
-        &mut self.animations
+    /// Clear all line animations so the next layout rebuilds from scratch.
+    pub fn reset(&mut self) {
+        self.animations.clear();
+        self.interlude_insert_after = None;
+        self.interlude_extra_height = 0.0;
+        self.interlude_top_margin = 0.0;
     }
 }
 
@@ -815,6 +715,40 @@ mod tests {
         let is_bg_flags: Vec<bool> = vec![false; line_count];
         manager.ensure_capacity(line_count, &is_bg_flags);
         manager
+    }
+
+    #[test]
+    fn interlude_top_tracks_next_line_current_position() {
+        let mut manager = create_test_manager(2);
+        let line_heights = vec![48.0, 48.0];
+        let buffered_lines = HashSet::new();
+
+        manager.calc_layout_full(
+            &line_heights,
+            8.0,
+            0,
+            &buffered_lines,
+            true,
+            true,
+            true,
+            0.97,
+            0.75,
+            0.0,
+            1.05,
+            false,
+            1280.0,
+            0.0,
+            false,
+            Some(0),
+            36.0,
+            6.0,
+        );
+
+        let next_line_y = manager.animations[1].current_y();
+        assert!((manager.current_interlude_top().unwrap() - (next_line_y - 30.0)).abs() < 0.001);
+
+        manager.animations[1].set_position_y(next_line_y + 24.0);
+        assert!((manager.current_interlude_top().unwrap() - (next_line_y - 6.0)).abs() < 0.001);
     }
 
     /// Helper to get blur level for a specific line after layout calculation
@@ -841,8 +775,45 @@ mod tests {
             1.05,  // stagger_reduction_factor
             false, // is_non_dynamic
             viewport_width,
+            0.0,   // manual_scroll_offset
+            false, // disable_blur
+            None,
+            0.0,
+            0.0,
         );
         manager.animations[line_index].blur
+    }
+
+    fn get_opacity_for_line(
+        manager: &mut LineAnimationManager,
+        line_count: usize,
+        line_index: usize,
+        scroll_to_index: usize,
+        buffered_lines: &HashSet<usize>,
+        is_non_dynamic: bool,
+    ) -> f32 {
+        let line_heights: Vec<f32> = vec![48.0; line_count];
+        manager.calc_layout_full(
+            &line_heights,
+            8.0,
+            scroll_to_index,
+            buffered_lines,
+            true,
+            true,
+            true,
+            0.97,
+            0.75,
+            0.05,
+            1.05,
+            is_non_dynamic,
+            1920.0,
+            0.0,
+            false,
+            None,
+            0.0,
+            0.0,
+        );
+        manager.animations[line_index].opacity
     }
 
     // ========== Property 1: Active lines have zero blur ==========
@@ -944,6 +915,19 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_non_dynamic_inactive_line_uses_opacity() {
+        let mut manager = create_test_manager(4);
+        let mut buffered = HashSet::new();
+        buffered.insert(1);
+
+        let non_dynamic_opacity = get_opacity_for_line(&mut manager, 4, 3, 1, &buffered, true);
+        let dynamic_opacity = get_opacity_for_line(&mut manager, 4, 3, 1, &buffered, false);
+
+        assert_eq!(non_dynamic_opacity, 0.2);
+        assert_eq!(dynamic_opacity, 1.0);
+    }
+
     // ========== Property 4: Blur level maximum cap ==========
     // The cap is applied in pipeline.rs, not in line_animation.rs
     // This test verifies the blur calculation can produce values > 32
@@ -972,5 +956,168 @@ mod tests {
             blur, 42.0,
             "Blur calculation can exceed 32 (cap applied later)"
         );
+    }
+
+    #[test]
+    fn test_manual_scroll_offset_matches_direction() {
+        let mut manager = create_test_manager(3);
+        let line_heights = vec![48.0; 3];
+        let buffered = HashSet::new();
+
+        manager.calc_layout_full(
+            &line_heights,
+            8.0,
+            0,
+            &buffered,
+            true,
+            true,
+            true,
+            0.97,
+            0.75,
+            0.05,
+            1.05,
+            false,
+            1920.0,
+            0.0,
+            false,
+            None,
+            0.0,
+            0.0,
+        );
+        let base_y = manager.animations[0].current_y();
+
+        manager.calc_layout_full(
+            &line_heights,
+            8.0,
+            0,
+            &buffered,
+            true,
+            true,
+            true,
+            0.97,
+            0.75,
+            0.05,
+            1.05,
+            false,
+            1920.0,
+            50.0,
+            false,
+            None,
+            0.0,
+            0.0,
+        );
+        let scrolled_y = manager.animations[0].current_y();
+
+        assert_eq!(
+            scrolled_y,
+            base_y - 50.0,
+            "Positive manual scroll should move lyrics upward scrollOffset"
+        );
+    }
+
+    #[test]
+    fn test_scroll_bounds_are_independent_from_current_manual_offset() {
+        let mut manager = create_test_manager(6);
+        let line_heights = vec![48.0; 6];
+        let mut buffered = HashSet::new();
+        buffered.insert(2);
+
+        let base_bounds = manager.calc_layout_full(
+            &line_heights,
+            8.0,
+            2,
+            &buffered,
+            true,
+            true,
+            true,
+            0.97,
+            0.75,
+            0.05,
+            1.05,
+            false,
+            1920.0,
+            0.0,
+            false,
+            None,
+            0.0,
+            0.0,
+        );
+
+        let shifted_bounds = manager.calc_layout_full(
+            &line_heights,
+            8.0,
+            2,
+            &buffered,
+            true,
+            true,
+            true,
+            0.97,
+            0.75,
+            0.05,
+            1.05,
+            false,
+            1920.0,
+            120.0,
+            false,
+            None,
+            0.0,
+            0.0,
+        );
+
+        assert_eq!(base_bounds, shifted_bounds);
+    }
+
+    #[test]
+    fn test_disable_blur_forces_zero_immediately() {
+        let mut manager = create_test_manager(5);
+        let line_heights = vec![48.0; 5];
+        let mut buffered = HashSet::new();
+        buffered.insert(2);
+
+        manager.calc_layout_full(
+            &line_heights,
+            8.0,
+            2,
+            &buffered,
+            true,
+            true,
+            true,
+            0.97,
+            0.75,
+            0.05,
+            1.05,
+            false,
+            1920.0,
+            0.0,
+            false,
+            None,
+            0.0,
+            0.0,
+        );
+        assert!(manager.animations[0].blur > 0.0);
+
+        manager.calc_layout_full(
+            &line_heights,
+            8.0,
+            2,
+            &buffered,
+            true,
+            false,
+            true,
+            0.97,
+            0.75,
+            0.05,
+            1.05,
+            false,
+            1920.0,
+            80.0,
+            true,
+            None,
+            0.0,
+            0.0,
+        );
+
+        assert_eq!(manager.animations[0].target_blur, 0.0);
+        assert_eq!(manager.animations[0].blur, 0.0);
     }
 }

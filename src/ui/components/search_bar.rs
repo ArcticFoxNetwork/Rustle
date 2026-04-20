@@ -53,11 +53,7 @@ impl Default for SearchBarStyle {
 }
 
 /// Build the search bar component with a custom style
-pub fn view(
-    search_query: &str,
-    locale: Locale,
-    style: SearchBarStyle,
-) -> Element<'_, Message> {
+pub fn view(search_query: &str, locale: Locale, style: SearchBarStyle) -> Element<'_, Message> {
     let search_icon = svg(svg::Handle::from_memory(
         crate::ui::icons::SEARCH.as_bytes(),
     ))

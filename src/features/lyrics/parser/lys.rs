@@ -136,6 +136,7 @@ pub fn parse_lys(src: &str) -> Vec<LyricLineOwned> {
 }
 
 /// Convert lyrics to LYS format string
+#[cfg(test)]
 pub fn stringify_lys(lines: &[LyricLineOwned]) -> String {
     use std::fmt::Write;
 

@@ -125,6 +125,7 @@ pub fn parse_qrc(src: &str) -> Vec<LyricLineOwned> {
 }
 
 /// Convert lyrics to QRC format string
+#[cfg(test)]
 pub fn stringify_qrc(lines: &[LyricLineOwned]) -> String {
     use std::fmt::Write;
 

@@ -7,8 +7,8 @@ use iced::{Alignment, Element, Fill, Padding};
 
 use crate::app::Message;
 use crate::i18n::{Key, Locale};
-use crate::ui::theme;
 use crate::ui::components::search_bar::{self, SearchBarStyle};
+use crate::ui::theme;
 
 /// Build the complete top bar with navigation buttons on left, search bar in center, and window controls on right
 pub fn view<'a>(

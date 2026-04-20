@@ -56,9 +56,32 @@ impl App {
                 Some(Task::none())
             }
 
+            Message::LyricsViewportResized(size) => {
+                if (self.ui.lyrics.viewport_width - size.width).abs() < 0.5
+                    && (self.ui.lyrics.viewport_height - size.height).abs() < 0.5
+                {
+                    return Some(Task::none());
+                }
+
+                self.ui.lyrics.viewport_width = size.width.max(100.0);
+                self.ui.lyrics.viewport_height = size.height.max(100.0);
+                self.ui.lyrics.viewport_initialized = true;
+
+                if let Some(engine_cell) = &self.ui.lyrics.engine {
+                    let mut engine = engine_cell.borrow_mut();
+                    engine
+                        .line_animations_mut()
+                        .set_viewport_height(self.ui.lyrics.viewport_height);
+                    engine.invalidate_layout();
+                }
+
+                Some(self.request_lyrics_shaping_for_current_viewport())
+            }
+
             Message::WindowResized(size) => {
                 self.ui.lyrics.viewport_width = (size.width * 0.6 - 60.0).max(100.0);
                 self.ui.lyrics.viewport_height = size.height;
+                self.ui.lyrics.viewport_initialized = true;
 
                 if let Some(engine_cell) = &self.ui.lyrics.engine {
                     let mut engine = engine_cell.borrow_mut();
@@ -79,7 +102,7 @@ impl App {
                     (available_width - DETAIL_GRID_PADDING).max(200.0);
                 self.ui.search.content_width = (available_width - GRID_PADDING).max(200.0);
 
-                Some(Task::none())
+                Some(self.request_lyrics_shaping_for_current_viewport())
             }
 
             // Handle async FontSystem initialization
@@ -98,7 +121,19 @@ impl App {
                     tracing::info!("LyricsEngine created with shared FontSystem");
                 }
 
-                Some(Task::none())
+                if let (Some(engine_cell), Some(shaped_lines)) = (
+                    &self.ui.lyrics.engine,
+                    self.ui.lyrics.cached_shaped_lines.as_ref(),
+                ) {
+                    let mut engine = engine_cell.borrow_mut();
+                    engine.set_cached_shaped_lines_with_metrics(
+                        shaped_lines.as_ref().clone(),
+                        self.ui.lyrics.shaped_content_width,
+                        self.ui.lyrics.shaped_font_size,
+                    );
+                }
+
+                Some(self.request_lyrics_shaping_for_current_viewport())
             }
 
             Message::PreloadLyrics(song_id, ncm_id, _song_name, _singer, _album) => {
@@ -154,7 +189,7 @@ impl App {
                                     .iter()
                                     .map(|line| {
                                         let word_count = line.words.len();
-                                        let mut line_data =
+                                        let line_data =
                                             crate::features::lyrics::engine::LyricLineData {
                                                 text: line.text.clone(),
                                                 words: line
@@ -166,10 +201,7 @@ impl App {
                                                             text: w.word.clone(),
                                                             start_ms: w.start_ms,
                                                             end_ms: w.end_ms,
-                                                            roman_word: None,
                                                             emphasize: false,
-                                                            x_start: 0.0,
-                                                            x_end: 0.0,
                                                             is_last_word: i
                                                                 == word_count.saturating_sub(1),
                                                         }
@@ -181,9 +213,7 @@ impl App {
                                                 end_ms: line.end_ms,
                                                 is_duet: line.is_duet,
                                                 is_bg: line.is_background,
-                                                mask_animation: None,
                                             };
-                                        line_data.compute_mask_animation();
                                         line_data
                                     })
                                     .collect();
@@ -210,6 +240,10 @@ impl App {
                     self.ui.lyrics.lines.clear();
                     self.ui.lyrics.cached_engine_lines = None;
                     self.ui.lyrics.cached_shaped_lines = None;
+                    self.ui.lyrics.shaped_content_width = 0.0;
+                    self.ui.lyrics.shaped_font_size = 0.0;
+                    self.ui.lyrics.shape_generation =
+                        self.ui.lyrics.shape_generation.wrapping_add(1);
                     self.ui.lyrics.is_loading = false;
                     self.ui.lyrics.load_error = Some(error.clone());
                     self.ui.lyrics.current_line_idx = None;
@@ -247,7 +281,7 @@ impl App {
                                     .iter()
                                     .map(|line| {
                                         let word_count = line.words.len();
-                                        let mut line_data =
+                                        let line_data =
                                             crate::features::lyrics::engine::LyricLineData {
                                                 text: line.text.clone(),
                                                 words: line
@@ -259,10 +293,7 @@ impl App {
                                                             text: w.word.clone(),
                                                             start_ms: w.start_ms,
                                                             end_ms: w.end_ms,
-                                                            roman_word: None,
                                                             emphasize: false,
-                                                            x_start: 0.0,
-                                                            x_end: 0.0,
                                                             is_last_word: i
                                                                 == word_count.saturating_sub(1),
                                                         }
@@ -274,9 +305,7 @@ impl App {
                                                 end_ms: line.end_ms,
                                                 is_duet: line.is_duet,
                                                 is_bg: line.is_background,
-                                                mask_animation: None,
                                             };
-                                        line_data.compute_mask_animation();
                                         line_data
                                     })
                                     .collect();
@@ -307,160 +336,26 @@ impl App {
                         engine_lines.len()
                     );
 
-                    // Check if font system is ready
-                    let Some(font_system) = self.ui.lyrics.shared_font_system.clone() else {
-                        tracing::warn!(
-                            "FontSystem not ready, skipping text shaping for song {}",
-                            song_id
-                        );
-                        return Some(Task::none());
-                    };
-
-                    // 在后台线程触发异步文本 shaping
-                    // 关键优化：文本 shaping 是 CPU 密集型操作，不应阻塞主线程
-                    let lines_for_shaping = engine_lines.clone();
-                    let song_id = *song_id;
-                    let viewport_width = self.ui.lyrics.viewport_width;
-                    let viewport_height = self.ui.lyrics.viewport_height;
-
-                    return Some(Task::perform(
-                        async move {
-                            tokio::task::spawn_blocking(move || {
-                                use crate::features::lyrics::engine::{
-                                    CachedShapedLine, SdfPreGenerator, TextShaper,
-                                };
-
-                                // Calculate font sizes (same as in LyricsEngine::calculate_line_heights)
-                                let content_width = viewport_width * 0.9;
-                                let font_size = (viewport_height * 0.055).clamp(24.0, 72.0);
-                                let trans_height_ratio = 0.7;
-                                let roman_height_ratio = 0.6;
-                                let trans_font_size = (font_size * trans_height_ratio).max(10.0);
-                                let roman_font_size = (font_size * roman_height_ratio).max(10.0);
-
-                                // Create text shaper with shared font system
-                                let text_shaper = TextShaper::new(font_system.clone());
-
-                                // Shape all lines
-                                let shaped_lines: Vec<CachedShapedLine> = lines_for_shaping
-                                    .iter()
-                                    .map(|line| {
-                                        // Shape main lyrics
-                                        let main_shaped = text_shaper.shape_line(
-                                            &line.text,
-                                            &line.words,
-                                            font_size,
-                                            content_width,
-                                        );
-                                        let mut total_height = main_shaped.height;
-
-                                        // Shape translation line if present
-                                        let translation_shaped =
-                                            if let Some(ref translated) = line.translated {
-                                                if !translated.is_empty() {
-                                                    let shaped = text_shaper.shape_simple(
-                                                        translated,
-                                                        trans_font_size,
-                                                        content_width,
-                                                    );
-                                                    total_height += shaped.height;
-                                                    Some(shaped)
-                                                } else {
-                                                    None
-                                                }
-                                            } else {
-                                                None
-                                            };
-
-                                        // Shape romanized line if present
-                                        let romanized_shaped =
-                                            if let Some(ref romanized) = line.romanized {
-                                                if !romanized.is_empty() {
-                                                    let shaped = text_shaper.shape_simple(
-                                                        romanized,
-                                                        roman_font_size,
-                                                        content_width,
-                                                    );
-                                                    total_height += shaped.height;
-                                                    Some(shaped)
-                                                } else {
-                                                    None
-                                                }
-                                            } else {
-                                                None
-                                            };
-
-                                        CachedShapedLine {
-                                            main: main_shaped,
-                                            translation: translation_shaped,
-                                            romanized: romanized_shaped,
-                                            total_height,
-                                        }
-                                    })
-                                    .collect();
-
-                                // Pre-generate SDF glyphs in background thread
-                                let start = std::time::Instant::now();
-                                let sdf_pre_gen = SdfPreGenerator::new(font_system);
-
-                                // Collect all cache keys from shaped lines
-                                let cache_keys: Vec<cosmic_text::CacheKey> = shaped_lines
-                                    .iter()
-                                    .flat_map(|line| {
-                                        let main_keys =
-                                            line.main.glyphs.iter().map(|g| g.cache_key);
-                                        let trans_keys = line
-                                            .translation
-                                            .iter()
-                                            .flat_map(|t| t.glyphs.iter().map(|g| g.cache_key));
-                                        let roman_keys = line
-                                            .romanized
-                                            .iter()
-                                            .flat_map(|r| r.glyphs.iter().map(|g| g.cache_key));
-                                        main_keys.chain(trans_keys).chain(roman_keys)
-                                    })
-                                    .collect();
-
-                                // Pre-generate all SDF glyphs
-                                let generated = sdf_pre_gen.generate_all(&cache_keys);
-                                let pre_generated_bitmaps = sdf_pre_gen.take_all();
-
-                                tracing::info!(
-                                    "Pre-generated {} SDF glyphs in {:?} (total keys: {})",
-                                    generated,
-                                    start.elapsed(),
-                                    cache_keys.len()
-                                );
-
-                                (
-                                    song_id,
-                                    std::sync::Arc::new(shaped_lines),
-                                    pre_generated_bitmaps,
-                                )
-                            })
-                            .await
-                            .ok()
-                        },
-                        |result| {
-                            if let Some((song_id, shaped_lines, pre_generated_bitmaps)) = result {
-                                Message::LyricsShapedLinesReady(
-                                    song_id,
-                                    shaped_lines,
-                                    pre_generated_bitmaps,
-                                )
-                            } else {
-                                Message::Noop
-                            }
-                        },
-                    ));
+                    return Some(self.request_lyrics_shaping_for_current_viewport());
                 }
                 Some(Task::none())
             }
 
             // Handle pre-computed shaped lines (Single Source of Truth for text layout)
-            Message::LyricsShapedLinesReady(song_id, shaped_lines, pre_generated_bitmaps) => {
-                if self.ui.lyrics.loading_song_id == Some(*song_id) {
+            Message::LyricsShapedLinesReady(
+                song_id,
+                generation,
+                shaped_lines,
+                pre_generated_bitmaps,
+                content_width,
+                font_size,
+            ) => {
+                if self.ui.lyrics.loading_song_id == Some(*song_id)
+                    && self.ui.lyrics.shape_generation == *generation
+                {
                     self.ui.lyrics.cached_shaped_lines = Some(shaped_lines.clone());
+                    self.ui.lyrics.shaped_content_width = *content_width;
+                    self.ui.lyrics.shaped_font_size = *font_size;
                     tracing::info!(
                         "Shaped lines ready for song {}: {} lines",
                         song_id,
@@ -470,7 +365,11 @@ impl App {
                     // Update engine with pre-computed shaped lines
                     if let Some(engine_cell) = &self.ui.lyrics.engine {
                         let mut engine = engine_cell.borrow_mut();
-                        engine.set_cached_shaped_lines(shaped_lines.as_ref().clone());
+                        engine.set_cached_shaped_lines_with_metrics(
+                            shaped_lines.as_ref().clone(),
+                            *content_width,
+                            *font_size,
+                        );
                     }
 
                     // Import pre-generated MSDF bitmaps to global cache
@@ -550,11 +449,200 @@ impl App {
         }
     }
 
+    fn current_lyrics_shape_metrics(&self) -> Option<(f32, f32)> {
+        if !self.ui.lyrics.viewport_initialized {
+            return None;
+        }
+
+        let viewport_width = self.ui.lyrics.viewport_width.max(100.0);
+        let viewport_height = self.ui.lyrics.viewport_height.max(100.0);
+        let content_width = viewport_width * 0.9;
+        let font_size = crate::features::lyrics::engine::FontSizeConfig::default()
+            .calculate_font_size(viewport_width, viewport_height);
+
+        Some((content_width, font_size))
+    }
+
+    fn request_lyrics_shaping_for_current_viewport(&mut self) -> Task<Message> {
+        let Some(lines_for_shaping) = self.ui.lyrics.cached_engine_lines.clone() else {
+            return Task::none();
+        };
+        let Some(font_system) = self.ui.lyrics.shared_font_system.clone() else {
+            return Task::none();
+        };
+        let Some(song_id) = self.ui.lyrics.loading_song_id else {
+            return Task::none();
+        };
+        let Some((content_width, font_size)) = self.current_lyrics_shape_metrics() else {
+            return Task::none();
+        };
+
+        let cache_matches_current = self
+            .ui
+            .lyrics
+            .cached_shaped_lines
+            .as_ref()
+            .map(|lines| lines.len() == lines_for_shaping.len())
+            .unwrap_or(false)
+            && (self.ui.lyrics.shaped_content_width - content_width).abs() <= 1.0
+            && (self.ui.lyrics.shaped_font_size - font_size).abs() <= 0.1;
+
+        if cache_matches_current {
+            return Task::none();
+        }
+
+        self.ui.lyrics.shape_generation = self.ui.lyrics.shape_generation.wrapping_add(1);
+        let generation = self.ui.lyrics.shape_generation;
+
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    use crate::features::lyrics::engine::{
+                        CachedShapedLine, SdfPreGenerator, TextShaper,
+                    };
+
+                    let trans_height_ratio = 0.5;
+                    let roman_height_ratio = 0.5;
+                    let bg_font_size_ratio = 0.7;
+
+                    let text_shaper = TextShaper::new(font_system.clone());
+
+                    let shaped_lines: Vec<CachedShapedLine> = lines_for_shaping
+                        .iter()
+                        .map(|line| {
+                            let main_font_size = if line.is_bg {
+                                font_size * bg_font_size_ratio
+                            } else {
+                                font_size
+                            };
+                            let trans_font_size = (main_font_size * trans_height_ratio).max(10.0);
+                            let roman_font_size = (main_font_size * roman_height_ratio).max(10.0);
+
+                            let main_shaped = text_shaper.shape_line(
+                                &line.text,
+                                &line.words,
+                                main_font_size,
+                                content_width,
+                            );
+                            let mut total_height = main_shaped.height;
+
+                            let translation_shaped = if let Some(ref translated) = line.translated {
+                                if !translated.is_empty() {
+                                    let shaped = text_shaper.shape_simple(
+                                        translated,
+                                        trans_font_size,
+                                        content_width,
+                                    );
+                                    total_height += shaped.height;
+                                    Some(shaped)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                            let romanized_shaped = if let Some(ref romanized) = line.romanized {
+                                if !romanized.is_empty() {
+                                    let shaped = text_shaper.shape_simple(
+                                        romanized,
+                                        roman_font_size,
+                                        content_width,
+                                    );
+                                    total_height += shaped.height;
+                                    Some(shaped)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                            CachedShapedLine {
+                                main: main_shaped,
+                                main_font_size,
+                                translation: translation_shaped,
+                                translation_font_size: trans_font_size,
+                                romanized: romanized_shaped,
+                                romanized_font_size: roman_font_size,
+                                total_height,
+                            }
+                        })
+                        .collect();
+
+                    let start = std::time::Instant::now();
+                    let sdf_pre_gen = SdfPreGenerator::new(font_system);
+
+                    let cache_keys: Vec<cosmic_text::CacheKey> = shaped_lines
+                        .iter()
+                        .flat_map(|line| {
+                            let main_keys = line.main.glyphs.iter().map(|g| g.cache_key);
+                            let trans_keys = line
+                                .translation
+                                .iter()
+                                .flat_map(|t| t.glyphs.iter().map(|g| g.cache_key));
+                            let roman_keys = line
+                                .romanized
+                                .iter()
+                                .flat_map(|r| r.glyphs.iter().map(|g| g.cache_key));
+                            main_keys.chain(trans_keys).chain(roman_keys)
+                        })
+                        .collect();
+
+                    let generated = sdf_pre_gen.generate_all(&cache_keys);
+                    let pre_generated_bitmaps = sdf_pre_gen.take_all();
+
+                    tracing::info!(
+                        "Pre-generated {} SDF glyphs in {:?} (total keys: {})",
+                        generated,
+                        start.elapsed(),
+                        cache_keys.len()
+                    );
+
+                    (
+                        song_id,
+                        generation,
+                        std::sync::Arc::new(shaped_lines),
+                        pre_generated_bitmaps,
+                        content_width,
+                        font_size,
+                    )
+                })
+                .await
+                .ok()
+            },
+            |result| {
+                if let Some((
+                    song_id,
+                    generation,
+                    shaped_lines,
+                    pre_generated_bitmaps,
+                    content_width,
+                    font_size,
+                )) = result
+                {
+                    Message::LyricsShapedLinesReady(
+                        song_id,
+                        generation,
+                        shaped_lines,
+                        pre_generated_bitmaps,
+                        content_width,
+                        font_size,
+                    )
+                } else {
+                    Message::Noop
+                }
+            },
+        )
+    }
+
     /// Apply lyrics lines to state (shared by online and local loading)
     fn apply_lyrics_lines(&mut self, lines: Vec<crate::ui::pages::LyricLine>) {
         self.ui.lyrics.lines = lines;
         self.ui.lyrics.cached_engine_lines = None;
         self.ui.lyrics.cached_shaped_lines = None; // Clear shaped lines cache
+        self.ui.lyrics.shaped_content_width = 0.0;
+        self.ui.lyrics.shaped_font_size = 0.0;
         self.ui.lyrics.is_loading = false;
         self.ui.lyrics.load_error = None;
         self.ui.lyrics.current_line_idx = None;
@@ -563,7 +651,7 @@ impl App {
         // (engine is pre-created at app startup to avoid FontSystem::new() delay)
         if let Some(engine_cell) = &self.ui.lyrics.engine {
             let mut engine = engine_cell.borrow_mut();
-            // Clear cached shaped lines to force re-calculation
+            engine.reset_for_new_lyrics();
             engine.set_cached_shaped_lines(Vec::new());
         }
     }
@@ -616,7 +704,6 @@ impl App {
             self.ui.lyrics.current_line_idx = new_current_line;
         }
 
-        self.update_scroll_bounce_back(delta_secs);
         self.update_lyrics_engine(delta_secs);
 
         Task::none()
@@ -629,10 +716,12 @@ impl App {
 
         let engine_lines = self.get_or_create_engine_lines();
 
-        let user_scrolling = self.ui.lyrics.user_scrolling;
-        let manual_scroll_offset = self.ui.lyrics.manual_scroll_offset;
         let content_width = self.ui.lyrics.viewport_width * 0.9;
-        let font_size = (self.ui.lyrics.viewport_height * 0.055).clamp(24.0, 72.0);
+        let font_size = crate::features::lyrics::engine::FontSizeConfig::default()
+            .calculate_font_size(
+                self.ui.lyrics.viewport_width,
+                self.ui.lyrics.viewport_height,
+            );
         let viewport_height = self.ui.lyrics.viewport_height;
 
         let runtime = self.playback_runtime();
@@ -656,11 +745,13 @@ impl App {
 
             engine.update(delta_secs);
 
-            if user_scrolling {
-                engine.handle_wheel(manual_scroll_offset);
-            }
-
-            engine.set_viewport_info(&engine_lines, content_width, font_size, viewport_height);
+            engine.set_viewport_info(
+                &engine_lines,
+                content_width,
+                font_size,
+                viewport_height,
+                self.ui.lyrics.viewport_width,
+            );
 
             if is_playing {
                 engine.resume();
@@ -669,10 +760,6 @@ impl App {
             }
 
             engine.set_current_time(time_ms, &engine_lines, just_initialized);
-        }
-
-        if user_scrolling {
-            self.ui.lyrics.manual_scroll_offset = 0.0;
         }
     }
 
@@ -698,7 +785,7 @@ impl App {
             .lines
             .iter()
             .map(|line| {
-                let mut line_data = crate::features::lyrics::engine::LyricLineData {
+                let line_data = crate::features::lyrics::engine::LyricLineData {
                     text: line.text.clone(),
                     words: {
                         let word_count = line.words.len();
@@ -709,10 +796,7 @@ impl App {
                                 text: w.word.clone(),
                                 start_ms: w.start_ms,
                                 end_ms: w.end_ms,
-                                roman_word: None,
                                 emphasize: false,
-                                x_start: 0.0,
-                                x_end: 0.0,
                                 is_last_word: i == word_count.saturating_sub(1),
                             })
                             .collect()
@@ -723,9 +807,7 @@ impl App {
                     end_ms: line.end_ms,
                     is_duet: line.is_duet,
                     is_bg: line.is_background,
-                    mask_animation: None,
                 };
-                line_data.compute_mask_animation();
                 line_data
             })
             .collect();
@@ -735,35 +817,13 @@ impl App {
         arc
     }
 
-    /// Handle scroll bounce-back after user inactivity
-    fn update_scroll_bounce_back(&mut self, delta_secs: f32) {
-        const BOUNCE_BACK_DELAY_SECS: f32 = 3.0;
-        const BOUNCE_BACK_SPEED: f32 = 8.0;
-
-        if let Some(last_scroll) = self.ui.lyrics.last_scroll_time {
-            let elapsed = std::time::Instant::now()
-                .duration_since(last_scroll)
-                .as_secs_f32();
-
-            if elapsed > BOUNCE_BACK_DELAY_SECS {
-                let lerp_factor = 1.0 - (-BOUNCE_BACK_SPEED * delta_secs).exp();
-                self.ui.lyrics.manual_scroll_offset *= 1.0 - lerp_factor;
-
-                if self.ui.lyrics.manual_scroll_offset.abs() < 1.0 {
-                    self.ui.lyrics.manual_scroll_offset = 0.0;
-                    self.ui.lyrics.user_scrolling = false;
-                    self.ui.lyrics.last_scroll_time = None;
-                }
-            }
-        }
-    }
-
     /// Handle user scroll event on lyrics
     pub fn handle_lyrics_scroll(&mut self, delta: f32) {
         tracing::debug!("Lyrics scroll: delta={}", delta);
-        self.ui.lyrics.user_scrolling = true;
-        self.ui.lyrics.last_scroll_time = Some(std::time::Instant::now());
-        self.ui.lyrics.manual_scroll_offset += delta;
+
+        if let Some(engine_cell) = &self.ui.lyrics.engine {
+            engine_cell.borrow_mut().handle_wheel(delta);
+        }
     }
 
     // ============ ASYNC LOADING METHODS ============
@@ -781,6 +841,9 @@ impl App {
         self.ui.lyrics.lines.clear();
         self.ui.lyrics.cached_engine_lines = None;
         self.ui.lyrics.cached_shaped_lines = None;
+        self.ui.lyrics.shaped_content_width = 0.0;
+        self.ui.lyrics.shaped_font_size = 0.0;
+        self.ui.lyrics.shape_generation = self.ui.lyrics.shape_generation.wrapping_add(1);
         self.ui.lyrics.current_line_idx = None;
         self.ui.lyrics.load_error = None;
         self.ui.lyrics.loading_song_id = Some(song.id);
@@ -789,6 +852,7 @@ impl App {
         // Clear engine's cached data for re-layout, but keep the engine instance
         if let Some(engine_cell) = &self.ui.lyrics.engine {
             let mut engine = engine_cell.borrow_mut();
+            engine.reset_for_new_lyrics();
             engine.set_cached_shaped_lines(Vec::new());
         }
 
@@ -957,10 +1021,7 @@ impl App {
 
     /// 只更新歌词页面背景（封面下载完成后调用）
     /// 不重新加载歌词
-    pub fn update_lyrics_background(
-        &mut self,
-        song: &crate::database::DbSong,
-    ) -> Task<Message> {
+    pub fn update_lyrics_background(&mut self, song: &crate::database::DbSong) -> Task<Message> {
         self.update_background_async(song)
     }
 }

@@ -266,6 +266,8 @@ pub enum Message {
     CloseLyricsPage,
     /// Scroll lyrics manually (delta in pixels)
     LyricsScroll(f32),
+    /// Real rendered lyrics viewport resized
+    LyricsViewportResized(iced::Size),
     /// Window resized (for lyrics viewport calculation)
     WindowResized(iced::Size),
     /// Font system initialized asynchronously (for lyrics text shaping)
@@ -288,11 +290,14 @@ pub enum Message {
     /// 包含预生成的 SDF 位图，避免首次渲染时阻塞主线程
     LyricsShapedLinesReady(
         i64,
+        u64,
         std::sync::Arc<Vec<crate::features::lyrics::engine::CachedShapedLine>>,
         std::collections::HashMap<
             cosmic_text::CacheKey,
             crate::features::lyrics::engine::sdf_generator::SdfBitmap,
         >,
+        f32,
+        f32,
     ),
     /// Background colors extracted asynchronously (song_id, primary, secondary, tertiary)
     LyricsBackgroundReady(i64, [f32; 4], [f32; 4], [f32; 4]),
@@ -849,6 +854,9 @@ impl std::fmt::Debug for Message {
             Self::OpenLyricsPage => simple!("OpenLyricsPage"),
             Self::CloseLyricsPage => simple!("CloseLyricsPage"),
             Self::LyricsScroll(d) => simple!("LyricsScroll", "{:.1}", d),
+            Self::LyricsViewportResized(size) => {
+                simple!("LyricsViewportResized", "{}x{}", size.width, size.height)
+            }
             Self::WindowResized(size) => simple!("WindowResized", "{}x{}", size.width, size.height),
             Self::LyricsFontSystemReady(_) => simple!("LyricsFontSystemReady"),
             Self::LyricsLoaded(id, lines) => {
@@ -862,10 +870,11 @@ impl std::fmt::Debug for Message {
             Self::LyricsEngineLinesReady(id, lines) => {
                 simple!("LyricsEngineLinesReady", "id={}, {} lines", id, lines.len())
             }
-            Self::LyricsShapedLinesReady(id, lines, bitmaps) => simple!(
+            Self::LyricsShapedLinesReady(id, generation, lines, bitmaps, _, _) => simple!(
                 "LyricsShapedLinesReady",
-                "id={}, {} lines, {} bitmaps",
+                "id={}, gen={}, {} lines, {} bitmaps",
                 id,
+                generation,
                 lines.len(),
                 bitmaps.len()
             ),

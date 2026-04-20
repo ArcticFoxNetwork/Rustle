@@ -20,7 +20,7 @@ pub fn view(
     is_playing: bool,
     position: f32, // 0.0 to 1.0
     duration_secs: f32,
-    volume: f32,       // 0.0 to 1.0
+    volume: f32, // 0.0 to 1.0
     play_mode: PlayMode,
     is_buffering: bool,             // Whether streaming is buffering
     download_progress: Option<f32>, // Download progress 0.0 to 1.0 (None if not streaming)
@@ -215,11 +215,8 @@ pub fn view(
         is_first_song,
     );
 
-    let progress_slider = widgets::progress_slider::view(
-        position,
-        download_progress,
-        SliderSize::Standard,
-    );
+    let progress_slider =
+        widgets::progress_slider::view(position, download_progress, SliderSize::Standard);
 
     let progress_row = row![
         text(current_time)

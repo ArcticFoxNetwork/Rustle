@@ -183,7 +183,7 @@ pub fn contrast_image(data: &mut [u8], contrast: f32) {
     }
 }
 
-/// Apple Music 风格的图像预处理参数
+/// 图像预处理参数
 #[derive(Debug, Clone, Copy)]
 pub struct ImageProcessingParams {
     pub blur_radius: usize,
@@ -207,7 +207,7 @@ impl Default for ImageProcessingParams {
 
 impl ImageProcessingParams {
     /// 默认参数 (简化版，用于单次处理)
-    pub fn amll_default() -> Self {
+    pub fn default() -> Self {
         Self {
             blur_radius: 2,
             blur_quality: 4,

@@ -1,7 +1,5 @@
 //! GPU-accelerated Lyrics Render Engine
 //!
-//! A high-performance render engine for Apple Music-style lyrics visualization.
-//!
 //! ## Architecture
 //!
 //! This engine bypasses glyphon's limitations for dynamic lyrics:
@@ -17,15 +15,11 @@
 //! - `SdfCache`: MSDF texture atlas for glyph storage
 //! - `TextShaper`: cosmic-text based text shaping
 //! - `ScrollPhysics`: Physics simulation for smooth scrolling
-//! - `LensModel`: Visual effects (scale, blur, opacity) based on distance
 //! - `Spring`: Spring-based animation system
 
 // Core modules
-pub mod conversion;
 pub mod gpu_pipeline;
 pub mod interlude_dots;
-pub mod layout;
-pub mod lens;
 pub mod line_animation;
 pub mod per_line_blur;
 pub mod physics;
@@ -37,16 +31,14 @@ pub mod spring;
 pub mod text_shaper;
 pub mod types;
 pub mod vertex;
-pub mod word_splitter;
 
 // Re-exports for convenience
 pub use interlude_dots::InterludeDots;
-pub use lens::LensModel;
 pub use line_animation::{AnimationBuffers, LineAnimationManager};
 pub use physics::{ScrollPhysics, ScrollState};
 pub use sdf_cache::SdfPreGenerator;
 pub use text_shaper::TextShaper;
-pub use types::{ComputedLineStyle, FontSizeConfig, LyricLineData, WordData};
+pub use types::{FontSizeConfig, LyricLineData, WordData, lyrics_are_non_dynamic};
 
 use cosmic_text::FontSystem;
 use parking_lot::Mutex;
@@ -67,7 +59,6 @@ use std::time::Instant;
 /// - Interlude dots animation
 /// - Translation and romanized text support
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct LyricsEngineConfig {
     // === Font Size ===
     /// Font size configuration for lyrics rendering
@@ -80,10 +71,6 @@ pub struct LyricsEngineConfig {
     pub trans_height_ratio: f32,
     /// Romanized text height ratio (relative to main line)
     pub roman_height_ratio: f32,
-    /// Line spacing in logical pixels
-    pub line_spacing: f32,
-    /// Maximum lines to render
-    pub max_lines: usize,
     /// Alignment position (0.0 = top, 0.5 = center, 1.0 = bottom)
     /// Default: 0.35
     pub align_position: f32,
@@ -95,12 +82,12 @@ pub struct LyricsEngineConfig {
     pub enable_blur: bool,
     /// Enable scale effect for non-active lines
     pub enable_scale: bool,
-    /// Blur pyramid levels
-    pub blur_levels: usize,
     /// Scale factor for non-active lines (default: 0.97)
     pub inactive_scale: f32,
     /// Scale factor for background lyrics (default: 0.75)
     pub bg_line_scale: f32,
+    /// Base font size ratio for background lyrics (default: 0.7em)
+    pub bg_font_size_ratio: f32,
     /// Word fade width in em units (default: 0.5)
     /// - 0.5 for iPad-like effect
     /// - 1.0 for Android-like effect
@@ -126,21 +113,6 @@ pub struct LyricsEngineConfig {
     /// Spring stiffness for Y position
     pub spring_stiffness: f32,
 
-    // Scale: mass=2, damping=25, stiffness=100 (normal)
-    //        mass=1, damping=20, stiffness=50 (background)
-    /// Spring mass for scale (normal lines)
-    pub scale_spring_mass: f32,
-    /// Spring damping for scale (normal lines)
-    pub scale_spring_damping: f32,
-    /// Spring stiffness for scale (normal lines)
-    pub scale_spring_stiffness: f32,
-    /// Spring mass for scale (background lines)
-    pub scale_bg_spring_mass: f32,
-    /// Spring damping for scale (background lines)
-    pub scale_bg_spring_damping: f32,
-    /// Spring stiffness for scale (background lines)
-    pub scale_bg_spring_stiffness: f32,
-
     // === Staggered Animation ===
     /// Base delay for staggered animation (seconds)
     /// Default: 0.05
@@ -152,8 +124,6 @@ pub struct LyricsEngineConfig {
     // === Interlude ===
     /// Minimum interlude duration to show dots (ms)
     pub interlude_min_duration: u64,
-    /// Target breathe duration for interlude dots (ms)
-    pub interlude_breathe_duration: u64,
 
     // === Rendering ===
     /// Hide passed lines (scroll them out of view)
@@ -161,21 +131,10 @@ pub struct LyricsEngineConfig {
     /// Overscan distance for virtualization (pixels)
     /// Default: 300
     pub overscan_px: f32,
-
-    // === Emphasis Effects ===
-    /// Enable emphasis effects for long words
-    pub enable_emphasis: bool,
-    /// Minimum word duration for emphasis (ms)
-    /// Default: 1000ms
-    pub emphasis_min_duration: u64,
-    /// Maximum word length for emphasis (characters)
-    /// Default: 7 for non-CJK, unlimited for CJK
-    pub emphasis_max_length: usize,
 }
 
 /// Alignment anchor for current lyric line
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-#[allow(dead_code)]
 pub enum AlignAnchor {
     Top,
     #[default]
@@ -191,19 +150,17 @@ impl Default for LyricsEngineConfig {
 
             // Layout
             line_height: 48.0,
-            trans_height_ratio: 0.7,
-            roman_height_ratio: 0.6,
-            line_spacing: 8.0,
-            max_lines: 128,
+            trans_height_ratio: 0.5,
+            roman_height_ratio: 0.5,
             align_position: 0.35,
             align_anchor: AlignAnchor::Center,
 
             // Visual Effects
             enable_blur: true,
             enable_scale: true,
-            blur_levels: 5,
             inactive_scale: 0.97,
             bg_line_scale: 0.75,
+            bg_font_size_ratio: 0.7,
             word_fade_width: 0.5,
 
             // Physics
@@ -217,32 +174,16 @@ impl Default for LyricsEngineConfig {
             spring_damping: 15.0,
             spring_stiffness: 90.0,
 
-            // Spring (defaults for scale - normal lines)
-            scale_spring_mass: 2.0,
-            scale_spring_damping: 25.0,
-            scale_spring_stiffness: 100.0,
-
-            // Spring (defaults for scale - background lines)
-            scale_bg_spring_mass: 1.0,
-            scale_bg_spring_damping: 20.0,
-            scale_bg_spring_stiffness: 50.0,
-
             // Staggered Animation (defaults)
             stagger_base_delay: 0.05,
             stagger_reduction_factor: 1.05,
 
             // Interlude
             interlude_min_duration: 4000,
-            interlude_breathe_duration: 1500,
 
             // Rendering
             hide_passed_lines: false,
             overscan_px: 300.0,
-
-            // Emphasis Effects
-            enable_emphasis: true,
-            emphasis_min_duration: 1000,
-            emphasis_max_length: 7,
         }
     }
 }
@@ -256,10 +197,16 @@ pub type SharedFontSystem = Arc<Mutex<FontSystem>>;
 pub struct CachedShapedLine {
     /// Main text shaped result
     pub main: text_shaper::ShapedLine,
+    /// Main text logical font size
+    pub main_font_size: f32,
     /// Translation text shaped result (if any)
     pub translation: Option<text_shaper::ShapedLine>,
+    /// Translation logical font size
+    pub translation_font_size: f32,
     /// Romanized text shaped result (if any)
     pub romanized: Option<text_shaper::ShapedLine>,
+    /// Romanized logical font size
+    pub romanized_font_size: f32,
     /// Total height of this line (main + translation + romanized)
     pub total_height: f32,
 }
@@ -270,8 +217,6 @@ pub struct LyricsEngine {
     config: LyricsEngineConfig,
     /// Physics simulation for user scrolling (not used for auto-scroll anymore)
     physics: ScrollPhysics,
-    /// Lens model for visual effects
-    lens: LensModel,
     /// Interlude dots animation
     interlude_dots: InterludeDots,
     /// Text shaper for calculating line heights
@@ -304,11 +249,36 @@ pub struct LyricsEngine {
     last_content_width: f32,
     /// Last known font size for invalidation
     last_font_size: f32,
+    /// Force layout recalculation on the next timing update.
+    layout_dirty: bool,
     /// Viewport height for layout calculations
     viewport_height: f32,
+    /// Viewport width for layout calculations
+    viewport_width: f32,
+    /// Last blur-disable state used by the current layout.
+    last_disable_blur: bool,
+    /// Last target align index for dynamic spring params
+    last_target_align_index: usize,
+    /// Last interlude state for dynamic spring params
+    last_interlude_state: bool,
+    /// Current interlude insert position (gap is after this line index)
+    interlude_insert_after: Option<usize>,
+    /// Extra vertical height reserved for the current interlude
+    interlude_extra_height: f32,
+    /// Whether the next line after the interlude is a duet line
+    interlude_align_right: bool,
 }
 
 impl LyricsEngine {
+    fn pos_y_spring_params(&self) -> crate::features::lyrics::engine::spring::SpringParams {
+        crate::features::lyrics::engine::spring::SpringParams {
+            mass: self.config.spring_mass as f64,
+            damping: self.config.spring_damping as f64,
+            stiffness: self.config.spring_stiffness as f64,
+            soft: false,
+        }
+    }
+
     /// Create new lyrics engine with shared font system
     ///
     /// The font system should be created once at app startup and shared
@@ -318,9 +288,9 @@ impl LyricsEngine {
         physics.set_friction(config.scroll_friction);
         physics.set_snap_threshold(config.snap_threshold);
         physics.set_max_overscroll(config.max_overscroll);
-
-        let mut lens = LensModel::new();
-        lens.set_edge_scale_factor(config.inactive_scale);
+        debug_assert!(
+            [AlignAnchor::Top, AlignAnchor::Center, AlignAnchor::Bottom].contains(&config.align_anchor)
+        );
 
         // Use provided font system for text shaping
         let text_shaper = TextShaper::new(font_system);
@@ -338,7 +308,6 @@ impl LyricsEngine {
 
         Self {
             physics,
-            lens,
             interlude_dots: InterludeDots::new(),
             text_shaper,
             line_animations,
@@ -355,15 +324,16 @@ impl LyricsEngine {
             cached_line_heights: Vec::new(),
             last_content_width: 0.0,
             last_font_size: 0.0,
+            layout_dirty: true,
             viewport_height: 800.0,
+            viewport_width: 1200.0,
+            last_disable_blur: false,
+            last_target_align_index: 0,
+            last_interlude_state: false,
+            interlude_insert_after: None,
+            interlude_extra_height: 0.0,
+            interlude_align_right: false,
         }
-    }
-
-    /// Create new lyrics engine (creates its own FontSystem - slower, use new_with_font_system instead)
-    #[allow(dead_code)]
-    pub fn new(config: LyricsEngineConfig) -> Self {
-        let font_system: SharedFontSystem = Arc::new(Mutex::new(FontSystem::new()));
-        Self::new_with_font_system(config, font_system)
     }
 
     /// Update the engine state
@@ -388,6 +358,9 @@ impl LyricsEngine {
         // Update line animations
         self.line_animations.update(dt);
 
+        // Keep the dots aligned with animated line movement.
+        self.update_interlude_transform();
+
         // Update animation buffers from line animations (in-place, no allocations)
         // This prepares the data for LyricsEnginePrimitive::from_engine
         self.animation_buffers
@@ -403,65 +376,9 @@ impl LyricsEngine {
         &self.config
     }
 
-    /// Get mutable reference to configuration
-    #[allow(dead_code)]
-    pub fn config_mut(&mut self) -> &mut LyricsEngineConfig {
-        &mut self.config
-    }
-
-    /// Update configuration at runtime
-    #[allow(dead_code)]
-    pub fn set_config(&mut self, config: LyricsEngineConfig) {
-        self.physics.set_friction(config.scroll_friction);
-        self.physics.set_snap_threshold(config.snap_threshold);
-        self.physics.set_max_overscroll(config.max_overscroll);
-        self.lens.set_edge_scale_factor(config.inactive_scale);
-        self.config = config;
-    }
-
     /// Handle mouse wheel event
     pub fn handle_wheel(&mut self, delta: f32) {
-        self.physics.apply_impulse(delta);
-    }
-
-    /// Handle mouse move
-    #[allow(dead_code)]
-    pub fn handle_mouse_move(&mut self, _position: iced::Point) {
-        self.is_hovering = true;
-    }
-
-    /// Handle mouse exit
-    #[allow(dead_code)]
-    pub fn handle_mouse_exit(&mut self) {
-        self.is_hovering = false;
-    }
-
-    /// Get current scroll position (legacy, for compatibility)
-    /// 使用逐行动画，滚动位置由 line_animations 管理
-    pub fn scroll_position(&self) -> f32 {
-        // 返回 0，实际位置在 line_animations 中
-        0.0
-    }
-
-    /// Set current scroll position (legacy, for compatibility)
-    #[allow(dead_code)]
-    pub fn set_scroll_position(&mut self, _position: f32) {
-        // No-op with per-line animations
-    }
-
-    /// Get current animated Y positions for all lines (in logical pixels)
-    pub fn line_positions(&mut self) -> Vec<f32> {
-        self.line_animations.current_positions()
-    }
-
-    /// Get current animated scales for all lines (0.0 - 1.0)
-    pub fn line_scales(&mut self) -> Vec<f32> {
-        self.line_animations.current_scales()
-    }
-
-    /// Get line animation manager (for rendering)
-    pub fn line_animations(&self) -> &LineAnimationManager {
-        &self.line_animations
+        self.physics.scroll_by(delta);
     }
 
     /// Get mutable line animation manager
@@ -474,6 +391,7 @@ impl LyricsEngine {
     pub fn invalidate_layout(&mut self) {
         self.last_content_width = 0.0;
         self.last_font_size = 0.0;
+        self.layout_dirty = true;
     }
 
     /// Get animation buffers reference (for efficient rendering)
@@ -485,16 +403,23 @@ impl LyricsEngine {
         &self.animation_buffers
     }
 
-    /// Get physics state
-    #[allow(dead_code)]
-    pub fn physics_state(&self) -> ScrollState {
-        self.physics.state()
-    }
-
-    /// Get current time in milliseconds
-    #[allow(dead_code)]
-    pub fn current_time(&self) -> f64 {
-        self.current_time_ms
+    /// Reset state that must not leak across lyric loads, even if line counts match.
+    pub fn reset_for_new_lyrics(&mut self) {
+        self.hot_lines.clear();
+        self.buffered_lines.clear();
+        self.scroll_to_index = 0;
+        self.current_time_ms = 0.0;
+        self.last_target_align_index = 0;
+        self.last_interlude_state = false;
+        self.physics.reset_manual_scroll();
+        self.interlude_dots.set_interlude(None);
+        self.interlude_insert_after = None;
+        self.interlude_extra_height = 0.0;
+        self.interlude_align_right = false;
+        self.line_animations.reset();
+        self.animation_buffers.clear();
+        self.layout_dirty = true;
+        self.last_disable_blur = false;
     }
 
     /// 设置当前播放时间并更新行状态
@@ -509,6 +434,10 @@ impl LyricsEngine {
         // 如果歌词数量变化，需要重新初始化动画并立即排版
         let lyrics_changed = self.line_animations.len() != lines.len();
 
+        if is_seek || lyrics_changed {
+            self.physics.reset_manual_scroll();
+        }
+
         // Update hot lines (currently playing)
         let scroll_changed = self.update_hot_lines(time_ms, lines, is_seek);
 
@@ -520,8 +449,25 @@ impl LyricsEngine {
         // 1. buffered_lines 发生变化（scroll_changed）
         // 2. 显式 seek 操作（is_seek）
         // 3. 歌词变化（lyrics_changed）- 切歌或首次加载时立即排版
-        if scroll_changed || is_seek || lyrics_changed {
+        // 4. 用户正在手动滚动（物理状态不是 AutoPlay）
+        // 5. 正在平滑回弹到中心（position 不为 0）
+        let disable_blur = self.physics.state()
+            != crate::features::lyrics::engine::physics::ScrollState::AutoPlay
+            || self.physics.position().abs() > 0.5;
+        let blur_state_changed = disable_blur != self.last_disable_blur;
+
+        if scroll_changed
+            || is_seek
+            || lyrics_changed
+            || self.layout_dirty
+            || blur_state_changed
+            || self.physics.state()
+                != crate::features::lyrics::engine::physics::ScrollState::AutoPlay
+            || self.physics.position().abs() > 0.5
+        {
             self.calc_scroll_target(lines, is_seek || lyrics_changed);
+        } else {
+            self.last_disable_blur = disable_blur;
         }
     }
 
@@ -533,16 +479,66 @@ impl LyricsEngine {
     /// - content_width: Available width for text (in logical pixels)
     /// - font_size: Font size (in logical pixels, typically 48.0)
     /// - viewport_height: Viewport height (in logical pixels)
+    /// - viewport_width: Viewport width (in logical pixels)
     pub fn set_viewport_info(
         &mut self,
         lines: &[LyricLineData],
         content_width: f32,
         font_size: f32,
         viewport_height: f32,
+        viewport_width: f32,
     ) {
+        if (self.viewport_height - viewport_height).abs() > 0.5
+            || (self.viewport_width - viewport_width).abs() > 0.5
+        {
+            self.layout_dirty = true;
+        }
         self.viewport_height = viewport_height;
+        self.viewport_width = viewport_width;
         self.line_animations.set_viewport_height(viewport_height);
+        self.physics.set_viewport_height(viewport_height);
         self.calculate_line_heights(lines, content_width, font_size);
+    }
+
+    fn update_dynamic_spring_params(&mut self, lines: &[LyricLineData]) {
+        if lines.is_empty() {
+            return;
+        }
+
+        let current_index = self.scroll_to_index;
+        if current_index == 0 || current_index >= lines.len() {
+            return;
+        }
+
+        let current_line = &lines[current_index];
+        let prev_line = &lines[current_index - 1];
+
+        let prev_start = prev_line
+            .words
+            .first()
+            .map(|w| w.start_ms)
+            .unwrap_or(prev_line.start_ms);
+        let interval = current_line.start_ms.saturating_sub(prev_start) as f32;
+
+        let min_interval = 100.0;
+        let max_interval = 800.0;
+        let clamped_interval = interval.clamp(min_interval, max_interval);
+
+        let max_stiffness = 220.0;
+        let min_stiffness = 170.0;
+
+        let mut ratio = 1.0 - (clamped_interval - min_interval) / (max_interval - min_interval);
+        ratio = ratio.clamp(0.0, 1.0).powf(0.2);
+
+        let target_stiffness = min_stiffness + ratio * (max_stiffness - min_stiffness);
+        let damping_multiplier = 2.2;
+        let target_damping = target_stiffness.sqrt() * damping_multiplier;
+
+        let mut params = self.pos_y_spring_params();
+        params.stiffness = target_stiffness as f64;
+        params.damping = target_damping as f64;
+
+        self.line_animations.set_pos_y_spring_params(params);
     }
 
     /// Calculate and set the scroll target position
@@ -559,6 +555,8 @@ impl LyricsEngine {
             return;
         }
 
+        let is_non_dynamic = lyrics_are_non_dynamic(lines);
+
         // Ensure we have animations for all lines
         let is_bg_flags: Vec<bool> = lines.iter().map(|l| l.is_bg).collect();
         let was_reset = self
@@ -567,6 +565,25 @@ impl LyricsEngine {
 
         // If animations were reset (new song), force seek behavior
         let is_seek = is_seek || was_reset;
+
+        let is_interlude_active = self.interlude_dots.enabled;
+
+        let index_changed = self.last_target_align_index != self.scroll_to_index;
+
+        if index_changed || self.last_interlude_state != is_interlude_active {
+            self.last_interlude_state = is_interlude_active;
+
+            if is_seek {
+                self.line_animations
+                    .set_pos_y_spring_params(self.pos_y_spring_params());
+            } else if is_interlude_active {
+                self.line_animations
+                    .set_pos_y_spring_params(self.pos_y_spring_params());
+            } else {
+                self.update_dynamic_spring_params(lines);
+            }
+        }
+        self.last_target_align_index = self.scroll_to_index;
 
         // Use the same line_spacing formula as GPU pipeline
         let line_spacing = self.config.line_height * 0.5;
@@ -584,8 +601,20 @@ impl LyricsEngine {
             })
             .collect();
 
-        // Calculate layout using LineAnimationManager with configurable stagger
-        self.line_animations.calc_layout_with_stagger(
+        // Extract manual scroll offset from physics state.
+        // During auto-play, this is naturally 0.0.
+        let mut manual_scroll_offset = self.physics.position();
+        let disable_blur =
+            self.physics.state() != ScrollState::AutoPlay || manual_scroll_offset.abs() > 0.5;
+
+        let effective_stagger_delay = if index_changed {
+            self.config.stagger_base_delay
+        } else {
+            0.0
+        };
+
+        // 应用 `window.innerWidth <= 1024 ? blur * 0.8 : blur` 的设计。
+        let mut bounds = self.line_animations.calc_layout_full(
             &line_heights,
             line_spacing,
             self.scroll_to_index,
@@ -595,9 +624,49 @@ impl LyricsEngine {
             self.config.enable_scale,
             self.config.inactive_scale,
             self.config.bg_line_scale,
-            self.config.stagger_base_delay,
+            effective_stagger_delay,
             self.config.stagger_reduction_factor,
+            is_non_dynamic,
+            self.viewport_width,
+            manual_scroll_offset,
+            disable_blur,
+            self.interlude_insert_after,
+            self.interlude_extra_height,
+            interlude_dots::dot_margin(self.last_font_size.max(self.config.line_height)),
         );
+
+        self.physics.set_scroll_bounds(bounds.min, bounds.max);
+        let clamped_offset = self.physics.clamp_position();
+
+        if (clamped_offset - manual_scroll_offset).abs() > 0.1 {
+            manual_scroll_offset = clamped_offset;
+            bounds = self.line_animations.calc_layout_full(
+                &line_heights,
+                line_spacing,
+                self.scroll_to_index,
+                &self.buffered_lines,
+                self.is_playing,
+                is_seek,
+                self.config.enable_scale,
+                self.config.inactive_scale,
+                self.config.bg_line_scale,
+                effective_stagger_delay,
+                self.config.stagger_reduction_factor,
+                is_non_dynamic,
+                self.viewport_width,
+                manual_scroll_offset,
+                disable_blur,
+                self.interlude_insert_after,
+                self.interlude_extra_height,
+                interlude_dots::dot_margin(self.last_font_size.max(self.config.line_height)),
+            );
+            self.physics.set_scroll_bounds(bounds.min, bounds.max);
+        }
+
+        self.layout_dirty = false;
+        self.update_interlude_transform();
+        self.last_disable_blur =
+            self.physics.state() != ScrollState::AutoPlay || manual_scroll_offset.abs() > 0.5;
     }
 
     /// Calculate and cache line heights using text shaper
@@ -628,18 +697,25 @@ impl LyricsEngine {
             return;
         }
 
-        // Calculate font sizes for translation and romanized text
-        let trans_font_size = (font_size * self.config.trans_height_ratio).max(10.0);
-        let roman_font_size = (font_size * self.config.roman_height_ratio).max(10.0);
-
         // Shape all lines and cache the results (Single Source of Truth)
         self.cached_shaped_lines = lines
             .iter()
             .map(|line| {
+                let main_font_size = if line.is_bg {
+                    font_size * self.config.bg_font_size_ratio
+                } else {
+                    font_size
+                };
+                let trans_font_size = (main_font_size * self.config.trans_height_ratio).max(10.0);
+                let roman_font_size = (main_font_size * self.config.roman_height_ratio).max(10.0);
+
                 // Shape main lyrics
-                let main_shaped =
-                    self.text_shaper
-                        .shape_line(&line.text, &line.words, font_size, content_width);
+                let main_shaped = self.text_shaper.shape_line(
+                    &line.text,
+                    &line.words,
+                    main_font_size,
+                    content_width,
+                );
                 let mut total_height = main_shaped.height;
 
                 // Shape translation line if present
@@ -678,8 +754,11 @@ impl LyricsEngine {
 
                 CachedShapedLine {
                     main: main_shaped,
+                    main_font_size,
                     translation: translation_shaped,
+                    translation_font_size: trans_font_size,
                     romanized: romanized_shaped,
+                    romanized_font_size: roman_font_size,
                     total_height,
                 }
             })
@@ -694,6 +773,7 @@ impl LyricsEngine {
 
         self.last_content_width = content_width;
         self.last_font_size = font_size;
+        self.layout_dirty = true;
     }
 
     /// Get cached line heights (for external use)
@@ -709,14 +789,28 @@ impl LyricsEngine {
     /// 设置异步任务预计算的 shaped lines
     /// 允许在后台线程进行文本 shaping
     pub fn set_cached_shaped_lines(&mut self, shaped_lines: Vec<CachedShapedLine>) {
+        self.set_cached_shaped_lines_with_metrics(shaped_lines, 0.0, 0.0);
+    }
+
+    /// Sets async pre-computed shaped lines together with the metrics used to
+    /// produce them so we can avoid immediately reshaping with the same inputs.
+    pub fn set_cached_shaped_lines_with_metrics(
+        &mut self,
+        shaped_lines: Vec<CachedShapedLine>,
+        content_width: f32,
+        font_size: f32,
+    ) {
         // Update cached line heights from shaped lines
         self.cached_line_heights = shaped_lines.iter().map(|s| s.total_height).collect();
 
         self.cached_shaped_lines = shaped_lines;
-
-        // Mark that we have valid shaped data
-        // last_content_width/last_font_size 不在这里更新，异步任务使用的是当时的视口尺寸
-        // 视口变化时会重新调用 calculate_line_heights
+        self.layout_dirty = true;
+        if content_width > 0.0 {
+            self.last_content_width = content_width;
+        }
+        if font_size > 0.0 {
+            self.last_font_size = font_size;
+        }
     }
 
     /// Update hot lines based on current time
@@ -879,42 +973,126 @@ impl LyricsEngine {
     }
 
     /// Update interlude dots state
+    ///
+    /// - Checks gaps at (scrollToIndex - 1), scrollToIndex, and (scrollToIndex + 1)
+    /// - Gap end is adjusted by -250ms (early end before next line starts)
+    /// - Sets dots position based on the interlude's location in the lyrics
     fn update_interlude(&mut self, time_ms: f64, lines: &[LyricLineData]) {
-        let time = time_ms as u64;
+        let current_time = time_ms as u64 + 20;
+        let old_insert_after = self.interlude_insert_after;
+        let old_extra_height = self.interlude_extra_height;
+        let old_align_right = self.interlude_align_right;
+        let old_enabled = self.interlude_dots.enabled;
 
         // Check if we're in an interlude (no active lines)
         if !self.buffered_lines.is_empty() {
             self.interlude_dots.set_interlude(None);
+            self.interlude_insert_after = None;
+            self.interlude_extra_height = 0.0;
+            self.interlude_align_right = false;
+            let layout_changed = old_insert_after.is_some()
+                || old_enabled
+                || old_align_right
+                || old_extra_height.abs() > 0.5;
+            if layout_changed {
+                self.layout_dirty = true;
+            }
             return;
         }
 
-        // Find the interlude range
-        let idx = self.scroll_to_index;
-        if idx == 0 {
-            // Before first line
-            if let Some(first) = lines.first() {
-                if first.start_ms > time {
-                    let duration = first.start_ms - time;
-                    if duration >= self.config.interlude_min_duration {
-                        self.interlude_dots
-                            .set_interlude(Some((time_ms as f32, first.start_ms as f32)));
-                        return;
-                    }
-                }
+        let idx = self.scroll_to_index as i64;
+        let min_duration = self.config.interlude_min_duration;
+
+        // Returns (gap_start, gap_end, k_index) if we're in a valid gap
+        let check_gap = |k: i64| -> Option<(u64, u64, i64)> {
+            if k < -1 || k >= lines.len() as i64 - 1 {
+                return None;
             }
-        } else if let (Some(current), Some(next)) = (lines.get(idx), lines.get(idx + 1)) {
-            // Between lines
-            if current.end_ms < time && next.start_ms > time {
-                let duration = next.start_ms - current.end_ms;
-                if duration >= self.config.interlude_min_duration {
-                    self.interlude_dots
-                        .set_interlude(Some((current.end_ms as f32, next.start_ms as f32)));
-                    return;
-                }
+
+            let gap_start = if k == -1 {
+                0u64
+            } else {
+                lines[k as usize].end_ms
+            };
+
+            let next_line = &lines[(k + 1) as usize];
+            let gap_end = gap_start.max(next_line.start_ms.saturating_sub(250));
+
+            if gap_end.saturating_sub(gap_start) < min_duration {
+                return None;
             }
+
+            if gap_end > current_time && gap_start < current_time {
+                Some((gap_start, gap_end, k))
+            } else {
+                None
+            }
+        };
+
+        let interlude = check_gap(idx - 1)
+            .or_else(|| check_gap(idx))
+            .or_else(|| check_gap(idx + 1));
+
+        if let Some((gap_start, gap_end, interlude_line_idx)) = interlude {
+            // Use FIXED gap boundaries as the interlude range.
+            self.interlude_dots
+                .set_interlude(Some((gap_start as f32, gap_end as f32)));
+            self.interlude_dots.sync_time(current_time as f32);
+            let font_size = self.last_font_size.max(self.config.line_height);
+            // `interlude_line_idx == -1` means the gap is before the first lyric line.
+            // Keep that state explicit with a sentinel instead of casting directly and overflowing later.
+            self.interlude_insert_after = Some(if interlude_line_idx < 0 {
+                usize::MAX
+            } else {
+                interlude_line_idx as usize
+            });
+            self.interlude_extra_height = interlude_dots::dot_total_height(
+                font_size,
+                self.viewport_width,
+                self.viewport_height,
+            );
+            self.interlude_align_right = lines
+                .get((interlude_line_idx + 1) as usize)
+                .map(|line| line.is_duet)
+                .unwrap_or(false);
+        } else {
+            self.interlude_dots.set_interlude(None);
+            self.interlude_insert_after = None;
+            self.interlude_extra_height = 0.0;
+            self.interlude_align_right = false;
         }
 
-        self.interlude_dots.set_interlude(None);
+        let layout_changed = old_insert_after != self.interlude_insert_after
+            || (old_extra_height - self.interlude_extra_height).abs() > 0.5
+            || old_align_right != self.interlude_align_right
+            || old_enabled != self.interlude_dots.enabled;
+
+        if layout_changed {
+            self.layout_dirty = true;
+        }
+    }
+
+    fn update_interlude_transform(&mut self) {
+        let Some(top) = self.line_animations.current_interlude_top() else {
+            return;
+        };
+
+        let font_size = self.last_font_size.max(self.config.line_height);
+        let dot_width = interlude_dots::dot_container_width(
+            font_size,
+            self.viewport_width,
+            self.viewport_height,
+        );
+        let pad_x = interlude_dots::dot_padding_x(font_size);
+        let trailing_margin = interlude_dots::dot_trailing_margin_px();
+        let base_padding = self.viewport_width * 0.05;
+        let left = if self.interlude_align_right {
+            (self.viewport_width - base_padding - dot_width + pad_x + trailing_margin).max(0.0)
+        } else {
+            (base_padding - pad_x).max(0.0)
+        };
+
+        self.interlude_dots.set_transform(left, top);
     }
 
     /// Pause playback effects
@@ -947,90 +1125,5 @@ impl LyricsEngine {
     /// Get scroll target index
     pub fn scroll_to_index(&self) -> usize {
         self.scroll_to_index
-    }
-
-    /// Get scroll velocity
-    #[allow(dead_code)]
-    pub fn scroll_velocity(&self) -> f32 {
-        self.physics.velocity()
-    }
-
-    /// Calculate computed styles for all lines using the lens model
-    #[allow(dead_code)]
-    pub fn compute_line_styles(
-        &self,
-        lines: &[LyricLineData],
-        viewport_height: f32,
-    ) -> Vec<ComputedLineStyle> {
-        let mut styles = Vec::with_capacity(lines.len());
-        let mut y_position = 0.0;
-
-        // Calculate alignment position (default: 0.35 from top)
-        let align_y = viewport_height * self.config.align_position;
-
-        for (idx, line) in lines.iter().enumerate() {
-            // Calculate total height for this line
-            let line_height = self.config.line_height
-                + if line.translated.is_some() {
-                    self.config.line_height * self.config.trans_height_ratio
-                } else {
-                    0.0
-                }
-                + if line.romanized.is_some() {
-                    self.config.line_height * self.config.roman_height_ratio
-                } else {
-                    0.0
-                };
-
-            // Distance from alignment point
-            let distance_from_center = y_position - self.scroll_position() - align_y;
-
-            // Use lens model to compute style
-            let is_active = self.buffered_lines.contains(&idx);
-            let (mut scale, blur) = self.lens.calculate(
-                distance_from_center,
-                viewport_height,
-                self.physics.velocity(),
-            );
-            let opacity = self
-                .lens
-                .calculate_opacity(distance_from_center, viewport_height);
-            let glow = self
-                .lens
-                .calculate_glow(distance_from_center, viewport_height, is_active);
-
-            // Apply background line scale if applicable
-            if line.is_bg && !is_active {
-                scale *= self.config.bg_line_scale;
-            }
-
-            // Apply scale effect only if enabled
-            if !self.config.enable_scale && !is_active {
-                scale = 1.0;
-            }
-
-            // Apply hide passed lines
-            let final_opacity =
-                if self.config.hide_passed_lines && idx < self.scroll_to_index && self.is_playing {
-                    0.0001 // Nearly invisible but not zero (for browser optimization)
-                } else if is_active {
-                    0.85
-                } else {
-                    opacity
-                };
-
-            styles.push(ComputedLineStyle {
-                y_position: y_position - self.scroll_position(),
-                scale,
-                blur: if self.config.enable_blur { blur } else { 0.0 },
-                opacity: final_opacity,
-                glow,
-                is_active,
-            });
-
-            y_position += line_height + self.config.line_spacing;
-        }
-
-        styles
     }
 }

@@ -8,8 +8,8 @@
 //! - 渲染时根据实际字号进行缩放
 //! - 位置使用 cosmic-text 的布局，尺寸使用 SDF 的度量
 
-use crate::features::lyrics::engine::sdf_generator::{SdfBitmap, SdfConfig, SdfGenerator};
-use cosmic_text::{CacheKey, FontSystem};
+use crate::features::lyrics::engine::sdf_generator::{SdfBitmap, SdfGenerator};
+use cosmic_text::{CacheKey, FontSystem, SwashCache};
 use iced::wgpu;
 use iced::wgpu::{Device, Queue};
 use parking_lot::Mutex;
@@ -34,16 +34,6 @@ pub fn take_from_global_cache(key: &CacheKey) -> Option<SdfBitmap> {
     GLOBAL_PRE_GENERATED.lock().remove(key)
 }
 
-/// 清空全局预生成缓存
-pub fn clear_global_cache() {
-    GLOBAL_PRE_GENERATED.lock().clear();
-}
-
-/// 获取全局预生成缓存的大小
-pub fn global_cache_size() -> usize {
-    GLOBAL_PRE_GENERATED.lock().len()
-}
-
 /// 纹理图集大小
 /// 4096x4096 可以容纳更多字形，减少清空重建的频率
 /// 对于中文歌词，常用汉字约 3000-5000 个，加上标点和英文，4096x4096 足够
@@ -66,8 +56,6 @@ pub struct SdfGlyphInfo {
     /// top: 字形顶边缘相对于基线的偏移（正值表示基线以上）
     pub offset_x: i32,
     pub offset_y: i32,
-    /// 水平前进宽度
-    pub advance: f32,
 }
 
 /// 字形缓存键
@@ -85,8 +73,6 @@ struct AtlasRow {
 pub struct SdfAtlas {
     /// GPU 纹理（RGB 格式）
     texture: wgpu::Texture,
-    /// 纹理视图
-    pub view: wgpu::TextureView,
     /// 缓存的字形信息
     glyphs: HashMap<SdfGlyphKey, SdfGlyphInfo>,
     /// Shelf packing 行
@@ -96,8 +82,6 @@ pub struct SdfAtlas {
     /// 图集尺寸
     width: u32,
     height: u32,
-    /// 是否需要重建（溢出时）
-    needs_rebuild: bool,
 }
 
 impl SdfAtlas {
@@ -120,17 +104,13 @@ impl SdfAtlas {
             view_formats: &[],
         });
 
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
         Self {
             texture,
-            view,
             glyphs: HashMap::new(),
             rows: Vec::new(),
             y_cursor: 0,
             width: ATLAS_SIZE,
             height: ATLAS_SIZE,
-            needs_rebuild: false,
         }
     }
 
@@ -155,7 +135,6 @@ impl SdfAtlas {
                 height: 0,
                 offset_x: bitmap.bearing_x,
                 offset_y: bitmap.bearing_y,
-                advance: bitmap.advance,
             };
             self.glyphs.insert(key, info);
             return Some(info);
@@ -202,82 +181,6 @@ impl SdfAtlas {
             height: bitmap.height,
             offset_x: bitmap.bearing_x,
             offset_y: bitmap.bearing_y,
-            advance: bitmap.advance,
-        };
-
-        self.glyphs.insert(key, info);
-        Some(info)
-    }
-
-    /// 缓存字形（使用 cosmic-text 的 Placement 度量）
-    ///
-    /// 这个方法使用 cosmic-text 提供的度量，而不是 SDF 生成器的度量，
-    /// 确保与 cosmic-text 的布局完全一致。
-    pub fn cache_with_placement(
-        &mut self,
-        queue: &Queue,
-        key: SdfGlyphKey,
-        bitmap: &SdfBitmap,
-        placement_info: &SdfGlyphInfo,
-    ) -> Option<SdfGlyphInfo> {
-        if bitmap.width == 0 || bitmap.height == 0 {
-            // 空字形（空格等）
-            let info = SdfGlyphInfo {
-                uv_min: [0.0, 0.0],
-                uv_max: [0.0, 0.0],
-                width: placement_info.width,
-                height: placement_info.height,
-                offset_x: placement_info.offset_x,
-                offset_y: placement_info.offset_y,
-                advance: placement_info.advance,
-            };
-            self.glyphs.insert(key, info);
-            return Some(info);
-        }
-
-        // 在图集中分配空间
-        let (x, y) = self.allocate(bitmap.width, bitmap.height)?;
-
-        // 将单通道 SDF 数据转换为 RGBA
-        let rgba_data = sdf_to_rgba(&bitmap.data);
-
-        // 上传到 GPU
-        queue.write_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d { x, y, z: 0 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            &rgba_data,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(bitmap.width * 4),
-                rows_per_image: Some(bitmap.height),
-            },
-            wgpu::Extent3d {
-                width: bitmap.width,
-                height: bitmap.height,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        // 计算 UV 坐标
-        let uv_min = [x as f32 / self.width as f32, y as f32 / self.height as f32];
-        let uv_max = [
-            (x + bitmap.width) as f32 / self.width as f32,
-            (y + bitmap.height) as f32 / self.height as f32,
-        ];
-
-        // 使用 cosmic-text 的度量，但 UV 坐标基于 SDF 纹理
-        let info = SdfGlyphInfo {
-            uv_min,
-            uv_max,
-            width: placement_info.width,
-            height: placement_info.height,
-            offset_x: placement_info.offset_x,
-            offset_y: placement_info.offset_y,
-            advance: placement_info.advance,
         };
 
         self.glyphs.insert(key, info);
@@ -313,8 +216,6 @@ impl SdfAtlas {
             return Some((x, y));
         }
 
-        // 图集已满
-        self.needs_rebuild = true;
         None
     }
 
@@ -323,7 +224,6 @@ impl SdfAtlas {
         self.glyphs.clear();
         self.rows.clear();
         self.y_cursor = 0;
-        self.needs_rebuild = false;
 
         // 清空纹理
         let clear_data = vec![0u8; (self.width * self.height * 4) as usize];
@@ -346,16 +246,6 @@ impl SdfAtlas {
                 depth_or_array_layers: 1,
             },
         );
-    }
-
-    /// 检查是否需要重建
-    pub fn needs_rebuild(&self) -> bool {
-        self.needs_rebuild
-    }
-
-    /// 获取纹理
-    pub fn texture(&self) -> &wgpu::Texture {
-        &self.texture
     }
 }
 
@@ -487,39 +377,39 @@ pub struct SdfCache {
 }
 
 impl SdfCache {
-    /// 创建新的 SDF 缓存
-    ///
-    /// IMPORTANT: font_system 必须与 TextShaper 使用同一实例！
-    /// CacheKey 包含 font_id，必须匹配才能正确查找字形。
-    pub fn new(device: &Device, font_system: SharedFontSystem) -> Self {
-        Self::with_debug(device, font_system, false)
+    fn sdf_cache_key(cache_key: CacheKey, base_size: u32) -> CacheKey {
+        CacheKey {
+            font_size_bits: (base_size as f32).to_bits(),
+            ..cache_key
+        }
+    }
+
+    fn generate_bitmap_from_swash(
+        &self,
+        font_system: &mut FontSystem,
+        cache_key: CacheKey,
+        _font_data: &[u8],
+        _face_index: u32,
+    ) -> Option<SdfBitmap> {
+        let base_key = Self::sdf_cache_key(cache_key, self.generator.config().base_size);
+        let mut swash_cache = SwashCache::new();
+        let image = swash_cache.get_image_uncached(font_system, base_key)?;
+        self.generator.generate_from_swash_image(&image)
     }
 
     /// Create with debug logging enabled
     pub fn with_debug(device: &Device, font_system: SharedFontSystem, debug_logging: bool) -> Self {
         Self {
-            // base_size = 64px, buffer = 4px
+            // base_size = 64px, buffer = 12px
             // 64px 是速度和质量的平衡点：
             // - 比 96px 快约 2 倍
             // - 质量足够好，适合大多数显示器
-            // - buffer = 4 保持笔画清晰不粘连
-            generator: SdfGenerator::new(64, 4),
+            // - 更大的 buffer 能给 glow/blur 留出真实采样空间，减少矩形外推带来的颗粒感
+            generator: SdfGenerator::new(64, 12),
             font_store: Mutex::new(FontStore::with_debug(debug_logging)),
             atlas: Mutex::new(SdfAtlas::new(device)),
             font_system,
             debug_logging,
-            pre_generated: Mutex::new(HashMap::new()),
-        }
-    }
-
-    /// 使用自定义配置创建
-    pub fn with_config(device: &Device, font_system: SharedFontSystem, config: SdfConfig) -> Self {
-        Self {
-            generator: SdfGenerator::with_config(config),
-            font_store: Mutex::new(FontStore::new()),
-            atlas: Mutex::new(SdfAtlas::new(device)),
-            font_system,
-            debug_logging: false,
             pre_generated: Mutex::new(HashMap::new()),
         }
     }
@@ -556,7 +446,7 @@ impl SdfCache {
         } else {
             // 需要同步生成（慢速路径）
             // 获取字体数据和 face index
-            let font_system = self.font_system.lock();
+            let mut font_system = self.font_system.lock();
             let mut font_store = self.font_store.lock();
 
             // Check if font_id exists in the font system
@@ -568,12 +458,12 @@ impl SdfCache {
                 );
             }
 
-            let (font_data, _face_index) =
+            let (font_data, face_index) =
                 font_store.get_or_load(&font_system, cache_key.font_id)?;
-            drop(font_system); // 释放锁
+            drop(font_store);
 
             // 生成 SDF
-            self.generator.generate(&font_data, cache_key.glyph_id)?
+            self.generate_bitmap_from_swash(&mut font_system, cache_key, &font_data, face_index)?
         };
 
         // 缓存到图集
@@ -593,113 +483,12 @@ impl SdfCache {
         }
     }
 
-    /// 预生成 MSDF 位图（不需要 GPU，可在后台线程调用）
-    ///
-    /// 这个方法只生成位图并缓存，不上传到 GPU。
-    /// 后续调用 get_glyph 时会使用预生成的位图，只需要上传到 GPU（快速操作）。
-    ///
-    /// 返回 true 如果成功生成或已经在缓存中
-    pub fn pre_generate_glyph(&self, cache_key: CacheKey) -> bool {
-        // 先检查图集缓存
-        {
-            let atlas = self.atlas.lock();
-            if atlas.get(&cache_key).is_some() {
-                return true; // 已经在图集中
-            }
-        }
-
-        // 检查预生成缓存
-        {
-            let pre_gen = self.pre_generated.lock();
-            if pre_gen.contains_key(&cache_key) {
-                return true; // 已经预生成
-            }
-        }
-
-        // 获取字体数据和 face index
-        let font_system = self.font_system.lock();
-        let mut font_store = self.font_store.lock();
-
-        let font_info = font_system.db().face(cache_key.font_id);
-        if font_info.is_none() {
-            if self.debug_logging {
-                tracing::warn!(
-                    "[SdfCache] Font mismatch: font_id {:?} not found in font system",
-                    cache_key.font_id
-                );
-            }
-            return false;
-        }
-
-        let Some((font_data, _face_index)) =
-            font_store.get_or_load(&font_system, cache_key.font_id)
-        else {
-            return false;
-        };
-        drop(font_system); // 释放锁
-        drop(font_store);
-
-        // 生成 SDF
-        let Some(bitmap) = self.generator.generate(&font_data, cache_key.glyph_id) else {
-            return false;
-        };
-
-        // 缓存预生成的位图
-        let mut pre_gen = self.pre_generated.lock();
-        pre_gen.insert(cache_key, PreGeneratedSdf { bitmap });
-
-        true
-    }
-
-    /// 批量预生成 MSDF 位图
-    ///
-    /// 用于在后台线程中预生成所有需要的字形
-    pub fn pre_generate_glyphs(&self, cache_keys: &[CacheKey]) -> usize {
-        let mut generated = 0;
-        for key in cache_keys {
-            if self.pre_generate_glyph(*key) {
-                generated += 1;
-            }
-        }
-        generated
-    }
-
-    /// 清空预生成缓存
-    pub fn clear_pre_generated(&self) {
-        self.pre_generated.lock().clear();
-    }
-
-    /// 获取预生成缓存的大小
-    pub fn pre_generated_count(&self) -> usize {
-        self.pre_generated.lock().len()
-    }
-
     /// 获取图集纹理视图
     pub fn atlas_view(&self) -> wgpu::TextureView {
         let atlas = self.atlas.lock();
         atlas
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default())
-    }
-
-    /// 清空缓存
-    pub fn clear(&self, queue: &Queue) {
-        self.atlas.lock().clear(queue);
-    }
-
-    /// 检查是否需要重建
-    pub fn needs_rebuild(&self) -> bool {
-        self.atlas.lock().needs_rebuild()
-    }
-
-    /// 获取 SDF buffer（用于 shader）
-    pub fn sdf_buffer(&self) -> usize {
-        self.generator.config().buffer
-    }
-
-    /// 获取基准字号（用于 shader）
-    pub fn base_size(&self) -> u32 {
-        self.generator.config().base_size
     }
 }
 
@@ -721,7 +510,7 @@ impl SdfCache {
 /// let bitmaps = pre_gen.take_all();
 ///
 /// // 在主线程中
-/// sdf_cache.import_pre_generated(bitmaps);
+/// import_to_global_cache(bitmaps);
 /// ```
 pub struct SdfPreGenerator {
     /// SDF 生成器
@@ -735,11 +524,18 @@ pub struct SdfPreGenerator {
 }
 
 impl SdfPreGenerator {
+    fn sdf_cache_key(cache_key: CacheKey, base_size: u32) -> CacheKey {
+        CacheKey {
+            font_size_bits: (base_size as f32).to_bits(),
+            ..cache_key
+        }
+    }
+
     /// 创建新的预生成器
     pub fn new(font_system: SharedFontSystem) -> Self {
         Self {
             // 使用与 SdfCache 相同的配置
-            generator: SdfGenerator::new(64, 4),
+            generator: SdfGenerator::new(64, 12),
             font_store: Mutex::new(FontStore::new()),
             font_system,
             pre_generated: Mutex::new(HashMap::new()),
@@ -757,19 +553,24 @@ impl SdfPreGenerator {
         }
 
         // 获取字体数据
-        let font_system = self.font_system.lock();
+        let mut font_system = self.font_system.lock();
         let mut font_store = self.font_store.lock();
 
-        let Some((font_data, _face_index)) =
+        let Some((_font_data, _face_index)) =
             font_store.get_or_load(&font_system, cache_key.font_id)
         else {
             return false;
         };
-        drop(font_system);
         drop(font_store);
 
-        // 生成 SDF
-        let Some(bitmap) = self.generator.generate(&font_data, cache_key.glyph_id) else {
+        let base_key = Self::sdf_cache_key(cache_key, self.generator.config().base_size);
+        let mut swash_cache = SwashCache::new();
+        let Some(image) = swash_cache.get_image_uncached(&mut font_system, base_key) else {
+            return false;
+        };
+        drop(font_system);
+
+        let Some(bitmap) = self.generator.generate_from_swash_image(&image) else {
             return false;
         };
 
@@ -795,23 +596,5 @@ impl SdfPreGenerator {
     pub fn take_all(&self) -> HashMap<CacheKey, SdfBitmap> {
         let mut pre_gen = self.pre_generated.lock();
         std::mem::take(&mut *pre_gen)
-    }
-
-    /// 获取预生成的位图数量
-    pub fn count(&self) -> usize {
-        self.pre_generated.lock().len()
-    }
-}
-
-impl SdfCache {
-    /// 导入预生成的位图
-    ///
-    /// 将后台线程生成的位图导入到预生成缓存中，
-    /// 后续调用 get_glyph 时会使用这些位图。
-    pub fn import_pre_generated(&self, bitmaps: HashMap<CacheKey, SdfBitmap>) {
-        let mut pre_gen = self.pre_generated.lock();
-        for (key, bitmap) in bitmaps {
-            pre_gen.insert(key, PreGeneratedSdf { bitmap });
-        }
     }
 }

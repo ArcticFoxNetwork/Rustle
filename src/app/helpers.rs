@@ -167,7 +167,8 @@ pub async fn init_font_system() -> crate::features::lyrics::engine::SharedFontSy
     tokio::task::spawn_blocking(|| {
         tracing::info!("Initializing FontSystem for lyrics...");
         let start = std::time::Instant::now();
-        let font_system = cosmic_text::FontSystem::new();
+        let mut font_system = cosmic_text::FontSystem::new();
+        crate::platform::theme::configure_cosmic_font_system(&mut font_system);
         tracing::info!("FontSystem initialized in {:?}", start.elapsed());
 
         // Warm up font cache with common character sets

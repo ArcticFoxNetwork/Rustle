@@ -1,4 +1,4 @@
-//! Apple Music 风格 Mesh Gradient 背景渲染器
+//! Mesh Gradient 背景渲染器
 //!
 //! 完整实现 mesh-renderer 的效果:
 //! - Bicubic Hermite Patch (BHP) 网格渲染
@@ -14,7 +14,7 @@ use iced::Rectangle;
 use iced::advanced::graphics::Viewport;
 use iced::wgpu;
 use iced::widget::shader;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -666,7 +666,7 @@ impl TexturedBackgroundProgram {
 
         tracing::info!("Processing new background image...");
 
-        let params = ImageProcessingParams::amll_default();
+        let params = ImageProcessingParams::default();
         let processed = process_image_for_background(&image, 32, &params);
 
         let preset = choose_control_point_preset();
@@ -694,30 +694,9 @@ impl TexturedBackgroundProgram {
         true
     }
 
-    /// 从文件路径设置专辑封面
-    ///
-    /// # Returns
-    /// 返回 `true` 表示状态已更新（图片发生变化），
-    /// 返回 `false` 表示复用了现有 Mesh（图片未变化）。
-    pub fn set_album_image_path(&mut self, path: &Path) -> bool {
-        // 快速检查：如果路径没变，直接返回，甚至不读取文件
-        if self.current_image_path.as_ref().map(|p| p.as_path()) == Some(path) && self.has_cover {
-            tracing::debug!("Lyrics background cached, skipping reload: {:?}", path);
-            return false;
-        }
-
-        match image::open(path) {
-            Ok(img) => self.set_album_image(img, Some(path.to_path_buf())),
-            Err(e) => {
-                tracing::warn!("Failed to load album image from {:?}: {}", path, e);
-                false
-            }
-        }
-    }
-
     /// Check if the given path matches the currently loaded image
     /// Used for async loading to avoid redundant loads
-    pub fn is_same_image(&self, path: &Path) -> bool {
+    pub fn is_same_image(&self, path: &std::path::Path) -> bool {
         self.current_image_path.as_ref().map(|p| p.as_path()) == Some(path) && self.has_cover
     }
 
@@ -732,11 +711,6 @@ impl TexturedBackgroundProgram {
     /// 设置时间
     pub fn set_time(&mut self, time: f32) {
         self.time = time;
-    }
-
-    /// 设置音量
-    pub fn set_volume(&mut self, volume: f32) {
-        self.target_volume = volume / 10.0;
     }
 
     /// 更新状态 (每帧调用)
@@ -807,11 +781,6 @@ impl TexturedBackgroundProgram {
             volume: self.smoothed_volume,
             aspect,
         }
-    }
-
-    /// 检查是否有活跃的 mesh
-    pub fn is_active(&self) -> bool {
-        !self.mesh_states.is_empty()
     }
 }
 

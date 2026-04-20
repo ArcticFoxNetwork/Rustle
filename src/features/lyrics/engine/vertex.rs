@@ -1,4 +1,4 @@
-//! Custom vertex structures for Apple Music-style lyrics rendering
+//! Custom vertex structures for lyrics rendering
 //!
 //! These structures carry timing data to the GPU for word-by-word highlighting.
 //! This is the key difference from glyphon - we can pass time information per-glyph.
@@ -8,10 +8,10 @@ use iced::wgpu;
 
 /// 单个字形的顶点数据，包含时间信息
 ///
-/// 核心数据结构，支持 Apple Music 风格的逐字高亮
+/// 核心数据结构，支持逐字高亮
 /// Each glyph knows its timing, allowing the shader to calculate highlight progress.
 ///
-/// ## Apple Music-style Features
+/// ## Features
 ///
 /// - Per-character animation delay for wave effects
 /// - Per-character X offset for emphasis wave
@@ -56,7 +56,8 @@ pub struct LyricGlyphVertex {
     /// Line index (for per-line effects)
     pub line_index: u32,
     /// Flags: bit 0 = is_active, bit 1 = emphasize, bit 2 = is_bg, bit 3 = is_duet
-    ///        bit 4 = is_translation, bit 5 = is_romanized
+    ///        bit 4 = is_translation, bit 5 = is_romanized,
+    ///        bit 6 = is_last_word, bit 7 = is_non_dynamic
     pub flags: u32,
 
     // === Visual properties (8 bytes) ===
@@ -262,6 +263,24 @@ impl LyricGlyphVertex {
             self.flags &= !32;
         }
     }
+
+    /// Set last-word flag
+    pub fn set_last_word(&mut self, is_last_word: bool) {
+        if is_last_word {
+            self.flags |= 64;
+        } else {
+            self.flags &= !64;
+        }
+    }
+
+    /// Set non-dynamic lyrics flag
+    pub fn set_non_dynamic(&mut self, is_non_dynamic: bool) {
+        if is_non_dynamic {
+            self.flags |= 128;
+        } else {
+            self.flags &= !128;
+        }
+    }
 }
 
 impl Default for LyricGlyphVertex {
@@ -343,162 +362,6 @@ impl Default for GlobalUniform {
             scroll_y: 0.0,
             align_position: 0.35,
             sdf_range: 4.0,
-        }
-    }
-}
-
-/// Global uniforms for SDF lyrics shader
-///
-/// 扩展了基础 GlobalUniform，添加 SDF 渲染所需的参数
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable)]
-pub struct SdfGlobalUniform {
-    /// Viewport size (full window size in physical pixels)
-    pub viewport_size: [f32; 2],
-    /// Bounds offset (widget position in window, physical pixels)
-    pub bounds_offset: [f32; 2],
-    /// Bounds size (widget size in physical pixels)
-    pub bounds_size: [f32; 2],
-    /// Current playback time (milliseconds)
-    pub current_time_ms: f32,
-    /// Word fade width (em units, default: 0.5)
-    pub word_fade_width: f32,
-    /// Base font size (pixels)
-    pub font_size: f32,
-    /// Scroll position
-    pub scroll_y: f32,
-    /// Alignment position (0.35 default)
-    pub align_position: f32,
-    /// SDF range in pixels (用于计算 screen_px_range)
-    pub sdf_range: f32,
-    /// Atlas font size (生成 MSDF 时的基准字号)
-    pub atlas_font_size: f32,
-    /// Padding for alignment
-    pub _padding: f32,
-}
-
-impl Default for SdfGlobalUniform {
-    fn default() -> Self {
-        Self {
-            viewport_size: [800.0, 600.0],
-            bounds_offset: [0.0, 0.0],
-            bounds_size: [800.0, 600.0],
-            current_time_ms: 0.0,
-            word_fade_width: 0.5,
-            font_size: 48.0,
-            scroll_y: 0.0,
-            align_position: 0.35,
-            sdf_range: 4.0,
-            atlas_font_size: 48.0,
-            _padding: 0.0,
-        }
-    }
-}
-
-impl SdfGlobalUniform {
-    /// 从基础 GlobalUniform 创建，添加 SDF 参数
-    pub fn from_global(global: &GlobalUniform, sdf_range: f32, atlas_font_size: f32) -> Self {
-        Self {
-            viewport_size: global.viewport_size,
-            bounds_offset: global.bounds_offset,
-            bounds_size: global.bounds_size,
-            current_time_ms: global.current_time_ms,
-            word_fade_width: global.word_fade_width,
-            font_size: global.font_size,
-            scroll_y: global.scroll_y,
-            align_position: global.align_position,
-            sdf_range,
-            atlas_font_size,
-            _padding: 0.0,
-        }
-    }
-
-    /// 计算 screen_px_range（用于 shader 中的抗锯齿）
-    ///
-    /// 公式: screen_px_range = sdf_range * (font_size / atlas_font_size)
-    pub fn screen_px_range(&self) -> f32 {
-        self.sdf_range * (self.font_size / self.atlas_font_size)
-    }
-}
-
-/// Index type for glyph rendering (6 indices per quad)
-#[allow(dead_code)]
-pub type GlyphIndex = u32;
-
-/// Generate indices for a quad (two triangles)
-#[allow(dead_code)]
-pub fn quad_indices(base_vertex: u32) -> [GlyphIndex; 6] {
-    [
-        base_vertex,
-        base_vertex + 1,
-        base_vertex + 2,
-        base_vertex + 2,
-        base_vertex + 3,
-        base_vertex,
-    ]
-}
-
-/// Interlude dots rendering data
-///
-/// 用于渲染间奏时的三个动画点
-/// 传递给 GPU 渲染
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable)]
-pub struct InterludeDotsUniform {
-    /// Position (x, y) in logical pixels
-    pub position: [f32; 2],
-    /// Overall scale (0.0 - 1.0)
-    pub scale: f32,
-    /// Dot size in pixels
-    pub dot_size: f32,
-    /// Dot spacing in pixels
-    pub dot_spacing: f32,
-    /// Dot 0 opacity (0.0 - 1.0)
-    pub dot0_opacity: f32,
-    /// Dot 1 opacity (0.0 - 1.0)
-    pub dot1_opacity: f32,
-    /// Dot 2 opacity (0.0 - 1.0)
-    pub dot2_opacity: f32,
-    /// Whether dots are enabled (1.0 = enabled, 0.0 = disabled)
-    pub enabled: f32,
-    /// Padding for alignment
-    pub _padding: [f32; 3],
-}
-
-impl Default for InterludeDotsUniform {
-    fn default() -> Self {
-        Self {
-            position: [0.0, 0.0],
-            scale: 0.0,
-            dot_size: 8.0,
-            dot_spacing: 16.0,
-            dot0_opacity: 0.0,
-            dot1_opacity: 0.0,
-            dot2_opacity: 0.0,
-            enabled: 0.0,
-            _padding: [0.0; 3],
-        }
-    }
-}
-
-#[allow(dead_code)]
-impl InterludeDotsUniform {
-    /// Create from InterludeDots state
-    pub fn from_state(
-        dots: &crate::features::lyrics::engine::InterludeDots,
-        dot_size: f32,
-        dot_spacing: f32,
-    ) -> Self {
-        Self {
-            position: [dots.left, dots.top],
-            scale: dots.scale,
-            dot_size,
-            dot_spacing,
-            dot0_opacity: dots.dot_opacities[0],
-            dot1_opacity: dots.dot_opacities[1],
-            dot2_opacity: dots.dot_opacities[2],
-            enabled: if dots.enabled { 1.0 } else { 0.0 },
-            _padding: [0.0; 3],
         }
     }
 }

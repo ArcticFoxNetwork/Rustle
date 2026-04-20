@@ -2,6 +2,7 @@
 //!
 //! Supports multiple lyrics formats:
 //! - LRC: Standard line-level lyrics [mm:ss.xx]text
+//! - LQE: Lyricify Quick Export container (LYS + LRC attributes)
 //! - YRC: NetEase Cloud Music word-level lyrics
 //! - QRC: QQ Music word-level lyrics
 //! - ESLrc: Foobar2000 ESLyric word-level format
@@ -11,6 +12,7 @@
 
 mod ass;
 mod eslrc;
+mod lqe;
 mod lrc;
 mod lys;
 mod online;
@@ -22,43 +24,64 @@ mod yrc;
 pub use online::*;
 pub use types::*;
 
-use std::path::Path;
+fn split_bracket_prefix(line: &str) -> Option<(&str, &str)> {
+    if !line.starts_with('[') {
+        return None;
+    }
+
+    let bracket_end = line.find(']')?;
+    Some((&line[1..bracket_end], &line[bracket_end + 1..]))
+}
+
+fn is_word_timed_line_header(header: &str) -> bool {
+    let (start, duration) = match header.split_once(',') {
+        Some(parts) => parts,
+        None => return false,
+    };
+
+    !start.is_empty()
+        && !duration.is_empty()
+        && start.chars().all(|ch| ch.is_ascii_digit())
+        && duration.chars().all(|ch| ch.is_ascii_digit())
+}
 
 /// Detect lyrics format from content
 pub fn detect_format(content: &str) -> LyricsFormat {
     let trimmed = content.trim();
+
+    if trimmed.starts_with("[Lyricify Quick Export]")
+        || trimmed.contains("[lyrics: format@Lyricify Syllable]")
+    {
+        return LyricsFormat::Lqe;
+    }
 
     // TTML format: XML with <tt> root element
     if trimmed.starts_with("<?xml") || trimmed.starts_with("<tt") {
         return LyricsFormat::Ttml;
     }
 
-    // YRC format: starts with [timestamp,duration]
     if trimmed.starts_with('[') {
-        // Check for YRC pattern: [start,duration](word_start,word_duration,0)
-        if let Some(first_line) = trimmed.lines().next() {
-            // YRC has pattern like [0,1000](0,500,0)word
-            if first_line.contains("](") && first_line.contains(",0)") {
-                return LyricsFormat::Yrc;
-            }
-            // QRC has pattern like [0,1000]word(0,500)
-            if first_line.contains("](")
-                || (first_line.contains("(")
-                    && first_line.contains(")")
-                    && !first_line.contains(",0)"))
-            {
-                // Check if it's QRC (word before timestamp) or YRC (timestamp before word)
-                if let Some(bracket_end) = first_line.find(']') {
-                    let after_bracket = &first_line[bracket_end + 1..];
-                    // QRC: text(time,duration)
-                    // YRC: (time,duration,0)text
-                    if after_bracket.starts_with('(') {
+        if let Some(first_line) = trimmed.lines().find(|line| !line.trim().is_empty()) {
+            if let Some((header, after_bracket)) = split_bracket_prefix(first_line.trim()) {
+                let after_bracket = after_bracket.trim_start();
+                if is_word_timed_line_header(header) {
+                    // YRC uses a `[start,duration]` line header followed by word markers
+                    // in the form `(start,duration,0)text`.
+                    if after_bracket.starts_with('(') && after_bracket.contains(",0)") {
                         return LyricsFormat::Yrc;
-                    } else if after_bracket.contains('(') {
+                    }
+
+                    // QRC also uses `[start,duration]`, but the word timing marker trails
+                    // the text as `word(start,duration)`.
+                    if after_bracket.contains('(')
+                        && after_bracket.contains(')')
+                        && !after_bracket.contains(",0)")
+                    {
                         return LyricsFormat::Qrc;
                     }
                 }
             }
+
             // LYS format: starts with [digit] property marker
             if first_line.len() >= 3 && first_line.starts_with('[') {
                 if let Some(c) = first_line.chars().nth(1) {
@@ -110,8 +133,9 @@ pub fn parse_lyrics(content: &str) -> Vec<LyricLineOwned> {
 
 /// Parse lyrics with specified format
 pub fn parse_lyrics_with_format(content: &str, format: LyricsFormat) -> Vec<LyricLineOwned> {
-    match format {
+    let mut lines = match format {
         LyricsFormat::Lrc => lrc::parse_lrc(content),
+        LyricsFormat::Lqe => lqe::parse_lqe(content),
         LyricsFormat::Yrc => yrc::parse_yrc(content),
         LyricsFormat::Qrc => qrc::parse_qrc(content),
         LyricsFormat::EsLrc => eslrc::parse_eslrc(content),
@@ -124,15 +148,15 @@ pub fn parse_lyrics_with_format(content: &str, format: LyricsFormat) -> Vec<Lyri
             // Try LRC as fallback
             lrc::parse_lrc(content)
         }
-    }
+    };
+
+    optimize_lyrics_lines(&mut lines);
+    lines
 }
 
-/// Parse lyrics from file
-#[allow(dead_code)]
-pub fn parse_lyrics_file(path: &Path) -> Option<Vec<LyricLineOwned>> {
-    let content = std::fs::read_to_string(path).ok()?;
-    let lines = parse_lyrics(&content);
-    if lines.is_empty() { None } else { Some(lines) }
+/// Parse sidecar LRC attributes like `.tlrc` using raw line timestamps.
+pub fn parse_lrc_sidecar(content: &str) -> Vec<LyricLineOwned> {
+    lrc::parse_lrc(content)
 }
 
 /// Convert parsed lyrics to UI format
@@ -146,7 +170,7 @@ pub fn to_ui_lyrics(lines: Vec<LyricLineOwned>) -> Vec<crate::ui::pages::LyricLi
                 .map(|w| crate::ui::pages::LyricWord {
                     start_ms: w.start_time,
                     end_ms: w.end_time,
-                    word: w.word,
+                    word: normalize_lyric_text(&w.word),
                 })
                 .collect();
 
@@ -168,12 +192,12 @@ pub fn to_ui_lyrics(lines: Vec<LyricLineOwned>) -> Vec<crate::ui::pages::LyricLi
                 translated: if line.translated_lyric.is_empty() {
                     None
                 } else {
-                    Some(line.translated_lyric)
+                    Some(normalize_lyric_text(&line.translated_lyric))
                 },
                 romanized: if line.roman_lyric.is_empty() {
                     None
                 } else {
-                    Some(line.roman_lyric)
+                    Some(normalize_lyric_text(&line.roman_lyric))
                 },
                 is_background: line.is_bg,
                 is_duet: line.is_duet,
@@ -184,21 +208,59 @@ pub fn to_ui_lyrics(lines: Vec<LyricLineOwned>) -> Vec<crate::ui::pages::LyricLi
 
 /// Merge translation lyrics into main lyrics
 pub fn merge_translation(main: &mut [LyricLineOwned], translation: &[LyricLineOwned]) {
+    merge_lrc_attr(main, translation, LyricAttr::Translation);
+}
+
+/// Merge romanized lyrics into main lyrics.
+pub fn merge_romanization(main: &mut [LyricLineOwned], romanization: &[LyricLineOwned]) {
+    merge_lrc_attr(main, romanization, LyricAttr::Romanization);
+}
+
+#[derive(Clone, Copy)]
+enum LyricAttr {
+    Translation,
+    Romanization,
+}
+
+fn line_anchor_time(line: &LyricLineOwned) -> u64 {
+    line.words
+        .first()
+        .map(|word| word.start_time)
+        .unwrap_or(line.start_time)
+}
+
+fn merge_lrc_attr(main: &mut [LyricLineOwned], attr_lines: &[LyricLineOwned], attr: LyricAttr) {
+    let mut attr_index = 0usize;
+
     for main_line in main.iter_mut() {
-        // Find matching translation line by start time
-        if let Some(trans_line) = translation
+        let Some(attr_line) = attr_lines.get(attr_index) else {
+            break;
+        };
+
+        if line_anchor_time(attr_line) != line_anchor_time(main_line) {
+            continue;
+        }
+
+        let text = attr_line
+            .words
             .iter()
-            .find(|t| t.start_time == main_line.start_time)
-        {
-            if !trans_line.words.is_empty() {
-                main_line.translated_lyric = trans_line
-                    .words
-                    .iter()
-                    .map(|w| w.word.as_str())
-                    .collect::<Vec<_>>()
-                    .join("");
+            .map(|w| w.word.as_str())
+            .collect::<Vec<_>>()
+            .join("");
+
+        if !text.is_empty() {
+            match attr {
+                LyricAttr::Translation if main_line.translated_lyric.is_empty() => {
+                    main_line.translated_lyric = text
+                }
+                LyricAttr::Romanization if main_line.roman_lyric.is_empty() => {
+                    main_line.roman_lyric = text
+                }
+                _ => {}
             }
         }
+
+        attr_index += 1;
     }
 }
 
@@ -219,10 +281,132 @@ mod tests {
     }
 
     #[test]
+    fn test_detect_lqe() {
+        let content = "[Lyricify Quick Export]\n[lyrics: format@Lyricify Syllable]\n[0]Hi(0,500)";
+        assert_eq!(detect_format(content), LyricsFormat::Lqe);
+    }
+
+    #[test]
+    fn test_detect_parenthesized_lrc_stays_lrc() {
+        let content = "[00:01.000](Se-no! Ah Ah Ah Ah)\n[00:03.000]Next";
+        assert_eq!(detect_format(content), LyricsFormat::Lrc);
+    }
+
+    #[test]
+    fn test_detect_lrc_with_inline_parentheses_stays_lrc() {
+        let content = "[00:01.000]Hello (world)\n[00:03.000]Next";
+        assert_eq!(detect_format(content), LyricsFormat::Lrc);
+    }
+
+    #[test]
     fn test_parse_lrc() {
         let content = "[00:01.12]First line\n[00:05.00]Second line";
         let lines = parse_lyrics(content);
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].start_time, 1120);
+    }
+
+    #[test]
+    fn test_parse_parenthesized_lrc_through_auto_detect_marks_background() {
+        let content = "[00:01.000](Hello, world!）";
+        let lines = parse_lyrics(content);
+        assert_eq!(lines.len(), 1);
+        assert!(lines[0].is_bg);
+        assert_eq!(lines[0].words[0].word, "Hello, world!");
+    }
+
+    #[test]
+    fn test_merge_translation_matches_duplicate_timestamps_sequentially() {
+        let mut main = vec![
+            LyricLineOwned {
+                start_time: 1000,
+                words: vec![LyricWordOwned {
+                    start_time: 1000,
+                    end_time: 2000,
+                    word: "Main A".into(),
+                    roman_word: String::new(),
+                }],
+                ..Default::default()
+            },
+            LyricLineOwned {
+                start_time: 1000,
+                words: vec![LyricWordOwned {
+                    start_time: 1000,
+                    end_time: 2000,
+                    word: "Main B".into(),
+                    roman_word: String::new(),
+                }],
+                ..Default::default()
+            },
+        ];
+        let translation = vec![LyricLineOwned {
+            start_time: 1000,
+            words: vec![LyricWordOwned {
+                start_time: 1000,
+                end_time: 2000,
+                word: "Trans".into(),
+                roman_word: String::new(),
+            }],
+            ..Default::default()
+        }];
+
+        merge_translation(&mut main, &translation);
+
+        assert_eq!(main[0].translated_lyric, "Trans");
+        assert!(main[1].translated_lyric.is_empty());
+    }
+
+    #[test]
+    fn test_merge_translation_preserves_existing_inline_text() {
+        let mut main = vec![
+            LyricLineOwned {
+                start_time: 1000,
+                translated_lyric: "Inline".into(),
+                words: vec![LyricWordOwned {
+                    start_time: 1000,
+                    end_time: 2000,
+                    word: "Main A".into(),
+                    roman_word: String::new(),
+                }],
+                ..Default::default()
+            },
+            LyricLineOwned {
+                start_time: 2000,
+                words: vec![LyricWordOwned {
+                    start_time: 2000,
+                    end_time: 3000,
+                    word: "Main B".into(),
+                    roman_word: String::new(),
+                }],
+                ..Default::default()
+            },
+        ];
+        let translation = vec![
+            LyricLineOwned {
+                start_time: 1000,
+                words: vec![LyricWordOwned {
+                    start_time: 1000,
+                    end_time: 2000,
+                    word: "Sidecar A".into(),
+                    roman_word: String::new(),
+                }],
+                ..Default::default()
+            },
+            LyricLineOwned {
+                start_time: 2000,
+                words: vec![LyricWordOwned {
+                    start_time: 2000,
+                    end_time: 3000,
+                    word: "Sidecar B".into(),
+                    roman_word: String::new(),
+                }],
+                ..Default::default()
+            },
+        ];
+
+        merge_translation(&mut main, &translation);
+
+        assert_eq!(main[0].translated_lyric, "Inline");
+        assert_eq!(main[1].translated_lyric, "Sidecar B");
     }
 }

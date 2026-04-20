@@ -1,6 +1,6 @@
 //! Animated background shader
 //!
-//! Implements Apple Music-style lyrics background effects using WGPU:
+//! Implements lyrics background effects using WGPU:
 //! - Mesh gradient with animated control points
 //! - Gaussian blur on album artwork
 //! - Vignette effect

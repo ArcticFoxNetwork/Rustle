@@ -1,4 +1,4 @@
-// Apple Music-style Lyrics SDF Shader
+// Lyrics SDF Shader
 //
 // 使用 MSDF (Multi-channel Signed Distance Field) 渲染歌词文本。
 // 相比位图渲染的优势：
@@ -135,6 +135,7 @@ fn is_duet(flags: u32) -> bool { return (flags & 8u) != 0u; }
 fn is_translation(flags: u32) -> bool { return (flags & 16u) != 0u; }
 fn is_romanized(flags: u32) -> bool { return (flags & 32u) != 0u; }
 fn is_last_word(flags: u32) -> bool { return (flags & 64u) != 0u; }
+fn is_non_dynamic(flags: u32) -> bool { return (flags & 128u) != 0u; }
 
 // SDF 采样函数（单通道 SDF，R=G=B）
 fn median(r: f32, g: f32, b: f32) -> f32 {
@@ -234,150 +235,143 @@ fn sample_sdf_auto_aa(uv: vec2<f32>) -> f32 {
     return clamp(screen_px_dist + 0.5, 0.0, 1.0);
 }
 
-// 高斯模糊 SDF 采样（统一算法：基于到字形边缘的距离）
+fn pixel_offset_to_uv(offset_px: vec2<f32>, uv_bounds: vec4<f32>, screen_size: vec2<f32>) -> vec2<f32> {
+    let uv_size = uv_bounds.zw - uv_bounds.xy;
+    var uv_offset = vec2<f32>(0.0);
+    if screen_size.x > 0.001 {
+        uv_offset.x = offset_px.x * uv_size.x / screen_size.x;
+    }
+    if screen_size.y > 0.001 {
+        uv_offset.y = offset_px.y * uv_size.y / screen_size.y;
+    }
+    return uv_offset;
+}
+
+fn sample_sdf_coverage_with_edge_fade(
+    uv: vec2<f32>,
+    uv_bounds: vec4<f32>,
+    screen_size: vec2<f32>,
+    total_expand: f32
+) -> f32 {
+    let edge_data = sample_sdf_with_edge_fade(uv, uv_bounds, screen_size, total_expand);
+    let sdf_dist = edge_data.x;
+    let edge_fade = edge_data.y;
+    let sdf_gradient = max(fwidth(sdf_dist), 0.0001);
+    let sdf_pixel_dist = sdf_dist / sdf_gradient;
+    let coverage = smoothstep(-0.5, 0.5, sdf_pixel_dist);
+    return coverage * edge_fade;
+}
+
+// 多采样 SDF 模糊采样
 // blur_px: 模糊半径（像素），范围 0-32
 // uv_bounds: 原始 UV 边界 (min_x, min_y, max_x, max_y)
 // screen_size: 字形在屏幕上的尺寸（像素）
 // total_expand: 画布扩展量（像素）
 //
-// 核心思路：
-// - 锐利模式（blur_px < 0.5）：只在 UV 边界内渲染
-// - 模糊模式：UV 边界外使用距离外推产生自然衰减
+// 这里对字形 coverage 做多点采样近似高斯卷积。
+// 它比简单的 edge softening 更接近真实 blur，同时能借助 edge_fade 抑制矩形边界。
 fn sample_sdf_gaussian_blur_v2(uv: vec2<f32>, blur_px: f32, uv_bounds: vec4<f32>, screen_size: vec2<f32>, total_expand: f32) -> f32 {
-    let edge_threshold = 0.5;
-    
-    // 计算 UV 空间的边界尺寸
-    let uv_size = uv_bounds.zw - uv_bounds.xy;
-    
-    // 计算 UV 收缩量（避免采样到边缘像素）
-    // 0.5 像素是双线性插值的最小安全边距
-    let atlas_size = 2048.0;
-    let uv_shrink = 0.5 / atlas_size;
-    let safe_uv_min = uv_bounds.xy + vec2<f32>(uv_shrink);
-    let safe_uv_max = uv_bounds.zw - vec2<f32>(uv_shrink);
-    
-    // 检查是否在安全 UV 边界内
-    let is_inside = all(uv >= safe_uv_min) && all(uv <= safe_uv_max);
-    
-    // 锐利模式：只在 UV 边界内渲染，边界外直接返回 0
     if blur_px < 0.5 {
-        if !is_inside {
-            return 0.0;
+        return sample_sdf_coverage_with_edge_fade(uv, uv_bounds, screen_size, total_expand);
+    }
+
+    let radius1 = max(0.75, blur_px * 0.45);
+    let radius2 = max(radius1 + 0.75, blur_px * 0.9);
+    let diag = radius1 * 0.70710678;
+
+    let uv_x1 = pixel_offset_to_uv(vec2<f32>(radius1, 0.0), uv_bounds, screen_size);
+    let uv_y1 = pixel_offset_to_uv(vec2<f32>(0.0, radius1), uv_bounds, screen_size);
+    let uv_x2 = pixel_offset_to_uv(vec2<f32>(radius2, 0.0), uv_bounds, screen_size);
+    let uv_y2 = pixel_offset_to_uv(vec2<f32>(0.0, radius2), uv_bounds, screen_size);
+    let uv_d1 = pixel_offset_to_uv(vec2<f32>(diag, diag), uv_bounds, screen_size);
+    let uv_d2 = pixel_offset_to_uv(vec2<f32>(diag, -diag), uv_bounds, screen_size);
+
+    var alpha = 0.0;
+    alpha += sample_sdf_coverage_with_edge_fade(uv, uv_bounds, screen_size, total_expand) * 0.20;
+
+    alpha += sample_sdf_coverage_with_edge_fade(uv + uv_x1, uv_bounds, screen_size, total_expand) * 0.14;
+    alpha += sample_sdf_coverage_with_edge_fade(uv - uv_x1, uv_bounds, screen_size, total_expand) * 0.14;
+    alpha += sample_sdf_coverage_with_edge_fade(uv + uv_y1, uv_bounds, screen_size, total_expand) * 0.14;
+    alpha += sample_sdf_coverage_with_edge_fade(uv - uv_y1, uv_bounds, screen_size, total_expand) * 0.14;
+
+    alpha += sample_sdf_coverage_with_edge_fade(uv + uv_d1, uv_bounds, screen_size, total_expand) * 0.05;
+    alpha += sample_sdf_coverage_with_edge_fade(uv - uv_d1, uv_bounds, screen_size, total_expand) * 0.05;
+    alpha += sample_sdf_coverage_with_edge_fade(uv + uv_d2, uv_bounds, screen_size, total_expand) * 0.05;
+    alpha += sample_sdf_coverage_with_edge_fade(uv - uv_d2, uv_bounds, screen_size, total_expand) * 0.05;
+
+    alpha += sample_sdf_coverage_with_edge_fade(uv + uv_x2, uv_bounds, screen_size, total_expand) * 0.02;
+    alpha += sample_sdf_coverage_with_edge_fade(uv - uv_x2, uv_bounds, screen_size, total_expand) * 0.02;
+    alpha += sample_sdf_coverage_with_edge_fade(uv + uv_y2, uv_bounds, screen_size, total_expand) * 0.02;
+    alpha += sample_sdf_coverage_with_edge_fade(uv - uv_y2, uv_bounds, screen_size, total_expand) * 0.02;
+
+    return clamp(alpha, 0.0, 1.0);
+}
+
+fn gaussian_weight(distance_px: f32, sigma_px: f32) -> f32 {
+    let safe_sigma = max(sigma_px, 0.001);
+    let normalized = distance_px / safe_sigma;
+    return exp(-0.5 * normalized * normalized);
+}
+
+// 外发光采样（使用更接近 CSS text-shadow 的高斯核）
+// 之前的双环 8 向采样核太稀疏，半径一大就容易出现颗粒感和分层。
+// 这里改为 3 个同心环 + 12 个方向的高斯权重近似，离浏览器的文字阴影更近。
+fn sample_sdf_glow_v2(uv: vec2<f32>, glow_radius_px: f32, uv_bounds: vec4<f32>, screen_size: vec2<f32>, total_expand: f32) -> f32 {
+    if glow_radius_px < 0.5 {
+        return 0.0;
+    }
+
+    let base_coverage = sample_sdf_coverage_with_edge_fade(uv, uv_bounds, screen_size, total_expand);
+    let sigma = max(glow_radius_px * 0.55, 0.75);
+    let ring_radii = array<f32, 3>(
+        max(0.65, glow_radius_px * 0.28),
+        max(1.25, glow_radius_px * 0.58),
+        max(2.0, glow_radius_px * 0.95),
+    );
+    let directions = array<vec2<f32>, 12>(
+        vec2<f32>(1.0, 0.0),
+        vec2<f32>(0.8660254, 0.5),
+        vec2<f32>(0.5, 0.8660254),
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(-0.5, 0.8660254),
+        vec2<f32>(-0.8660254, 0.5),
+        vec2<f32>(-1.0, 0.0),
+        vec2<f32>(-0.8660254, -0.5),
+        vec2<f32>(-0.5, -0.8660254),
+        vec2<f32>(0.0, -1.0),
+        vec2<f32>(0.5, -0.8660254),
+        vec2<f32>(0.8660254, -0.5),
+    );
+
+    let center_weight = gaussian_weight(0.0, sigma);
+    var blurred = base_coverage * center_weight;
+    var total_weight = center_weight;
+
+    for (var ring_i = 0u; ring_i < 3u; ring_i = ring_i + 1u) {
+        let radius = ring_radii[ring_i];
+        let weight = gaussian_weight(radius, sigma);
+
+        for (var dir_i = 0u; dir_i < 12u; dir_i = dir_i + 1u) {
+            let sample_uv = uv + pixel_offset_to_uv(directions[dir_i] * radius, uv_bounds, screen_size);
+            blurred += sample_sdf_coverage_with_edge_fade(
+                sample_uv,
+                uv_bounds,
+                screen_size,
+                total_expand,
+            ) * weight;
+            total_weight += weight;
         }
-        // 钳位到安全边界内采样
-        let safe_uv = clamp(uv, safe_uv_min, safe_uv_max);
-        let msdf = textureSample(sdf_atlas, sdf_sampler, safe_uv).rgb;
-        let sdf_value = median(msdf.r, msdf.g, msdf.b);
-        
-        // 使用 fwidth 自适应抗锯齿
-        // fwidth 计算屏幕空间梯度，自动适应不同缩放级别
-        // 这比固定 aa_width 更准确，能在各种字号下保持一致的边缘质量
-        let screen_px_range = fwidth(sdf_value);
-        
-        // 如果梯度太小（可能是数值问题），使用固定值
-        let aa_width = select(0.02, screen_px_range * 0.5, screen_px_range > 0.001);
-        
-        return smoothstep(edge_threshold - aa_width, edge_threshold + aa_width, sdf_value);
     }
-    
-    // === 模糊模式：使用距离外推 ===
-    
-    // 将 UV 偏移转换为像素偏移的比例
-    var px_per_uv = vec2<f32>(0.0);
-    if uv_size.x > 0.0001 {
-        px_per_uv.x = screen_size.x / uv_size.x;
-    }
-    if uv_size.y > 0.0001 {
-        px_per_uv.y = screen_size.y / uv_size.y;
-    }
-    
-    // 钳位 UV 到安全边界内进行采样
-    let clamped_uv = clamp(uv, safe_uv_min, safe_uv_max);
-    
-    // 采样 SDF
-    let msdf = textureSample(sdf_atlas, sdf_sampler, clamped_uv).rgb;
-    let sdf_value = median(msdf.r, msdf.g, msdf.b) - edge_threshold;
-    
-    // 计算 SDF 梯度，将 SDF 值转换为像素距离
-    let sdf_gradient = fwidth(sdf_value);
-    var sdf_pixel_dist = 0.0;
-    if sdf_gradient > 0.0001 {
-        sdf_pixel_dist = sdf_value / sdf_gradient;
-    }
-    
-    // 计算 UV 超出边界的像素距离
-    let uv_offset = uv - clamped_uv;
-    let pixel_offset = uv_offset * px_per_uv;
-    let boundary_distance = length(pixel_offset);  // 欧几里得距离 = 圆形衰减
-    
-    // 外推 SDF 距离
-    let total_distance = sdf_pixel_dist - boundary_distance;
-    
-    // 模糊模式：使用 smoothstep 产生柔和边缘
-    let edge_width = blur_px / 8.0;
-    let softness = blur_px / 32.0;
-    let opacity_factor = 1.0 - softness * 0.6;
-    return smoothstep(-edge_width, edge_width, total_distance) * opacity_factor;
-}
 
-// 带可控模糊的 SDF 采样 (兼容旧接口)
-// softness: 0.0 = 锐利, 1.0 = 非常模糊
-// uv_bounds: 原始 UV 边界用于钳位
-// screen_size: 字形在屏幕上的尺寸（像素）
-// total_expand: 画布扩展量（像素）
-fn sample_sdf_soft_v2(uv: vec2<f32>, softness: f32, uv_bounds: vec4<f32>, screen_size: vec2<f32>, total_expand: f32) -> f32 {
-    // 将 softness (0-1+) 转换为 blur_px (0-32+)
-    return sample_sdf_gaussian_blur_v2(uv, softness * 32.0, uv_bounds, screen_size, total_expand);
-}
+    let blurred_coverage = blurred / max(total_weight, 0.0001);
+    let halo = max(blurred_coverage - base_coverage * 0.3, 0.0);
+    let halo_mask = 1.0 - smoothstep(0.06, 0.82, base_coverage);
 
-// 外发光采样（统一算法：基于到字形边缘的距离）
-fn sample_sdf_glow_v2(uv: vec2<f32>, glow_radius: f32, uv_bounds: vec4<f32>, screen_size: vec2<f32>, total_expand: f32) -> f32 {
-    let edge_threshold = 0.5;
-    
-    // 计算 UV 空间的边界尺寸
-    let uv_size = uv_bounds.zw - uv_bounds.xy;
-    
-    // 将 UV 偏移转换为像素偏移的比例
-    var px_per_uv = vec2<f32>(0.0);
-    if uv_size.x > 0.0001 {
-        px_per_uv.x = screen_size.x / uv_size.x;
-    }
-    if uv_size.y > 0.0001 {
-        px_per_uv.y = screen_size.y / uv_size.y;
-    }
-    
-    // 钳位 UV 到边界内进行采样
-    let clamped_uv = clamp(uv, uv_bounds.xy, uv_bounds.zw);
-    
-    // 采样 SDF
-    let msdf = textureSample(sdf_atlas, sdf_sampler, clamped_uv).rgb;
-    let sdf_value = median(msdf.r, msdf.g, msdf.b) - edge_threshold;
-    
-    // 计算 SDF 梯度，将 SDF 值转换为像素距离
-    let sdf_gradient = fwidth(sdf_value);
-    var sdf_pixel_dist = 0.0;
-    if sdf_gradient > 0.0001 {
-        sdf_pixel_dist = sdf_value / sdf_gradient;
-    }
-    
-    // 计算 UV 超出边界的像素距离
-    let uv_offset = uv - clamped_uv;
-    let pixel_offset = uv_offset * px_per_uv;
-    let boundary_distance = length(pixel_offset);
-    
-    // 外推 SDF 距离
-    let total_distance = sdf_pixel_dist - boundary_distance;
-    
-    // 发光效果：在字形外部（total_distance < 0）产生发光
-    let glow_range = glow_radius * 10.0;
-    if total_distance < 0.0 {
-        return 1.0 - smoothstep(-glow_range, 0.0, total_distance);
-    }
-    return 0.0;
+    return clamp(halo * halo_mask * 1.12, 0.0, 1.0);
 }
 
 
-// Apple Music 风格的渐变遮罩计算
+// 渐变遮罩计算
 fn calculate_gradient_mask(
     pos_in_word: f32,
     word_start_ms: f32,
@@ -434,22 +428,45 @@ fn calculate_dark_mask_alpha(scale: f32) -> f32 {
     return normalized * 0.2 + 0.2;
 }
 
-fn cubic_bezier_approx(t: f32, p1: f32, p2: f32) -> f32 {
+// Proper CSS cubic-bezier solver (Newton-Raphson)
+fn solve_cubic_bezier(x: f32, x1: f32, y1: f32, x2: f32, y2: f32) -> f32 {
+    var t = x;
+    for (var i = 0; i < 8; i++) {
+        let t2 = t * t;
+        let t3 = t2 * t;
+        let mt = 1.0 - t;
+        let mt2 = mt * mt;
+        
+        let current_x = 3.0 * mt2 * t * x1 + 3.0 * mt * t2 * x2 + t3;
+        let error = current_x - x;
+        if abs(error) < 0.001 {
+            break;
+        }
+        
+        let dx = 3.0 * mt2 * x1 + 6.0 * mt * t * (x2 - x1) + 3.0 * t2 * (1.0 - x2);
+        if abs(dx) < 0.001 {
+            break;
+        }
+        
+        t = t - error / dx;
+        t = clamp(t, 0.0, 1.0);
+    }
+    
     let t2 = t * t;
     let t3 = t2 * t;
     let mt = 1.0 - t;
     let mt2 = mt * mt;
-    return 3.0 * mt2 * t * p1 + 3.0 * mt * t2 * p2 + t3;
+    return 3.0 * mt2 * t * y1 + 3.0 * mt * t2 * y2 + t3;
 }
 
 fn emphasis_easing(x: f32) -> f32 {
     let mid = 0.5;
     if x < mid {
-        let t = x / mid;
-        return cubic_bezier_approx(t, 0.4, 1.0);
+        let normalized_x = x / mid;
+        return solve_cubic_bezier(normalized_x, 0.2, 0.4, 0.58, 1.0);
     } else {
-        let t = (x - mid) / (1.0 - mid);
-        return 1.0 - cubic_bezier_approx(t, 0.0, 1.0);
+        let normalized_x = (x - mid) / (1.0 - mid);
+        return 1.0 - solve_cubic_bezier(normalized_x, 0.3, 0.0, 0.58, 1.0);
     }
 }
 
@@ -479,8 +496,9 @@ fn calculate_char_emphasis_progress(
     if word_duration_ms <= 0.0 {
         return 0.0;
     }
+    let effective_duration = max(1000.0, word_duration_ms);
     let elapsed = current_time_ms - char_delay_ms;
-    let progress = elapsed / word_duration_ms;
+    let progress = elapsed / effective_duration;
     return clamp(progress, 0.0, 1.0);
 }
 
@@ -492,7 +510,8 @@ fn calculate_emphasis_float_progress(
     if word_duration_ms <= 0.0 {
         return 0.0;
     }
-    let float_duration = word_duration_ms * 1.4;
+    let effective_duration = max(1000.0, word_duration_ms);
+    let float_duration = effective_duration * 1.4;
     let float_delay = char_delay_ms - 400.0;
     let elapsed = current_time_ms - float_delay;
     let progress = elapsed / float_duration;
@@ -523,6 +542,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     
     let line_idx = in.line_info.x;
     let line = lines[line_idx];
+    let non_dynamic = is_non_dynamic(in.line_info.y);
+    let is_sub_line = is_translation(in.line_info.y) || is_romanized(in.line_info.y);
     
     let corner_x = in.corner.x;
     let corner_y = in.corner.y;
@@ -564,14 +585,14 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     // 基础上浮效果：基于时间进度，不依赖 is_active flag
     // 这样当行从 active 变为非 active 时，上浮效果会保持，
     // 然后通过 Y 位置的 spring 动画平滑过渡到新位置
-    if basic_float_progress > 0.0 {
+    if !non_dynamic && !is_sub_line && basic_float_progress > 0.0 {
         let is_bg_line = is_bg(in.line_info.y);
         let float_multiplier = select(1.0, 2.0, is_bg_line);
         let basic_float_y = -basic_float_progress * 0.05 * float_multiplier * globals.font_size;
         emphasis_offset_y += basic_float_y;
     }
     
-    if is_emphasize(in.line_info.y) && char_emphasis > 0.0 {
+    if !non_dynamic && !is_sub_line && is_emphasize(in.line_info.y) && char_emphasis > 0.0 {
         let emp = emphasis_easing(char_emphasis);
         let last_word = is_last_word(in.line_info.y);
         let amount = calculate_emphasis_amount(word_duration_ms, last_word);
@@ -587,7 +608,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
         emphasis_offset_y += emphasis_y;
     }
     
-    if is_emphasize(in.line_info.y) && emphasis_float_progress > 0.0 {
+    if !non_dynamic && !is_sub_line && is_emphasize(in.line_info.y) && emphasis_float_progress > 0.0 {
         let is_bg_line = is_bg(in.line_info.y);
         let float_multiplier = select(1.0, 2.0, is_bg_line);
         let emphasis_float_y = -sin(emphasis_float_progress * 3.14159) * 0.05 * float_multiplier * globals.font_size;
@@ -598,17 +619,11 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     pos.y = line_center_y + (pos.y - line_center_y) * scale;
     
     // === 画布扩展：修复模糊裁剪问题 (3σ 法则) ===
-    // 计算最大模糊半径（包含行模糊和强调发光）
-    var max_blur_px = line.blur;
-    if is_emphasize(in.line_info.y) {
-        // 强调发光最大约 10px，确保有足够空间
-        max_blur_px = max(max_blur_px, 10.0);
-    }
+    // 行级模糊已经改成真正的离屏 blur，glow 也会单独走离屏 mask + blur + composite。
+    // 这里仅为当前 pass 的 line.blur 扩展画布，不再把强调 glow 混进同一个 fragment pass。
+    let max_blur_px = line.blur;
     
-    // [DEBUG] 临时禁用画布扩展，测试基础渲染
-    max_blur_px = 0.0;
-    
-    // [关键修改] 只有在需要模糊时才扩展画布
+    // 只有在需要模糊时才扩展画布
     // 如果 max_blur_px < 0.5，不需要扩展（锐利模式）
     var total_expand = 0.0;
     if max_blur_px >= 0.5 {
@@ -679,6 +694,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let line = lines[in.line_index];
+    let is_sub_line = is_translation(in.flags) || is_romanized(in.flags);
     
     // 计算像素在单词中的位置
     let pixel_pos_in_word = in.glyph_word_pos.x + in.local_x * in.glyph_word_pos.y;
@@ -693,242 +709,102 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         pixel_pos_in_word  // 使用单词内位置作为行内位置的近似
     );
     
-    // 计算渐变遮罩高亮值（使用全局视觉位置）
-    let highlight = calculate_gradient_mask(
-        global_visual_pos,  // 使用全局视觉位置，实现换行按顺序高亮
-        in.word_time.x,
-        in.word_time.y,
-        globals.current_time_ms,
-        globals.word_fade_width
-    );
-    
-    // 动态 alpha 计算
-    let bright_alpha = calculate_bright_mask_alpha(line.scale);
-    let dark_alpha = calculate_dark_mask_alpha(line.scale);
-    var brightness = mix(dark_alpha, bright_alpha, highlight);
-    
-    // 翻译和音译行：使用固定 opacity: 0.3，不参与高亮渐变
-    // 这样翻译行的亮度不会随着主歌词的高亮进度变化
-    if is_translation(in.flags) || is_romanized(in.flags) {
-        brightness = 0.3;
+    var brightness = 1.0;
+    var alpha_multiplier = line.opacity;
+    if is_sub_line {
+        // 子行在视觉上比我们现在更容易随离焦一起变暗。
+        // active 行保持 0.3，非 active 行额外乘上整行 opacity，避免翻译行“悬浮发亮”。
+        alpha_multiplier = 0.3;
+        if line.is_active == 0u {
+            alpha_multiplier = alpha_multiplier * line.opacity;
+        }
+    } else {
+        // 主行同样允许梯度扫光。
+        // 非动态只是不做逐字上浮/强调，不应该禁掉整行的扫光。
+        let highlight = calculate_gradient_mask(
+            global_visual_pos,  // 使用全局视觉位置，实现换行按顺序高亮
+            in.word_time.x,
+            in.word_time.y,
+            globals.current_time_ms,
+            globals.word_fade_width
+        );
+
+        let bright_alpha = calculate_bright_mask_alpha(line.scale);
+        let dark_alpha = calculate_dark_mask_alpha(line.scale);
+        brightness = mix(dark_alpha, bright_alpha, highlight);
     }
     
     // 强调效果
-    var glow_intensity = 0.0;
-    var emphasis_glow_radius = 0.0;
     if is_emphasize(in.flags) && in.emphasis > 0.0 {
         let emp = emphasis_easing(in.emphasis);
         let word_duration = in.word_time.y - in.word_time.x;
         let last_word = is_last_word(in.flags);
         let amount = calculate_emphasis_amount(word_duration, last_word);
-        
+
         brightness = brightness + emp * 0.1 * amount;
-        
-        // 计算发光强度和半径 (style)
-        // Formula: glowLevel = emphasisEasing(progress) * blur
-        // Formula: radius = min(0.3, blur * 0.3)em
-        let blur_amount = calculate_emphasis_blur(word_duration, last_word);
-        glow_intensity = emp * blur_amount;
-        emphasis_glow_radius = min(0.3, blur_amount * 0.3);
     }
     
     // === SDF 采样 ===
-    // [DEBUG] 临时禁用模糊，测试基础渲染
-    // let softness = line.blur / 16.0;
-    let softness = 0.0;
+    // line.blur 已经是按像素计算的行级模糊半径，直接用于 SDF 采样。
+    let blur_px = line.blur;
     
     // 采样主体（使用边缘衰减确保在边缘前归零）
-    let shape_alpha = sample_sdf_soft_v2(in.uv, softness, in.uv_bounds, in.screen_size, in.total_expand);
+    let shape_alpha = sample_sdf_gaussian_blur_v2(
+        in.uv,
+        blur_px,
+        in.uv_bounds,
+        in.screen_size,
+        in.total_expand,
+    );
     
     // Early discard
-    if shape_alpha < 0.01 && glow_intensity < 0.01 {
+    if shape_alpha < 0.01 {
         discard;
     }
     
     // 基础颜色
-    var color = in.color.rgb * brightness;
-    var alpha = shape_alpha * line.opacity;
-    
-    // 高亮发光（激活行）
-    if highlight > 0.3 && is_active(in.flags) {
-        let glow_strength = (highlight - 0.3) / 0.7;
-        let highlight_glow = vec3<f32>(0.15, 0.15, 0.2) * glow_strength * 0.5;
-        color = color + highlight_glow;
-    }
-    
-    // 强调发光效果（使用 SDF 外发光）
-    // [DEBUG] 临时禁用发光效果，因为它会在 padding 区域产生方框
-    // Formula: textShadow: `0 0 ${min(0.3, blur * 0.3)}em rgba(255, 255, 255, ${glowLevel})`
-    // if glow_intensity > 0.01 {
-    //     let glow_alpha = sample_sdf_glow_v2(in.uv, emphasis_glow_radius, in.uv_bounds, in.screen_size, in.total_expand);
-    //     let glow_color = in.color.rgb * 1.2; // 稍微提亮
-    //     
-    //     // 混合发光和主体
-    //     // glow_intensity 作为 alpha 乘数 (the glowLevel)
-    //     color = mix(color, glow_color, glow_alpha * 0.5);
-    //     alpha = max(alpha, glow_alpha * glow_intensity * line.opacity);
-    // }
-    
-    // 行级发光
-    if line.glow > 0.0 {
-        let bloom = color * line.glow * 0.25;
-        color = color + bloom;
-    }
-    
-    return vec4<f32>(color, alpha);
-}
-
-// 带外发光的完整渲染（单 pass 实现所有效果）
-@fragment
-fn fs_main_with_glow(in: VertexOutput) -> @location(0) vec4<f32> {
-    let line = lines[in.line_index];
-    
-    let pixel_pos_in_word = in.glyph_word_pos.x + in.local_x * in.glyph_word_pos.y;
-    
-    // === 换行高亮修复：计算全局视觉位置 ===
-    let visual_info = unpack_visual_line_info(in.visual_line_info);
-    let global_visual_pos = calculate_global_visual_pos(
-        visual_info.x,
-        visual_info.y,
-        pixel_pos_in_word
-    );
-    
-    let highlight = calculate_gradient_mask(
-        global_visual_pos,  // 使用全局视觉位置
-        in.word_time.x,
-        in.word_time.y,
-        globals.current_time_ms,
-        globals.word_fade_width
-    );
-    
-    let bright_alpha = calculate_bright_mask_alpha(line.scale);
-    let dark_alpha = calculate_dark_mask_alpha(line.scale);
-    var brightness = mix(dark_alpha, bright_alpha, highlight);
-    
-    // 翻译和音译行：使用固定 opacity: 0.3，不参与高亮渐变
-    if is_translation(in.flags) || is_romanized(in.flags) {
-        brightness = 0.3;
-    }
-    
-    var glow_intensity = 0.0;
-    var emphasis_glow_radius = 0.0;
-    if is_emphasize(in.flags) && in.emphasis > 0.0 {
-        let emp = emphasis_easing(in.emphasis);
-        let word_duration = in.word_time.y - in.word_time.x;
-        let last_word = is_last_word(in.flags);
-        let amount = calculate_emphasis_amount(word_duration, last_word);
-        brightness = brightness + emp * 0.1 * amount;
-        let blur_amount = calculate_emphasis_blur(word_duration, last_word);
-        glow_intensity = emp * blur_amount;
-        emphasis_glow_radius = min(0.3, blur_amount * 0.3);
-    }
-    
-    // SDF 采样（统一算法：基于到字形边缘的距离）
-    let edge_threshold = 0.5;
-    let uv_size = in.uv_bounds.zw - in.uv_bounds.xy;
-    
-    var px_per_uv = vec2<f32>(0.0);
-    if uv_size.x > 0.0001 {
-        px_per_uv.x = in.screen_size.x / uv_size.x;
-    }
-    if uv_size.y > 0.0001 {
-        px_per_uv.y = in.screen_size.y / uv_size.y;
-    }
-    
-    // [DEBUG] 临时禁用模糊，测试基础渲染
-    // let blur_px = line.blur;
-    let blur_px = 0.0;
-    
-    // 计算 UV 收缩量（避免采样到边缘像素）
-    // 0.5 像素是双线性插值的最小安全边距
-    let atlas_size = 2048.0;
-    let uv_shrink = 0.5 / atlas_size;
-    let safe_uv_min = in.uv_bounds.xy + vec2<f32>(uv_shrink);
-    let safe_uv_max = in.uv_bounds.zw - vec2<f32>(uv_shrink);
-    
-    // 检查是否在安全 UV 边界内
-    let is_inside = all(in.uv >= safe_uv_min) && all(in.uv <= safe_uv_max);
-    
-    // 锐利模式下，UV 边界外直接丢弃
-    if blur_px < 0.5 && !is_inside {
-        discard;
-    }
-    
-    // 钳位 UV 到安全边界内进行采样
-    let clamped_uv = clamp(in.uv, safe_uv_min, safe_uv_max);
-    
-    // 采样 SDF
-    let msdf = textureSample(sdf_atlas, sdf_sampler, clamped_uv).rgb;
-    let sdf_value_raw = median(msdf.r, msdf.g, msdf.b);
-    let sdf_value = sdf_value_raw - edge_threshold;
-    
-    // 计算 opacity
-    var opacity = 0.0;
-    if blur_px < 0.5 {
-        // 锐利模式：使用 fwidth 自适应抗锯齿
-        let screen_px_range = fwidth(sdf_value);
-        let aa_width = select(0.02, screen_px_range * 0.5, screen_px_range > 0.001);
-        opacity = smoothstep(edge_threshold - aa_width, edge_threshold + aa_width, sdf_value_raw);
-    } else {
-        // 模糊模式：使用距离外推
-        let sdf_gradient = fwidth(sdf_value);
-        var sdf_pixel_dist = 0.0;
-        if sdf_gradient > 0.0001 {
-            sdf_pixel_dist = sdf_value / sdf_gradient;
-        }
-        
-        // 计算 UV 超出边界的像素距离（欧几里得距离 = 圆形衰减）
-        let uv_offset = in.uv - clamped_uv;
-        let pixel_offset = uv_offset * px_per_uv;
-        let boundary_distance = length(pixel_offset);
-        
-        // 外推 SDF 距离
-        let total_distance = sdf_pixel_dist - boundary_distance;
-        
-        let edge_width = blur_px / 8.0;
-        let softness = blur_px / 32.0;
-        let opacity_factor = 1.0 - softness * 0.6;
-        opacity = smoothstep(-edge_width, edge_width, total_distance) * opacity_factor;
-    }
-    
-    // 计算发光
-    // [DEBUG] 临时禁用发光效果
-    // let glow_softness = max(blur_px / 32.0 * 0.3, emphasis_glow_radius);
-    // let glow_range = glow_softness * 10.0;
-    var glow_alpha = 0.0;
-    // 发光只在字形外部（sdf_value < 0）
-    // if sdf_value < 0.0 {
-    //     // 使用 sdf_value 直接计算发光，不需要 fwidth
-    //     let normalized_dist = sdf_value * 10.0;  // 放大距离
-    //     glow_alpha = 1.0 - smoothstep(-glow_range, 0.0, normalized_dist);
-    // }
-    
-    // 混合
     let fill_color = in.color.rgb * brightness;
-    let glow_color = in.color.rgb * 1.1;
-    
-    let final_color = mix(glow_color, fill_color, opacity);
-    // [DEBUG] 禁用发光 alpha
-    // let final_alpha = max(opacity, glow_alpha * glow_intensity) * line.opacity;
-    let final_alpha = opacity * line.opacity;
-    
+    let fill_alpha = shape_alpha * alpha_multiplier;
+    let premul_color = fill_color * fill_alpha;
+    let final_alpha = fill_alpha;
+
     if final_alpha < 0.01 {
         discard;
     }
-    
-    // 高亮发光
-    var result_color = final_color;
-    if highlight > 0.3 && is_active(in.flags) {
-        let glow_strength = (highlight - 0.3) / 0.7;
-        let highlight_glow = vec3<f32>(0.15, 0.15, 0.2) * glow_strength * 0.5;
-        result_color = result_color + highlight_glow;
+
+    return vec4<f32>(premul_color, final_alpha);
+}
+
+@fragment
+fn fs_glow_mask(in: VertexOutput) -> @location(0) vec4<f32> {
+    let line = lines[in.line_index];
+    let is_sub_line = is_translation(in.flags) || is_romanized(in.flags);
+    if is_sub_line || !is_emphasize(in.flags) || in.emphasis <= 0.0 {
+        discard;
     }
-    
-    // 行级发光
-    if line.glow > 0.0 {
-        let bloom = result_color * line.glow * 0.25;
-        result_color = result_color + bloom;
+
+    let word_duration = in.word_time.y - in.word_time.x;
+    let last_word = is_last_word(in.flags);
+    let blur_amount = calculate_emphasis_blur(word_duration, last_word);
+    let glow_intensity = emphasis_easing(in.emphasis) * blur_amount;
+    if glow_intensity <= 0.01 {
+        discard;
     }
-    
-    return vec4<f32>(result_color, final_alpha);
+
+    let shape_alpha = sample_sdf_coverage_with_edge_fade(
+        in.uv,
+        in.uv_bounds,
+        in.screen_size,
+        in.total_expand,
+    );
+    if shape_alpha < 0.01 {
+        discard;
+    }
+
+    let alpha = shape_alpha * glow_intensity * line.opacity;
+    if alpha < 0.01 {
+        discard;
+    }
+
+    return vec4<f32>(vec3<f32>(alpha), alpha);
 }

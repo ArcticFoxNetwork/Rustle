@@ -117,6 +117,7 @@ pub fn parse_yrc(src: &str) -> Vec<LyricLineOwned> {
 }
 
 /// Convert lyrics to YRC format string
+#[cfg(test)]
 pub fn stringify_yrc(lines: &[LyricLineOwned]) -> String {
     use std::fmt::Write;
 

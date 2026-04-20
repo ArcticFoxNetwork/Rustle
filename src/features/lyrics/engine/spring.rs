@@ -30,8 +30,6 @@
 //! position(t) = to - (cos(t * dfm) * delta + sin(t * dfm) * leftover) * e^(t * dm)
 //! ```
 
-#![allow(dead_code)]
-
 use std::f64::consts::E;
 use std::sync::Arc;
 
@@ -96,13 +94,12 @@ type SolverFn = Arc<dyn Fn(Num) -> Num + Send + Sync>;
 
 /// Create solver function for spring animation
 fn solve_spring(from: Num, velocity: Num, to: Num, delay: Num, params: &SpringParams) -> SolverFn {
-    let soft = params.soft;
     let stiffness = params.stiffness;
     let damping = params.damping;
     let mass = params.mass;
     let delta = to - from;
 
-    if soft || 1.0 <= damping / (2.0 * (stiffness * mass).sqrt()) {
+    if params.is_overdamped() {
         // Overdamped
         let angular_frequency = -(stiffness / mass).sqrt();
         let leftover = -angular_frequency * delta - velocity;
@@ -329,21 +326,8 @@ impl Spring {
         }
     }
 
-    /// Get current position
-    pub fn get_current_position(&self) -> Num {
-        self.current_position
-    }
-
-    // ========== Convenience aliases ==========
-
-    /// Alias for get_current_position
     pub fn position(&self) -> Num {
         self.current_position
-    }
-
-    /// Get position rounded to integer
-    pub fn position_rounded(&self) -> Num {
-        self.current_position.round()
     }
 
     /// Alias for set_target_position
@@ -361,33 +345,6 @@ impl Spring {
         self.target_position
     }
 
-    /// Get current velocity
-    pub fn velocity(&self) -> Num {
-        (self.get_v)(self.current_time)
-    }
-
-    /// Get current acceleration
-    pub fn acceleration(&self) -> Num {
-        (self.get_v2)(self.current_time)
-    }
-
-    /// Get current params
-    pub fn params(&self) -> &SpringParams {
-        &self.params
-    }
-
-    /// Alias for position()
-    pub fn current_position(&self) -> Num {
-        self.current_position
-    }
-
-    /// Get remaining delay
-    pub fn delay(&self) -> Num {
-        self.queue_position.map(|q| q.time).unwrap_or(0.0)
-    }
-
-    // ========== Legacy compatibility ==========
-
     /// Set velocity (resets solver)
     pub fn set_velocity(&mut self, value: Num) {
         // Store current position, set new velocity, reset solver
@@ -398,35 +355,6 @@ impl Spring {
         self.get_v2 = get_velocity(Arc::clone(&self.get_v));
     }
 
-    /// Builder for set_velocity
-    pub fn with_velocity(mut self, value: Num) -> Self {
-        self.set_velocity(value);
-        self
-    }
-
-    /// Set damper (updates params)
-    pub fn set_damper(&mut self, value: Num) {
-        let stiffness = self.params.stiffness;
-        let mass = self.params.mass;
-        self.params.damping = value * 2.0 * (stiffness * mass).sqrt();
-    }
-
-    /// Builder for set_damper
-    pub fn with_damper(mut self, value: Num) -> Self {
-        self.set_damper(value);
-        self
-    }
-
-    /// Set speed (updates stiffness)
-    pub fn set_speed(&mut self, value: Num) {
-        self.params.stiffness = value * value * self.params.mass;
-    }
-
-    /// Builder for set_target
-    pub fn with_target(mut self, value: Num) -> Self {
-        self.set_target(value);
-        self
-    }
 }
 
 impl Clone for Spring {

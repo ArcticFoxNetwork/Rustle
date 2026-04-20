@@ -781,11 +781,12 @@ impl UiState {
                 cached_shaped_lines: None,
                 // FontSystem will be created asynchronously
                 shared_font_system: None,
-                user_scrolling: false,
-                last_scroll_time: None,
-                manual_scroll_offset: 0.0,
                 viewport_width: 800.0,  // Default, will be updated from view
                 viewport_height: 600.0, // Default, will be updated from view
+                viewport_initialized: false,
+                shaped_content_width: 0.0,
+                shaped_font_size: 0.0,
+                shape_generation: 0,
                 loading_song_id: None,
                 is_loading: false,
                 load_error: None,
@@ -938,16 +939,19 @@ pub struct LyricsState {
     /// Shared font system for async text shaping (created asynchronously at app startup)
     pub shared_font_system: Option<crate::features::lyrics::engine::SharedFontSystem>,
 
-    // Scrolling
-    pub user_scrolling: bool,
-    pub last_scroll_time: Option<Instant>,
-    pub manual_scroll_offset: f32,
-
     // Viewport info for line height calculations
     /// Last known viewport width (in logical pixels)
     pub viewport_width: f32,
     /// Last known viewport height (in logical pixels)
     pub viewport_height: f32,
+    /// Whether viewport metrics have been initialized from a real layout/window event.
+    pub viewport_initialized: bool,
+    /// Content width used by the latest accepted shaped lines.
+    pub shaped_content_width: f32,
+    /// Main font size used by the latest accepted shaped lines.
+    pub shaped_font_size: f32,
+    /// Monotonic generation for async lyrics shaping requests.
+    pub shape_generation: u64,
 
     // Online lyrics loading
     /// Song ID currently loading lyrics for (to avoid duplicate requests)

@@ -1,4 +1,4 @@
-// Apple Music-style Interlude Dots Shader
+// Interlude Dots Shader
 //
 // Renders three animated dots during instrumental interludes.
 // Features:
@@ -61,12 +61,11 @@ fn vs_main(
     
     let dot_index = instance_index;
     
-    // Calculate dot center position
-    // Dots are arranged horizontally: [dot0] [dot1] [dot2]
-    let total_width = dots.dot_size * 3.0 + dots.dot_spacing * 2.0;
-    let start_x = dots.position.x - total_width * 0.5 * dots.scale;
-    let dot_x = start_x + (dots.dot_size * 0.5 + f32(dot_index) * (dots.dot_size + dots.dot_spacing)) * dots.scale;
-    let dot_y = dots.position.y;
+    // position is the padded inner origin of the dot row.
+    let dot_x =
+        dots.position.x +
+        (dots.dot_size * 0.5 + f32(dot_index) * (dots.dot_size + dots.dot_spacing)) * dots.scale;
+    let dot_y = dots.position.y + dots.dot_size * 0.5 * dots.scale;
     
     // Calculate corner offset
     let corner_x = f32(vertex_index & 1u);
@@ -96,14 +95,10 @@ fn vs_main(
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    // Calculate distance from center for circular dot
-    let center = vec2<f32>(0.5, 0.5);
-    let dist = distance(in.uv, center);
-    
-    // Soft circle with anti-aliasing
-    let radius = 0.4;
-    let softness = 0.1;
-    let circle_alpha = 1.0 - smoothstep(radius - softness, radius + softness, dist);
+    let centered = (in.uv - vec2<f32>(0.5, 0.5)) * 2.0;
+    let dist = length(centered);
+    let aa = max(fwidth(dist), 0.01);
+    let circle_alpha = 1.0 - smoothstep(1.0 - aa, 1.0 + aa, dist);
     
     // Get dot opacity based on index
     var dot_opacity: f32;
@@ -121,10 +116,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         discard;
     }
     
-    // White dots with slight glow
-    let base_color = vec3<f32>(1.0, 1.0, 1.0);
-    let glow = vec3<f32>(0.1, 0.1, 0.15) * (1.0 - dist * 2.0);
-    let color = base_color + glow;
-    
+    let color = vec3<f32>(1.0, 1.0, 1.0) * alpha;
     return vec4<f32>(color, alpha);
 }
