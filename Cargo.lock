@@ -5076,7 +5076,7 @@ dependencies = [
 
 [[package]]
 name = "rustle"
-version = "0.2.4"
+version = "0.3.0"
 dependencies = [
  "ab_glyph",
  "aes",
