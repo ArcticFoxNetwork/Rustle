@@ -1,0 +1,13 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Rustle
+GenericName=Music Player
+Comment=Stream NetEase Cloud Music and play your local library
+Exec=rustle
+Icon=life.fxs.rustle
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=music;player;audio;netease;lyrics;
+StartupNotify=true
+StartupWMClass=life.fxs.rustle

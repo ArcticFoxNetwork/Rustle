@@ -1,5 +1,6 @@
 //! Linux MPRIS D-Bus integration using LocalPlayerInterface trait
 
+use crate::platform::{APP_BINARY_NAME, APP_DISPLAY_NAME, APP_ID};
 use mpris_server::{
     LocalPlayerInterface, LocalRootInterface, LocalServer, LoopStatus, Metadata, PlaybackRate,
     PlaybackStatus, Property, Time, TrackId, Volume,
@@ -16,7 +17,7 @@ fn to_mpris_metadata(meta: &MediaMetadata) -> Metadata {
 
     if let Some(ref track_id) = meta.track_id {
         builder = builder.trackid(
-            TrackId::try_from(format!("/org/rustle/track/{}", track_id))
+            TrackId::try_from(format!("/org/{}/track/{}", APP_BINARY_NAME, track_id))
                 .unwrap_or_else(|_| TrackId::NO_TRACK),
         );
     }
@@ -129,11 +130,11 @@ impl LocalRootInterface for MprisPlayer {
     }
 
     async fn identity(&self) -> fdo::Result<String> {
-        Ok("Rustle".to_string())
+        Ok(APP_DISPLAY_NAME.to_string())
     }
 
     async fn desktop_entry(&self) -> fdo::Result<String> {
-        Ok("rustle".to_string())
+        Ok(APP_ID.to_string())
     }
 
     async fn supported_uri_schemes(&self) -> fdo::Result<Vec<String>> {
@@ -331,7 +332,7 @@ pub fn start() -> (LinuxMediaHandle, mpsc::UnboundedReceiver<MediaCommand>) {
         let local = tokio::task::LocalSet::new();
         local.block_on(&rt, async move {
             // Start the MPRIS server
-            let server = LocalServer::new("Rustle", player)
+            let server = LocalServer::new(APP_ID, player)
                 .await
                 .expect("Failed to create MPRIS server");
 

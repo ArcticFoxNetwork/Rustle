@@ -10,6 +10,10 @@
 //! - `theme.rs` - Platform-specific theme constants
 //! - `keybindings.rs` - Keybinding display format
 
+pub const APP_BINARY_NAME: &str = "rustle";
+pub const APP_DISPLAY_NAME: &str = "Rustle";
+pub const APP_ID: &str = "life.fxs.rustle";
+
 pub mod keybindings;
 pub mod media_controls;
 pub mod theme;
@@ -18,7 +22,5 @@ pub mod window;
 
 pub fn init() {
     theme::configure_iced_font_system();
-
-    #[cfg(target_os = "windows")]
     window::initialize_process();
 }

@@ -1,0 +1,78 @@
+# Updates the Rustle package on microsoft/winget-pkgs whenever a release is
+# published. Requires the following repository configuration:
+#   - Secret:   WINGET_CREATE_TOKEN  (GitHub PAT with permission to fork and
+#                                     open PRs against microsoft/winget-pkgs)
+#   - Variable: WINGET_PACKAGE_ID    (optional; defaults to FeiXiangShi.Rustle)
+# The first submission must be done manually with `wingetcreate new`; this
+# workflow only handles `wingetcreate update` for subsequent releases.
+name: WinGet
+
+on:
+  release:
+    types:
+      - published
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+      version:
+        description: Optional package version without the leading v
+        required: false
+
+env:
+  APP_NAME: rustle
+  PACKAGE_ID: ${{ vars.WINGET_PACKAGE_ID || 'FeiXiangShi.Rustle' }}
+  WINGET_CREATE_TOKEN: ${{ secrets.WINGET_CREATE_TOKEN }}
+
+jobs:
+  update:
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    if: github.event_name != 'release' || github.event.release.prerelease == false
+    steps:
+      - name: Resolve release metadata
+        id: release
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.release.tag_name }}"
+          if (-not $tag) {
+            $tag = "${{ inputs.tag }}"
+          }
+          if (-not $tag) {
+            throw "A release tag is required."
+          }
+
+          $version = "${{ inputs.version }}"
+          if (-not $version) {
+            $version = $tag.TrimStart('v')
+          }
+
+          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/${{ env.APP_NAME }}-windows-x86_64.exe"
+
+          "tag=$tag" >> $env:GITHUB_OUTPUT
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "url=$url" >> $env:GITHUB_OUTPUT
+
+      - name: Skip when token is not configured
+        if: ${{ env.WINGET_CREATE_TOKEN == '' }}
+        shell: pwsh
+        run: |
+          Write-Host "::notice::WINGET_CREATE_TOKEN is not set. Skipping WinGet update."
+
+      - name: Download wingetcreate
+        if: ${{ env.WINGET_CREATE_TOKEN != '' }}
+        shell: pwsh
+        run: |
+          Invoke-WebRequest https://aka.ms/wingetcreate/latest -OutFile wingetcreate.exe
+
+      - name: Update WinGet manifest
+        if: ${{ env.WINGET_CREATE_TOKEN != '' }}
+        shell: pwsh
+        run: |
+          .\wingetcreate.exe update "${{ env.PACKAGE_ID }}" `
+            -u "${{ steps.release.outputs.url }}" `
+            -v "${{ steps.release.outputs.version }}" `
+            -t "$env:WINGET_CREATE_TOKEN" `
+            --submit

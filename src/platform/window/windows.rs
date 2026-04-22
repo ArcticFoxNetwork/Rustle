@@ -2,6 +2,7 @@
 //!
 //! Windows requires special handling: minimize before hide, restore before show
 
+use crate::platform::APP_ID;
 use iced::Task;
 
 pub fn initialize_process() {
@@ -10,7 +11,7 @@ pub fn initialize_process() {
         fn SetCurrentProcessExplicitAppUserModelID(appid: *const u16) -> i32;
     }
 
-    let app_id: Vec<u16> = "ArcticFoxNetwork.Rustle\0".encode_utf16().collect();
+    let app_id: Vec<u16> = format!("{}\0", APP_ID).encode_utf16().collect();
     let result = unsafe { SetCurrentProcessExplicitAppUserModelID(app_id.as_ptr()) };
 
     if result < 0 {

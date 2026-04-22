@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>life.fxs.rustle</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>AGPL-3.0-or-later</project_license>
+  <name>Rustle</name>
+  <summary>Native music player for NetEase Cloud Music and local libraries</summary>
+  <developer_name>Fei XiangShi</developer_name>
+  <launchable type="desktop-id">life.fxs.rustle.desktop</launchable>
+  <provides>
+    <binary>rustle</binary>
+  </provides>
+  <url type="homepage">https://github.com/Fei-xiangShi/Rustle</url>
+  <url type="bugtracker">https://github.com/Fei-xiangShi/Rustle/issues</url>
+  <url type="vcs-browser">https://github.com/Fei-xiangShi/Rustle</url>
+  <description>
+    <p>Rustle is a native desktop music player built with Rust and iced. It supports NetEase Cloud Music streaming, local library import, persistent playback, system media controls, and GPU-accelerated lyrics rendering.</p>
+    <p>The app includes playlist management, folder watching for local music libraries, tray integration, and synchronized lyric formats such as LRC, YRC, QRC, TTML, and ESLrc.</p>
+  </description>
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/Fei-xiangShi/Rustle/main/assets/screenshots/lyrics_page.png</image>
+      <caption>GPU-accelerated lyrics rendering</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Fei-xiangShi/Rustle/main/assets/screenshots/playlist.png</image>
+      <caption>Playlist management and local library browsing</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/Fei-xiangShi/Rustle/main/assets/screenshots/settings_page.png</image>
+      <caption>Playback, integration, and interface settings</caption>
+    </screenshot>
+  </screenshots>
+  <content_rating type="oars-1.1"/>
+</component>

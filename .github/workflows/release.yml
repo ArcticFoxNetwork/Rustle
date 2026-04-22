@@ -10,10 +10,11 @@ env:
   CARGO_TERM_COLOR: always
   APP_NAME: rustle
   APP_DISPLAY_NAME: Rustle
+  APP_ID: life.fxs.rustle
 
 jobs:
   linux-appimage:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
 
@@ -40,28 +41,22 @@ jobs:
         run: |
           mkdir -p AppDir/usr/bin
           mkdir -p AppDir/usr/share/applications
+          mkdir -p AppDir/usr/share/metainfo
           mkdir -p AppDir/usr/share/icons/hicolor/256x256/apps
+          mkdir -p AppDir/usr/share/licenses/${{ env.APP_NAME }}
           cp target/release/${{ env.APP_NAME }} AppDir/usr/bin/
-
-      - name: Create desktop file
-        run: |
-          cat > AppDir/usr/share/applications/${{ env.APP_NAME }}.desktop << DESKTOP
-          [Desktop Entry]
-          Name=${{ env.APP_DISPLAY_NAME }}
-          Comment=A modern music player
-          Exec=${{ env.APP_NAME }}
-          Icon=${{ env.APP_NAME }}
-          Type=Application
-          Categories=Audio;Music;Player;
-          DESKTOP
+          cp packaging/linux/${{ env.APP_ID }}.desktop AppDir/usr/share/applications/
+          cp packaging/linux/${{ env.APP_ID }}.metainfo.xml AppDir/usr/share/metainfo/
+          cp LICENSE AppDir/usr/share/licenses/${{ env.APP_NAME }}/LICENSE
 
       - name: Setup icon and AppRun
         run: |
-          # Generate 256x256 icon from high-res source
-          if [ -f "assets/icons/icon.png" ]; then
-            convert assets/icons/icon.png -resize 256x256 AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png
+          if [ -f "assets/icons/icon_256.png" ]; then
+            cp assets/icons/icon_256.png AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png
+          elif [ -f "assets/icons/icon.png" ]; then
+            convert assets/icons/icon.png -resize 256x256 AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png
           else
-            convert -size 256x256 xc:pink AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png 2>/dev/null || touch AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png
+            convert -size 256x256 xc:pink AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png 2>/dev/null || touch AppDir/usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png
           fi
 
       - name: Create AppRun script
@@ -78,8 +73,9 @@ jobs:
 
       - name: Link files to AppDir root
         run: |
-          ln -sf usr/share/applications/${{ env.APP_NAME }}.desktop AppDir/
-          ln -sf usr/share/icons/hicolor/256x256/apps/${{ env.APP_NAME }}.png AppDir/
+          ln -sf usr/share/applications/${{ env.APP_ID }}.desktop AppDir/${{ env.APP_ID }}.desktop
+          ln -sf usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png AppDir/${{ env.APP_ID }}.png
+          ln -sf usr/share/icons/hicolor/256x256/apps/${{ env.APP_ID }}.png AppDir/.DirIcon
 
       - name: Download appimagetool
         run: |
@@ -145,7 +141,7 @@ jobs:
               <key>CFBundleExecutable</key>
               <string>${{ env.APP_NAME }}</string>
               <key>CFBundleIdentifier</key>
-              <string>com.${{ env.APP_NAME }}.app</string>
+              <string>${{ env.APP_ID }}</string>
               <key>CFBundleName</key>
               <string>${{ env.APP_DISPLAY_NAME }}</string>
               <key>CFBundleIconFile</key>
@@ -289,6 +285,18 @@ jobs:
       - name: Display structure
         run: ls -R artifacts
 
+      - name: Generate release checksums
+        run: |
+          # Emit checksums keyed by basename so users can verify next to the
+          # downloaded (flat) release assets.
+          (
+            cd artifacts
+            find . -type f -not -name 'SHA256SUMS.txt' -print0 \
+              | sort -z \
+              | xargs -0 -n1 sha256sum \
+              | awk '{ n = split($2, p, "/"); printf "%s  %s\n", $1, p[n] }'
+          ) > artifacts/SHA256SUMS.txt
+
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
@@ -297,6 +305,7 @@ jobs:
             artifacts/macos-x86_64/*
             artifacts/macos-arm64/*
             artifacts/windows-x86_64/*
+            artifacts/SHA256SUMS.txt
           draft: false
           prerelease: false
           generate_release_notes: true

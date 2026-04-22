@@ -3,6 +3,8 @@
 //! Provides unified window behavior functions across platforms.
 //! Handles platform-specific differences in show/hide/minimize behavior.
 
+#[cfg(target_os = "linux")]
+use crate::platform::APP_ID;
 use iced::Task;
 
 #[cfg(target_os = "linux")]
@@ -82,7 +84,7 @@ pub fn window_settings() -> iced::window::Settings {
         decorations: false,
         #[cfg(target_os = "linux")]
         platform_specific: iced::window::settings::PlatformSpecific {
-            application_id: "rustle".to_string(),
+            application_id: APP_ID.to_string(),
             ..Default::default()
         },
         #[cfg(target_os = "macos")]
