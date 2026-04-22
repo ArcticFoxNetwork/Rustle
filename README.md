@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="../../releases"><img src="https://img.shields.io/github/v/release/ArcticFoxNetwork/Rustle?style=flat-square&color=blue" alt="Release"></a>
+  <a href="../../releases"><img src="https://img.shields.io/github/v/release/Fei-xiangShi/Rustle?style=flat-square&color=blue" alt="Release"></a>
   <img src="https://img.shields.io/badge/Platform-Windows%20%7C%20macOS%20%7C%20Linux-green?style=flat-square" alt="Platform">
   <img src="https://img.shields.io/badge/License-AGPL--3.0-orange?style=flat-square" alt="License">
 </p>
@@ -48,27 +48,27 @@
 |:--|:--:|:--:|
 | **内存占用** | ~250MB | 500MB+ |
 | **磁盘占用** | ~15MB | 150MB+ |
-| **CPU 空闲时** | <1% | 3-5% |
-| **启动速度** | 10ms | 2-5秒 |
+| **CPU 空闲时** | <1% | 3–5% |
+| **启动速度** | 10ms | 2–5秒 |
 
 ### 真正的跨平台体验
 
 | 平台 | 系统托盘 | 媒体控制 |
 |:--|:--:|:--:|
-| **Linux** | freedesktop 标准 | MPRIS D-Bus |
+| **Linux** | StatusNotifierItem | MPRIS2 D-Bus |
 | **Windows** | 原生托盘 | 系统媒体控制 |
 | **macOS** | 菜单栏图标 | 控制中心集成 |
 
 ### 更懂你的使用习惯
 
-- **播放状态持久化** - 关闭应用后，下次打开自动恢复播放列表和进度
-- **无缝预加载** - 提前加载下一首，切歌零等待
+- **播放状态持久化** — 关闭后下次打开自动恢复队列与进度
+- **无缝预加载** — 提前解码下一首，切歌零等待
 
 ### GPU 加速歌词渲染
 
-- **Apple Music 风格** - 逐字高亮、弹簧物理动画
-- **SDF 文字渲染** - GPU 加速，任意缩放不模糊
-- **多格式支持** - LRC / YRC / QRC / TTML / ESLrc
+- **Apple Music 风格** — 逐字高亮、弹簧物理动画
+- **SDF 文字渲染** — GPU 加速，任意缩放不模糊
+- **多格式支持** — LRC / YRC / QRC / TTML / ESLrc / LYS
 
 ---
 
@@ -81,6 +81,12 @@
 | Windows | `.exe` | x86_64 |
 | macOS | `.dmg` | Intel / Apple Silicon |
 | Linux | `.AppImage` | x86_64 |
+
+**Windows (winget)**
+
+```bash
+winget install FeiXiangShi.Rustle
+```
 
 **Arch Linux (AUR)**
 
@@ -96,17 +102,19 @@ yay -S rustle
 <summary><b>从源码构建</b></summary>
 
 ```bash
-# 克隆仓库
-git clone https://github.com/ArcticFoxNetwork/Rustle
+git clone https://github.com/Fei-xiangShi/Rustle
 cd Rustle
 
-# 安装依赖 (Ubuntu/Debian)
-sudo apt-get install -y libssl-dev libdbus-1-dev libasound2-dev
+# Ubuntu/Debian
+sudo apt-get install -y libasound2-dev pkg-config
+# Arch
+sudo pacman -S --needed alsa-lib pkgconf
 
-# 构建并运行
-cargo build --release
+cargo build --release --locked
 ./target/release/rustle
 ```
+
+Windows / macOS 安装好 [Rust 工具链](https://rustup.rs) 后直接 `cargo build --release` 即可。
 </details>
 
 ---
@@ -128,7 +136,7 @@ cargo build --release
 
 | 🖥️ 系统集成 |
 |:--|
-| 系统托盘 / MPRIS (Linux) / 全局快捷键 / 代理设置 |
+| 系统托盘 · MPRIS2 (Linux) · 全局媒体键 · 代理设置 |
 
 ---
 
@@ -136,10 +144,10 @@ cargo build --release
 
 | 播放控制 | | 导航 | |
 |:--|:--|:--|:--|
-| `Space` | 播放/暂停 | `Ctrl+H` | 首页 |
-| `Ctrl+N/P` | 下/上一首 | `Ctrl+K` | 搜索 |
-| `Ctrl+→/←` | 快进/快退 | `Q` | 队列 |
-| `Ctrl+↑/↓` | 音量 +/- | `F11` | 全屏 |
+| `Space` | 播放 / 暂停 | `Ctrl+H` | 首页 |
+| `Ctrl+N` / `Ctrl+P` | 下 / 上一首 | `Ctrl+K` | 搜索 |
+| `Ctrl+→` / `Ctrl+←` | 快进 / 快退 | `Q` | 队列 |
+| `Ctrl+↑` / `Ctrl+↓` | 音量 +/− | `F11` | 全屏 |
 
 ---
 
