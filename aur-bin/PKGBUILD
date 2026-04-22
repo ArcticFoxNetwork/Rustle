@@ -9,7 +9,6 @@ license=('AGPL-3.0-or-later')
 depends=(
     'dbus'
     'alsa-lib'
-    'libayatana-appindicator'
 )
 provides=('rustle')
 conflicts=('rustle')
