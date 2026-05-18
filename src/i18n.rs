@@ -171,6 +171,8 @@ pub enum Key {
     SettingsClearCache,
     SettingsClearCacheDesc,
     SettingsClearButton,
+    SettingsDiscordRichPresence,
+    SettingsDiscordRichPresenceDesc,
 
     // Settings - Shortcuts Section
     SettingsShortcutsTitle,

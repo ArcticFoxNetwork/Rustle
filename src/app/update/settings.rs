@@ -314,6 +314,20 @@ impl App {
                 self.switch_audio_output_device(device.clone());
                 Some(Task::perform(async { Message::SaveSettings }, |m| m))
             }
+            Message::UpdateDiscordEnabled(enabled) => {
+                self.core.settings.system.discord_enabled = *enabled;
+                self.core.discord_presence.set_enabled(*enabled);
+                if !*enabled {
+                    // Clear presence immediately when disabled
+                    return Some(Task::run(
+                        futures_util::stream::once(async move {
+                            crate::platform::discord::clear_activity_oneshot().await;
+                        }),
+                        |_| Message::SaveSettings,
+                    ));
+                }
+                Some(Task::perform(async { Message::SaveSettings }, |m| m))
+            }
             Message::UpdateProxyType(proxy_type) => {
                 self.core.settings.network.proxy_type = *proxy_type;
                 tracing::info!("Proxy type changed to: {:?}", proxy_type);

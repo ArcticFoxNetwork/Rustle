@@ -13,6 +13,7 @@ use crate::audio::{AudioAnalysisData, AudioProcessingChain, PlaybackInfo, Playba
 use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong, DbWatchedFolder};
 use crate::features::import::{CoverCache, FolderWatcher, ScanHandle, ScanProgress, ScanState};
 use crate::i18n::Locale;
+use crate::platform::discord::DiscordPresence;
 use crate::platform::media_controls::{MediaCommand, MediaHandle};
 use crate::ui::animation::{HoverAnimations, SingleHoverAnimation};
 use crate::ui::components::{ImportingPlaylist, NavItem};
@@ -55,6 +56,7 @@ pub struct CoreState {
     pub mpris_handle: Option<MediaHandle>,
     pub mpris_rx:
         Option<Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<MediaCommand>>>>,
+    pub discord_presence: DiscordPresence,
     pub window_restore_mode: iced::window::Mode,
     pub window_visibility: WindowVisibilityState,
     pub window_focused: bool,
@@ -87,6 +89,7 @@ impl CoreState {
         audio: Option<crate::audio::AudioHandle>,
         audio_chain: AudioProcessingChain,
     ) -> Self {
+        let discord_enabled = settings.system.discord_enabled;
         Self {
             db: None,
             db_error: None,
@@ -101,6 +104,7 @@ impl CoreState {
             cover_cache: None,
             mpris_handle: None,
             mpris_rx: None,
+            discord_presence: DiscordPresence::new(discord_enabled),
             window_restore_mode: iced::window::Mode::Windowed,
             window_visibility: WindowVisibilityState::Visible,
             window_focused: true,

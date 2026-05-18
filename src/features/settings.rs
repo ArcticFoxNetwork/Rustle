@@ -269,6 +269,9 @@ pub struct SystemSettings {
     pub audio_output_device: Option<String>,
     /// Audio buffer size in samples
     pub audio_buffer_size: u32,
+    /// Enable Discord Rich Presence integration
+    #[serde(default = "default_true")]
+    pub discord_enabled: bool,
 }
 
 /// Proxy type for network settings
@@ -465,6 +468,7 @@ impl Default for SystemSettings {
         Self {
             audio_output_device: None,
             audio_buffer_size: 512,
+            discord_enabled: true,
         }
     }
 }

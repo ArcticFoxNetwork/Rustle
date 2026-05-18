@@ -1,6 +1,7 @@
 //! Message update handlers - thin dispatcher delegating to submodules
 
 mod database;
+mod discord;
 mod discover;
 mod import;
 mod keyboard;
@@ -64,6 +65,9 @@ impl App {
             return task;
         }
         if let Some(task) = self.handle_mpris(&message) {
+            return task;
+        }
+        if let Some(task) = self.handle_discord(&message) {
             return task;
         }
         if let Some(task) = self.handle_keyboard(&message) {

@@ -139,6 +139,8 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::SettingsClearCache, "清除缓存");
     m.insert(Key::SettingsClearCacheDesc, "删除所有缓存的音频文件");
     m.insert(Key::SettingsClearButton, "清除");
+    m.insert(Key::SettingsDiscordRichPresence, "Discord Rich Presence");
+    m.insert(Key::SettingsDiscordRichPresenceDesc, "在 Discord 上显示当前播放状态");
 
     // Settings - Shortcuts Section
     m.insert(Key::SettingsShortcutsTitle, "快捷键设置");

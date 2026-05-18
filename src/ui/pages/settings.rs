@@ -646,6 +646,14 @@ fn system_section(
             };
             Message::UpdateAudioOutputDevice(device)
         },)
+    ),
+    setting_row(
+        locale.get(Key::SettingsDiscordRichPresence),
+        Some(locale.get(Key::SettingsDiscordRichPresenceDesc)),
+        toggler(settings.system.discord_enabled)
+            .on_toggle(Message::UpdateDiscordEnabled)
+            .size(theme::TEXT_SIZE_TITLE)
+            .into(),
     ),]
     .spacing(0)
     .into()

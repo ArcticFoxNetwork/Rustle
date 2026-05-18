@@ -122,6 +122,8 @@ pub enum Message {
     EnforceCacheLimit,
     /// Update system settings
     UpdateAudioOutputDevice(Option<String>),
+    /// Toggle Discord Rich Presence
+    UpdateDiscordEnabled(bool),
     /// Update network settings
     UpdateProxyType(crate::features::ProxyType),
     UpdateProxyHost(String),
@@ -592,6 +594,12 @@ pub enum Message {
     StreamingEvent(i64, crate::audio::streaming::StreamingEvent),
     /// Audio thread event
     AudioEvent(crate::audio::AudioEvent),
+
+    // ============ Discord Rich Presence ============
+    /// Update Discord presence with current playback state
+    DiscordUpdatePresence,
+    /// Clear Discord presence
+    DiscordClearPresence,
 }
 
 /// Icon identifiers for hover tracking
@@ -793,6 +801,7 @@ impl std::fmt::Debug for Message {
             Self::RefreshCacheStats => simple!("RefreshCacheStats"),
             Self::EnforceCacheLimit => simple!("EnforceCacheLimit"),
             Self::UpdateAudioOutputDevice(_) => simple!("UpdateAudioOutputDevice"),
+            Self::UpdateDiscordEnabled(b) => simple!("UpdateDiscordEnabled", "{}", b),
             Self::UpdateProxyType(t) => simple!("UpdateProxyType", "{:?}", t),
             Self::UpdateProxyHost(_) => simple!("UpdateProxyHost"),
             Self::UpdateProxyPort(_) => simple!("UpdateProxyPort"),
@@ -1073,6 +1082,10 @@ impl std::fmt::Debug for Message {
 
             // Audio events
             Self::AudioEvent(event) => simple!("AudioEvent", "{:?}", event),
+
+            // Discord
+            Self::DiscordUpdatePresence => simple!("DiscordUpdatePresence"),
+            Self::DiscordClearPresence => simple!("DiscordClearPresence"),
         }
     }
 }

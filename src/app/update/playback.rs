@@ -125,7 +125,14 @@ impl App {
                 Some(self.handle_streaming_event(*song_id, event.clone()))
             }
 
-            Message::AudioEvent(event) => Some(self.handle_audio_event(event.clone())),
+            Message::AudioEvent(event) => {
+                let task = self.handle_audio_event(event.clone());
+                if let Some(discord_task) = self.maybe_update_discord(event) {
+                    Some(Task::batch(vec![task, discord_task]))
+                } else {
+                    Some(task)
+                }
+            }
 
             _ => None,
         }

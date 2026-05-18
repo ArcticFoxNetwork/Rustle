@@ -14,7 +14,7 @@ categories = ["multimedia::audio"]
 iced = { version = "=0.15.0-dev", features = ["tokio", "advanced", "canvas", "image", "svg", "debug"] }
 iced_anim = "0.3.1"
 bytemuck = { version = "1.25", features = ["derive"] }
-tokio = { version = "1.50", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "fs"] }
+tokio = { version = "1.50", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "fs", "net", "io-util"] }
 rodio = { version = "0.21.1", features = ["symphonia-all"] }
 spectrum-analyzer = "1.7.0"
 rtrb = "0.3.3"
@@ -47,6 +47,7 @@ sdf_glyph_renderer = "1.0"
 ab_glyph = "0.2"
 quick-xml = "0.37.5"
 futures-util = "0.3.32"
+discord-rich-presence = "1.1.0"
 
 # Netease Cloud Music API
 qrcode-generator = "5.0"

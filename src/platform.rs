@@ -14,6 +14,7 @@ pub const APP_BINARY_NAME: &str = "rustle";
 pub const APP_DISPLAY_NAME: &str = "Rustle";
 pub const APP_ID: &str = "life.fxs.rustle";
 
+pub mod discord;
 pub mod keybindings;
 pub mod media_controls;
 pub mod theme;
