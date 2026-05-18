@@ -38,31 +38,7 @@ impl App {
                         .iter()
                         .find(|s| s.id == ncm_id)
                     {
-                        let db_song = crate::database::DbSong {
-                            id: -(song_info.id as i64),
-                            file_path: String::new(),
-                            title: song_info.name.clone(),
-                            artist: song_info.singer.clone(),
-                            album: song_info.album.clone(),
-                            duration_secs: (song_info.duration / 1000) as i64,
-                            track_number: None,
-                            year: None,
-                            genre: None,
-                            cover_path: if song_info.pic_url.is_empty() {
-                                None
-                            } else {
-                                Some(song_info.pic_url.clone())
-                            },
-                            file_hash: None,
-                            file_size: 0,
-                            format: Some("mp3".to_string()),
-                            normalization_gain: None,
-                            play_count: 0,
-                            last_played: None,
-                            last_modified: 0,
-                            is_missing: false,
-                            created_at: 0,
-                        };
+                        let db_song = Self::ncm_song_to_db_song(song_info);
                         self.playback.queue.push(db_song);
                         self.persist_queue_snapshot();
                         let idx = self.playback.queue.len() - 1;
@@ -98,9 +74,9 @@ impl App {
 
             Message::CyclePlayMode => {
                 if self.is_fm_mode() {
-                    return Some(Task::done(Message::ShowErrorToast(
+                    return Some(Self::toast_error(
                         "私人FM模式下无法更改播放模式".to_string(),
-                    )));
+                    ));
                 }
 
                 self.core.settings.play_mode = self.core.settings.play_mode.next();
@@ -276,9 +252,9 @@ impl App {
             AudioEvent::SeekFailed { error } => {
                 tracing::warn!("Seek failed: {}", error);
                 if error.contains("not supported") {
-                    return Task::done(Message::ShowWarningToast(
+                    return Self::toast_warning(
                         "该格式不支持拖动进度条".to_string(),
-                    ));
+                    );
                 }
                 if error.contains("end of stream") || error.contains("streaming") {
                     let progress = self
@@ -287,10 +263,10 @@ impl App {
                         .as_ref()
                         .map(|b| (b.progress() * 100.0) as u32)
                         .unwrap_or(0);
-                    return Task::done(Message::ShowInfoToast(format!(
+                    return Self::toast_info(format!(
                         "正在缓冲中 ({}%)，请稍候再拖动进度",
                         progress
-                    )));
+                    ));
                 }
             }
             AudioEvent::SeekStarted { target_position } => {
@@ -344,10 +320,10 @@ impl App {
             }
             AudioEvent::DeviceSwitchFailed { error } => {
                 tracing::error!("Device switch failed: {}", error);
-                return Task::done(Message::ShowErrorToast(format!(
+                return Self::toast_error(format!(
                     "切换音频设备失败: {}",
                     error
-                )));
+                ));
             }
             AudioEvent::Finished => {
                 tracing::info!("Song finished (AudioEvent::Finished)");
@@ -402,7 +378,7 @@ impl App {
             StreamingEvent::Error(err) => {
                 tracing::error!("Streaming error for song {}: {}", song_id, err);
                 self.replace_active_streaming_buffer(None);
-                return Task::done(Message::ShowErrorToast(format!("下载失败: {}", err)));
+                return Self::toast_error(format!("下载失败: {}", err));
             }
         }
         Task::none()

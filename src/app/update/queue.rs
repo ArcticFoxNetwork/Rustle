@@ -51,31 +51,7 @@ impl App {
                     if !ncm_songs.is_empty() {
                         let db_songs: Vec<crate::database::DbSong> = ncm_songs
                             .iter()
-                            .map(|song| crate::database::DbSong {
-                                id: -(song.id as i64),
-                                file_path: String::new(),
-                                title: song.name.clone(),
-                                artist: song.singer.clone(),
-                                album: song.album.clone(),
-                                duration_secs: (song.duration / 1000) as i64,
-                                track_number: None,
-                                year: None,
-                                genre: None,
-                                cover_path: if song.pic_url.is_empty() {
-                                    None
-                                } else {
-                                    Some(song.pic_url.clone())
-                                },
-                                file_hash: None,
-                                file_size: 0,
-                                format: Some("mp3".to_string()),
-                                normalization_gain: None,
-                                play_count: 0,
-                                last_played: None,
-                                last_modified: 0,
-                                is_missing: false,
-                                created_at: 0,
-                            })
+                            .map(|song| Self::ncm_song_to_db_song(song))
                             .collect();
 
                         self.playback.queue = db_songs.clone();
@@ -129,9 +105,9 @@ impl App {
                 if let Some(idx) = self.playback.current_index {
                     return Some(self.handle_playback_failure(idx, "Song resolution failed"));
                 }
-                Some(Task::done(Message::ShowErrorToast(
+                Some(Self::toast_error(
                     "无法加载歌曲".to_string(),
-                )))
+                ))
             }
 
             Message::RemoveFromQueue(idx) => {

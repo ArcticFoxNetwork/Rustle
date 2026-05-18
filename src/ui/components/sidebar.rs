@@ -143,7 +143,7 @@ pub fn view(
         Message::ImportLocalPlaylist,
     );
 
-    // User profile card at bottom - clickable login prompt with hover animation
+    // User profile card at bottom
     let user_hover_progress = sidebar_animations.get_progress(&SidebarId::UserCard);
 
     let not_logged_in = locale.get(Key::NotLoggedIn).to_string();
@@ -152,10 +152,9 @@ pub fn view(
     let avatar_radius = avatar_size / 2.0;
     let avatar_icon_size = 20.0;
 
-    let user_card_content = if is_logged_in {
+    let avatar_elem = if is_logged_in {
         if let Some(info) = user_info {
-            // Use pre-loaded avatar handle for instant rendering
-            let avatar = if let Some(handle) = &info.avatar_handle {
+            if let Some(handle) = &info.avatar_handle {
                 container(
                     iced::widget::image(handle.clone())
                         .width(Fill)
@@ -165,189 +164,89 @@ pub fn view(
                 )
                 .width(avatar_size)
                 .height(avatar_size)
+                .into()
             } else {
-                container(
-                    svg(svg::Handle::from_memory(crate::ui::icons::USER.as_bytes()))
-                        .width(avatar_icon_size)
-                        .height(avatar_icon_size)
-                        .style(|theme, _status| svg::Style {
-                            color: Some(theme::text_secondary(theme)),
-                        }),
-                )
-                .width(avatar_size)
-                .height(avatar_size)
-                .center_x(avatar_size)
-                .center_y(avatar_size)
-                .style(move |theme| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(theme::border_color(theme))),
-                    border: iced::Border {
-                        radius: avatar_radius.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                })
-            };
-
-            let vip_text = if info.vip_type > 0 {
-                row![
-                    text("VIP")
-                        .size(theme::TEXT_SIZE_CAPTION)
-                        .style(|_theme| text::Style {
-                            color: Some(theme::ACCENT_PINK),
-                        }),
-                ]
-            } else {
-                row![]
-            };
-
-            button(
-                row![
-                    avatar,
-                    Space::new().width(12),
-                    column![
-                        text(info.nickname.clone())
-                            .size(theme::TEXT_SIZE_BODY_LARGE)
-                            .style(|theme| text::Style {
-                                color: Some(theme::text_primary(theme))
-                            })
-                            .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT)),
-                        Space::new().height(2),
-                        vip_text,
-                    ],
-                    Space::new().width(Fill),
-                    // Arrow indicator with animated color
-                    svg(svg::Handle::from_memory(
-                        crate::ui::icons::CHEVRON_RIGHT.as_bytes()
-                    ))
-                    .width(16)
-                    .height(16)
-                    .style(move |theme, _status| svg::Style {
-                        color: Some(theme::animated_brightness(theme, user_hover_progress)),
-                    }),
-                ]
-                .align_y(Alignment::Center)
-                .padding(Padding::new(10.0)),
-            )
+                avatar_placeholder(avatar_size, avatar_radius, avatar_icon_size)
+            }
         } else {
-            // Should not happen if is_logged_in is true, but fallback
-            button(
-                row![
-                    // Avatar placeholder
-                    container(
-                        svg(svg::Handle::from_memory(crate::ui::icons::USER.as_bytes()))
-                            .width(avatar_icon_size)
-                            .height(avatar_icon_size)
-                            .style(|theme, _status| svg::Style {
-                                color: Some(theme::text_secondary(theme)),
-                            })
-                    )
-                    .width(avatar_size)
-                    .height(avatar_size)
-                    .center_x(avatar_size)
-                    .center_y(avatar_size)
-                    .style(move |theme| iced::widget::container::Style {
-                        background: Some(iced::Background::Color(theme::border_color(theme))),
-                        border: iced::Border {
-                            radius: avatar_radius.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    }),
-                    Space::new().width(12),
-                    column![
-                        text(not_logged_in)
-                            .size(theme::TEXT_SIZE_BODY_LARGE)
-                            .style(|theme| text::Style {
-                                color: Some(theme::text_primary(theme))
-                            })
-                            .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT)),
-                        Space::new().height(2),
-                        text(click_to_login)
-                            .size(theme::TEXT_SIZE_LABEL)
-                            .color(theme::ACCENT_PINK),
-                    ],
-                    Space::new().width(Fill),
-                    // Arrow indicator with animated color
-                    svg(svg::Handle::from_memory(
-                        crate::ui::icons::CHEVRON_RIGHT.as_bytes()
-                    ))
-                    .width(16)
-                    .height(16)
-                    .style(move |theme, _status| svg::Style {
-                        color: Some(theme::animated_brightness(theme, user_hover_progress)),
-                    }),
-                ]
-                .align_y(Alignment::Center)
-                .padding(Padding::new(10.0)),
-            )
+            avatar_placeholder(avatar_size, avatar_radius, avatar_icon_size)
         }
     } else {
-        button(
-            row![
-                // Avatar placeholder
-                container(
-                    svg(svg::Handle::from_memory(crate::ui::icons::USER.as_bytes()))
-                        .width(avatar_icon_size)
-                        .height(avatar_icon_size)
-                        .style(|theme, _status| svg::Style {
-                            color: Some(theme::text_secondary(theme)),
-                        })
-                )
-                .width(avatar_size)
-                .height(avatar_size)
-                .center_x(avatar_size)
-                .center_y(avatar_size)
-                .style(move |theme| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(theme::border_color(theme))),
-                    border: iced::Border {
-                        radius: avatar_radius.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }),
-                Space::new().width(12),
+        avatar_placeholder(avatar_size, avatar_radius, avatar_icon_size)
+    };
+
+    let text_col = if is_logged_in {
+        if let Some(info) = user_info {
+            if info.vip_type > 0 {
                 column![
-                    text(not_logged_in)
+                    text(info.nickname.clone())
                         .size(theme::TEXT_SIZE_BODY_LARGE)
                         .style(|theme| text::Style {
                             color: Some(theme::text_primary(theme))
                         })
                         .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT)),
                     Space::new().height(2),
-                    text(click_to_login)
-                        .size(theme::TEXT_SIZE_LABEL)
-                        .color(theme::ACCENT_PINK),
-                ],
-                Space::new().width(Fill),
-                // Arrow indicator with animated color
-                svg(svg::Handle::from_memory(
-                    crate::ui::icons::CHEVRON_RIGHT.as_bytes()
-                ))
-                .width(16)
-                .height(16)
-                .style(move |theme, _status| svg::Style {
-                    color: Some(theme::animated_brightness(theme, user_hover_progress)),
-                }),
+                    row![
+                        text("VIP")
+                            .size(theme::TEXT_SIZE_CAPTION)
+                            .style(|_theme| text::Style {
+                                color: Some(theme::ACCENT_PINK),
+                            }),
+                    ],
+                ]
+                .into()
+            } else {
+                column![
+                    text(info.nickname.clone())
+                        .size(theme::TEXT_SIZE_BODY_LARGE)
+                        .style(|theme| text::Style {
+                            color: Some(theme::text_primary(theme))
+                        })
+                        .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT)),
+                ]
+                .into()
+            }
+        } else {
+            column![
+                text(not_logged_in)
+                    .size(theme::TEXT_SIZE_BODY_LARGE)
+                    .style(|theme| text::Style {
+                        color: Some(theme::text_primary(theme))
+                    })
+                    .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT)),
+                Space::new().height(2),
+                text(click_to_login)
+                    .size(theme::TEXT_SIZE_LABEL)
+                    .color(theme::ACCENT_PINK),
             ]
-            .align_y(Alignment::Center)
-            .padding(Padding::new(10.0)),
-        )
-    }
-    .width(Fill)
-    .padding(0)
-    .style(move |_theme, _status| iced::widget::button::Style {
-        background: Some(iced::Background::Color(Color::TRANSPARENT)),
-        border: iced::Border {
-            radius: 8.0.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    })
-    .on_press(if is_logged_in {
-        Message::OpenSettings
+            .into()
+        }
     } else {
-        Message::ToggleLoginPopup
-    });
+        column![
+            text(not_logged_in)
+                .size(theme::TEXT_SIZE_BODY_LARGE)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_primary(theme))
+                })
+                .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT)),
+            Space::new().height(2),
+            text(click_to_login)
+                .size(theme::TEXT_SIZE_LABEL)
+                .color(theme::ACCENT_PINK),
+        ]
+        .into()
+    };
+
+    let user_card_content = user_card_row(
+        avatar_elem,
+        text_col,
+        user_hover_progress,
+        if is_logged_in {
+            Message::OpenSettings
+        } else {
+            Message::ToggleLoginPopup
+        },
+    );
 
     let user_card: Element<'static, Message> = mouse_area(user_card_content)
         .on_enter(Message::HoverSidebar(Some(SidebarId::UserCard)))
@@ -495,6 +394,74 @@ pub fn view(
     mouse_area(sidebar_container)
         .on_exit(Message::HoverSidebar(None))
         .into()
+}
+
+/// Circular avatar placeholder with a centered user icon
+fn avatar_placeholder(
+    size: f32,
+    radius: f32,
+    icon_size: f32,
+) -> Element<'static, Message> {
+    container(
+        svg(svg::Handle::from_memory(crate::ui::icons::USER.as_bytes()))
+            .width(icon_size)
+            .height(icon_size)
+            .style(|theme, _status| svg::Style {
+                color: Some(theme::text_secondary(theme)),
+            }),
+    )
+    .width(size)
+    .height(size)
+    .center_x(size)
+    .center_y(size)
+    .style(move |theme| iced::widget::container::Style {
+        background: Some(iced::Background::Color(theme::border_color(theme))),
+        border: iced::Border {
+            radius: radius.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .into()
+}
+
+/// Build a user card row with avatar, text column, and chevron indicator
+fn user_card_row(
+    avatar: Element<'static, Message>,
+    text_column: Element<'static, Message>,
+    hover_progress: f32,
+    on_press: Message,
+) -> Element<'static, Message> {
+    button(
+        row![
+            avatar,
+            Space::new().width(12),
+            text_column,
+            Space::new().width(Fill),
+            svg(svg::Handle::from_memory(
+                crate::ui::icons::CHEVRON_RIGHT.as_bytes()
+            ))
+            .width(16)
+            .height(16)
+            .style(move |theme, _status| svg::Style {
+                color: Some(theme::animated_brightness(theme, hover_progress)),
+            }),
+        ]
+        .align_y(Alignment::Center)
+        .padding(Padding::new(10.0)),
+    )
+    .width(Fill)
+    .padding(0)
+    .style(move |_theme, _status| iced::widget::button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        border: iced::Border {
+            radius: 8.0.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .on_press(on_press)
+    .into()
 }
 
 /// Create an animated sidebar button with hover transition

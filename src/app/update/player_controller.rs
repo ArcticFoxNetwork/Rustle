@@ -13,6 +13,7 @@ use crate::app::message::Message;
 use crate::app::state::{App, PendingPlaybackKind, PendingPlaybackRequest};
 use crate::database::DbSong;
 use crate::features::PlayMode;
+use crate::i18n::Key;
 
 use super::preload_manager::PreloadDirection;
 use super::queue_navigator::QueueNavigator;
@@ -526,10 +527,10 @@ impl App {
                 self.playback.consecutive_failures
             );
 
-            Task::done(Message::ShowErrorToast(format!(
+            Self::toast_error(format!(
                 "连续 {} 首歌曲播放失败，已停止播放",
                 MAX_CONSECUTIVE_FAILURES
-            )))
+            ))
         } else {
             Task::none()
         };
@@ -717,16 +718,16 @@ impl App {
                     if let Some(idx) = pending.queue_index {
                         self.handle_playback_failure(idx, &message)
                     } else {
-                        Task::done(Message::ShowErrorToast(format!("播放错误: {}", message)))
+                        Self::toast_error(format!("播放错误: {}", message))
                     }
                 }
                 PendingPlaybackKind::LoadPausedTrack | PendingPlaybackKind::RestartCurrentTrack => {
-                    Task::done(Message::ShowErrorToast(format!("播放错误: {}", message)))
+                    Self::toast_error(format!("播放错误: {}", message))
                 }
             };
         }
 
-        Task::done(Message::ShowErrorToast(format!("播放错误: {}", message)))
+        Self::toast_error(format!("播放错误: {}", message))
     }
 
     pub fn pause_current_playback(&mut self) {
@@ -1142,7 +1143,7 @@ impl App {
             Task::batch([resolve_task, event_task])
         } else {
             self.playback.pending_resolution_index = None;
-            Task::done(Message::ShowWarningToast("请先登录".to_string()))
+            Self::toast_warning(self.core.locale.get(Key::NotLoggedIn).to_string())
         }
     }
 

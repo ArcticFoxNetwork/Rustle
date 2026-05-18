@@ -10,6 +10,28 @@ use crate::app::state::UserInfo;
 use crate::app::{App, Message, Route};
 use crate::i18n::Key;
 
+/// Return `Some(toast_warning)` if user is not logged in, `None` if logged in.
+macro_rules! require_logged_in {
+    ($self:expr) => {
+        if !$self.core.is_logged_in {
+            return Some(Self::toast_warning(
+                $self.core.locale.get(Key::NotLoggedIn).to_string(),
+            ));
+        }
+    };
+}
+
+/// Return `Some(toast_warning)` if NCM client is not available, `None` if available.
+macro_rules! require_ncm_client {
+    ($self:expr) => {
+        if $self.core.ncm_client.is_none() {
+            return Some(Self::toast_warning(
+                $self.core.locale.get(Key::NotLoggedIn).to_string(),
+            ));
+        }
+    };
+}
+
 fn artist_page_id(artist_id: u64) -> i64 {
     i64::MIN + artist_id as i64
 }
@@ -42,7 +64,7 @@ fn format_social_count(value: u64) -> String {
 }
 
 impl App {
-    fn ncm_song_to_db_song(song_info: &crate::api::SongInfo) -> crate::database::DbSong {
+    pub(crate) fn ncm_song_to_db_song(song_info: &crate::api::SongInfo) -> crate::database::DbSong {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -112,7 +134,7 @@ impl App {
         } else {
             self.exit_fm_mode();
             let msg = self.core.locale.get(Key::NotLoggedIn).to_string();
-            Task::done(Message::ShowWarningToast(msg))
+            Self::toast_warning(msg)
         }
     }
 
@@ -438,7 +460,7 @@ impl App {
             return Task::batch([cover_task, api_task]);
         }
 
-        Task::done(Message::ShowWarningToast("请先登录".to_string()))
+        Self::toast_warning(self.core.locale.get(Key::NotLoggedIn).to_string())
     }
 
     pub(super) fn open_artist_route(&mut self, artist_id: u64) -> Task<Message> {
@@ -502,7 +524,7 @@ impl App {
             );
         }
 
-        Task::done(Message::ShowWarningToast("请先登录".to_string()))
+        Self::toast_warning(self.core.locale.get(Key::NotLoggedIn).to_string())
     }
 
     pub(super) fn open_user_route(&mut self, user_id: u64) -> Task<Message> {
@@ -573,7 +595,7 @@ impl App {
             );
         }
 
-        Task::done(Message::ShowWarningToast("请先登录".to_string()))
+        Self::toast_warning(self.core.locale.get(Key::NotLoggedIn).to_string())
     }
 
     /// Handle NCM-related messages
@@ -794,9 +816,9 @@ impl App {
                 QrLoginStatus::Expired => {
                     self.ui.home.qr_status = Some("二维码已过期，请刷新".to_string());
                     self.ui.home.login_popup_open = false;
-                    Some(Task::done(Message::ShowErrorToast(
+                    Some(Self::toast_error(
                         "二维码已过期".to_string(),
-                    )))
+                    ))
                 }
                 QrLoginStatus::Success => {
                     self.ui.home.qr_status = Some("登录成功！".to_string());
@@ -824,10 +846,10 @@ impl App {
                 QrLoginStatus::Error(err) => {
                     self.ui.home.qr_status = Some(format!("登录错误: {}", err));
                     self.ui.home.login_popup_open = false;
-                    Some(Task::done(Message::ShowErrorToast(format!(
+                    Some(Self::toast_error(format!(
                         "登录失败: {}",
                         err
-                    ))))
+                    )))
                 }
             },
 
@@ -849,7 +871,7 @@ impl App {
                 let avatar_url = login_info.avatar_url.clone();
 
                 Some(Task::batch([
-                    Task::done(Message::ShowSuccessToast("登录成功！".to_string())),
+                    Self::toast_success("登录成功！".to_string()),
                     self.load_homepage_data(),
                     Task::perform(
                         async move {
@@ -894,9 +916,9 @@ impl App {
                 let proxy_url = self.core.settings.network.proxy_url();
                 self.set_ncm_client(NcmClient::with_proxy(proxy_url));
 
-                Some(Task::done(Message::ShowSuccessToast(
+                Some(Self::toast_success(
                     "已退出登录".to_string(),
-                )))
+                ))
             }
 
             Message::UserInfoLoaded(user_info) => {
@@ -1122,11 +1144,7 @@ impl App {
             }
 
             Message::ToggleFavorite(song_id) => {
-                if !self.core.is_logged_in {
-                    return Some(Task::done(Message::ShowWarningToast(
-                        "请先登录".to_string(),
-                    )));
-                }
+                require_logged_in!(self);
 
                 if let Some(client) = &self.core.ncm_client {
                     let client = client.clone();
@@ -1190,11 +1208,7 @@ impl App {
             Message::PlayNcmSong(song_info) => {
                 debug!("Playing NCM song: {}", song_info.name);
 
-                if self.core.ncm_client.is_none() {
-                    return Some(Task::done(Message::ShowWarningToast(
-                        "请先登录".to_string(),
-                    )));
-                }
+                require_ncm_client!(self);
 
                 self.exit_fm_mode();
                 self.ui.home.current_ncm_playlist_songs = vec![song_info.clone()];
@@ -1324,9 +1338,9 @@ impl App {
                         },
                     ))
                 } else {
-                    Some(Task::done(Message::ShowWarningToast(
-                        "请先登录".to_string(),
-                    )))
+                    Some(Self::toast_warning(
+                        self.core.locale.get(Key::NotLoggedIn).to_string(),
+                    ))
                 }
             }
 
@@ -2553,11 +2567,7 @@ impl App {
             }
 
             Message::TogglePlaylistSubscribe(playlist_id) => {
-                if !self.core.is_logged_in {
-                    return Some(Task::done(Message::ShowWarningToast(
-                        "请先登录".to_string(),
-                    )));
-                }
+                require_logged_in!(self);
 
                 // Get current subscription status
                 let is_subscribed = self
@@ -2610,7 +2620,7 @@ impl App {
                 } else {
                     "已取消收藏"
                 };
-                Some(Task::done(Message::ShowSuccessToast(msg.to_string())))
+                Some(Self::toast_success(msg.to_string()))
             }
 
             _ => None,

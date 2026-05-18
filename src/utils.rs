@@ -580,3 +580,31 @@ pub async fn download_playlist_creator_avatar(
     let path = avatars_cache_dir().join(format!("playlist_creator_{}.jpg", playlist_id));
     download_img(client, avatar_url, path, 100, 100).await
 }
+
+// ============================================================================
+// Time Formatting
+// ============================================================================
+
+/// Format duration in seconds to "M:SS" or "MM:SS" string
+pub fn format_time(seconds: f32) -> String {
+    if seconds.is_finite() && seconds > 0.0 {
+        let total_secs = seconds as u64;
+        let mins = total_secs / 60;
+        let secs = total_secs % 60;
+        format!("{}:{:02}", mins, secs)
+    } else {
+        "0:00".to_string()
+    }
+}
+
+/// Format duration in seconds to "MM:SS" string (padded minutes)
+pub fn format_time_padded(seconds: f32) -> String {
+    if seconds.is_finite() && seconds > 0.0 {
+        let total_secs = seconds as u64;
+        let mins = total_secs / 60;
+        let secs = total_secs % 60;
+        format!("{:02}:{:02}", mins, secs)
+    } else {
+        "00:00".to_string()
+    }
+}

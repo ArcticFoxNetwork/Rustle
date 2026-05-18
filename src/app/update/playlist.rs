@@ -101,13 +101,13 @@ impl App {
                 if let Some(db) = &self.core.db {
                     let db = db.clone();
                     return Some(Task::batch([
-                        Task::done(Message::ShowSuccessToast("歌单已删除".to_string())),
+                        Self::toast_success("歌单已删除".to_string()),
                         Task::perform(load_watched_folders(db), Message::WatchedFoldersLoaded),
                     ]));
                 }
-                Some(Task::done(Message::ShowSuccessToast(
+                Some(Self::toast_success(
                     "歌单已删除".to_string(),
-                )))
+                ))
             }
 
             Message::PlaylistViewLoaded(view) => {

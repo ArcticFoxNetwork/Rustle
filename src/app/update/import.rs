@@ -174,10 +174,10 @@ impl App {
                     }
                     Some(Task::none())
                 }
-                Err(err) => Some(Task::done(Message::ShowErrorToast(format!(
+                Err(err) => Some(Self::toast_error(format!(
                     "创建本地媒体库失败：{}",
                     err
-                )))),
+                ))),
             },
 
             Message::WatchedFoldersLoaded(folders) => {
@@ -353,9 +353,9 @@ impl App {
                 Ok(task) => tasks.push(task),
                 Err(err) => {
                     tracing::error!("Failed to start folder watcher service: {}", err);
-                    return Task::done(Message::ShowWarningToast(
+                    return Self::toast_warning(
                         "本地媒体库监听启动失败".to_string(),
-                    ));
+                    );
                 }
             }
         }
@@ -460,10 +460,10 @@ impl App {
                     Message::WatchedFolderSyncCompleted,
                 )
             }
-            WatchEvent::Error(err) => Task::done(Message::ShowWarningToast(format!(
+            WatchEvent::Error(err) => Self::toast_warning(format!(
                 "本地媒体库监听出错：{}",
                 err
-            ))),
+            )),
         }
     }
 
@@ -546,7 +546,7 @@ impl App {
                 if let Some(playlist) = &mut self.ui.importing_playlist {
                     playlist.set_status("导入失败");
                 }
-                return Task::done(Message::ShowErrorToast(format!("导入失败：{}", err)));
+                return Self::toast_error(format!("导入失败：{}", err));
             }
             ScanProgress::Completed {
                 imported,
@@ -577,25 +577,25 @@ impl App {
                 let (toast_task, clear_delay_secs) = if total_processed == 0 {
                     self.ui.importing_playlist = None;
                     (
-                        Task::done(Message::ShowErrorToast(
+                        Self::toast_error(
                             "导入失败：未找到任何音频文件".to_string(),
-                        )),
+                        ),
                         None,
                     )
                 } else if *errors == 0 {
                     (
-                        Task::done(Message::ShowSuccessToast(format!(
+                        Self::toast_success(format!(
                             "导入完成！成功导入 {} 首歌曲",
                             imported
-                        ))),
+                        )),
                         Some(4),
                     )
                 } else {
                     (
-                        Task::done(Message::ShowWarningToast(format!(
+                        Self::toast_warning(format!(
                             "导入完成：{} 首成功，{} 首失败",
                             imported, errors
-                        ))),
+                        )),
                         Some(5),
                     )
                 };
@@ -685,7 +685,7 @@ impl App {
                 self.library.scan_handle = None;
                 self.ui.importing_playlist = None;
 
-                return Task::done(Message::ShowWarningToast("导入已取消".to_string()));
+                return Self::toast_warning("导入已取消".to_string());
             }
             _ => {}
         }

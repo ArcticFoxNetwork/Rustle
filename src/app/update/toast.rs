@@ -33,4 +33,24 @@ impl App {
             _ => None,
         }
     }
+
+    /// Create a task that shows an error toast
+    pub fn toast_error(msg: impl Into<String>) -> Task<Message> {
+        Task::done(Message::ShowErrorToast(msg.into()))
+    }
+
+    /// Create a task that shows a warning toast
+    pub fn toast_warning(msg: impl Into<String>) -> Task<Message> {
+        Task::done(Message::ShowWarningToast(msg.into()))
+    }
+
+    /// Create a task that shows a success toast
+    pub fn toast_success(msg: impl Into<String>) -> Task<Message> {
+        Task::done(Message::ShowSuccessToast(msg.into()))
+    }
+
+    /// Create a task that shows an info toast
+    pub fn toast_info(msg: impl Into<String>) -> Task<Message> {
+        Task::done(Message::ShowInfoToast(msg.into()))
+    }
 }

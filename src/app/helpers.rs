@@ -520,7 +520,7 @@ impl App {
                 },
             )
         } else {
-            Task::done(Message::ShowWarningToast("请先登录".to_string()))
+            Self::toast_warning(self.core.locale.get(crate::i18n::Key::NotLoggedIn).to_string())
         }
     }
 }
