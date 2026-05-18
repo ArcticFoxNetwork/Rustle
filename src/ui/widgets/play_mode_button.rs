@@ -72,7 +72,7 @@ pub fn view(play_mode: PlayMode, size: ButtonSize, is_fm_mode: bool) -> Element<
                 .width(icon_size)
                 .height(icon_size)
                 .style(move |_theme, _status| svg::Style {
-                    color: Some(theme::TEXT_SECONDARY),
+                    color: Some(theme::text_secondary(_theme)),
                 }),
         )
         .padding(padding)

@@ -354,7 +354,6 @@ impl Spring {
         self.get_v = get_velocity(Arc::clone(&self.current_solver));
         self.get_v2 = get_velocity(Arc::clone(&self.get_v));
     }
-
 }
 
 impl Clone for Spring {

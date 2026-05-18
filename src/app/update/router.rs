@@ -40,7 +40,8 @@ impl App {
         self.close_route_overlays();
         self.reset_route_transient_state();
 
-        if matches!(previous_route, Route::Search { .. }) && !matches!(route, Route::Search { .. }) {
+        if matches!(previous_route, Route::Search { .. }) && !matches!(route, Route::Search { .. })
+        {
             self.clear_search_cover_cache();
         }
 

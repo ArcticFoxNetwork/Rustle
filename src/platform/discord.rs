@@ -10,9 +10,9 @@
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use discord_rich_presence::activity::{Activity, ActivityType, Assets, Button, Timestamps};
-use discord_rich_presence::DiscordIpcClient;
 use discord_rich_presence::DiscordIpc;
+use discord_rich_presence::DiscordIpcClient;
+use discord_rich_presence::activity::{Activity, ActivityType, Assets, Button, Timestamps};
 
 const DISCORD_CLIENT_ID: &str = "1505971130908020966";
 const MIN_UPDATE_INTERVAL: Duration = Duration::from_secs(15);
@@ -76,10 +76,7 @@ pub fn build_activity(
         )]);
 
     if let Some(url) = art_url {
-        builder.assets(
-            Assets::new()
-                .large_image(url.to_string()),
-        )
+        builder.assets(Assets::new().large_image(url.to_string()))
     } else {
         builder
     }
@@ -113,7 +110,10 @@ pub fn build_activity_safe(
     position: Duration,
     duration: Duration,
 ) -> Activity<'static> {
-    match (title.filter(|t| !t.is_empty()), artist.filter(|a| !a.is_empty())) {
+    match (
+        title.filter(|t| !t.is_empty()),
+        artist.filter(|a| !a.is_empty()),
+    ) {
         (Some(t), Some(a)) => {
             let album_str = album.unwrap_or("Unknown Album");
             build_activity(t, a, album_str, art_url, position, duration)
@@ -133,9 +133,7 @@ static DISCORD_CONNECTED: std::sync::atomic::AtomicBool = std::sync::atomic::Ato
 static LAST_SEND: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 fn get_or_init_client() -> Option<&'static Arc<Mutex<DiscordIpcClient>>> {
-    DISCORD_CLIENT.get_or_init(|| {
-        Arc::new(Mutex::new(DiscordIpcClient::new(DISCORD_CLIENT_ID)))
-    });
+    DISCORD_CLIENT.get_or_init(|| Arc::new(Mutex::new(DiscordIpcClient::new(DISCORD_CLIENT_ID))));
     DISCORD_CLIENT.get()
 }
 

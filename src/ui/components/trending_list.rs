@@ -49,7 +49,9 @@ pub fn view<'a>(
             container(
                 text(locale.get(Key::Loading).to_string())
                     .size(theme::TEXT_SIZE_BODY)
-                    .color(theme::TEXT_SECONDARY),
+                    .style(|theme| text::Style {
+                        color: Some(theme::text_secondary(theme))
+                    }),
             )
             .width(Fill)
             .height(200)
@@ -103,7 +105,9 @@ fn view_song_item<'a>(
 
     let artist_text = text(&song.singer)
         .size(theme::TEXT_SIZE_CAPTION)
-        .color(theme::TEXT_SECONDARY);
+        .style(|theme| text::Style {
+            color: Some(theme::text_secondary(theme)),
+        });
 
     let song_info = column![song_name, artist_text,].spacing(2);
 
@@ -125,7 +129,9 @@ fn view_song_item<'a>(
         } else {
             let duration = text(format_duration(song.duration / 1000))
                 .size(theme::TEXT_SIZE_CAPTION)
-                .color(theme::TEXT_SECONDARY)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_secondary(theme)),
+                })
                 .into();
             (duration, 50.0)
         };
@@ -145,7 +151,7 @@ fn view_song_item<'a>(
                 .width(20)
                 .height(20)
                 .style(move |_theme, _status| svg::Style {
-                    color: Some(theme::TEXT_MUTED),
+                    color: Some(theme::text_muted(_theme)),
                 }),
         )
         .width(COVER_SIZE)

@@ -91,7 +91,7 @@ pub fn view<'a>(
             .width(24)
             .height(24)
             .style(|_theme, _status| svg::Style {
-                color: Some(theme::TEXT_PRIMARY),
+                color: Some(theme::text_primary(_theme)),
             }),
     )
     .padding(12)
@@ -115,7 +115,7 @@ pub fn view<'a>(
     let icon_btn_style = |_theme: &iced::Theme, status: button::Status| {
         let base = button::Style {
             background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-            text_color: theme::TEXT_PRIMARY,
+            text_color: theme::text_primary(_theme),
             border: iced::Border {
                 radius: 6.0.into(),
                 ..Default::default()
@@ -129,7 +129,7 @@ pub fn view<'a>(
                 background: Some(iced::Background::Color(Color::from_rgba(
                     1.0, 1.0, 1.0, 0.1,
                 ))),
-                text_color: theme::TEXT_PRIMARY,
+                text_color: theme::text_primary(_theme),
                 ..base
             },
             button::Status::Pressed => button::Style {
@@ -145,7 +145,7 @@ pub fn view<'a>(
     let close_btn_style = |_theme: &iced::Theme, status: button::Status| {
         let base = button::Style {
             background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-            text_color: theme::TEXT_PRIMARY,
+            text_color: theme::text_primary(_theme),
             border: iced::Border {
                 radius: 6.0.into(),
                 ..Default::default()
@@ -159,14 +159,14 @@ pub fn view<'a>(
                 background: Some(iced::Background::Color(iced::Color::from_rgb(
                     0.8, 0.2, 0.2,
                 ))),
-                text_color: theme::TEXT_PRIMARY,
+                text_color: theme::text_primary(_theme),
                 ..base
             },
             button::Status::Pressed => button::Style {
                 background: Some(iced::Background::Color(iced::Color::from_rgb(
                     0.6, 0.15, 0.15,
                 ))),
-                text_color: theme::TEXT_PRIMARY,
+                text_color: theme::text_primary(_theme),
                 ..base
             },
             _ => base,
@@ -178,7 +178,7 @@ pub fn view<'a>(
             .width(14)
             .height(14)
             .style(|_theme, _status| svg::Style {
-                color: Some(theme::TEXT_PRIMARY),
+                color: Some(theme::text_primary(_theme)),
             }),
     )
     .width(32)
@@ -191,7 +191,7 @@ pub fn view<'a>(
             .width(14)
             .height(14)
             .style(|_theme, _status| svg::Style {
-                color: Some(theme::TEXT_PRIMARY),
+                color: Some(theme::text_primary(_theme)),
             }),
     )
     .width(32)
@@ -204,7 +204,7 @@ pub fn view<'a>(
             .width(14)
             .height(14)
             .style(|_theme, _status| svg::Style {
-                color: Some(theme::TEXT_PRIMARY),
+                color: Some(theme::text_primary(_theme)),
             }),
     )
     .width(32)
@@ -217,7 +217,7 @@ pub fn view<'a>(
             .width(14)
             .height(14)
             .style(|_theme, _status| svg::Style {
-                color: Some(theme::TEXT_PRIMARY),
+                color: Some(theme::text_primary(_theme)),
             }),
     )
     .width(32)
@@ -294,7 +294,9 @@ fn build_left_panel<'a>(
     // Song title
     let title = text(&song.title)
         .size(theme::TEXT_SIZE_TITLE_LARGE)
-        .color(theme::TEXT_PRIMARY)
+        .style(|theme| text::Style {
+            color: Some(theme::text_primary(theme)),
+        })
         .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     // Artist name
@@ -304,7 +306,9 @@ fn build_left_panel<'a>(
     let artist: Element<'a, Message> = button(
         text(&song.artist)
             .size(theme::TEXT_SIZE_SUBTITLE)
-            .color(theme::TEXT_SECONDARY),
+            .style(|theme| text::Style {
+                color: Some(theme::text_secondary(theme)),
+            }),
     )
     .padding(0)
     .style(|_theme, _status| button::Style {
@@ -321,11 +325,15 @@ fn build_left_panel<'a>(
     let time_row = row![
         text(current_time)
             .size(theme::TEXT_SIZE_CAPTION)
-            .color(theme::TEXT_MUTED),
+            .style(|theme| text::Style {
+                color: Some(theme::text_muted(theme))
+            }),
         Space::new().width(Fill),
         text(total_time)
             .size(theme::TEXT_SIZE_CAPTION)
-            .color(theme::TEXT_MUTED),
+            .style(|theme| text::Style {
+                color: Some(theme::text_muted(theme))
+            }),
     ]
     .width(Fill);
 
@@ -458,7 +466,9 @@ fn build_right_panel_engine<'a>(
                     Space::new().height(16),
                     text("纯音乐，请欣赏")
                         .size(theme::TEXT_SIZE_SUBTITLE)
-                        .color(theme::TEXT_MUTED),
+                        .style(|theme| text::Style {
+                            color: Some(theme::text_muted(theme))
+                        }),
                 ]
                 .align_x(Alignment::Center),
             )
@@ -578,7 +588,9 @@ fn build_simple_lyrics_panel(
                     Space::new().height(16),
                     text("暂无歌词")
                         .size(theme::TEXT_SIZE_SUBTITLE)
-                        .color(theme::TEXT_MUTED),
+                        .style(|theme| text::Style {
+                            color: Some(theme::text_muted(theme))
+                        }),
                 ]
                 .align_x(Alignment::Center),
             )

@@ -145,7 +145,9 @@ pub fn view(
             container(
                 text(song_clone.artist.clone())
                     .size(theme::TEXT_SIZE_CAPTION)
-                    .color(theme::TEXT_SECONDARY),
+                    .style(|theme| text::Style {
+                        color: Some(theme::text_secondary(theme)),
+                    }),
             )
             .max_width(TEXT_MAX_WIDTH)
             .clip(true),
@@ -167,10 +169,14 @@ pub fn view(
         let placeholder = column![
             text("No song playing")
                 .size(theme::TEXT_SIZE_BODY)
-                .color(theme::TEXT_MUTED),
+                .style(|theme| text::Style {
+                    color: Some(theme::text_muted(theme))
+                }),
             text("Select a song to play")
                 .size(theme::TEXT_SIZE_CAPTION)
-                .color(theme::TEXT_MUTED),
+                .style(|theme| text::Style {
+                    color: Some(theme::text_muted(theme))
+                }),
         ]
         .spacing(2);
 
@@ -221,13 +227,17 @@ pub fn view(
     let progress_row = row![
         text(current_time)
             .size(theme::TEXT_SIZE_CAPTION)
-            .color(theme::TEXT_MUTED),
+            .style(|theme| text::Style {
+                color: Some(theme::text_muted(theme))
+            }),
         Space::new().width(8),
         progress_slider,
         Space::new().width(8),
         text(total_time)
             .size(theme::TEXT_SIZE_CAPTION)
-            .color(theme::TEXT_MUTED),
+            .style(|theme| text::Style {
+                color: Some(theme::text_muted(theme))
+            }),
     ]
     .align_y(Alignment::Center);
 
@@ -240,7 +250,7 @@ pub fn view(
         .width(18)
         .height(18)
         .style(|_theme, _status| svg::Style {
-            color: Some(theme::TEXT_SECONDARY),
+            color: Some(theme::text_secondary(_theme)),
         });
 
     let volume_slider = widgets::progress_slider::volume_slider(volume);
@@ -255,7 +265,7 @@ pub fn view(
             .width(18)
             .height(18)
             .style(|_theme, _status| svg::Style {
-                color: Some(theme::TEXT_SECONDARY),
+                color: Some(theme::text_secondary(_theme)),
             }),
     )
     .padding(8)

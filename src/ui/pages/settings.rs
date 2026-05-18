@@ -266,7 +266,7 @@ fn account_section(
                     .width(24)
                     .height(24)
                     .style(|_theme, _status| iced::widget::svg::Style {
-                        color: Some(theme::TEXT_SECONDARY),
+                        color: Some(theme::text_secondary(_theme)),
                     }),
                 )
                 .width(48)
@@ -631,30 +631,32 @@ fn system_section(
     let devices_for_closure = audio_devices.to_vec();
     let default_label = default_device_label.clone();
 
-    column![setting_row(
-        locale.get(Key::SettingsAudioDevice),
-        None,
-        styled_pick_list(display_names, Some(current_display), move |display_value| {
-            // Convert display name back to internal name
-            let device = if display_value == default_label {
-                None
-            } else {
-                devices_for_closure
-                    .iter()
-                    .find(|(_, description)| *description == display_value)
-                    .map(|(name, _)| name.clone())
-            };
-            Message::UpdateAudioOutputDevice(device)
-        },)
-    ),
-    setting_row(
-        locale.get(Key::SettingsDiscordRichPresence),
-        Some(locale.get(Key::SettingsDiscordRichPresenceDesc)),
-        toggler(settings.system.discord_enabled)
-            .on_toggle(Message::UpdateDiscordEnabled)
-            .size(theme::TEXT_SIZE_TITLE)
-            .into(),
-    ),]
+    column![
+        setting_row(
+            locale.get(Key::SettingsAudioDevice),
+            None,
+            styled_pick_list(display_names, Some(current_display), move |display_value| {
+                // Convert display name back to internal name
+                let device = if display_value == default_label {
+                    None
+                } else {
+                    devices_for_closure
+                        .iter()
+                        .find(|(_, description)| *description == display_value)
+                        .map(|(name, _)| name.clone())
+                };
+                Message::UpdateAudioOutputDevice(device)
+            },)
+        ),
+        setting_row(
+            locale.get(Key::SettingsDiscordRichPresence),
+            Some(locale.get(Key::SettingsDiscordRichPresenceDesc)),
+            toggler(settings.system.discord_enabled)
+                .on_toggle(Message::UpdateDiscordEnabled)
+                .size(theme::TEXT_SIZE_TITLE)
+                .into(),
+        ),
+    ]
     .spacing(0)
     .into()
 }

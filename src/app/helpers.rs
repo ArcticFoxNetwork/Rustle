@@ -520,7 +520,12 @@ impl App {
                 },
             )
         } else {
-            Self::toast_warning(self.core.locale.get(crate::i18n::Key::NotLoggedIn).to_string())
+            Self::toast_warning(
+                self.core
+                    .locale
+                    .get(crate::i18n::Key::NotLoggedIn)
+                    .to_string(),
+            )
         }
     }
 }

@@ -80,10 +80,7 @@ impl App {
             Message::SearchFailed(error) => {
                 self.ui.search.loading = false;
                 tracing::error!("Search failed: {}", error);
-                Some(Self::toast_error(format!(
-                    "搜索失败: {}",
-                    error
-                )))
+                Some(Self::toast_error(format!("搜索失败: {}", error)))
             }
 
             Message::SearchPageChanged(page) => {

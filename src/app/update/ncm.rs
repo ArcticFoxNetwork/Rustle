@@ -816,9 +816,7 @@ impl App {
                 QrLoginStatus::Expired => {
                     self.ui.home.qr_status = Some("二维码已过期，请刷新".to_string());
                     self.ui.home.login_popup_open = false;
-                    Some(Self::toast_error(
-                        "二维码已过期".to_string(),
-                    ))
+                    Some(Self::toast_error("二维码已过期".to_string()))
                 }
                 QrLoginStatus::Success => {
                     self.ui.home.qr_status = Some("登录成功！".to_string());
@@ -846,10 +844,7 @@ impl App {
                 QrLoginStatus::Error(err) => {
                     self.ui.home.qr_status = Some(format!("登录错误: {}", err));
                     self.ui.home.login_popup_open = false;
-                    Some(Self::toast_error(format!(
-                        "登录失败: {}",
-                        err
-                    )))
+                    Some(Self::toast_error(format!("登录失败: {}", err)))
                 }
             },
 
@@ -916,9 +911,7 @@ impl App {
                 let proxy_url = self.core.settings.network.proxy_url();
                 self.set_ncm_client(NcmClient::with_proxy(proxy_url));
 
-                Some(Self::toast_success(
-                    "已退出登录".to_string(),
-                ))
+                Some(Self::toast_success("已退出登录".to_string()))
             }
 
             Message::UserInfoLoaded(user_info) => {

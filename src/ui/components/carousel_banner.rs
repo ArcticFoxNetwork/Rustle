@@ -332,11 +332,15 @@ fn view_placeholder(locale: Locale) -> Element<'static, Message> {
             }),
         text(hero_subtitle)
             .size(theme::TEXT_SIZE_BODY)
-            .color(theme::TEXT_SECONDARY),
+            .style(|theme| text::Style {
+                color: Some(theme::text_secondary(theme))
+            }),
         Space::new().height(20),
         text(locale.get(Key::Loading).to_string())
             .size(theme::TEXT_SIZE_BODY)
-            .color(theme::TEXT_SECONDARY),
+            .style(|theme| text::Style {
+                color: Some(theme::text_secondary(theme))
+            }),
     ]
     .spacing(8)
     .padding(Padding::new(32.0));

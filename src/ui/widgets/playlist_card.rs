@@ -115,7 +115,9 @@ pub fn view<'a, Message: Clone + 'a>(
     // Author name
     let author_text = text(truncate_text(author, 25))
         .size(theme::TEXT_SIZE_CAPTION)
-        .color(theme::TEXT_MUTED);
+        .style(|theme| text::Style {
+            color: Some(theme::text_muted(theme)),
+        });
 
     // Card content
     let content = column![
@@ -202,7 +204,9 @@ pub fn view_with_custom_cover<'a, Message: Clone + 'a>(
     // Author name
     let author_text = text(truncate_text(author, 25))
         .size(theme::TEXT_SIZE_CAPTION)
-        .color(theme::TEXT_MUTED);
+        .style(|theme| text::Style {
+            color: Some(theme::text_muted(theme)),
+        });
 
     // Card content
     let content = column![

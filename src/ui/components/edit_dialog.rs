@@ -42,7 +42,9 @@ pub fn view<'a>(
     // Dialog content
     let title = text(locale.get(Key::EditPlaylistTitle).to_string())
         .size(theme::TEXT_SIZE_TITLE)
-        .color(theme::TEXT_PRIMARY)
+        .style(|theme| text::Style {
+            color: Some(theme::text_primary(theme)),
+        })
         .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     // Cover image section
@@ -88,7 +90,9 @@ pub fn view<'a>(
     let change_cover_btn = button(
         text(locale.get(Key::EditPlaylistChangeCover).to_string())
             .size(theme::TEXT_SIZE_LABEL)
-            .color(theme::TEXT_PRIMARY),
+            .style(|theme| text::Style {
+                color: Some(theme::text_primary(theme)),
+            }),
     )
     .padding(Padding::new(6.0).left(12.0).right(12.0))
     .style(|theme, status| {
@@ -102,7 +106,7 @@ pub fn view<'a>(
                 radius: 4.0.into(),
                 ..Default::default()
             },
-            text_color: theme::TEXT_PRIMARY,
+            text_color: theme::text_primary(theme),
             ..Default::default()
         }
     })
@@ -113,7 +117,9 @@ pub fn view<'a>(
 
     let name_label = text(locale.get(Key::EditPlaylistName).to_string())
         .size(theme::TEXT_SIZE_BODY)
-        .color(theme::TEXT_SECONDARY);
+        .style(|theme| text::Style {
+            color: Some(theme::text_secondary(theme)),
+        });
     let name_input = text_input(locale.get(Key::EditPlaylistNamePlaceholder), name)
         .on_input(Message::EditPlaylistNameChanged)
         .padding(12)
@@ -125,15 +131,17 @@ pub fn view<'a>(
                 width: 1.0,
                 radius: 6.0.into(),
             },
-            icon: theme::TEXT_MUTED,
-            placeholder: theme::TEXT_MUTED,
-            value: theme::TEXT_PRIMARY,
+            icon: theme::text_muted(theme),
+            placeholder: theme::text_muted(theme),
+            value: theme::text_primary(theme),
             selection: theme::ACCENT_PINK,
         });
 
     let desc_label = text(locale.get(Key::EditPlaylistDesc).to_string())
         .size(theme::TEXT_SIZE_BODY)
-        .color(theme::TEXT_SECONDARY);
+        .style(|theme| text::Style {
+            color: Some(theme::text_secondary(theme)),
+        });
     let desc_input = text_input(locale.get(Key::EditPlaylistDescPlaceholder), description)
         .on_input(Message::EditPlaylistDescriptionChanged)
         .padding(12)
@@ -145,9 +153,9 @@ pub fn view<'a>(
                 width: 1.0,
                 radius: 6.0.into(),
             },
-            icon: theme::TEXT_MUTED,
-            placeholder: theme::TEXT_MUTED,
-            value: theme::TEXT_PRIMARY,
+            icon: theme::text_muted(theme),
+            placeholder: theme::text_muted(theme),
+            value: theme::text_primary(theme),
             selection: theme::ACCENT_PINK,
         });
 
@@ -158,11 +166,15 @@ pub fn view<'a>(
                     column![
                         text(locale.get(Key::EditPlaylistWatchLibrary).to_string())
                             .size(theme::TEXT_SIZE_BODY)
-                            .color(theme::TEXT_SECONDARY),
+                            .style(|theme| text::Style {
+                                color: Some(theme::text_secondary(theme))
+                            }),
                         Space::new().height(4),
                         text(locale.get(Key::EditPlaylistWatchLibraryDesc).to_string())
                             .size(theme::TEXT_SIZE_CAPTION)
-                            .color(theme::TEXT_MUTED),
+                            .style(|theme| text::Style {
+                                color: Some(theme::text_muted(theme))
+                            }),
                     ]
                     .spacing(0)
                     .width(Fill),
@@ -174,7 +186,9 @@ pub fn view<'a>(
                 Space::new().height(8),
                 text(watch_path.unwrap_or_default().to_string())
                     .size(theme::TEXT_SIZE_CAPTION)
-                    .color(theme::TEXT_MUTED),
+                    .style(|theme| text::Style {
+                        color: Some(theme::text_muted(theme))
+                    }),
             ]
             .spacing(0),
         )
@@ -203,7 +217,9 @@ pub fn view<'a>(
     let cancel_btn = button(
         text(locale.get(Key::Cancel).to_string())
             .size(theme::TEXT_SIZE_BODY)
-            .color(theme::TEXT_PRIMARY),
+            .style(|theme| text::Style {
+                color: Some(theme::text_primary(theme)),
+            }),
     )
     .padding(Padding::new(10.0).left(24.0).right(24.0))
     .style(|theme, status| {
@@ -219,7 +235,7 @@ pub fn view<'a>(
                 width: 1.0,
                 radius: 20.0.into(),
             },
-            text_color: theme::TEXT_PRIMARY,
+            text_color: theme::text_primary(theme),
             ..Default::default()
         }
     })

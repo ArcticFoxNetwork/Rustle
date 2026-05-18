@@ -122,7 +122,9 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
                 view_progress_ring_styled(progress_ring, 28.0),
                 text(format!("{}%", percentage))
                     .size(theme::TEXT_SIZE_MICRO)
-                    .color(theme::TEXT_MUTED)
+                    .style(|theme| text::Style {
+                        color: Some(theme::text_muted(theme))
+                    })
             ]
             .align_x(Alignment::Center)
             .spacing(1),
@@ -154,12 +156,14 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
                 color: Some(if completed {
                     theme::text_primary(theme)
                 } else {
-                    theme::TEXT_SECONDARY
+                    theme::text_secondary(theme)
                 })
             }),
         text(status_text)
             .size(theme::TEXT_SIZE_CAPTION)
-            .color(theme::TEXT_MUTED)
+            .style(|theme| text::Style {
+                color: Some(theme::text_muted(theme))
+            })
     ]
     .spacing(2);
 
@@ -167,13 +171,17 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
         if playlist.cancelling {
             text("取消中")
                 .size(theme::TEXT_SIZE_CAPTION)
-                .color(theme::TEXT_MUTED)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_muted(theme)),
+                })
                 .into()
         } else {
             button(
                 text("取消")
                     .size(theme::TEXT_SIZE_CAPTION)
-                    .color(theme::TEXT_MUTED),
+                    .style(|theme| text::Style {
+                        color: Some(theme::text_muted(theme)),
+                    }),
             )
             .style(theme::text_button)
             .on_press(Message::CancelScan)

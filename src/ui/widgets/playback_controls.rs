@@ -149,7 +149,7 @@ pub fn prev_button(size: ControlSize, disabled: bool) -> Element<'static, Messag
                 color: Some(if disabled {
                     theme::TEXT_DISABLED
                 } else {
-                    theme::TEXT_SECONDARY
+                    theme::text_secondary(_theme)
                 }),
             }),
     )
@@ -191,7 +191,7 @@ pub fn next_button(size: ControlSize) -> Element<'static, Message> {
             .width(icon_size)
             .height(icon_size)
             .style(|_theme, _status| svg::Style {
-                color: Some(theme::TEXT_SECONDARY),
+                color: Some(theme::text_secondary(_theme)),
             }),
     )
     .padding(padding)

@@ -118,7 +118,9 @@ pub fn view(
     // Library section header
     let library_header = text(locale.get(Key::LibraryTitle))
         .size(theme::TEXT_SIZE_LABEL)
-        .color(theme::TEXT_MUTED)
+        .style(|theme| text::Style {
+            color: Some(theme::text_muted(theme)),
+        })
         .width(Fill);
 
     // Recently played button - use same animated style as nav buttons
@@ -186,13 +188,11 @@ pub fn view(
                         })
                         .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT)),
                     Space::new().height(2),
-                    row![
-                        text("VIP")
-                            .size(theme::TEXT_SIZE_CAPTION)
-                            .style(|_theme| text::Style {
-                                color: Some(theme::ACCENT_PINK),
-                            }),
-                    ],
+                    row![text("VIP").size(theme::TEXT_SIZE_CAPTION).style(|_theme| {
+                        text::Style {
+                            color: Some(theme::ACCENT_PINK),
+                        }
+                    }),],
                 ]
                 .into()
             } else {
@@ -294,7 +294,9 @@ pub fn view(
     if is_logged_in {
         let cloud_header = text(locale.get(Key::CloudPlaylistsTitle))
             .size(theme::TEXT_SIZE_LABEL)
-            .color(theme::TEXT_MUTED)
+            .style(|theme| text::Style {
+                color: Some(theme::text_muted(theme)),
+            })
             .width(Fill);
 
         scrollable_items.push(Space::new().height(20).into());
@@ -397,11 +399,7 @@ pub fn view(
 }
 
 /// Circular avatar placeholder with a centered user icon
-fn avatar_placeholder(
-    size: f32,
-    radius: f32,
-    icon_size: f32,
-) -> Element<'static, Message> {
+fn avatar_placeholder(size: f32, radius: f32, icon_size: f32) -> Element<'static, Message> {
     container(
         svg(svg::Handle::from_memory(crate::ui::icons::USER.as_bytes()))
             .width(icon_size)

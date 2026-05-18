@@ -24,12 +24,16 @@ pub fn view(
     // Dialog content
     let title = text(locale.get(Key::ExitDialogTitle).to_string())
         .size(theme::TEXT_SIZE_SUBTITLE)
-        .color(theme::TEXT_PRIMARY)
+        .style(|theme| text::Style {
+            color: Some(theme::text_primary(theme)),
+        })
         .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     let message = text(locale.get(Key::ExitDialogMessage).to_string())
         .size(theme::TEXT_SIZE_BODY)
-        .color(theme::TEXT_SECONDARY);
+        .style(|theme| text::Style {
+            color: Some(theme::text_secondary(theme)),
+        });
 
     let remember_checkbox = checkbox(remember_choice)
         .label("记住我的选择")
@@ -62,7 +66,9 @@ pub fn view(
     let exit_btn = button(
         text(locale.get(Key::ExitDialogExit).to_string())
             .size(theme::TEXT_SIZE_BODY)
-            .color(theme::TEXT_PRIMARY),
+            .style(|theme| text::Style {
+                color: Some(theme::text_primary(theme)),
+            }),
     )
     .padding([10, 24])
     .style(|theme, status| {
@@ -72,7 +78,7 @@ pub fn view(
         };
         button::Style {
             background: Some(iced::Background::Color(bg)),
-            text_color: theme::TEXT_PRIMARY,
+            text_color: theme::text_primary(theme),
             border: iced::Border {
                 radius: 8.0.into(),
                 width: 1.0,
@@ -92,7 +98,7 @@ pub fn view(
     .style(|theme, status| {
         let bg = match status {
             button::Status::Hovered => theme::hover_bg(theme),
-            _ => theme::TEXT_PRIMARY,
+            _ => theme::text_primary(theme),
         };
         button::Style {
             background: Some(iced::Background::Color(bg)),
@@ -109,7 +115,9 @@ pub fn view(
     let cancel_btn = button(
         text(locale.get(Key::Cancel).to_string())
             .size(theme::TEXT_SIZE_BODY)
-            .color(theme::TEXT_SECONDARY),
+            .style(|theme| text::Style {
+                color: Some(theme::text_secondary(theme)),
+            }),
     )
     .padding([10, 16])
     .style(|theme, status| {
@@ -119,7 +127,7 @@ pub fn view(
         };
         button::Style {
             background: Some(iced::Background::Color(bg)),
-            text_color: theme::TEXT_SECONDARY,
+            text_color: theme::text_secondary(theme),
             border: iced::Border {
                 radius: 8.0.into(),
                 ..Default::default()

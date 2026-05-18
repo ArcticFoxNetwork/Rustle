@@ -1,7 +1,8 @@
 // src/app/view.rs
 //! Application view rendering
 
-use iced::widget::{Space, column, container, row, stack};
+use iced::mouse::Interaction;
+use iced::widget::{Space, column, container, mouse_area, opaque, row, stack};
 use iced::{Alignment, Element, Fill};
 
 use super::message::Message;
@@ -339,20 +340,28 @@ impl App {
                 );
 
                 // Position queue popup above player bar, aligned to the right
-                container(
-                    column![
-                        Space::new().height(Fill),
-                        container(queue_popup)
+                // Wrap in opaque + mouse_area to block event/cursor penetration
+                // Clicking outside the queue bubble dismisses it
+                opaque(
+                    mouse_area(
+                        container(
+                            column![
+                                Space::new().height(Fill),
+                                container(queue_popup)
+                                    .width(Fill)
+                                    .align_x(Alignment::End)
+                                    .padding(iced::Padding::new(0.0).right(20.0).bottom(8.0)),
+                                Space::new().height(components::PLAYER_BAR_HEIGHT),
+                            ]
                             .width(Fill)
-                            .align_x(Alignment::End)
-                            .padding(iced::Padding::new(0.0).right(20.0).bottom(8.0)),
-                        Space::new().height(components::PLAYER_BAR_HEIGHT),
-                    ]
-                    .width(Fill)
-                    .height(Fill),
+                            .height(Fill),
+                        )
+                        .width(Fill)
+                        .height(Fill),
+                    )
+                    .interaction(Interaction::Idle)
+                    .on_press(Message::ToggleQueue),
                 )
-                .width(Fill)
-                .height(Fill)
                 .into()
             } else {
                 // Empty overlay when queue is hidden - keeps layout structure consistent
@@ -378,14 +387,17 @@ impl App {
         // Build overlays - always use consistent stack structure to preserve scroll
 
         // Toast overlay (empty space if not visible)
+        // Wrapped in opaque to prevent click/cursor penetration through toast area
         let toast_overlay: Element<'_, Message> = if self.ui.toast_visible {
             if let Some(toast) = &self.ui.toast {
                 let toast_widget = widgets::view_toast(toast);
-                container(toast_widget)
-                    .width(Fill)
-                    .padding(20)
-                    .align_x(Alignment::Center)
-                    .into()
+                opaque(
+                    container(toast_widget)
+                        .width(Fill)
+                        .padding(20)
+                        .align_x(Alignment::Center),
+                )
+                .into()
             } else {
                 Space::new().width(0).height(0).into()
             }

@@ -252,9 +252,7 @@ impl App {
             AudioEvent::SeekFailed { error } => {
                 tracing::warn!("Seek failed: {}", error);
                 if error.contains("not supported") {
-                    return Self::toast_warning(
-                        "该格式不支持拖动进度条".to_string(),
-                    );
+                    return Self::toast_warning("该格式不支持拖动进度条".to_string());
                 }
                 if error.contains("end of stream") || error.contains("streaming") {
                     let progress = self
@@ -320,10 +318,7 @@ impl App {
             }
             AudioEvent::DeviceSwitchFailed { error } => {
                 tracing::error!("Device switch failed: {}", error);
-                return Self::toast_error(format!(
-                    "切换音频设备失败: {}",
-                    error
-                ));
+                return Self::toast_error(format!("切换音频设备失败: {}", error));
             }
             AudioEvent::Finished => {
                 tracing::info!("Song finished (AudioEvent::Finished)");

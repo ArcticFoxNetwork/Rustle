@@ -2,7 +2,8 @@
 //!
 //! Displays QR code for NCM login with status messages.
 
-use iced::widget::{Space, button, column, container, image, row, svg, text};
+use iced::mouse::Interaction;
+use iced::widget::{Space, button, column, container, image, mouse_area, opaque, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Padding};
 use std::path::PathBuf;
 
@@ -40,16 +41,17 @@ pub fn view<'a>(
     };
 
     // Popup container with mouse_area to prevent click-through to backdrop
-    let popup = iced::widget::mouse_area(
+    let popup = mouse_area(
         container(content)
             .width(POPUP_WIDTH)
             .height(POPUP_HEIGHT)
             .padding(24)
             .style(theme::login_popup),
-    );
+    )
+    .interaction(Interaction::Idle);
 
     // Backdrop - clicking outside popup closes it
-    let backdrop = iced::widget::mouse_area(
+    let backdrop = mouse_area(
         container(Space::new().width(Fill).height(Fill))
             .width(Fill)
             .height(Fill)
@@ -58,19 +60,22 @@ pub fn view<'a>(
                 ..Default::default()
             }),
     )
+    .interaction(Interaction::Idle)
     .on_press(Message::ToggleLoginPopup);
 
-    // Stack popup on backdrop
-    iced::widget::stack![
-        backdrop,
-        container(popup)
-            .width(Fill)
-            .height(Fill)
-            .align_x(Alignment::Center)
-            .align_y(Alignment::Center),
-    ]
-    .width(Fill)
-    .height(Fill)
+    // Stack popup on backdrop, wrapped in opaque to block events from reaching layers below
+    opaque(
+        iced::widget::stack![
+            backdrop,
+            container(popup)
+                .width(Fill)
+                .height(Fill)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center),
+        ]
+        .width(Fill)
+        .height(Fill),
+    )
     .into()
 }
 
@@ -107,7 +112,9 @@ fn view_qr_login<'a>(
         container(
             text(locale.get(Key::LoginGeneratingQr).to_string())
                 .size(theme::TEXT_SIZE_BODY)
-                .color(theme::TEXT_SECONDARY),
+                .style(|theme| text::Style {
+                    color: Some(theme::text_secondary(theme)),
+                }),
         )
         .width(QR_SIZE)
         .height(QR_SIZE)
@@ -126,7 +133,9 @@ fn view_qr_login<'a>(
 
     let status_text = text(qr_status.unwrap_or("请使用网易云音乐App扫码"))
         .size(theme::TEXT_SIZE_BODY)
-        .color(theme::TEXT_SECONDARY);
+        .style(|theme| text::Style {
+            color: Some(theme::text_secondary(theme)),
+        });
 
     let refresh_button = button(
         row![
@@ -183,7 +192,9 @@ fn view_logged_in(user: &UserInfo, locale: Locale) -> Element<'_, Message> {
 
     let uid_text = text(format!("UID: {}", user.user_id))
         .size(theme::TEXT_SIZE_BODY)
-        .color(theme::TEXT_SECONDARY);
+        .style(|theme| text::Style {
+            color: Some(theme::text_secondary(theme)),
+        });
 
     let logout_button = button(
         row![

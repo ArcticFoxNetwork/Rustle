@@ -60,7 +60,7 @@ pub fn view(search_query: &str, locale: Locale, style: SearchBarStyle) -> Elemen
     .width(style.icon_size)
     .height(style.icon_size)
     .style(|_theme, _status| svg::Style {
-        color: Some(theme::TEXT_MUTED),
+        color: Some(theme::text_muted(_theme)),
     });
 
     let input = text_input(locale.get(Key::SearchPlaceholder), search_query)
@@ -72,8 +72,8 @@ pub fn view(search_query: &str, locale: Locale, style: SearchBarStyle) -> Elemen
         .style(|theme, _status| iced::widget::text_input::Style {
             background: iced::Background::Color(iced::Color::TRANSPARENT),
             border: iced::Border::default(),
-            icon: theme::TEXT_MUTED,
-            placeholder: theme::TEXT_MUTED,
+            icon: theme::text_muted(theme),
+            placeholder: theme::text_muted(theme),
             value: theme::text_primary(theme),
             selection: theme::ACCENT_PINK,
         });

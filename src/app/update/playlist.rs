@@ -105,9 +105,7 @@ impl App {
                         Task::perform(load_watched_folders(db), Message::WatchedFoldersLoaded),
                     ]));
                 }
-                Some(Self::toast_success(
-                    "歌单已删除".to_string(),
-                ))
+                Some(Self::toast_success("歌单已删除".to_string()))
             }
 
             Message::PlaylistViewLoaded(view) => {

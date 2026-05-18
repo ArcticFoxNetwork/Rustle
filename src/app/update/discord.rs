@@ -29,14 +29,12 @@ impl App {
                 }
             }
 
-            Message::DiscordClearPresence => {
-                Some(Task::run(
-                    futures_util::stream::once(async move {
-                        discord_mod::clear_activity_oneshot().await;
-                    }),
-                    |_| Message::Noop,
-                ))
-            }
+            Message::DiscordClearPresence => Some(Task::run(
+                futures_util::stream::once(async move {
+                    discord_mod::clear_activity_oneshot().await;
+                }),
+                |_| Message::Noop,
+            )),
 
             _ => None,
         }
@@ -52,14 +50,10 @@ impl App {
             AudioEvent::Started { .. } | AudioEvent::Resumed => {
                 Some(Task::done(Message::DiscordUpdatePresence))
             }
-            AudioEvent::Paused { .. }
-            | AudioEvent::Stopped
-            | AudioEvent::Finished => {
+            AudioEvent::Paused { .. } | AudioEvent::Stopped | AudioEvent::Finished => {
                 Some(Task::done(Message::DiscordClearPresence))
             }
-            AudioEvent::SeekComplete { .. } => {
-                Some(Task::done(Message::DiscordUpdatePresence))
-            }
+            AudioEvent::SeekComplete { .. } => Some(Task::done(Message::DiscordUpdatePresence)),
             _ => None,
         }
     }
@@ -97,13 +91,7 @@ impl App {
         let duration = runtime.info.duration;
 
         Some(discord_mod::build_activity_safe(
-            title,
-            artist,
-            album,
-            art_url,
-            filename,
-            position,
-            duration,
+            title, artist, album, art_url, filename, position, duration,
         ))
     }
 }

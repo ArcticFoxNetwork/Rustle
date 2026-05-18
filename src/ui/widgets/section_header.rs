@@ -36,13 +36,15 @@ pub fn view<'a, Message: Clone + 'a>(
             row![
                 text(see_all_text)
                     .size(theme::TEXT_SIZE_BODY)
-                    .color(theme::TEXT_SECONDARY),
+                    .style(|theme| text::Style {
+                        color: Some(theme::text_secondary(theme))
+                    }),
                 Space::new().width(4),
                 svg(svg::Handle::from_memory(icons::CHEVRON_RIGHT.as_bytes()))
                     .width(16)
                     .height(16)
                     .style(|_theme, _status| svg::Style {
-                        color: Some(theme::TEXT_SECONDARY),
+                        color: Some(theme::text_secondary(_theme)),
                     }),
             ]
             .align_y(Alignment::Center),
@@ -50,8 +52,8 @@ pub fn view<'a, Message: Clone + 'a>(
         .padding(0)
         .style(|_theme, status| {
             let text_color = match status {
-                iced::widget::button::Status::Hovered => theme::TEXT_PRIMARY,
-                _ => theme::TEXT_SECONDARY,
+                iced::widget::button::Status::Hovered => theme::text_primary(_theme),
+                _ => theme::text_secondary(_theme),
             };
             iced::widget::button::Style {
                 background: None,

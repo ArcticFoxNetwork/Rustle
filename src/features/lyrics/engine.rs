@@ -289,7 +289,8 @@ impl LyricsEngine {
         physics.set_snap_threshold(config.snap_threshold);
         physics.set_max_overscroll(config.max_overscroll);
         debug_assert!(
-            [AlignAnchor::Top, AlignAnchor::Center, AlignAnchor::Bottom].contains(&config.align_anchor)
+            [AlignAnchor::Top, AlignAnchor::Center, AlignAnchor::Bottom]
+                .contains(&config.align_anchor)
         );
 
         // Use provided font system for text shaping

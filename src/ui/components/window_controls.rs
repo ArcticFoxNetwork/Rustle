@@ -99,8 +99,8 @@ pub fn view<'a>(
             ))
             .width(icon_size)
             .height(icon_size)
-            .style(|_theme, _status| svg::Style {
-                color: Some(theme::TEXT_SECONDARY),
+            .style(|theme, _status| svg::Style {
+                color: Some(theme::text_secondary(theme)),
             }),
         )
         .width(button_size)
@@ -116,8 +116,8 @@ pub fn view<'a>(
             svg(svg::Handle::from_memory(MINIMIZE_ICON.as_bytes()))
                 .width(icon_size)
                 .height(icon_size)
-                .style(|_theme, _status| svg::Style {
-                    color: Some(theme::TEXT_SECONDARY),
+                .style(|theme, _status| svg::Style {
+                    color: Some(theme::text_secondary(theme)),
                 }),
         )
         .width(button_size)
@@ -133,8 +133,8 @@ pub fn view<'a>(
             svg(svg::Handle::from_memory(MAXIMIZE_ICON.as_bytes()))
                 .width(icon_size)
                 .height(icon_size)
-                .style(|_theme, _status| svg::Style {
-                    color: Some(theme::TEXT_SECONDARY),
+                .style(|theme, _status| svg::Style {
+                    color: Some(theme::text_secondary(theme)),
                 }),
         )
         .width(button_size)
@@ -150,8 +150,8 @@ pub fn view<'a>(
             svg(svg::Handle::from_memory(CLOSE_ICON.as_bytes()))
                 .width(icon_size)
                 .height(icon_size)
-                .style(|_theme, _status| svg::Style {
-                    color: Some(theme::TEXT_SECONDARY),
+                .style(|theme, _status| svg::Style {
+                    color: Some(theme::text_secondary(theme)),
                 }),
         )
         .width(button_size)
@@ -214,7 +214,7 @@ fn nav_button_style(
     let base = button::Style {
         background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
         text_color: if enabled {
-            theme::TEXT_SECONDARY
+            theme::text_secondary(theme)
         } else {
             theme::TEXT_DISABLED
         },
@@ -252,7 +252,7 @@ fn nav_button_style(
 fn window_button_style(theme: &iced::Theme, status: button::Status) -> button::Style {
     let base = button::Style {
         background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-        text_color: theme::TEXT_SECONDARY,
+        text_color: theme::text_secondary(theme),
         border: iced::Border {
             radius: 6.0.into(),
             ..Default::default()
@@ -279,7 +279,7 @@ fn window_button_style(theme: &iced::Theme, status: button::Status) -> button::S
 fn close_button_style(theme: &iced::Theme, status: button::Status) -> button::Style {
     let base = button::Style {
         background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-        text_color: theme::TEXT_SECONDARY,
+        text_color: theme::text_secondary(theme),
         border: iced::Border {
             radius: 6.0.into(),
             ..Default::default()

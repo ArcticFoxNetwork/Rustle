@@ -182,19 +182,15 @@ impl App {
                                                 crate::features::lyrics::to_ui_lyrics(lines);
                                             Message::LyricsLoaded(song_id, ui_lines)
                                         }
-                                        Err(e) => Message::LyricsLoadFailed(
-                                            song_id,
-                                            e.to_string(),
-                                        ),
+                                        Err(e) => Message::LyricsLoadFailed(song_id, e.to_string()),
                                     }
                                 },
                                 |msg| msg,
                             ))
                         } else {
-                            self.playback.lyrics_cache_manager.finish_warmup(
-                                song_id,
-                                Err("No NCM client".to_string()),
-                            );
+                            self.playback
+                                .lyrics_cache_manager
+                                .finish_warmup(song_id, Err("No NCM client".to_string()));
                             Some(Task::done(Message::LyricsLoadFailed(
                                 song_id,
                                 "No NCM client".to_string(),
@@ -237,11 +233,9 @@ impl App {
             Message::LyricsWarmupFinished(song_id, result) => {
                 match result {
                     Ok(()) => tracing::debug!("Lyrics warmup completed for song {}", song_id),
-                    Err(error) => tracing::debug!(
-                        "Lyrics warmup failed for song {}: {}",
-                        song_id,
-                        error
-                    ),
+                    Err(error) => {
+                        tracing::debug!("Lyrics warmup failed for song {}: {}", song_id, error)
+                    }
                 }
                 self.playback
                     .lyrics_cache_manager
@@ -250,7 +244,9 @@ impl App {
                 if self.ui.lyrics.pending_song_id == Some(*song_id) {
                     return Some(match result {
                         Ok(()) => self.resume_display_lyrics_load_from_cache(*song_id),
-                        Err(error) => Task::done(Message::LyricsLoadFailed(*song_id, error.clone())),
+                        Err(error) => {
+                            Task::done(Message::LyricsLoadFailed(*song_id, error.clone()))
+                        }
                     });
                 }
                 Some(Task::none())
@@ -697,9 +693,8 @@ impl App {
             async move {
                 tokio::task::spawn_blocking(move || {
                     if song_id < 0 {
-                        crate::features::lyrics::load_cached_lyrics(ncm_id).map(|cached_lines| {
-                            crate::features::lyrics::to_ui_lyrics(cached_lines)
-                        })
+                        crate::features::lyrics::load_cached_lyrics(ncm_id)
+                            .map(|cached_lines| crate::features::lyrics::to_ui_lyrics(cached_lines))
                     } else {
                         None
                     }
@@ -996,20 +991,18 @@ impl App {
                 .ok()
                 .flatten()
             },
-            |result| {
-                match result {
-                    Some((song_id, lines, needs_online)) => {
-                        if needs_online {
-                            let ncm_id = (-song_id) as u64;
-                            Message::FetchLyricsOnline(song_id, ncm_id)
-                        } else if !lines.is_empty() {
-                            Message::LocalLyricsReady(song_id, lines)
-                        } else {
-                            Message::LyricsLoadFailed(song_id, "No lyrics found".to_string())
-                        }
+            |result| match result {
+                Some((song_id, lines, needs_online)) => {
+                    if needs_online {
+                        let ncm_id = (-song_id) as u64;
+                        Message::FetchLyricsOnline(song_id, ncm_id)
+                    } else if !lines.is_empty() {
+                        Message::LocalLyricsReady(song_id, lines)
+                    } else {
+                        Message::LyricsLoadFailed(song_id, "No lyrics found".to_string())
                     }
-                    None => Message::Noop,
                 }
+                None => Message::Noop,
             },
         );
 
