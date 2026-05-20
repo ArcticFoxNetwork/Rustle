@@ -44,7 +44,7 @@ pub fn is_protocol_registered() -> bool {
 #[cfg(target_os = "macos")]
 pub fn setup_macos_url_handler(tx: crate::protocol::ipc::IpcSender) {
     use std::sync::Mutex;
-    use objc2::{define_class, sel, MainThreadOnly};
+    use objc2::{define_class, sel};
     use objc2::rc::Retained;
     use objc2::runtime::{NSObject, NSObjectProtocol};
     use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventManager};
@@ -58,13 +58,12 @@ pub fn setup_macos_url_handler(tx: crate::protocol::ipc::IpcSender) {
     // Define a custom Objective-C class to handle Apple Events
     define_class!(
         #[unsafe(super = NSObject)]
-        #[thread_kind = MainThreadOnly]
         struct RustleURLHandler;
 
         unsafe impl NSObjectProtocol for RustleURLHandler {}
 
         impl RustleURLHandler {
-            #[method(handleGetURLEvent:withReplyEvent:)]
+            #[unsafe(method(handleGetURLEvent:withReplyEvent:))]
             fn handle_get_url_event(
                 &self,
                 event: &NSAppleEventDescriptor,

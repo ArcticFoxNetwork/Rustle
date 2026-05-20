@@ -135,8 +135,6 @@ pub fn spawn_ipc_listener(tx: IpcSender) -> tokio::task::JoinHandle<()> {
 /// Called by secondary instances. Returns Ok(()) if the URI was
 /// successfully forwarded, or Err if no primary instance is running.
 pub fn forward_uri_to_primary(uri: &str) -> Result<(), String> {
-    use std::io::Write;
-
     let payload = format!("URI:{}", uri);
     write_to_socket(&payload)
 }
@@ -146,8 +144,6 @@ pub fn forward_uri_to_primary(uri: &str) -> Result<(), String> {
 /// Called by secondary instances on normal launch. Returns Ok(())
 /// if the focus command was forwarded, or Err if no primary instance is running.
 pub fn forward_focus_to_primary() -> Result<(), String> {
-    use std::io::Write;
-
     write_to_socket("FOCUS")
 }
 
