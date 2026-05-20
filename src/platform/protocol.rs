@@ -42,45 +42,73 @@ pub fn is_protocol_registered() -> bool {
 /// Must be called after the `NSApplication` has been initialized (i.e., after
 /// the winit event loop has started).
 #[cfg(target_os = "macos")]
-pub fn setup_macos_url_handler(tx: std::sync::mpsc::Sender<String>) {
-    use objc2::class;
+pub fn setup_macos_url_handler(tx: crate::protocol::ipc::UriSender) {
+    use std::sync::Mutex;
+    use objc2::{define_class, sel, MainThreadOnly};
     use objc2::rc::Retained;
-    use objc2_foundation::NSAppleEventManager;
+    use objc2::runtime::{NSObject, NSObjectProtocol};
+    use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventManager};
 
     tracing::info!("Setting up macOS URL handler for rustle://");
 
-    // kAEGetURL event class/ID constants (from Carbon/AE/AERegistry.h)
-    // eventClass = 'GURL', eventID = 'GURL'
-    let event_class: u32 = 0x4755524c; // 'GURL'
-    let event_id: u32 = 0x4755524c; // 'GURL'
+    // Store the sender in a global so the handler method can access it
+    static SENDER: Mutex<Option<crate::protocol::ipc::UriSender>> = Mutex::new(None);
+    *SENDER.lock().unwrap() = Some(tx);
+
+    // Define a custom Objective-C class to handle Apple Events
+    define_class!(
+        #[unsafe(super = NSObject)]
+        #[thread_kind = MainThreadOnly]
+        struct RustleURLHandler {}
+
+        unsafe impl NSObjectProtocol for RustleURLHandler {}
+
+        impl RustleURLHandler {
+            #[method(handleGetURLEvent:withReplyEvent:)]
+            fn handle_get_url_event(
+                &self,
+                event: &NSAppleEventDescriptor,
+                _reply: &NSAppleEventDescriptor,
+            ) {
+                // keyDirectObject = '----' (0x2d2d2d2d)
+                let key_direct_object: u32 = 0x2d2d2d2d;
+                if let Some(url_desc) = event.paramDescriptorForKeyword(key_direct_object) {
+                    if let Some(url) = url_desc.stringValue() {
+                        let url_string = url.to_string();
+                        tracing::info!("macOS URL handler received: {}", url_string);
+                        if let Some(sender) = SENDER.lock().unwrap().as_ref() {
+                            let _ = sender.send(url_string);
+                        }
+                    }
+                }
+            }
+        }
+    );
+
+    // Hold the handler in a static to prevent deallocation.
+    // NSAppleEventManager does NOT retain its handler, so we must keep it alive.
+    static HANDLER: Mutex<Option<Retained<RustleURLHandler>>> = Mutex::new(None);
+    let handler = RustleURLHandler::new();
+
+    // kAEGetURL: eventClass = 'GURL', eventID = 'GURL'
+    let event_class: u32 = 0x4755524c;
+    let event_id: u32 = 0x4755524c;
 
     let manager = unsafe { NSAppleEventManager::sharedAppleEventManager() };
 
-    // Install handler for Get URL events
-    // The handler closure is called when macOS sends an open URL event
-    // It extracts the direct object (the URL string) and forwards it
-    let handler = move |_event: &objc2_foundation::NSAppleEventDescriptor,
-                        _reply: &objc2_foundation::NSAppleEventDescriptor| {
-        // Extract the direct object descriptor containing the URL
-        // paramKeyword '----' (keyDirectObject) = 0x2d2d2d2d
-        let key_direct_object: u32 = 0x2d2d2d2d;
-        if let Some(url_desc) = unsafe { _event.paramDescriptorForKeyword(key_direct_object) } {
-            let url_str = url_desc.stringValue();
-            if let Some(url) = url_str {
-                let url_string = url.to_string();
-                tracing::info!("macOS URL handler received: {}", url_string);
-                let _ = tx.send(url_string);
-            }
-        }
-    };
-
-    // Use NSAppleEventManager to set the handler
-    // Note: This requires macOS 10.0+. objc2 0.6 provides the necessary bindings.
     unsafe {
-        let _ = manager.setEventHandler(&handler, event_class, event_id);
+        manager.setEventHandler_andSelector_forEventClass_andEventID(
+            &handler,
+            sel!(handleGetURLEvent:withReplyEvent:),
+            event_class,
+            event_id,
+        );
     }
+
+    *HANDLER.lock().unwrap() = Some(handler);
+
     tracing::info!("macOS URL handler installed");
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn setup_macos_url_handler(_tx: std::sync::mpsc::Sender<String>) {}
+pub fn setup_macos_url_handler(_tx: crate::protocol::ipc::UriSender) {}

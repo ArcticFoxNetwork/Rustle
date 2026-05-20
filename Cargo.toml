@@ -77,7 +77,7 @@ smithay-client-toolkit = { git = "https://github.com/Fei-xiangShi/client-toolkit
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = "0.3"
+objc2-foundation = { version = "0.3", features = ["objc2-core-services"] }
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 tray-icon = "0.21.3"

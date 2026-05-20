@@ -674,7 +674,6 @@ impl App {
 
                 return Self::toast_warning("导入已取消".to_string());
             }
-            _ => {}
         }
 
         self.library.scan_progress = Some(progress);

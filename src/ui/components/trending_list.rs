@@ -2,7 +2,7 @@
 //!
 //! Displays the NCM trending chart (飙升榜) with hover effects.
 
-use iced::widget::{Space, button, column, container, image, mouse_area, row, svg, text};
+use iced::widget::{Space, button, column, container, image, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Padding};
 
 use crate::api::SongInfo;

@@ -76,6 +76,7 @@ impl App {
             // Protocol IPC listener and URI stream
             {
                 let (uri_tx, uri_rx) = crate::protocol::ipc::uri_channel();
+                let handler_uri_tx = uri_tx.clone();
                 crate::protocol::ipc::spawn_ipc_listener(uri_tx);
                 let uri_stream = Task::run(
                     async_stream::stream! {
@@ -91,7 +92,13 @@ impl App {
                         .map(Message::UriReceived)
                         .unwrap_or(Message::Noop),
                 );
-                Task::batch([uri_stream, pending])
+                let url_handler = Task::perform(
+                    async move {
+                        crate::platform::protocol::setup_macos_url_handler(handler_uri_tx);
+                    },
+                    |_| Message::Noop,
+                );
+                Task::batch([uri_stream, pending, url_handler])
             },
             Task::perform(helpers::init_database(), |result| match result {
                 Ok(db) => Message::DatabaseReady(Arc::new(db)),
