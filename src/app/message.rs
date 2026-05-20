@@ -673,7 +673,7 @@ pub enum Message {
     /// Pick a cover image for song edit
     PickSongEditCover(i64),
     /// Save song edits to file
-    SaveSongEdits(),
+    SaveSongEdits(i64),
     /// Song edits saved successfully
     SongEditsSaved(i64),
     /// Song edits save failed

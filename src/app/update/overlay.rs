@@ -15,7 +15,7 @@ impl App {
             }
 
             // When song edits are saved, dismiss the overlay and clean up legacy state
-            Message::SaveSongEdits() => {
+            Message::SaveSongEdits(_) => {
                 self.dismiss_top_overlay();
                 self.ui.song_edit_dialog = None;
                 None // Let the existing handler also process this
