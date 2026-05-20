@@ -21,8 +21,9 @@ fn main() -> iced::Result {
     // Initialize tracing for logging
     tracing_subscriber::fmt::init();
 
-    // Handle rustle:// protocol — forward to existing instance if running
     let args: Vec<String> = std::env::args().collect();
+
+    // Handle rustle:// protocol URL from CLI
     if args.len() >= 3 && args[1] == "--protocol-handler" {
         let uri = args[2].clone();
         match protocol::ipc::forward_uri_to_primary(&uri) {
@@ -33,6 +34,18 @@ fn main() -> iced::Result {
             Err(e) => {
                 tracing::warn!("No primary instance found ({}), starting new one", e);
                 protocol::ipc::set_pending_startup_uri(uri);
+            }
+        }
+    } else {
+        // Normal launch: check if another instance is already running.
+        // If so, focus its window and exit — single-instance enforcement.
+        match protocol::ipc::forward_focus_to_primary() {
+            Ok(()) => {
+                tracing::info!("Focused existing instance, exiting");
+                std::process::exit(0);
+            }
+            Err(_) => {
+                // No existing instance, proceed with normal startup
             }
         }
     }

@@ -42,7 +42,7 @@ pub fn is_protocol_registered() -> bool {
 /// Must be called after the `NSApplication` has been initialized (i.e., after
 /// the winit event loop has started).
 #[cfg(target_os = "macos")]
-pub fn setup_macos_url_handler(tx: crate::protocol::ipc::UriSender) {
+pub fn setup_macos_url_handler(tx: crate::protocol::ipc::IpcSender) {
     use std::sync::Mutex;
     use objc2::{define_class, sel, MainThreadOnly};
     use objc2::rc::Retained;
@@ -52,14 +52,14 @@ pub fn setup_macos_url_handler(tx: crate::protocol::ipc::UriSender) {
     tracing::info!("Setting up macOS URL handler for rustle://");
 
     // Store the sender in a global so the handler method can access it
-    static SENDER: Mutex<Option<crate::protocol::ipc::UriSender>> = Mutex::new(None);
+    static SENDER: Mutex<Option<crate::protocol::ipc::IpcSender>> = Mutex::new(None);
     *SENDER.lock().unwrap() = Some(tx);
 
     // Define a custom Objective-C class to handle Apple Events
     define_class!(
         #[unsafe(super = NSObject)]
         #[thread_kind = MainThreadOnly]
-        struct RustleURLHandler {}
+        struct RustleURLHandler;
 
         unsafe impl NSObjectProtocol for RustleURLHandler {}
 
@@ -77,7 +77,7 @@ pub fn setup_macos_url_handler(tx: crate::protocol::ipc::UriSender) {
                         let url_string = url.to_string();
                         tracing::info!("macOS URL handler received: {}", url_string);
                         if let Some(sender) = SENDER.lock().unwrap().as_ref() {
-                            let _ = sender.send(url_string);
+                            let _ = sender.send(crate::protocol::ipc::IpcMessage::Uri(url_string));
                         }
                     }
                 }
@@ -111,4 +111,4 @@ pub fn setup_macos_url_handler(tx: crate::protocol::ipc::UriSender) {
 }
 
 #[cfg(not(target_os = "macos"))]
-pub fn setup_macos_url_handler(_tx: crate::protocol::ipc::UriSender) {}
+pub fn setup_macos_url_handler(_tx: crate::protocol::ipc::IpcSender) {}

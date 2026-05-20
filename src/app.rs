@@ -75,17 +75,20 @@ impl App {
             open_window_and_init_mpris,
             // Protocol IPC listener and URI stream
             {
-                let (uri_tx, uri_rx) = crate::protocol::ipc::uri_channel();
-                let handler_uri_tx = uri_tx.clone();
-                crate::protocol::ipc::spawn_ipc_listener(uri_tx);
-                let uri_stream = Task::run(
+                let (ipc_tx, ipc_rx) = crate::protocol::ipc::ipc_channel();
+                let handler_ipc_tx = ipc_tx.clone();
+                crate::protocol::ipc::spawn_ipc_listener(ipc_tx);
+                let ipc_stream = Task::run(
                     async_stream::stream! {
-                        tokio::pin!(uri_rx);
-                        while let Some(uri) = uri_rx.recv().await {
-                            yield uri;
+                        tokio::pin!(ipc_rx);
+                        while let Some(msg) = ipc_rx.recv().await {
+                            yield msg;
                         }
                     },
-                    Message::UriReceived,
+                    |msg| match msg {
+                        crate::protocol::ipc::IpcMessage::Uri(uri) => Message::UriReceived(uri),
+                        crate::protocol::ipc::IpcMessage::Focus => Message::ShowOrFocusWindow,
+                    },
                 );
                 let pending = Task::done(
                     crate::protocol::ipc::take_pending_startup_uri()
@@ -94,11 +97,11 @@ impl App {
                 );
                 let url_handler = Task::perform(
                     async move {
-                        crate::platform::protocol::setup_macos_url_handler(handler_uri_tx);
+                        crate::platform::protocol::setup_macos_url_handler(handler_ipc_tx);
                     },
                     |_| Message::Noop,
                 );
-                Task::batch([uri_stream, pending, url_handler])
+                Task::batch([ipc_stream, pending, url_handler])
             },
             Task::perform(helpers::init_database(), |result| match result {
                 Ok(db) => Message::DatabaseReady(Arc::new(db)),
