@@ -138,26 +138,18 @@ pub struct NewPlaylist {
 /// Song with playlist-specific data (like added_at)
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct DbPlaylistSongWithDate {
-    // Song fields
-    pub id: i64,
-    pub file_path: String,
+    #[sqlx(flatten)]
+    pub song: DbSong,
+    pub added_at: i64,
+}
+#[derive(Debug, Clone, sqlx::FromRow)]
+pub struct DownloadRow {
+    pub song_id: i64,
+    pub ncm_id: i64,
     pub title: String,
     pub artist: String,
-    pub album: String,
-    pub duration_secs: i64,
-    pub track_number: Option<i64>,
-    pub year: Option<i64>,
-    pub genre: Option<String>,
-    pub cover_path: Option<String>,
-    pub file_hash: Option<String>,
+    pub file_path: String,
     pub file_size: i64,
-    pub format: Option<String>,
-    pub normalization_gain: Option<f64>,
-    pub play_count: i64,
-    pub last_played: Option<i64>,
-    pub last_modified: i64,
-    pub is_missing: bool,
-    pub created_at: i64,
-    // Playlist-specific field
-    pub added_at: i64,
+    pub quality: String,
+    pub downloaded_at: i64,
 }

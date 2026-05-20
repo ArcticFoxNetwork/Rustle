@@ -7,6 +7,7 @@ use iced::time::Instant;
 use crate::app::helpers::{load_playlist_view, load_watched_folders};
 use crate::app::message::Message;
 use crate::app::state::{App, Route};
+use crate::ui::overlay::{ModalKind, OverlayKind};
 
 impl App {
     pub(super) fn open_local_playlist_route(&mut self, playlist_id: i64) -> Task<Message> {
@@ -59,15 +60,36 @@ impl App {
 
             Message::RequestDeletePlaylist(id) => {
                 tracing::info!("Requesting delete for playlist: {}", id);
-                self.ui.dialogs.delete_pending_id = Some(*id);
-                self.ui.dialogs.delete_animation.start();
+                let name = self
+                    .library
+                    .playlists
+                    .iter()
+                    .find(|p| p.id == *id)
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("Unknown");
+                use crate::ui::overlay::{ModalConfig, ModalKind, OverlayEntry, OverlayKind};
+                self.ui.overlay_stack.push(OverlayEntry::new(
+                    OverlayKind::Modal(
+                        ModalKind::DeleteConfirm {
+                            playlist_id: *id,
+                            playlist_name: name.to_string(),
+                        },
+                        ModalConfig::default().width(380.0),
+                    ),
+                ));
                 Some(Task::none())
             }
 
             Message::ConfirmDeletePlaylist => {
-                if let Some(playlist_id) = self.ui.dialogs.delete_pending_id.take() {
+                let playlist_id = self.ui.overlay_stack.last().and_then(|e| match &e.kind {
+                    OverlayKind::Modal(ModalKind::DeleteConfirm { playlist_id, .. }, _) => {
+                        Some(*playlist_id)
+                    }
+                    _ => None,
+                });
+                if let Some(playlist_id) = playlist_id {
                     tracing::info!("Confirming delete for playlist: {}", playlist_id);
-                    self.ui.dialogs.delete_animation.stop();
+                    self.ui.overlay_stack.clear();
                     if let Some(db) = &self.core.db {
                         let db = db.clone();
                         return Some(Task::perform(
@@ -80,13 +102,6 @@ impl App {
                         ));
                     }
                 }
-                Some(Task::none())
-            }
-
-            Message::CancelDeletePlaylist => {
-                tracing::info!("Cancelled playlist deletion");
-                self.ui.dialogs.delete_pending_id = None;
-                self.ui.dialogs.delete_animation.stop();
                 Some(Task::none())
             }
 
@@ -169,42 +184,59 @@ impl App {
             Message::EditPlaylist(id) => {
                 tracing::info!("Edit playlist: {}", id);
                 if let Some(playlist) = &self.ui.playlist_page.current {
-                    self.ui.dialogs.edit_open = true;
-                    self.ui.dialogs.editing_playlist_id = Some(*id);
-                    self.ui.dialogs.edit_name = playlist.name.clone();
-                    self.ui.dialogs.edit_description =
-                        playlist.description.clone().unwrap_or_default();
-                    self.ui.dialogs.edit_cover = playlist.cover_path.clone();
-                    self.ui.dialogs.edit_watch_available = playlist.watched_folder_path.is_some();
-                    self.ui.dialogs.edit_watch_enabled = playlist.watch_enabled;
-                    self.ui.dialogs.edit_watch_path = playlist.watched_folder_path.clone();
-                    self.ui.dialogs.edit_animation.start();
+                    use crate::ui::overlay::{ModalConfig, ModalKind, OverlayEntry, OverlayKind};
+                    self.ui.overlay_stack.push(OverlayEntry::new(
+                        OverlayKind::Modal(
+                            ModalKind::PlaylistEdit {
+                                playlist_id: *id,
+                                name: playlist.name.clone(),
+                                description: playlist.description.clone().unwrap_or_default(),
+                                cover_path: playlist.cover_path.clone(),
+                                watch_enabled: playlist.watch_enabled,
+                                watch_available: playlist.watched_folder_path.is_some(),
+                                watch_path: playlist.watched_folder_path.clone(),
+                            },
+                            ModalConfig::default().width(480.0),
+                        ),
+                    ));
                 }
                 Some(Task::none())
             }
 
-            Message::CloseEditDialog => {
-                self.ui.dialogs.edit_animation.stop();
-                self.ui.dialogs.edit_open = false;
-                self.ui.dialogs.editing_playlist_id = None;
-                self.ui.dialogs.edit_watch_available = false;
-                self.ui.dialogs.edit_watch_enabled = false;
-                self.ui.dialogs.edit_watch_path = None;
-                Some(Task::none())
-            }
-
             Message::EditPlaylistNameChanged(name) => {
-                self.ui.dialogs.edit_name = name.clone();
+                if let Some(entry) = self.ui.overlay_stack.last_mut() {
+                    if let OverlayKind::Modal(ModalKind::PlaylistEdit { name: n, .. }, _) =
+                        &mut entry.kind
+                    {
+                        *n = name.clone();
+                    }
+                }
                 Some(Task::none())
             }
 
             Message::EditPlaylistDescriptionChanged(desc) => {
-                self.ui.dialogs.edit_description = desc.clone();
+                if let Some(entry) = self.ui.overlay_stack.last_mut() {
+                    if let OverlayKind::Modal(ModalKind::PlaylistEdit { description: d, .. }, _) =
+                        &mut entry.kind
+                    {
+                        *d = desc.clone();
+                    }
+                }
                 Some(Task::none())
             }
 
             Message::EditPlaylistWatchEnabledChanged(enabled) => {
-                self.ui.dialogs.edit_watch_enabled = *enabled;
+                if let Some(entry) = self.ui.overlay_stack.last_mut() {
+                    if let OverlayKind::Modal(
+                        ModalKind::PlaylistEdit {
+                            watch_enabled: w, ..
+                        },
+                        _,
+                    ) = &mut entry.kind
+                    {
+                        *w = *enabled;
+                    }
+                }
                 Some(Task::none())
             }
 
@@ -221,39 +253,65 @@ impl App {
 
             Message::CoverImagePicked(path) => {
                 if let Some(p) = path {
-                    self.ui.dialogs.edit_cover = Some(p.clone());
+                    if let Some(entry) = self.ui.overlay_stack.last_mut() {
+                        if let OverlayKind::Modal(
+                            ModalKind::PlaylistEdit { cover_path: c, .. },
+                            _,
+                        ) = &mut entry.kind
+                        {
+                            *c = Some(p.clone());
+                        }
+                    }
                 }
                 Some(Task::none())
             }
 
             Message::SavePlaylistEdits => {
-                if let (Some(db), Some(playlist_id)) =
-                    (&self.core.db, self.ui.dialogs.editing_playlist_id)
+                let edit_data = self
+                    .ui
+                    .overlay_stack
+                    .last()
+                    .and_then(|entry| match &entry.kind {
+                        OverlayKind::Modal(
+                            ModalKind::PlaylistEdit {
+                                playlist_id,
+                                name,
+                                description,
+                                cover_path,
+                                watch_available,
+                                watch_enabled,
+                                watch_path: _,
+                            },
+                            _,
+                        ) => Some((
+                            *playlist_id,
+                            name.clone(),
+                            description.clone(),
+                            cover_path.clone(),
+                            *watch_available,
+                            *watch_enabled,
+                        )),
+                        _ => None,
+                    });
+
+                if let (
+                    Some(db),
+                    Some((playlist_id, name, description, cover, watch_available, watch_enabled)),
+                ) = (&self.core.db, edit_data)
                 {
                     let db = db.clone();
-                    let name = self.ui.dialogs.edit_name.clone();
-                    let description = if self.ui.dialogs.edit_description.is_empty() {
-                        None
-                    } else {
-                        Some(self.ui.dialogs.edit_description.clone())
-                    };
-                    let cover = self.ui.dialogs.edit_cover.clone();
-                    let watch_available = self.ui.dialogs.edit_watch_available;
-                    let watch_enabled = self.ui.dialogs.edit_watch_enabled;
-
-                    self.ui.dialogs.edit_animation.stop();
-                    self.ui.dialogs.edit_open = false;
-                    self.ui.dialogs.editing_playlist_id = None;
-                    self.ui.dialogs.edit_watch_available = false;
-                    self.ui.dialogs.edit_watch_enabled = false;
-                    self.ui.dialogs.edit_watch_path = None;
+                    self.ui.overlay_stack.clear();
 
                     return Some(Task::perform(
                         async move {
                             db.update_playlist_full(
                                 playlist_id,
                                 &name,
-                                description.as_deref(),
+                                if description.is_empty() {
+                                    None
+                                } else {
+                                    Some(&description)
+                                },
                                 cover.as_deref(),
                             )
                             .await
@@ -325,6 +383,29 @@ impl App {
                 {
                     self.ui.playlist_page.search_expanded = false;
                     self.ui.playlist_page.search_animation.stop();
+                }
+                Some(Task::none())
+            }
+
+            Message::PlaylistPickerConfirm(song_id, playlist_id) => {
+                let sid = *song_id;
+                let pid = *playlist_id;
+                self.ui.overlay_stack.pop();
+                if let Some(ref db) = self.core.db {
+                    let db = std::sync::Arc::clone(db);
+                    let locale = self.core.locale;
+                    return Some(Task::perform(
+                        async move {
+                            let _ = db.add_song_to_playlist(pid, sid).await;
+                        },
+                        move |_| {
+                            Message::ShowSuccessToast(
+                                locale
+                                    .get(crate::i18n::Key::SongAddedToPlaylist)
+                                    .to_string(),
+                            )
+                        },
+                    ));
                 }
                 Some(Task::none())
             }

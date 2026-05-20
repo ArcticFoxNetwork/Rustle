@@ -237,42 +237,17 @@ impl ClearResult {
 pub fn cleanup_temp_files() -> ClearResult {
     let mut result = ClearResult::default();
 
+    // Clean cache directories
     for dir in cache_directories() {
-        if !dir.exists() {
-            continue;
-        }
-
-        let read_dir = match fs::read_dir(&dir) {
-            Ok(rd) => rd,
-            Err(e) => {
-                warn!("Failed to read cache directory {:?}: {}", dir, e);
-                continue;
-            }
-        };
-
-        for entry in read_dir.flatten() {
-            let path = entry.path();
-            if !path.is_file() {
-                continue;
-            }
-
-            // Check if it's a .tmp file
-            if path.extension().map(|e| e == "tmp").unwrap_or(false) {
-                let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
-                match fs::remove_file(&path) {
-                    Ok(_) => {
-                        info!("Cleaned up orphan temp file: {:?} ({} bytes)", path, size);
-                        result.files_deleted += 1;
-                        result.bytes_freed += size;
-                    }
-                    Err(e) => {
-                        warn!("Failed to delete temp file {:?}: {}", path, e);
-                        result.errors += 1;
-                    }
-                }
-            }
-        }
+        cleanup_temp_files_in_dir(&dir, &mut result);
     }
+
+    // Also clean download directory
+    let default_dl = {
+        let default_settings = crate::features::Settings::default();
+        default_settings.storage.effective_download_dir()
+    };
+    cleanup_temp_files_in_dir(&default_dl, &mut result);
 
     if result.files_deleted > 0 {
         info!(
@@ -282,6 +257,43 @@ pub fn cleanup_temp_files() -> ClearResult {
     }
 
     result
+}
+
+fn cleanup_temp_files_in_dir(dir: &std::path::PathBuf, result: &mut ClearResult) {
+    if !dir.exists() {
+        return;
+    }
+
+    let read_dir = match fs::read_dir(dir) {
+        Ok(rd) => rd,
+        Err(e) => {
+            warn!("Failed to read directory {:?}: {}", dir, e);
+            return;
+        }
+    };
+
+    for entry in read_dir.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+
+        // Check if it's a .tmp file
+        if path.extension().map(|e| e == "tmp").unwrap_or(false) {
+            let size = entry.metadata().map(|m| m.len()).unwrap_or(0);
+            match fs::remove_file(&path) {
+                Ok(_) => {
+                    info!("Cleaned up orphan temp file: {:?} ({} bytes)", path, size);
+                    result.files_deleted += 1;
+                    result.bytes_freed += size;
+                }
+                Err(e) => {
+                    warn!("Failed to delete temp file {:?}: {}", path, e);
+                    result.errors += 1;
+                }
+            }
+        }
+    }
 }
 
 /// Cache operation errors

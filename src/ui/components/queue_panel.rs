@@ -2,7 +2,7 @@
 //!
 //! Shows the current play queue as a popup bubble above the player bar.
 
-use iced::widget::{Space, button, column, container, row, scrollable, svg, text};
+use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, svg, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
 use crate::app::Message;
@@ -237,7 +237,8 @@ fn build_queue_item(song: DbSong, index: usize, is_current: bool) -> Element<'st
     .align_y(Alignment::Center)
     .padding(Padding::new(8.0).left(8.0).right(8.0));
 
-    button(item_row)
+    let song_id = song.id;
+    let btn = button(item_row)
         .width(Fill)
         .padding(0)
         .style(move |theme, status| {
@@ -259,6 +260,9 @@ fn build_queue_item(song: DbSong, index: usize, is_current: bool) -> Element<'st
                 ..Default::default()
             }
         })
-        .on_press(Message::PlayQueueIndex(index))
+        .on_press(Message::PlayQueueIndex(index));
+
+    mouse_area(btn)
+        .on_right_press(Message::RightClickSong(song_id))
         .into()
 }

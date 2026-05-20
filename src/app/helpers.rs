@@ -103,6 +103,11 @@ pub async fn load_queue(db: Arc<Database>) -> Vec<DbSong> {
     db.get_queue().await.unwrap_or_default()
 }
 
+/// Load download history from database
+pub async fn load_download_history(db: Arc<Database>) -> Vec<crate::database::DownloadRow> {
+    db.get_all_downloads().await.unwrap_or_default()
+}
+
 /// Load all watched local library folders from database.
 pub async fn load_watched_folders(db: Arc<Database>) -> Vec<DbWatchedFolder> {
     db.get_all_watched_folders().await.unwrap_or_default()
@@ -366,36 +371,26 @@ pub async fn load_playlist_view(
         .iter()
         .enumerate()
         .map(|(i, song)| {
-            let duration_secs = song.duration_secs as u64;
-            let mins = duration_secs / 60;
-            let secs = duration_secs % 60;
-
-            // Format added_at as relative time
+            let meta = crate::metadata::SongMetadata::from(&song.song);
             let added_date = format_relative_time(song.added_at);
+            let cover = meta.resolve_cover(Some(&song.song.file_path), song.song.id);
 
             pages::PlaylistSongView::new(
-                song.id,
+                song.song.id,
                 i + 1,
-                song.title.clone(),
-                if song.artist.is_empty() {
-                    "未知艺术家".to_string()
-                } else {
-                    song.artist.clone()
-                },
-                if song.album.is_empty() {
-                    "未知专辑".to_string()
-                } else {
-                    song.album.clone()
-                },
-                format!("{}:{:02}", mins, secs),
+                meta.title.clone(),
+                meta.artist.clone(),
+                meta.album.clone(),
+                meta.duration_display(),
                 added_date,
-                song.cover_path.clone(),
+                cover.map(|p| p.to_string_lossy().to_string()),
+                crate::utils::compute_source(&song.song.file_path, song.song.id, None, None),
             )
         })
         .collect();
 
     // Calculate total duration
-    let total_secs: u64 = songs.iter().map(|s| s.duration_secs as u64).sum();
+    let total_secs: u64 = songs.iter().map(|s| s.song.duration_secs as u64).sum();
     let total_mins = total_secs / 60;
     let total_hours = total_mins / 60;
     let remaining_mins = total_mins % 60;

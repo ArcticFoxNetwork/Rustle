@@ -4,8 +4,8 @@
 use iced::Task;
 
 use crate::app::helpers::{
-    load_playback_state, load_playlists, load_queue, load_songs, load_watched_folders,
-    validate_songs,
+    load_download_history, load_playback_state, load_playlists, load_queue, load_songs,
+    load_watched_folders, validate_songs,
 };
 use crate::app::message::Message;
 use crate::app::state::App;
@@ -253,6 +253,7 @@ impl App {
                         None => Message::DatabaseError("No playback state".into()),
                     }),
                     Task::perform(load_queue(db.clone()), Message::QueueRestored),
+                    Task::perform(load_download_history(db.clone()), Message::DownloadsLoaded),
                 ]))
             }
 
@@ -375,22 +376,22 @@ impl App {
                     .iter()
                     .enumerate()
                     .map(|(i, song)| {
-                        let duration_secs = song.duration_secs as u64;
-                        let mins = duration_secs / 60;
-                        let secs = duration_secs % 60;
+                        let meta = crate::metadata::SongMetadata::from(song);
+                        let cover = meta.resolve_cover(Some(&song.file_path), song.id);
 
                         pages::PlaylistSongView::new(
                             song.id,
                             i + 1,
-                            song.title.clone(),
-                            song.artist.clone(),
-                            song.album.clone(),
-                            format!("{}:{:02}", mins, secs),
+                            meta.title.clone(),
+                            meta.artist.clone(),
+                            meta.album.clone(),
+                            meta.duration_display(),
                             self.core
                                 .locale
                                 .get(crate::i18n::Key::RecentlyPlayedList)
                                 .to_string(),
-                            song.cover_path.clone(),
+                            cover.map(|p| p.to_string_lossy().to_string()),
+                            crate::utils::compute_source(&song.file_path, song.id, None, None),
                         )
                     })
                     .collect();

@@ -127,6 +127,8 @@ impl App {
             }
 
             MediaCommand::Quit => Some(iced::exit()),
+
+            MediaCommand::OpenUri(uri) => Some(Task::done(Message::UriReceived(uri.clone()))),
         }
     }
 

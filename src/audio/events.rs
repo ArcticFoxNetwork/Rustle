@@ -21,6 +21,7 @@ use std::time::Duration;
 use parking_lot::RwLock;
 
 use super::PlaybackStatus;
+use super::player::PlaybackError;
 use super::streaming::StreamingBuffer;
 
 // ============ Commands (UI -> Audio Thread) ============
@@ -306,6 +307,7 @@ pub enum AudioEvent {
     Error {
         request_id: Option<u64>,
         message: String,
+        error_kind: Option<PlaybackError>,
     },
 }
 

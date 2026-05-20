@@ -49,10 +49,7 @@ pub fn convert_ncm_songs_to_views(
         .iter()
         .enumerate()
         .map(|(i, song)| {
-            let duration_secs = song.duration / 1000;
-            let mins = duration_secs / 60;
-            let secs = duration_secs % 60;
-
+            let meta = crate::metadata::SongMetadata::from(song);
             let cover_path = cover_map.get(&song.id).cloned().flatten();
             let pic_url = if cover_path.is_none() && !song.pic_url.is_empty() {
                 Some(song.pic_url.clone())
@@ -60,24 +57,24 @@ pub fn convert_ncm_songs_to_views(
                 None
             };
 
+            let source = crate::utils::compute_source(
+                "",
+                -(song.id as i64),
+                Some(&song.singer),
+                Some(&song.name),
+            );
+
             crate::ui::components::playlist_view::SongItem::with_pic_url(
                 -(song.id as i64),
                 i + 1,
-                song.name.clone(),
-                if song.singer.is_empty() {
-                    "未知艺术家".to_string()
-                } else {
-                    song.singer.clone()
-                },
-                if song.album.is_empty() {
-                    "未知专辑".to_string()
-                } else {
-                    song.album.clone()
-                },
-                format!("{}:{:02}", mins, secs),
+                meta.title.clone(),
+                meta.artist.clone(),
+                meta.album.clone(),
+                meta.duration_display(),
                 String::new(),
                 cover_path,
                 pic_url,
+                source,
             )
         })
         .collect()

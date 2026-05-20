@@ -1,5 +1,6 @@
 //! Database operations organized by entity type
 
+mod downloads;
 mod history;
 mod playback;
 mod playlists;
@@ -7,6 +8,7 @@ mod queue;
 mod songs;
 mod watched_folders;
 
+pub use downloads::*;
 pub use history::*;
 pub use playback::*;
 pub use playlists::*;

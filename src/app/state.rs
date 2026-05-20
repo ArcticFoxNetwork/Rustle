@@ -19,6 +19,7 @@ use crate::ui::animation::{HoverAnimations, SingleHoverAnimation};
 use crate::ui::components::{ImportingPlaylist, NavItem};
 use crate::ui::effects::background::LyricsBackgroundProgram;
 use crate::ui::effects::textured_background::TexturedBackgroundProgram;
+use crate::ui::overlay::OverlayEntry;
 use crate::ui::pages;
 use crate::ui::widgets::Toast;
 
@@ -38,6 +39,8 @@ pub struct App {
 pub struct CoreState {
     pub db: Option<Arc<Database>>,
     pub db_error: Option<String>,
+    /// Download manager for offline downloads
+    pub download_manager: crate::download::DownloadManager,
     /// Audio handle for non-blocking audio control
     audio: Option<crate::audio::AudioHandle>,
     /// Audio processing chain (preamp, EQ, analyzer) - shared with AudioPlayer
@@ -61,6 +64,8 @@ pub struct CoreState {
     pub window_visibility: WindowVisibilityState,
     pub window_focused: bool,
     pub window_operation_pending: bool,
+    pub window_width: f32,
+    pub window_height: f32,
     /// Current mouse Y position for drag area detection
     pub mouse_position: iced::Point,
 }
@@ -93,6 +98,7 @@ impl CoreState {
         Self {
             db: None,
             db_error: None,
+            download_manager: Default::default(),
             audio,
             audio_chain,
             volume_before_mute: None,
@@ -109,6 +115,8 @@ impl CoreState {
             window_visibility: WindowVisibilityState::Visible,
             window_focused: true,
             window_operation_pending: false,
+            window_width: 1280.0,
+            window_height: 720.0,
             mouse_position: iced::Point::ORIGIN,
         }
     }
@@ -578,6 +586,7 @@ pub enum Route {
     Home,
     Discover(DiscoverViewMode),
     Radio,
+    Downloads,
     Settings(SettingsSection),
     AudioEngine,
     Playlist(i64),
@@ -599,6 +608,7 @@ impl Route {
             Self::Home => Some(NavItem::Home),
             Self::Discover(_) => Some(NavItem::Discover),
             Self::Radio => Some(NavItem::Radio),
+            Self::Downloads => Some(NavItem::Downloads),
             Self::Settings(_) => Some(NavItem::Settings),
             Self::AudioEngine => Some(NavItem::AudioEngine),
             Self::Playlist(_)
@@ -696,6 +706,9 @@ pub struct UiState {
     pub toast: Option<Toast>,
     pub toast_visible: bool,
 
+    /// Overlay stack — LIFO: last = topmost rendered overlay
+    pub overlay_stack: Vec<OverlayEntry>,
+
     /// Navigation history for back/forward
     pub nav_history: NavigationHistory,
 
@@ -727,6 +740,49 @@ pub struct UiState {
 
     // Cache statistics
     pub cache_stats: Option<crate::cache::CacheStats>,
+
+    // Context menu
+    pub context_menu: Option<ContextMenuState>,
+
+    // Song edit form state (visibility managed by overlay_stack)
+    pub song_edit_dialog: Option<SongEditDialogState>,
+
+    // Download panel tab
+    pub download_tab: DownloadTab,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DownloadTab {
+    #[default]
+    Active,
+    Completed,
+}
+
+/// Context menu state
+#[derive(Debug, Clone)]
+pub struct ContextMenuState {
+    pub song_id: i64,
+    pub x: f32,
+    pub y: f32,
+    /// Whether the song has an audio file on disk (local import or cached NCM)
+    pub has_file_on_disk: bool,
+    /// Whether this is an NCM/online song (may need download button)
+    pub is_ncm: bool,
+    /// Whether this song is liked/favorited by the current user
+    pub is_liked: bool,
+}
+
+/// Song edit dialog state
+#[derive(Debug, Clone)]
+pub struct SongEditDialogState {
+    pub song_id: i64,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub track_number: Option<u32>,
+    pub year: Option<u32>,
+    pub genre: String,
+    pub cover_path: Option<PathBuf>,
 }
 
 impl UiState {
@@ -736,6 +792,7 @@ impl UiState {
             search_query: String::new(),
             toast: None,
             toast_visible: false,
+            overlay_stack: Vec::new(),
             nav_history: {
                 let mut history = NavigationHistory::default();
                 history.push(NavigationEntry::Route(Route::Home));
@@ -752,6 +809,9 @@ impl UiState {
             sidebar_width: 280.0,
             sidebar_dragging: false,
             cache_stats: None,
+            context_menu: None,
+            song_edit_dialog: None,
+            download_tab: Default::default(),
 
             playlist_page: PlaylistPageState {
                 current: None,
@@ -800,23 +860,7 @@ impl UiState {
                 load_error: None,
             },
 
-            dialogs: DialogState {
-                import_open: false,
-                edit_open: false,
-                editing_playlist_id: None,
-                edit_name: String::new(),
-                edit_description: String::new(),
-                edit_cover: None,
-                edit_watch_enabled: false,
-                edit_watch_available: false,
-                edit_watch_path: None,
-                edit_animation: Default::default(),
-                delete_pending_id: None,
-                delete_animation: Default::default(),
-                exit_open: false,
-                exit_animation: Default::default(),
-                exit_remember: false,
-            },
+            dialogs: DialogState { import_open: false },
 
             home: HomePageState {
                 banners: Vec::new(),
@@ -858,9 +902,6 @@ impl UiState {
             || self.playlist_page.icon_animations.is_animating()
             || self.playlist_page.search_animation.is_animating()
             || self.lyrics.animation.is_animating()
-            || self.dialogs.edit_animation.is_animating()
-            || self.dialogs.exit_animation.is_animating()
-            || self.dialogs.delete_animation.is_animating()
             || self.home.carousel_animation.is_animating(_now)
             || self.home.song_hover_animations.is_animating()
             || self.discover.card_animations.is_animating()
@@ -877,9 +918,6 @@ impl UiState {
         self.playlist_page.icon_animations.tick(now);
         self.playlist_page.search_animation.tick(now);
         self.lyrics.animation.tick(now);
-        self.dialogs.edit_animation.tick(now);
-        self.dialogs.exit_animation.tick(now);
-        self.dialogs.delete_animation.tick(now);
         self.home.song_hover_animations.tick(now);
         self.discover.card_animations.tick(now);
         self.search.song_animations.tick(now);
@@ -974,26 +1012,6 @@ pub struct LyricsState {
 
 pub struct DialogState {
     pub import_open: bool,
-
-    // Edit
-    pub edit_open: bool,
-    pub editing_playlist_id: Option<i64>,
-    pub edit_name: String,
-    pub edit_description: String,
-    pub edit_cover: Option<String>,
-    pub edit_watch_enabled: bool,
-    pub edit_watch_available: bool,
-    pub edit_watch_path: Option<String>,
-    pub edit_animation: SingleHoverAnimation,
-
-    // Delete
-    pub delete_pending_id: Option<i64>,
-    pub delete_animation: SingleHoverAnimation,
-
-    // Exit
-    pub exit_open: bool,
-    pub exit_animation: SingleHoverAnimation,
-    pub exit_remember: bool,
 }
 
 /// Discover page view mode

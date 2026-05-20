@@ -28,7 +28,7 @@ mod vertical_slider;
 
 // Re-export from primitives for backward compatibility
 pub use crate::ui::primitives::{
-    ProgressRing, VirtualList, VirtualListState, square_cover, view_progress_ring_styled,
+    ProgressRing, VirtualList, VirtualListState, view_progress_ring_styled,
 };
 
 pub use play_mode_button::ButtonSize as PlayModeButtonSize;

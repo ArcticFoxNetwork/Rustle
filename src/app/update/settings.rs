@@ -258,6 +258,23 @@ impl App {
                     Task::done(Message::EnforceCacheLimit),
                 ]))
             }
+            Message::UpdateDownloadQuality(quality) => {
+                self.core.settings.storage.download_quality = *quality;
+                Some(Task::done(Message::SaveSettings))
+            }
+            Message::UpdateDownloadDir(dir) => {
+                self.core.settings.storage.download_dir = dir.clone();
+                if let Some(path) = dir {
+                    let _ = std::fs::create_dir_all(path);
+                }
+                Some(Task::done(Message::SaveSettings))
+            }
+            Message::UpdateDownloadDirDialog => Some(Task::perform(
+                crate::app::helpers::open_folder_dialog(),
+                |result| {
+                    Message::UpdateDownloadDir(result.map(|p| p.to_string_lossy().to_string()))
+                },
+            )),
             Message::ClearCache => Some(Task::perform(
                 async {
                     match cache::clear_all_cache() {

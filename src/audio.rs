@@ -30,6 +30,6 @@ pub use analyzer::AudioAnalysisData;
 pub use chain::AudioProcessingChain;
 pub use events::AudioEvent;
 pub use handle::AudioHandle;
-pub use player::{PlaybackInfo, PlaybackStatus, get_audio_devices};
+pub use player::{PlaybackError, PlaybackInfo, PlaybackStatus, get_audio_devices};
 pub use streaming::{SharedBuffer, StreamingBuffer};
 pub use thread::spawn_audio_thread;

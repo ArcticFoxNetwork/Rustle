@@ -8,15 +8,34 @@ mod app;
 mod audio;
 mod cache;
 mod database;
+mod download;
 mod features;
 mod i18n;
+mod metadata;
 mod platform;
+mod protocol;
 mod ui;
 mod utils;
 
 fn main() -> iced::Result {
     // Initialize tracing for logging
     tracing_subscriber::fmt::init();
+
+    // Handle rustle:// protocol — forward to existing instance if running
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() >= 3 && args[1] == "--protocol-handler" {
+        let uri = args[2].clone();
+        match protocol::ipc::forward_uri_to_primary(&uri) {
+            Ok(()) => {
+                tracing::info!("URI forwarded to primary instance, exiting");
+                std::process::exit(0);
+            }
+            Err(e) => {
+                tracing::warn!("No primary instance found ({}), starting new one", e);
+                protocol::ipc::set_pending_startup_uri(uri);
+            }
+        }
+    }
 
     platform::init();
 

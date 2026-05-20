@@ -46,26 +46,6 @@ impl AudioThreadHandle {
     pub fn take_event_rx(&mut self) -> Option<super::events::AudioEventReceiver> {
         self.event_rx.take()
     }
-
-    #[allow(dead_code)]
-    pub fn join(mut self, timeout: Duration) -> Result<(), String> {
-        if let Some(handle) = self.thread_handle.take() {
-            self.handle.stop();
-
-            let start = std::time::Instant::now();
-            loop {
-                if handle.is_finished() {
-                    let _ = handle.join();
-                    return Ok(());
-                }
-                if start.elapsed() > timeout {
-                    return Err("Audio thread did not exit in time".to_string());
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
-        }
-        Ok(())
-    }
 }
 
 impl Drop for AudioThreadHandle {
@@ -132,6 +112,7 @@ pub fn spawn_audio_thread(
                     let _ = event_tx.send(AudioEvent::Error {
                         request_id: None,
                         message: e,
+                        error_kind: None,
                     });
                 }
             }
@@ -538,9 +519,11 @@ fn handle_play(
             });
         }
         Err(e) => {
+            let kind = super::player::classify_playback_error(&e);
             let _ = event_tx.send(AudioEvent::Error {
                 request_id: Some(request_id),
                 message: e,
+                error_kind: Some(kind),
             });
         }
     }
@@ -568,9 +551,11 @@ fn handle_load_paused(
             });
         }
         Err(e) => {
+            let kind = super::player::classify_playback_error(&e);
             let _ = event_tx.send(AudioEvent::Error {
                 request_id: Some(request_id),
                 message: e,
+                error_kind: Some(kind),
             });
         }
     }
@@ -602,9 +587,11 @@ fn handle_play_at(
             }
         }
         Err(e) => {
+            let kind = super::player::classify_playback_error(&e);
             let _ = event_tx.send(AudioEvent::Error {
                 request_id: Some(request_id),
                 message: e,
+                error_kind: Some(kind),
             });
         }
     }
@@ -660,9 +647,11 @@ fn handle_play_streaming(
             });
         }
         Err(e) => {
+            let kind = super::player::classify_playback_error(&e);
             let _ = event_tx.send(AudioEvent::Error {
                 request_id: Some(request_id),
                 message: e,
+                error_kind: Some(kind),
             });
         }
     }
@@ -712,9 +701,11 @@ fn handle_load_paused_streaming(
             }
         }
         Err(e) => {
+            let kind = super::player::classify_playback_error(&e);
             let _ = event_tx.send(AudioEvent::Error {
                 request_id: Some(request_id),
                 message: e,
+                error_kind: Some(kind),
             });
         }
     }
@@ -962,9 +953,11 @@ fn handle_play_preloaded_by_id(
                 });
             }
             Err(e) => {
+                let kind = super::player::classify_playback_error(&e);
                 let _ = event_tx.send(AudioEvent::Error {
                     request_id: Some(playback_request_id),
                     message: e,
+                    error_kind: Some(kind),
                 });
             }
         }
@@ -973,6 +966,7 @@ fn handle_play_preloaded_by_id(
         let _ = event_tx.send(AudioEvent::Error {
             request_id: Some(playback_request_id),
             message: format!("Preloaded sink not found: {}", request_id),
+            error_kind: None,
         });
     }
 }

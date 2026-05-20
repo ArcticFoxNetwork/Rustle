@@ -288,8 +288,11 @@ fn build_left_panel<'a>(
     let current_time = format_time(position * duration_secs);
     let total_time = format_time(duration_secs);
 
-    // Cover image - square aspect ratio using custom widget
-    let cover = widgets::square_cover::view(song.cover_path.as_deref());
+    let s = crate::ui::components::cover_thumb::CoverSize::Large;
+    let cover_handle = crate::ui::components::cover_thumb::resolve_song_cover(song.id);
+    let cover = crate::ui::components::cover_thumb::thumb(
+        cover_handle.as_ref(), s.px(), s.radius(),
+    );
 
     // Song title
     let title = text(&song.title)

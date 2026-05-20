@@ -637,6 +637,32 @@ impl MusicApi {
             .await?;
         to_search_response(result, search_type)
     }
+
+    /// 添加/删除歌曲到歌单
+    /// op: "add" | "del", track_ids: comma-separated
+    pub async fn playlist_add_tracks(
+        &self,
+        pid: u64,
+        track_ids: &str,
+        op: &str,
+    ) -> Result<()> {
+        let path = "/weapi/playlist/manipulate/tracks";
+        let mut params = HashMap::new();
+        let pid_str = pid.to_string();
+        let track_ids_formatted = format!("[{}]", track_ids);
+        params.insert("op", op);
+        params.insert("pid", &pid_str);
+        params.insert("trackIds", &track_ids_formatted);
+        let result = self
+            .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
+            .await?;
+        let msg = to_msg(result)?;
+        if msg.code == 200 {
+            Ok(())
+        } else {
+            Err(anyhow!("Failed to {} tracks: {}", op, msg.msg))
+        }
+    }
 }
 
 fn choose_user_agent(ua: &str) -> &str {

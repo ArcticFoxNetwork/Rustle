@@ -22,7 +22,8 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::LibraryRecentlyPlayed, "Recently Played");
     m.insert(Key::ImportLocalPlaylist, "Import Local Playlist");
     // Library - Cloud
-    m.insert(Key::CloudPlaylistsTitle, "Cloud Playlists");
+    m.insert(Key::CloudPlaylistsTitle, "My Playlists");
+    m.insert(Key::CollectedPlaylistsTitle, "Collected Playlists");
     m.insert(
         Key::CloudPlaylistsNotLoggedIn,
         "Login to view cloud playlists",
@@ -290,6 +291,81 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     );
     m.insert(Key::ExitDialogExit, "Exit");
     m.insert(Key::ExitDialogMinimize, "Minimize to Tray");
+
+    // Context Menu
+    m.insert(Key::ContextMenuEditTags, "Edit Tags");
+
+    // Song Info Dialog
+    m.insert(Key::SongInfoTitle, "Song Info");
+    m.insert(Key::SongInfoBasicSection, "Basic Info");
+    m.insert(Key::SongInfoDetailSection, "Details");
+    m.insert(Key::SongInfoFileSection, "File Info");
+    m.insert(Key::SongInfoStatsSection, "Statistics");
+    m.insert(Key::SongInfoTrackNumber, "Track No.");
+    m.insert(Key::SongInfoYear, "Year");
+    m.insert(Key::SongInfoGenre, "Genre");
+    m.insert(Key::SongInfoDuration, "Duration");
+    m.insert(Key::SongInfoFormat, "Format");
+    m.insert(Key::SongInfoFilePath, "File Path");
+    m.insert(Key::SongInfoFileSize, "File Size");
+    m.insert(Key::SongInfoPlayCount, "Plays");
+    m.insert(Key::SongInfoLastPlayed, "Last Played");
+    m.insert(Key::SongInfoEditButton, "Edit Tags");
+    m.insert(Key::SongInfoCloseButton, "Close");
+
+    // Song Edit Dialog
+    m.insert(Key::SongEditTitle, "Edit Song Tags");
+    m.insert(Key::SongEditLabelTitle, "Title");
+    m.insert(Key::SongEditLabelArtist, "Artist");
+    m.insert(Key::SongEditLabelAlbum, "Album");
+    m.insert(Key::SongEditCoverReplace, "Replace Cover");
+    m.insert(Key::SongEditCancel, "Cancel");
+    m.insert(Key::SongEditSave, "Save");
+    m.insert(Key::SongEditSaved, "Tags saved");
+    m.insert(Key::SongEditFailed, "Save failed");
+    m.insert(Key::SongAddedToPlaylist, "Song added to playlist");
+
+    // Context Menu Items
+    m.insert(Key::ContextMenuPlayNow, "Play Now");
+    m.insert(Key::ContextMenuPlayNext, "Play Next");
+    m.insert(Key::ContextMenuAddFavorites, "Add to Favorites");
+    m.insert(Key::ContextMenuRemoveFavorites, "Remove from Favorites");
+    m.insert(Key::ContextMenuAddPlaylist, "Add to Playlist...");
+    m.insert(Key::ContextMenuViewArtist, "View Artist");
+    m.insert(Key::ContextMenuViewAlbum, "View Album");
+    m.insert(Key::ContextMenuShowInFolder, "Show in Folder");
+    m.insert(Key::ContextMenuRemoveFromList, "Remove from List");
+    m.insert(Key::ContextMenuDownload, "Download");
+
+    // Playlist Picker
+    m.insert(Key::PlaylistPickerTitle, "Select Playlist");
+    m.insert(Key::PlaylistPickerConfirm, "Confirm");
+    m.insert(Key::PlaylistPickerCancel, "Cancel");
+
+    // Navigation
+    m.insert(Key::NavDownloads, "Downloads");
+
+    // Download
+    m.insert(Key::DownloadPanelTitle, "Download Manager");
+    m.insert(Key::DownloadActive, "Active");
+    m.insert(Key::DownloadCompleted, "Completed");
+    m.insert(Key::DownloadPending, "Pending");
+    m.insert(Key::DownloadNoActive, "No active downloads");
+    m.insert(Key::DownloadNoCompleted, "No completed downloads");
+    m.insert(Key::DownloadSpeed, "Speed");
+    m.insert(Key::DownloadCancel, "Cancel");
+    m.insert(Key::DownloadRetry, "Retry");
+    m.insert(Key::DownloadQueued, "Added to download queue");
+    m.insert(Key::DownloadFailed, "Download failed");
+
+    // Settings - Download
+    m.insert(Key::SettingsDownloadLocation, "Download Location");
+    m.insert(Key::SettingsDownloadQuality, "Download Quality");
+    m.insert(
+        Key::SettingsDownloadLocationDesc,
+        "Downloaded songs will be saved here",
+    );
+    m.insert(Key::SettingsDownloadChange, "Change");
 
     m
 });

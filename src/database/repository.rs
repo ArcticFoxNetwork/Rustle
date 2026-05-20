@@ -59,6 +59,10 @@ impl Database {
         ops::get_song_by_path(&self.pool, path).await
     }
 
+    pub async fn get_song_by_id(&self, id: i64) -> Result<Option<DbSong>> {
+        ops::get_song_by_id(&self.pool, id).await
+    }
+
     pub async fn get_all_songs(&self) -> Result<Vec<DbSong>> {
         ops::get_all_songs(&self.pool).await
     }
@@ -77,6 +81,40 @@ impl Database {
 
     pub async fn update_song_path(&self, old_path: &str, new_path: &str) -> Result<()> {
         ops::update_song_path(&self.pool, old_path, new_path).await
+    }
+
+    pub async fn update_song_cover(&self, song_id: i64, cover_path: &str) -> Result<()> {
+        ops::update_song_cover(&self.pool, song_id, cover_path).await
+    }
+
+    pub async fn refresh_song_metadata(&self, song: &DbSong) -> Result<()> {
+        ops::refresh_song_metadata(&self.pool, song).await
+    }
+
+    pub async fn insert_download(
+        &self,
+        song_id: i64,
+        ncm_id: u64,
+        title: &str,
+        artist: &str,
+        file_path: &str,
+        file_size: u64,
+        quality: &str,
+    ) -> anyhow::Result<()> {
+        ops::insert_download(
+            &self.pool, song_id, ncm_id, title, artist, file_path, file_size, quality,
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_all_downloads(&self) -> anyhow::Result<Vec<DownloadRow>> {
+        Ok(ops::get_all_downloads(&self.pool).await?)
+    }
+
+    pub async fn delete_download(&self, song_id: i64) -> anyhow::Result<()> {
+        ops::delete_download(&self.pool, song_id).await?;
+        Ok(())
     }
 
     pub async fn update_song_normalization(

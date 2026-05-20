@@ -96,6 +96,8 @@ impl App {
             }
 
             Message::WindowResized(size) => {
+                self.core.window_width = size.width;
+                self.core.window_height = size.height;
                 self.ui.lyrics.viewport_width = (size.width * 0.6 - 60.0).max(100.0);
                 self.ui.lyrics.viewport_height = size.height;
                 self.ui.lyrics.viewport_initialized = true;

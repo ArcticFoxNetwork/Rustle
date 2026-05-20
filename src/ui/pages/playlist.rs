@@ -181,47 +181,34 @@ pub fn view<'a>(
 
 /// Build the playlist header
 fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Message> {
-    // Cover image - prefer playlist cover_path, fallback to first song cover, then placeholder
-    // Only use local file paths, not URLs
-    let cover_path_opt: Option<&str> = playlist
-        .cover_path
-        .as_deref()
-        .filter(|p| !p.starts_with("http") && std::path::Path::new(p).exists())
-        .or_else(|| {
-            playlist
-                .songs
-                .first()
-                .and_then(|s| s.cover_path.as_deref())
-                .filter(|p| !p.starts_with("http") && std::path::Path::new(p).exists())
-        });
-
-    let cover: Element<'static, Message> = if let Some(cover_path) = cover_path_opt {
-        container(
-            image(image::Handle::from_path(cover_path))
-                .width(220)
-                .height(220)
-                .content_fit(iced::ContentFit::Cover)
-                .border_radius(8.0),
-        )
-        .width(220)
-        .height(220)
-        .style(|theme| iced::widget::container::Style {
-            border: iced::Border {
-                radius: 8.0.into(),
-                ..Default::default()
-            },
-            shadow: iced::Shadow {
-                color: theme::shadow_color(theme),
-                offset: iced::Vector::new(0.0, 8.0),
-                blur_radius: 32.0,
-            },
+    // Cover: playlist own cover → first song cover → NCM cache → placeholder
+    let cover_path_opt = {
+        let meta = crate::metadata::SongMetadata {
+            cover: playlist.cover_path.as_ref().map(|p| {
+                crate::metadata::CoverSource::Path(std::path::PathBuf::from(p))
+            }),
             ..Default::default()
-        })
-        .into()
-    } else {
-        // Placeholder
-        build_cover_placeholder()
+        };
+        meta.resolve_cover(None, playlist.id)
+            .or_else(|| {
+                playlist.songs.first().and_then(|s| {
+                    // Use resolve_cover with the song's cover_path
+                    crate::metadata::SongMetadata {
+                        cover: s.cover_path.as_ref().map(|p| {
+                            crate::metadata::CoverSource::Path(std::path::PathBuf::from(p))
+                        }),
+                        ..Default::default()
+                    }.resolve_cover(None, s.id)
+                })
+            })
     };
+
+    let s = crate::ui::components::cover_thumb::CoverSize::Large;
+    let cover_handle = cover_path_opt
+        .filter(|p| p.exists())
+        .map(iced::widget::image::Handle::from_path);
+    let cover: Element<'static, Message> =
+        crate::ui::components::cover_thumb::thumb(cover_handle.as_ref(), s.px(), s.radius());
 
     // Playlist type label - larger font
     let type_label_text = match playlist.kind {
@@ -740,35 +727,6 @@ pub(crate) fn build_controls<'a>(
     container(controls).width(Fill).into()
 }
 
-/// Build cover placeholder (music icon on dark background)
-fn build_cover_placeholder() -> Element<'static, Message> {
-    container(
-        svg(svg::Handle::from_memory(icons::MUSIC.as_bytes()))
-            .width(72)
-            .height(72)
-            .style(|_theme, _status| svg::Style {
-                color: Some(theme::icon_muted(&iced::Theme::Dark)),
-            }),
-    )
-    .width(220)
-    .height(220)
-    .center_x(220)
-    .center_y(220)
-    .style(|theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(theme::placeholder_bg(theme))),
-        border: iced::Border {
-            radius: 8.0.into(),
-            ..Default::default()
-        },
-        shadow: iced::Shadow {
-            color: theme::shadow_color(theme),
-            offset: iced::Vector::new(0.0, 8.0),
-            blur_radius: 32.0,
-        },
-        ..Default::default()
-    })
-    .into()
-}
 
 /// Build owner avatar placeholder (first letter on pink background)
 fn build_owner_avatar_placeholder(owner_name: &str) -> Element<'static, Message> {

@@ -861,6 +861,56 @@ fn storage_section(
             )
         ),
         divider(),
+        // Download location
+        {
+            let dl_dir = settings.storage.effective_download_dir();
+            let dl_path = dl_dir.to_string_lossy().to_string();
+            setting_row(
+                locale.get(Key::SettingsDownloadLocation),
+                Some(locale.get(Key::SettingsDownloadLocationDesc)),
+                row![
+                    text(dl_path)
+                        .size(theme::TEXT_SIZE_BODY)
+                        .style(|theme| text::Style {
+                            color: Some(theme::settings_value(theme))
+                        }),
+                    button(
+                        text(locale.get(Key::SettingsDownloadChange).to_string())
+                            .size(theme::TEXT_SIZE_BODY)
+                    )
+                    .style(theme::secondary_button)
+                    .padding([4, 12])
+                    .on_press(Message::UpdateDownloadDirDialog),
+                ]
+                .spacing(8)
+                .align_y(iced::Alignment::Center)
+                .into(),
+            )
+        },
+        divider(),
+        // Download quality
+        {
+            let current_quality = settings.storage.download_quality.display_name().to_string();
+            let qualities: Vec<String> = crate::features::MusicQuality::all()
+                .iter()
+                .map(|q| q.display_name().to_string())
+                .collect();
+            setting_row(
+                locale.get(Key::SettingsDownloadQuality),
+                None,
+                styled_pick_list(qualities, Some(current_quality), |value| {
+                    let q = match value.as_str() {
+                        "128kbps" => crate::features::MusicQuality::Standard,
+                        "192kbps" => crate::features::MusicQuality::Higher,
+                        "SQ (无损)" => crate::features::MusicQuality::Lossless,
+                        "Hi-Res" => crate::features::MusicQuality::HiRes,
+                        _ => crate::features::MusicQuality::High,
+                    };
+                    Message::UpdateDownloadQuality(q)
+                }),
+            )
+        },
+        divider(),
         setting_row(
             locale.get(Key::SettingsClearCache),
             Some(locale.get(Key::SettingsClearCacheDesc)),

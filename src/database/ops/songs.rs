@@ -86,6 +86,14 @@ pub async fn get_song_by_path(pool: &Pool<Sqlite>, path: &str) -> Result<Option<
     Ok(song)
 }
 
+pub async fn get_song_by_id(pool: &Pool<Sqlite>, id: i64) -> Result<Option<DbSong>> {
+    let song = sqlx::query_as::<_, DbSong>("SELECT * FROM songs WHERE id = ?")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(song)
+}
+
 /// Get all songs
 pub async fn get_all_songs(pool: &Pool<Sqlite>) -> Result<Vec<DbSong>> {
     let songs = sqlx::query_as::<_, DbSong>(
@@ -141,6 +149,18 @@ pub async fn update_song_path(pool: &Pool<Sqlite>, old_path: &str, new_path: &st
     Ok(())
 }
 
+/// Update cover_path for a song by ID
+pub async fn update_song_cover(pool: &Pool<Sqlite>, song_id: i64, cover_path: &str) -> Result<()> {
+    let now = super::current_timestamp();
+    sqlx::query("UPDATE songs SET cover_path = ?, last_modified = ? WHERE id = ?")
+        .bind(cover_path)
+        .bind(now)
+        .bind(song_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Update cached normalization gain for a song identified by storage path.
 pub async fn update_song_normalization(
     pool: &Pool<Sqlite>,
@@ -171,6 +191,37 @@ pub async fn update_song_normalization(
         .bind(lookup_path)
         .execute(pool)
         .await?;
+
+    Ok(())
+}
+
+/// Refresh descriptive metadata for any song (local or NCM) by ID.
+/// Only updates fields that come from file tags / API, never computed fields.
+pub async fn refresh_song_metadata(pool: &Pool<Sqlite>, song: &DbSong) -> Result<()> {
+    let now = super::current_timestamp();
+
+    sqlx::query(
+        r#"
+        UPDATE songs SET
+            title = ?, artist = ?, album = ?, duration_secs = ?,
+            track_number = ?, year = ?, genre = ?, cover_path = ?,
+            format = ?, last_modified = ?
+        WHERE id = ?
+        "#,
+    )
+    .bind(&song.title)
+    .bind(&song.artist)
+    .bind(&song.album)
+    .bind(song.duration_secs)
+    .bind(song.track_number)
+    .bind(song.year)
+    .bind(song.genre.as_deref())
+    .bind(song.cover_path.as_deref().filter(|p| !p.starts_with("http")))
+    .bind(song.format.as_deref())
+    .bind(now)
+    .bind(song.id)
+    .execute(pool)
+    .await?;
 
     Ok(())
 }

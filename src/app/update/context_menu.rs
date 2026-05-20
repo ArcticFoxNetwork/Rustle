@@ -1,0 +1,543 @@
+//! Context menu and song info/edit dialog handlers
+
+use std::path::Path;
+
+use iced::Task;
+
+use super::super::App;
+use crate::app::state::SongEditDialogState;
+use crate::app::{ContextMenuAction, Message};
+use crate::database::DbSong;
+use crate::i18n::Key;
+use crate::ui::overlay::{ModalKind, OverlayKind};
+
+impl App {
+    pub fn handle_context_menu(&mut self, message: &Message) -> Option<Task<Message>> {
+        match message {
+            Message::RightClickSong(song_id) => {
+                let pos = self.core.mouse_position;
+                let song = self.find_song_anywhere(*song_id);
+                let (has_file, is_ncm) = song
+                    .as_ref()
+                    .map(|s| {
+                        let has = !s.file_path.is_empty()
+                            && std::path::Path::new(&s.file_path).exists();
+                        (has, s.id < 0)
+                    })
+                    .unwrap_or((false, *song_id < 0));
+                let is_liked = if is_ncm {
+                    self.core.user_info.as_ref()
+                        .map(|u| u.like_songs.contains(&((-song_id) as u64)))
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+                self.ui.context_menu = Some(crate::app::state::ContextMenuState {
+                    song_id: *song_id,
+                    x: pos.x,
+                    y: pos.y,
+                    has_file_on_disk: has_file,
+                    is_ncm,
+                    is_liked,
+                });
+                Some(Task::none())
+            }
+            Message::RightClickNcmSong(info) => {
+                let pos = self.core.mouse_position;
+                let id = -(info.id as i64);
+                let song = self.find_song_anywhere(id);
+                let (has_file, is_ncm) = song
+                    .as_ref()
+                    .map(|s| {
+                        let has = !s.file_path.is_empty()
+                            && std::path::Path::new(&s.file_path).exists();
+                        (has, s.id < 0 && !has)
+                    })
+                    .unwrap_or((false, true));
+                let is_liked = if is_ncm {
+                    self.core.user_info.as_ref()
+                        .map(|u| u.like_songs.contains(&info.id))
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+                self.ui.context_menu = Some(crate::app::state::ContextMenuState {
+                    song_id: id,
+                    x: pos.x,
+                    y: pos.y,
+                    has_file_on_disk: has_file,
+                    is_ncm,
+                    is_liked,
+                });
+                Some(Task::none())
+            }
+            Message::ShowContextMenu {
+                song_id,
+                x,
+                y,
+                has_file_on_disk,
+                is_ncm,
+            } => {
+                let is_liked = if *is_ncm {
+                    self.core.user_info.as_ref()
+                        .map(|u| u.like_songs.contains(&(song_id.unsigned_abs())))
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+                self.ui.context_menu = Some(crate::app::state::ContextMenuState {
+                    song_id: *song_id,
+                    x: *x,
+                    y: *y,
+                    has_file_on_disk: *has_file_on_disk,
+                    is_ncm: *is_ncm,
+                    is_liked,
+                });
+                Some(Task::none())
+            }
+            Message::CloseContextMenu => {
+                self.ui.context_menu = None;
+                Some(Task::none())
+            }
+            Message::ContextMenuAction(action, song_id) => {
+                self.ui.context_menu = None;
+                self.dispatch_menu_action(*action, *song_id)
+            }
+            // ── Song Info / Edit ──
+            Message::EditSongTags(song_id) => Some(self.open_song_edit_dialog(*song_id)),
+            Message::OpenSongEditDialog(data) => {
+                let (s, meta, cover) = data.as_ref();
+                let edit_state = SongEditDialogState {
+                    song_id: s.id,
+                    title: meta.title.clone(),
+                    artist: meta.artist.clone(),
+                    album: meta.album.clone(),
+                    track_number: meta.track_number,
+                    year: meta.year,
+                    genre: meta.genre.clone().unwrap_or_default(),
+                    cover_path: cover.clone(),
+                };
+                self.ui.song_edit_dialog = Some(edit_state.clone());
+                use crate::ui::overlay::{ModalConfig, ModalKind, OverlayEntry, OverlayKind};
+                self.ui.overlay_stack.push(OverlayEntry::new(
+                    OverlayKind::Modal(
+                        ModalKind::SongEdit(edit_state),
+                        ModalConfig::default().width(600.0),
+                    ),
+                ));
+                Some(Task::none())
+            }
+            Message::SongEditFieldChanged {
+                song_id,
+                field,
+                value,
+            } => {
+                if let Some(ref mut e) = self.ui.song_edit_dialog {
+                    if e.song_id == *song_id {
+                        match field.as_str() {
+                            "title" => e.title = value.clone(),
+                            "artist" => e.artist = value.clone(),
+                            "album" => e.album = value.clone(),
+                            "track_number" => {
+                                e.track_number = value.parse::<u32>().ok();
+                            }
+                            "year" => {
+                                e.year = value.parse::<u32>().ok();
+                            }
+                            "genre" => e.genre = value.clone(),
+                            _ => {}
+                        }
+                    }
+                }
+                Some(Task::none())
+            }
+            Message::SaveSongEdits(song_id) => self.save_song_edits(*song_id),
+            Message::PickSongEditCover(song_id) => {
+                let sid = *song_id;
+                Some(Task::perform(
+                    async move {
+                        rfd::AsyncFileDialog::new()
+                            .add_filter("Images", &["png", "jpg", "jpeg", "webp"])
+                            .pick_file()
+                            .await
+                            .map(|f| f.path().to_path_buf())
+                    },
+                    move |path| match path {
+                        Some(p) => Message::SongEditCoverReplaced(sid, p),
+                        None => Message::Noop,
+                    },
+                ))
+            }
+            Message::SongEditCoverReplaced(song_id, path) => {
+                let p = path.clone();
+                if let Some(ref mut e) = self.ui.song_edit_dialog {
+                    if e.song_id == *song_id {
+                        e.cover_path = Some(p.clone());
+                    }
+                }
+                // Also update overlay entry
+                if let Some(entry) = self.ui.overlay_stack.last_mut() {
+                    if let OverlayKind::Modal(ModalKind::SongEdit(state), _) =
+                        &mut entry.kind
+                    {
+                        if state.song_id == *song_id {
+                            state.cover_path = Some(p);
+                        }
+                    }
+                }
+                Some(Task::none())
+            }
+            Message::SongEditsSaved(song_id) => {
+                // Refresh DB cache from the updated file
+                let task = if let Some(ref db) = self.core.db {
+                    if let Some(song) = self.find_song_anywhere(*song_id) {
+                        let meta = crate::metadata::SongMetadata::resolve(&song);
+                        let db = std::sync::Arc::clone(db);
+                        let mut updated = song.clone();
+                        meta.merge_into(&mut updated);
+                        Some(Task::perform(
+                            async move {
+                                let _ = db.refresh_song_metadata(&updated).await;
+                            },
+                            |_| Message::Noop,
+                        ))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+                Some(Task::batch([
+                    task.unwrap_or(Task::none()),
+                    Self::toast_success(self.core.locale.get(Key::SongEditSaved).to_string()),
+                ]))
+            }
+            Message::SongEditsFailed { error, .. } => {
+                Some(Self::toast_error(format!(
+                    "{}: {}",
+                    self.core.locale.get(Key::SongEditFailed),
+                    error
+                )))
+            }
+            _ => None,
+        }
+    }
+
+    fn dispatch_menu_action(
+        &mut self,
+        action: ContextMenuAction,
+        song_id: i64,
+    ) -> Option<Task<Message>> {
+        match action {
+            ContextMenuAction::PlayNow => Some(Task::done(Message::PlaySong(song_id))),
+            ContextMenuAction::PlayNext => {
+                self.insert_next_in_queue(song_id);
+                Some(Self::toast_success("已添加到下一首".to_string()))
+            }
+            ContextMenuAction::AddToFavorites => {
+                // NCM songs use negative id -> positive ncm_id
+                let ncm_id = if song_id < 0 { (-song_id) as u64 } else { 0 };
+                if ncm_id > 0 {
+                    Some(Task::done(Message::ToggleFavorite(ncm_id)))
+                } else {
+                    Some(Self::toast_info("仅支持收藏在线歌曲".to_string()))
+                }
+            }
+            ContextMenuAction::AddToPlaylist => self.open_playlist_picker(song_id),
+            ContextMenuAction::ViewArtist => self.navigate_to_artist(song_id),
+            ContextMenuAction::ViewAlbum => self.navigate_to_album(song_id),
+            ContextMenuAction::ShowInFolder => Some(self.show_in_folder(song_id)),
+            ContextMenuAction::Download => {
+                // Enqueue song for download
+                Some(Task::done(Message::DownloadSong(song_id)))
+            }
+            ContextMenuAction::EditSongTags => Some(self.open_song_edit_dialog(song_id)),
+            ContextMenuAction::RemoveFromList => self.remove_song_from_list(song_id),
+        }
+    }
+
+    // ── Helpers ──────────────────────────────────────
+
+    fn insert_next_in_queue(&mut self, song_id: i64) {
+        let song = self.find_song_anywhere(song_id);
+        if let Some(s) = song {
+            let idx = self.playback.current_index.map(|i| i + 1).unwrap_or(0);
+            if idx <= self.playback.queue.len() {
+                self.playback.queue.insert(idx, s);
+                self.persist_queue_snapshot();
+            }
+        }
+    }
+
+    fn navigate_to_artist(&mut self, song_id: i64) -> Option<Task<Message>> {
+        // Try NCM artist id first
+        let ncm_id = if song_id < 0 {
+            Some((-song_id) as u64)
+        } else {
+            None
+        };
+        // Search NCM playlist songs for artist info
+        if let Some(id) = ncm_id {
+            let artist_id = self
+                .ui
+                .home
+                .current_ncm_playlist_songs
+                .iter()
+                .find(|s| s.id == id)
+                .and_then(|s| {
+                    if s.singer_id != 0 {
+                        Some(s.singer_id)
+                    } else {
+                        None
+                    }
+                });
+            if let Some(aid) = artist_id {
+                return Some(Task::done(Message::OpenArtist(aid)));
+            }
+        }
+        // Fallback: search by artist name
+        let song = self.find_song_anywhere(song_id);
+        if let Some(s) = song {
+            if !s.artist.is_empty() {
+                return Some(Task::done(Message::OpenArtistByName(s.artist)));
+            }
+        }
+        Some(Self::toast_info("无法找到歌手信息".to_string()))
+    }
+
+    fn navigate_to_album(&mut self, song_id: i64) -> Option<Task<Message>> {
+        let ncm_id = if song_id < 0 {
+            Some((-song_id) as u64)
+        } else {
+            None
+        };
+        if let Some(id) = ncm_id {
+            let album_id = self
+                .ui
+                .home
+                .current_ncm_playlist_songs
+                .iter()
+                .find(|s| s.id == id)
+                .and_then(|s| {
+                    if s.album_id != 0 {
+                        Some(s.album_id)
+                    } else {
+                        None
+                    }
+                });
+            if let Some(aid) = album_id {
+                return Some(Task::done(Message::OpenAlbum(aid)));
+            }
+        }
+        Some(Self::toast_info("无法找到专辑信息".to_string()))
+    }
+
+    fn open_playlist_picker(&mut self, song_id: i64) -> Option<Task<Message>> {
+        use crate::ui::overlay::{ModalConfig, ModalKind, OverlayEntry, OverlayKind};
+        let is_ncm = song_id < 0;
+        let ncm_playlists = if is_ncm {
+            let owned: Vec<_> = self
+                .ui
+                .home
+                .user_playlists
+                .iter()
+                .filter(|pl| !pl.subscribed)
+                .cloned()
+                .collect();
+            Some(owned)
+        } else {
+            None
+        };
+        self.ui.overlay_stack.push(OverlayEntry::new(
+            OverlayKind::Modal(
+                ModalKind::PlaylistPicker {
+                    song_id,
+                    ncm_playlists,
+                },
+                ModalConfig::default().width(360.0),
+            ),
+        ));
+        Some(Task::none())
+    }
+
+    fn remove_song_from_list(&mut self, song_id: i64) -> Option<Task<Message>> {
+        let mut removed = false;
+        // 1. Remove from current playlist if viewing one
+        match self.ui.current_route {
+            crate::app::Route::Playlist(playlist_id) => {
+                self.ui.playlist_page.current.as_mut().map(|p| {
+                    p.songs.retain(|s| s.id != song_id);
+                });
+                if let Some(ref db) = self.core.db {
+                    let db = std::sync::Arc::clone(db);
+                    let pid = playlist_id;
+                    return Some(Task::perform(
+                        async move {
+                            let _ = db.remove_song_from_playlist(pid, song_id).await;
+                        },
+                        move |_| {
+                            Message::ShowSuccessToast("已从歌单中删除".to_string())
+                        },
+                    ));
+                }
+                removed = true;
+            }
+            crate::app::Route::NcmPlaylist(playlist_id) => {
+                // Remove from in-memory view
+                self.ui.playlist_page.current.as_mut().map(|p| {
+                    p.songs.retain(|s| s.id != song_id);
+                });
+                self.ui.home.current_ncm_playlist_songs
+                    .retain(|s| s.id != (-song_id) as u64);
+                if let Some(ref client) = self.core.ncm_client {
+                    let client = client.clone();
+                    let ncm_id = (-song_id) as u64;
+                    return Some(Task::perform(
+                        async move {
+                            client.client.playlist_add_tracks(
+                                playlist_id, &ncm_id.to_string(), "del",
+                            ).await
+                        },
+                        move |result| match result {
+                            Ok(()) => Message::ShowSuccessToast(
+                                "已从歌单中删除".to_string()
+                            ),
+                            Err(e) => Message::ShowErrorToast(
+                                format!("删除失败: {}", e)
+                            ),
+                        },
+                    ));
+                }
+                return Some(Self::toast_error("未登录网易云账号".to_string()));
+            }
+            _ => {}
+        }
+        // 2. Fallback: remove from playback queue
+        if let Some(pos) = self.playback.queue.iter().position(|s| s.id == song_id) {
+            self.playback.queue.remove(pos);
+            if let Some(ref mut idx) = self.playback.current_index {
+                if pos < *idx {
+                    *idx -= 1;
+                } else if pos == *idx {
+                    *idx = idx.saturating_sub(1);
+                }
+            }
+            self.persist_queue_snapshot();
+            removed = true;
+        }
+        if removed {
+            Some(Self::toast_success("已从列表移除".to_string()))
+        } else {
+            Some(Self::toast_info("歌曲不在播放列表中".to_string()))
+        }
+    }
+
+    fn find_song_anywhere(&self, song_id: i64) -> Option<DbSong> {
+        if let Some(s) = self.library.db_songs.iter().find(|s| s.id == song_id) {
+            return Some(s.clone());
+        }
+        if let Some(s) = self.playback.queue.iter().find(|s| s.id == song_id) {
+            return Some(s.clone());
+        }
+        if self.playback.current_song.as_ref().map(|s| s.id) == Some(song_id) {
+            return self.playback.current_song.clone();
+        }
+        if song_id < 0 {
+            let ncm_id = (-song_id) as u64;
+            if let Some(info) = self
+                .ui
+                .home
+                .current_ncm_playlist_songs
+                .iter()
+                .find(|s| s.id == ncm_id)
+            {
+                let mut song = Self::ncm_song_to_db_song(info);
+                // If the file exists on disk, set the real path so resolve()
+                // can extract metadata directly from the file
+                let dl = crate::features::settings::StorageSettings::default()
+                    .effective_download_dir();
+                let stem = format!(
+                    "{} - {}",
+                    crate::utils::sanitize_filename(&song.artist),
+                    crate::utils::sanitize_filename(&song.title),
+                );
+                if let Some(p) = crate::utils::AUDIO_EXTENSIONS
+                    .iter()
+                    .map(|e| dl.join(format!("{}.{}", stem, e)))
+                    .find(|p| p.exists())
+                {
+                    song.file_path = p.to_string_lossy().to_string();
+                }
+                return Some(song);
+            }
+        }
+        None
+    }
+
+    fn show_in_folder(&mut self, song_id: i64) -> Task<Message> {
+        let song = self.find_song_anywhere(song_id);
+        Task::perform(
+            async move {
+                let file_path = song.as_ref()
+                    .map(|s| s.file_path.clone())
+                    .unwrap_or_default();
+                if !file_path.is_empty() {
+                    crate::platform::open_in_file_manager(std::path::Path::new(&file_path));
+                    Message::Noop
+                } else {
+                    Message::ShowErrorToast("无法找到文件".to_string())
+                }
+            },
+            |msg| msg,
+        )
+    }
+
+    fn open_song_edit_dialog(&mut self, song_id: i64) -> Task<Message> {
+        let song = self.find_song_anywhere(song_id);
+        Task::perform(
+            async move {
+                let s = match song {
+                    Some(s) => s,
+                    None => return Message::ShowErrorToast("歌曲未找到".to_string()),
+                };
+                let meta = crate::metadata::SongMetadata::resolve(&s);
+                let cover = meta.resolve_cover(Some(&s.file_path), s.id);
+                Message::OpenSongEditDialog(Box::new((s, meta, cover)))
+            },
+            |msg| msg,
+        )
+    }
+
+    fn save_song_edits(&mut self, song_id: i64) -> Option<Task<Message>> {
+        let edit = self.ui.song_edit_dialog.take()?;
+        let song = self.find_song_anywhere(song_id);
+        let path = song.as_ref().and_then(|s| {
+            if s.file_path.is_empty() {
+                None
+            } else {
+                Some(Path::new(&s.file_path).to_path_buf())
+            }
+        })?;
+        Some(Task::perform(
+            async move {
+                match crate::features::import::save_metadata(
+                    &path,
+                    &crate::features::import::MetadataEdits {
+                        title: Some(edit.title),
+                        artist: Some(edit.artist),
+                        album: Some(edit.album),
+                        track_number: edit.track_number,
+                        year: edit.year,
+                        genre: Some(edit.genre),
+                        cover_data: None,
+                        cover_mime: None,
+                    },
+                ) {
+                    Ok(()) => Message::SongEditsSaved(song_id),
+                    Err(e) => Message::SongEditsFailed { song_id, error: e },
+                }
+            },
+            |m| m,
+        ))
+    }
+}

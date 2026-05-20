@@ -2,20 +2,22 @@
 //! Positioned at top of the application with navigation on left, search in center, and controls on right
 
 use iced::border::Radius;
-use iced::widget::{Space, button, container, row, svg, tooltip};
-use iced::{Alignment, Element, Fill, Padding};
+use iced::widget::{Space, button, container, image, row, svg, text, tooltip};
+use iced::{Alignment, ContentFit, Element, Fill, Padding};
 
-use crate::app::Message;
+use crate::app::{Message, UserInfo};
 use crate::i18n::{Key, Locale};
 use crate::ui::components::search_bar::{self, SearchBarStyle};
 use crate::ui::theme;
 
-/// Build the complete top bar with navigation buttons on left, search bar in center, and window controls on right
+/// Build the complete top bar with navigation buttons on left, search bar in center, user info and window controls on right
 pub fn view<'a>(
     locale: Locale,
     can_go_back: bool,
     can_go_forward: bool,
     search_query: &'a str,
+    is_logged_in: bool,
+    user_info: Option<&UserInfo>,
 ) -> Element<'a, Message> {
     let button_size = 36;
     let icon_size = 16;
@@ -91,6 +93,96 @@ pub fn view<'a>(
     // Add left margin to move buttons away from edge
     let nav_buttons = container(nav_group).padding(Padding::new(12.0).left(16.0));
 
+    // User info (avatar + username + SVIP badge, right side before settings)
+    let avatar_size = 28.0;
+    let avatar_radius = avatar_size / 2.0;
+    let avatar_icon_size = 14.0;
+
+    let avatar_elem: Element<'_, Message> = if is_logged_in {
+        if let Some(info) = user_info {
+            if let Some(handle) = &info.avatar_handle {
+                container(
+                    image(handle.clone())
+                        .width(Fill)
+                        .height(Fill)
+                        .content_fit(ContentFit::Cover)
+                        .border_radius(avatar_radius),
+                )
+                .width(avatar_size)
+                .height(avatar_size)
+                .into()
+            } else {
+                avatar_placeholder(avatar_size, avatar_radius, avatar_icon_size)
+            }
+        } else {
+            avatar_placeholder(avatar_size, avatar_radius, avatar_icon_size)
+        }
+    } else {
+        avatar_placeholder(avatar_size, avatar_radius, avatar_icon_size)
+    };
+
+    let user_text: Element<'_, Message> = if is_logged_in {
+        if let Some(info) = user_info {
+            if info.vip_type > 0 {
+                row![
+                    text(info.nickname.clone())
+                        .size(theme::TEXT_SIZE_BODY_LARGE)
+                        .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT))
+                        .style(|theme| text::Style {
+                            color: Some(theme::text_primary(theme))
+                        }),
+                    Space::new().width(6),
+                    text("SVIP")
+                        .size(theme::TEXT_SIZE_BODY_LARGE)
+                        .style(|_theme| text::Style {
+                            color: Some(theme::ACCENT_PINK)
+                        }),
+                ]
+                .align_y(Alignment::Center)
+                .into()
+            } else {
+                text(info.nickname.clone())
+                    .size(theme::TEXT_SIZE_BODY_LARGE)
+                    .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT))
+                    .style(|theme| text::Style {
+                        color: Some(theme::text_primary(theme)),
+                    })
+                    .into()
+            }
+        } else {
+            text("未登录")
+                .size(theme::TEXT_SIZE_BODY)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_muted(theme)),
+                })
+                .into()
+        }
+    } else {
+        text("未登录")
+            .size(theme::TEXT_SIZE_BODY)
+            .style(|theme| text::Style {
+                color: Some(theme::text_muted(theme)),
+            })
+            .into()
+    };
+
+    let user_info_widget =
+        button(row![avatar_elem, Space::new().width(6), user_text,].align_y(Alignment::Center))
+            .style(|_theme, _status| button::Style {
+                background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
+                text_color: iced::Color::TRANSPARENT,
+                border: iced::Border::default(),
+                shadow: iced::Shadow::default(),
+                snap: false,
+            })
+            .on_press(if is_logged_in {
+                user_info.map_or(Message::OpenSettings, |info| {
+                    Message::OpenUser(info.user_id)
+                })
+            } else {
+                Message::ToggleLoginPopup
+            });
+
     // Window control buttons (right side)
     let settings_btn = tooltip(
         button(
@@ -162,8 +254,18 @@ pub fn view<'a>(
         tooltip::Position::Bottom,
     );
 
-    let window_controls = container(
+    // Search bar (left, after nav buttons)
+    let search_bar = search_bar::view(search_query, locale, SearchBarStyle::top_bar());
+
+    // Complete top bar layout: nav + search on left, user info + window controls on right
+    container(
         row![
+            nav_buttons,
+            Space::new().width(16),
+            search_bar,
+            Space::new().width(12),
+            user_info_widget,
+            Space::new().width(6),
             settings_btn,
             Space::new().width(6),
             minimize_btn,
@@ -174,20 +276,8 @@ pub fn view<'a>(
         ]
         .align_y(Alignment::Center),
     )
-    .padding(Padding::new(12.0));
-
-    // Search bar (left, after nav buttons)
-    let search_bar = search_bar::view(search_query, locale, SearchBarStyle::top_bar());
-
-    // Complete top bar layout: nav + search on left, window controls on right
-    row![
-        nav_buttons,
-        Space::new().width(16),
-        search_bar,
-        Space::new().width(Fill),
-        window_controls,
-    ]
-    .align_y(Alignment::Center)
+    .width(Fill)
+    .padding(Padding::new(0.0).right(12.0))
     .into()
 }
 
@@ -325,3 +415,28 @@ const CLOSE_ICON: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="current
     <line x1="6" y1="6" x2="18" y2="18"/>
     <line x1="6" y1="18" x2="18" y2="6"/>
 </svg>"#;
+
+/// Circular avatar placeholder with a centered user icon
+fn avatar_placeholder(size: f32, radius: f32, icon_size: f32) -> Element<'static, Message> {
+    container(
+        svg(svg::Handle::from_memory(crate::ui::icons::USER.as_bytes()))
+            .width(icon_size)
+            .height(icon_size)
+            .style(|theme, _status| svg::Style {
+                color: Some(theme::text_secondary(theme)),
+            }),
+    )
+    .width(size)
+    .height(size)
+    .center_x(size)
+    .center_y(size)
+    .style(move |theme| iced::widget::container::Style {
+        background: Some(iced::Background::Color(theme::border_color(theme))),
+        border: iced::Border {
+            radius: radius.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .into()
+}

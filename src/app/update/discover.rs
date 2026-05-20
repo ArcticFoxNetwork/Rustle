@@ -78,6 +78,8 @@ impl App {
                     name: locale.get(Key::DiscoverDailyRecommend).to_string(),
                     cover_img_url: String::new(),
                     author: locale.get(Key::DiscoverDailyRecommendDesc).to_string(),
+                    creator_id: 0,
+                    subscribed: false,
                 }];
                 all_playlists.extend(playlists.clone());
 

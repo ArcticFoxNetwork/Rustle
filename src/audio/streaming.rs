@@ -26,7 +26,7 @@ pub const LOW_WATER_MARK_BYTES: u64 = 40 * 1024;
 pub const HIGH_WATER_MARK_BYTES: u64 = 400 * 1024;
 
 /// Valid audio extensions for URL parsing
-const VALID_AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "m4a", "aac", "ogg", "wav"];
+const VALID_AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "m4a", "aac", "ogg", "wav", "opus"];
 
 // ============ Format Detection Helpers ============
 
@@ -71,7 +71,7 @@ pub fn content_type_to_extension(content_type: &str) -> Option<String> {
         "audio/mpeg" | "audio/mp3" => Some("mp3".to_string()),
         "audio/flac" | "audio/x-flac" => Some("flac".to_string()),
         "audio/mp4" | "audio/m4a" | "audio/x-m4a" | "audio/aac" => Some("m4a".to_string()),
-        "audio/ogg" | "audio/vorbis" => Some("ogg".to_string()),
+        "audio/ogg" | "audio/vorbis" | "audio/opus" => Some("ogg".to_string()),
         "audio/wav" | "audio/x-wav" | "audio/wave" => Some("wav".to_string()),
         _ => None,
     }

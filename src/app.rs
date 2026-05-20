@@ -11,10 +11,13 @@ use iced::{Task, Theme};
 use std::sync::Arc;
 
 use crate::i18n::{Language, Locale};
-pub use message::{ContentWidthTarget, IconId, Message, SettingsSection, SidebarId};
+pub use message::{
+    ContentWidthTarget, ContextMenuAction, IconId, Message, SettingsSection, SidebarId,
+};
 pub use state::{
-    App, CoreState, DiscoverPageState, DiscoverViewMode, HomePageState, LibraryState,
-    PlaybackSessionState, Route, SearchPageState, SearchTab, UiState, UserInfo,
+    App, ContextMenuState, CoreState, DiscoverPageState, DiscoverViewMode, DownloadTab,
+    HomePageState, LibraryState, PlaybackSessionState, Route, SearchPageState, SearchTab,
+    SongEditDialogState, UiState, UserInfo,
 };
 
 impl App {
@@ -70,6 +73,26 @@ impl App {
 
         let init_task = Task::batch([
             open_window_and_init_mpris,
+            // Protocol IPC listener and URI stream
+            {
+                let (uri_tx, uri_rx) = crate::protocol::ipc::uri_channel();
+                crate::protocol::ipc::spawn_ipc_listener(uri_tx);
+                let uri_stream = Task::run(
+                    async_stream::stream! {
+                        tokio::pin!(uri_rx);
+                        while let Some(uri) = uri_rx.recv().await {
+                            yield uri;
+                        }
+                    },
+                    Message::UriReceived,
+                );
+                let pending = Task::done(
+                    crate::protocol::ipc::take_pending_startup_uri()
+                        .map(Message::UriReceived)
+                        .unwrap_or(Message::Noop),
+                );
+                Task::batch([uri_stream, pending])
+            },
             Task::perform(helpers::init_database(), |result| match result {
                 Ok(db) => Message::DatabaseReady(Arc::new(db)),
                 Err(e) => Message::DatabaseError(e.to_string()),
@@ -84,6 +107,18 @@ impl App {
             }),
             Task::done(Message::TryAutoLogin(0)),
             Task::done(Message::EnforceCacheLimit),
+            Task::perform(
+                async {
+                    crate::platform::protocol::register_protocol_scheme()
+                        .map(|_| {
+                            tracing::info!("rustle:// protocol registered");
+                        })
+                        .unwrap_or_else(|e| {
+                            tracing::warn!("rustle:// protocol registration failed: {}", e);
+                        })
+                },
+                |_| Message::Noop,
+            ),
             audio_listener_task,
         ]);
 

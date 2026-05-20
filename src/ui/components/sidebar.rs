@@ -8,8 +8,7 @@ use crate::app::{Message, Route, SidebarId};
 use crate::i18n::{Key, Locale};
 use crate::ui::animation::HoverAnimations;
 use crate::ui::components::importing_card::{self, ImportingPlaylist};
-use crate::ui::components::player_bar::PLAYER_BAR_HEIGHT;
-use crate::ui::theme::{self, BOLD_WEIGHT, MEDIUM_WEIGHT};
+use crate::ui::theme::{self, BOLD_WEIGHT};
 
 /// Navigation menu items
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -17,6 +16,7 @@ pub enum NavItem {
     Home,
     Discover,
     Radio,
+    Downloads,
     Settings,
     AudioEngine,
 }
@@ -27,6 +27,7 @@ impl NavItem {
             NavItem::Home => Key::NavHome,
             NavItem::Discover => Key::NavDiscover,
             NavItem::Radio => Key::NavRadio,
+            NavItem::Downloads => Key::NavDownloads,
             NavItem::Settings => Key::NavSettings,
             NavItem::AudioEngine => Key::NavAudioEngine,
         }
@@ -37,6 +38,7 @@ impl NavItem {
             NavItem::Home => crate::ui::icons::HOME,
             NavItem::Discover => crate::ui::icons::BROWSE,
             NavItem::Radio => crate::ui::icons::RADIO,
+            NavItem::Downloads => crate::ui::icons::DOWNLOAD,
             NavItem::Settings => crate::ui::icons::SETTINGS,
             NavItem::AudioEngine => crate::ui::icons::EQUALIZER,
         }
@@ -68,7 +70,6 @@ pub fn view(
     current_route: &Route,
     locale: Locale,
     is_logged_in: bool,
-    user_info: Option<&crate::app::UserInfo>,
     importing_playlist: Option<&ImportingPlaylist>,
     playlists: &[crate::database::DbPlaylist],
     user_playlists: &[crate::api::SongList],
@@ -100,7 +101,12 @@ pub fn view(
     .padding(Padding::new(24.0).bottom(34.0));
 
     // Main navigation menu with hover animations
-    let nav_items = [NavItem::Home, NavItem::Discover, NavItem::Radio];
+    let nav_items = [
+        NavItem::Home,
+        NavItem::Discover,
+        NavItem::Radio,
+        NavItem::Downloads,
+    ];
     let nav_menu = column(nav_items.into_iter().enumerate().map(|(idx, item)| {
         let is_active = matches!(current_route.nav_item(), Some(active) if active == item);
         let hover_progress = sidebar_animations.get_progress(&SidebarId::Nav(idx));
@@ -145,114 +151,6 @@ pub fn view(
         Message::ImportLocalPlaylist,
     );
 
-    // User profile card at bottom
-    let user_hover_progress = sidebar_animations.get_progress(&SidebarId::UserCard);
-
-    let not_logged_in = locale.get(Key::NotLoggedIn).to_string();
-    let click_to_login = locale.get(Key::ClickToLogin).to_string();
-    let avatar_size = 40.0;
-    let avatar_radius = avatar_size / 2.0;
-    let avatar_icon_size = 20.0;
-
-    let avatar_elem = if is_logged_in {
-        if let Some(info) = user_info {
-            if let Some(handle) = &info.avatar_handle {
-                container(
-                    iced::widget::image(handle.clone())
-                        .width(Fill)
-                        .height(Fill)
-                        .content_fit(iced::ContentFit::Cover)
-                        .border_radius(avatar_radius),
-                )
-                .width(avatar_size)
-                .height(avatar_size)
-                .into()
-            } else {
-                avatar_placeholder(avatar_size, avatar_radius, avatar_icon_size)
-            }
-        } else {
-            avatar_placeholder(avatar_size, avatar_radius, avatar_icon_size)
-        }
-    } else {
-        avatar_placeholder(avatar_size, avatar_radius, avatar_icon_size)
-    };
-
-    let text_col = if is_logged_in {
-        if let Some(info) = user_info {
-            if info.vip_type > 0 {
-                column![
-                    text(info.nickname.clone())
-                        .size(theme::TEXT_SIZE_BODY_LARGE)
-                        .style(|theme| text::Style {
-                            color: Some(theme::text_primary(theme))
-                        })
-                        .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT)),
-                    Space::new().height(2),
-                    row![text("VIP").size(theme::TEXT_SIZE_CAPTION).style(|_theme| {
-                        text::Style {
-                            color: Some(theme::ACCENT_PINK),
-                        }
-                    }),],
-                ]
-                .into()
-            } else {
-                column![
-                    text(info.nickname.clone())
-                        .size(theme::TEXT_SIZE_BODY_LARGE)
-                        .style(|theme| text::Style {
-                            color: Some(theme::text_primary(theme))
-                        })
-                        .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT)),
-                ]
-                .into()
-            }
-        } else {
-            column![
-                text(not_logged_in)
-                    .size(theme::TEXT_SIZE_BODY_LARGE)
-                    .style(|theme| text::Style {
-                        color: Some(theme::text_primary(theme))
-                    })
-                    .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT)),
-                Space::new().height(2),
-                text(click_to_login)
-                    .size(theme::TEXT_SIZE_LABEL)
-                    .color(theme::ACCENT_PINK),
-            ]
-            .into()
-        }
-    } else {
-        column![
-            text(not_logged_in)
-                .size(theme::TEXT_SIZE_BODY_LARGE)
-                .style(|theme| text::Style {
-                    color: Some(theme::text_primary(theme))
-                })
-                .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT)),
-            Space::new().height(2),
-            text(click_to_login)
-                .size(theme::TEXT_SIZE_LABEL)
-                .color(theme::ACCENT_PINK),
-        ]
-        .into()
-    };
-
-    let user_card_content = user_card_row(
-        avatar_elem,
-        text_col,
-        user_hover_progress,
-        if is_logged_in {
-            Message::OpenSettings
-        } else {
-            Message::ToggleLoginPopup
-        },
-    );
-
-    let user_card: Element<'static, Message> = mouse_area(user_card_content)
-        .on_enter(Message::HoverSidebar(Some(SidebarId::UserCard)))
-        .on_exit(Message::HoverSidebar(None))
-        .into();
-
     // Build library section with proper spacing (same as nav_menu)
     let mut library_items: Vec<Element<'static, Message>> = vec![recently_played];
 
@@ -267,8 +165,16 @@ pub fn view(
         let id = playlist.id;
         let is_active = matches!(current_route, Route::Playlist(current_id) if *current_id == id);
         let hover_progress = sidebar_animations.get_progress(&SidebarId::Playlist(id));
-        library_items.push(sidebar_button_animated(
+        let s = crate::ui::components::cover_thumb::CoverSize::Tiny;
+        let cover_handle = playlist.cover_path.as_deref()
+            .filter(|p| !p.is_empty() && std::path::Path::new(p).exists())
+            .map(|p| iced::widget::image::Handle::from_path(std::path::PathBuf::from(p)));
+        let cover_el = Some(crate::ui::components::cover_thumb::thumb(
+            cover_handle.as_ref(), s.px(), s.radius(),
+        ));
+        library_items.push(sidebar_button_animated_opt_cover(
             crate::ui::icons::MUSIC,
+            cover_el,
             name,
             is_active,
             hover_progress,
@@ -292,40 +198,73 @@ pub fn view(
 
     // Only show cloud playlists section if logged in
     if is_logged_in {
-        let cloud_header = text(locale.get(Key::CloudPlaylistsTitle))
+        // Split user playlists into owned and collected
+        let (owned_playlists, collected_playlists): (Vec<_>, Vec<_>) = user_playlists
+            .iter()
+            .partition(|pl| !pl.subscribed);
+
+        // Helper to render a playlist button
+        let render_playlist_btn =
+            |playlist: &crate::api::SongList| -> Element<'static, Message> {
+                let name = playlist.name.clone();
+                let id = playlist.id;
+                let is_active =
+                    matches!(current_route, Route::NcmPlaylist(current_id) if *current_id == id);
+                let hover_progress = sidebar_animations.get_progress(&SidebarId::UserPlaylist(id));
+
+                let s = crate::ui::components::cover_thumb::CoverSize::Tiny;
+                let cover_handle = crate::utils::find_playlist_cover(id)
+                    .map(iced::widget::image::Handle::from_path);
+                let cover_el = crate::ui::components::cover_thumb::thumb(
+                    cover_handle.as_ref(), s.px(), s.radius(),
+                );
+                sidebar_button_animated_opt_cover(
+                    crate::ui::icons::MUSIC,
+                    Some(cover_el),
+                    name,
+                    is_active,
+                    hover_progress,
+                    SidebarId::UserPlaylist(id),
+                    Message::OpenNcmPlaylist(id),
+                )
+            };
+
+        scrollable_items.push(Space::new().height(20).into());
+
+        // "My Playlists" section (owned)
+        let my_header = text(locale.get(Key::CloudPlaylistsTitle))
             .size(theme::TEXT_SIZE_LABEL)
             .style(|theme| text::Style {
                 color: Some(theme::text_muted(theme)),
             })
             .width(Fill);
-
-        scrollable_items.push(Space::new().height(20).into());
         scrollable_items.push(
-            container(cloud_header)
+            container(my_header)
                 .padding(Padding::new(0.0).left(14.0).bottom(8.0))
                 .into(),
         );
+        let my_items: Vec<Element<'static, Message>> =
+            owned_playlists.into_iter().map(render_playlist_btn).collect();
+        scrollable_items.push(column(my_items).spacing(4).into());
 
-        // User playlists
-        let mut cloud_playlist_items: Vec<Element<'static, Message>> = Vec::new();
-        for playlist in user_playlists {
-            let name = playlist.name.clone();
-            let id = playlist.id;
-            let is_active =
-                matches!(current_route, Route::NcmPlaylist(current_id) if *current_id == id);
-            let hover_progress = sidebar_animations.get_progress(&SidebarId::UserPlaylist(id));
-
-            cloud_playlist_items.push(sidebar_button_animated(
-                crate::ui::icons::MUSIC,
-                name,
-                is_active,
-                hover_progress,
-                SidebarId::UserPlaylist(id),
-                Message::OpenNcmPlaylist(id),
-            ));
+        // "Collected Playlists" section
+        if !collected_playlists.is_empty() {
+            scrollable_items.push(Space::new().height(20).into());
+            let collected_header = text(locale.get(Key::CollectedPlaylistsTitle))
+                .size(theme::TEXT_SIZE_LABEL)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_muted(theme)),
+                })
+                .width(Fill);
+            scrollable_items.push(
+                container(collected_header)
+                    .padding(Padding::new(0.0).left(14.0).bottom(8.0))
+                    .into(),
+            );
+            let collected_items: Vec<Element<'static, Message>> =
+                collected_playlists.into_iter().map(render_playlist_btn).collect();
+            scrollable_items.push(column(collected_items).spacing(4).into());
         }
-
-        scrollable_items.push(column(cloud_playlist_items).spacing(4).into());
     }
 
     // Scrollable area for library and cloud playlists only (hidden scrollbar)
@@ -365,27 +304,7 @@ pub fn view(
         .width(sidebar_width)
         .height(Fill);
 
-    let user_footer_border = container(Space::new().height(0))
-        .width(Fill)
-        .height(1)
-        .style(|theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(theme::player_bar_border(theme))),
-            ..Default::default()
-        });
-
-    let user_footer_content = container(user_card)
-        .width(Fill)
-        .height(PLAYER_BAR_HEIGHT - 1.0)
-        .padding(Padding::new(8.0).left(16.0).right(16.0))
-        .align_y(Alignment::Center)
-        .style(|theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(theme::player_bar_bg(theme))),
-            ..Default::default()
-        });
-
-    let content = column![top_content, user_footer_border, user_footer_content]
-        .width(sidebar_width)
-        .height(Fill);
+    let content = container(top_content).width(sidebar_width).height(Fill);
 
     // Wrap entire sidebar in mouse_area to clear hover when leaving sidebar
     let sidebar_container = container(content)
@@ -398,70 +317,6 @@ pub fn view(
         .into()
 }
 
-/// Circular avatar placeholder with a centered user icon
-fn avatar_placeholder(size: f32, radius: f32, icon_size: f32) -> Element<'static, Message> {
-    container(
-        svg(svg::Handle::from_memory(crate::ui::icons::USER.as_bytes()))
-            .width(icon_size)
-            .height(icon_size)
-            .style(|theme, _status| svg::Style {
-                color: Some(theme::text_secondary(theme)),
-            }),
-    )
-    .width(size)
-    .height(size)
-    .center_x(size)
-    .center_y(size)
-    .style(move |theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(theme::border_color(theme))),
-        border: iced::Border {
-            radius: radius.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    })
-    .into()
-}
-
-/// Build a user card row with avatar, text column, and chevron indicator
-fn user_card_row(
-    avatar: Element<'static, Message>,
-    text_column: Element<'static, Message>,
-    hover_progress: f32,
-    on_press: Message,
-) -> Element<'static, Message> {
-    button(
-        row![
-            avatar,
-            Space::new().width(12),
-            text_column,
-            Space::new().width(Fill),
-            svg(svg::Handle::from_memory(
-                crate::ui::icons::CHEVRON_RIGHT.as_bytes()
-            ))
-            .width(16)
-            .height(16)
-            .style(move |theme, _status| svg::Style {
-                color: Some(theme::animated_brightness(theme, hover_progress)),
-            }),
-        ]
-        .align_y(Alignment::Center)
-        .padding(Padding::new(10.0)),
-    )
-    .width(Fill)
-    .padding(0)
-    .style(move |_theme, _status| iced::widget::button::Style {
-        background: Some(iced::Background::Color(Color::TRANSPARENT)),
-        border: iced::Border {
-            radius: 8.0.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    })
-    .on_press(on_press)
-    .into()
-}
-
 /// Create an animated sidebar button with hover transition
 /// Used for both navigation items and playlist items
 fn sidebar_button_animated(
@@ -472,16 +327,32 @@ fn sidebar_button_animated(
     sidebar_id: SidebarId,
     on_press: Message,
 ) -> Element<'static, Message> {
-    let icon = svg(svg::Handle::from_memory(icon_svg.as_bytes()))
-        .width(22)
-        .height(22)
-        .style(move |theme, _status| svg::Style {
-            color: Some(if is_active {
-                theme::text_primary(theme)
-            } else {
-                theme::animated_brightness(theme, hover_progress)
-            }),
-        });
+    sidebar_button_animated_opt_cover(icon_svg, None, label, is_active, hover_progress, sidebar_id, on_press)
+}
+
+fn sidebar_button_animated_opt_cover(
+    fallback_svg: &'static str,
+    cover_icon: Option<Element<'static, Message>>,
+    label: String,
+    is_active: bool,
+    hover_progress: f32,
+    sidebar_id: SidebarId,
+    on_press: Message,
+) -> Element<'static, Message> {
+    let icon: Element<'static, Message> = match cover_icon {
+        Some(el) => el,
+        None => svg(svg::Handle::from_memory(fallback_svg.as_bytes()))
+            .width(24)
+            .height(24)
+            .style(move |theme, _status| svg::Style {
+                color: Some(if is_active {
+                    theme::text_primary(theme)
+                } else {
+                    theme::animated_brightness(theme, hover_progress)
+                }),
+            })
+            .into(),
+    };
 
     let label_text = text(label)
         .size(theme::TEXT_SIZE_BODY_LARGE)

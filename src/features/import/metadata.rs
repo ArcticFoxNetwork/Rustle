@@ -313,6 +313,103 @@ pub fn apply_smart_parsing(metadata: &mut AudioMetadata, filename: &str) {
     }
 }
 
+/// Editable metadata fields for saving back to file
+#[derive(Debug, Clone, Default)]
+pub struct MetadataEdits {
+    pub title: Option<String>,
+    pub artist: Option<String>,
+    pub album: Option<String>,
+    pub track_number: Option<u32>,
+    pub year: Option<u32>,
+    pub genre: Option<String>,
+    pub cover_data: Option<Vec<u8>>,
+    pub cover_mime: Option<String>,
+}
+
+/// Save metadata edits back to an audio file using lofty
+pub fn save_metadata(path: &Path, edits: &MetadataEdits) -> Result<(), String> {
+    use lofty::config::WriteOptions;
+    use lofty::file::{AudioFile, TaggedFileExt};
+    use lofty::tag::Accessor;
+
+    let mut tf = Probe::open(path)
+        .map_err(|e| format!("无法打开文件: {}", e))?
+        .read()
+        .map_err(|e| format!("无法读取文件: {}", e))?;
+
+    // Scope the tag borrow so save_to_path can take &mut tf
+    {
+        let tag = match tf.primary_tag_mut() {
+            Some(tag) => tag,
+            None => tf
+                .first_tag_mut()
+                .ok_or_else(|| "该文件无可编辑的标签".to_string())?,
+        };
+
+        if let Some(ref t) = edits.title {
+            tag.set_title(t.clone());
+        }
+        if let Some(ref a) = edits.artist {
+            tag.set_artist(a.clone());
+        }
+        if let Some(ref a) = edits.album {
+            tag.set_album(a.clone());
+        }
+        if let Some(n) = edits.track_number {
+            tag.set_track(n);
+        }
+        if let Some(y) = edits.year {
+            tag.set_year(y);
+        }
+        if let Some(ref g) = edits.genre {
+            tag.set_genre(g.clone());
+        }
+
+        // Write cover art if provided
+        if let (Some(data), Some(mime)) = (&edits.cover_data, &edits.cover_mime) {
+            use lofty::picture::{MimeType, Picture, PictureType};
+            let mime_type = if mime.contains("png") {
+                MimeType::Png
+            } else {
+                MimeType::Jpeg
+            };
+            let picture = Picture::new_unchecked(
+                PictureType::CoverFront,
+                Some(mime_type),
+                None::<String>,
+                data.clone(),
+            );
+            // Replace first picture if exists, otherwise push
+            if !tag.pictures().is_empty() {
+                tag.set_picture(0, picture);
+            } else {
+                tag.push_picture(picture);
+            }
+        }
+    } // tag borrow dropped here
+
+    // FLAC backup before writing (known lofty#549 issue)
+    let is_flac = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .map(|e| e.eq_ignore_ascii_case("flac"))
+        .unwrap_or(false);
+    if is_flac {
+        let bak = path.with_extension("flac.bak");
+        std::fs::copy(path, &bak).map_err(|e| format!("备份失败: {}", e))?;
+    }
+
+    tf.save_to_path(path, WriteOptions::default())
+        .map_err(|e| format!("保存标签失败: {}", e))?;
+
+    // Remove backup on success
+    if is_flac {
+        let _ = std::fs::remove_file(path.with_extension("flac.bak"));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

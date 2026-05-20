@@ -138,7 +138,7 @@ impl LocalRootInterface for MprisPlayer {
     }
 
     async fn supported_uri_schemes(&self) -> fdo::Result<Vec<String>> {
-        Ok(vec!["file".to_string()])
+        Ok(vec!["file".to_string(), "rustle".to_string()])
     }
 
     async fn supported_mime_types(&self) -> fdo::Result<Vec<String>> {
@@ -194,8 +194,8 @@ impl LocalPlayerInterface for MprisPlayer {
         Ok(())
     }
 
-    async fn open_uri(&self, _uri: String) -> fdo::Result<()> {
-        // Not implemented
+    async fn open_uri(&self, uri: String) -> fdo::Result<()> {
+        let _ = self.cmd_tx.send(MediaCommand::OpenUri(uri));
         Ok(())
     }
 

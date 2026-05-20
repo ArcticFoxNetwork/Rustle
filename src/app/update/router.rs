@@ -67,6 +67,10 @@ impl App {
                 self.ui.search.keyword.clear();
                 self.clear_playlist_route_markers();
             }
+            Route::Downloads => {
+                self.ui.search.keyword.clear();
+                self.clear_playlist_route_markers();
+            }
             Route::Settings(section) => {
                 self.ui.search.keyword.clear();
                 self.clear_playlist_route_markers();
@@ -138,6 +142,7 @@ impl App {
                 ),
                 self.start_personal_fm_route(),
             ]),
+            Route::Downloads => Task::none(),
             Route::Settings(section) => {
                 self.refresh_cache_stats();
                 iced::widget::operation::scroll_to(
@@ -198,6 +203,7 @@ impl App {
                 NavItem::Home => Route::Home,
                 NavItem::Discover => Route::Discover(DiscoverViewMode::Overview),
                 NavItem::Radio => Route::Radio,
+                NavItem::Downloads => Route::Downloads,
                 NavItem::Settings => Route::Settings(self.ui.active_settings_section),
                 NavItem::AudioEngine => Route::AudioEngine,
             }),

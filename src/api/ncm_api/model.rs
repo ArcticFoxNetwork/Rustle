@@ -144,6 +144,8 @@ pub struct AlbumDetail {
     pub track_count: u32,
     pub publish_time: u64,
     pub songs: Vec<SongInfo>,
+    /// Album genre tags (space-separated from API, e.g. "流行 摇滚")
+    pub tags: String,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -237,6 +239,12 @@ pub struct SongInfo {
     pub duration: u64,
     pub song_url: String,
     pub copyright: SongCopyright,
+    /// Track number in album (from API `no` field)
+    pub track_number: Option<u32>,
+    /// Release year (extracted from API `publishTime` timestamp)
+    pub year: Option<u32>,
+    /// Genre from album tags (first tag)
+    pub genre: Option<String>,
 }
 
 impl PartialEq for SongInfo {
@@ -258,6 +266,9 @@ impl Default for SongInfo {
             duration: 0,
             song_url: String::new(),
             copyright: SongCopyright::Unknown,
+            track_number: None,
+            year: None,
+            genre: None,
         }
     }
 }
@@ -281,6 +292,18 @@ pub enum Parse {
     PersonalFm,
 }
 
+fn timestamp_to_year(ts_ms: u64) -> Option<u32> {
+    if ts_ms == 0 {
+        return None;
+    }
+    // publishTime is milliseconds since epoch
+    let secs = ts_ms / 1000;
+    let days = secs / 86400;
+    // Days from 1970-01-01 to target date, convert to year
+    let year = 1970 + (days as f64 / 365.25) as u32;
+    Some(year)
+}
+
 pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
     let value = &serde_json::from_str::<Value>(&json)?;
     let code: i64 = get_val!(value, "code")?;
@@ -296,6 +319,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                     array = get_val!(value, "playlist", "tracks")?;
                 }
                 for v in array.iter() {
+                    let publish_ts: u64 = get_val!(v, "publishTime").unwrap_or(0);
                     vec.push(SongInfo {
                         id: get_val!(v, "id")?,
                         name: get_val!(v, "name")?,
@@ -313,6 +337,9 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         duration: get_val!(v, "dt")?,
                         song_url: String::new(),
                         copyright: SongCopyright::Unknown,
+                        track_number: get_val!(v, "no").ok(),
+                        year: timestamp_to_year(publish_ts),
+                    genre: None,
                     });
                 }
             }
@@ -330,6 +357,9 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         duration: get_val!(v, "simpleSong", "dt")?,
                         song_url: String::new(),
                         copyright: SongCopyright::Unknown,
+                        track_number: None,
+                        year: None,
+                    genre: None,
                     });
                 }
             }
@@ -353,6 +383,9 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         duration: get_val!(v, "duration")?,
                         song_url: String::new(),
                         copyright: SongCopyright::Unknown,
+                        track_number: None,
+                        year: None,
+                    genre: None,
                     });
                 }
             }
@@ -376,6 +409,9 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         duration: get_val!(v, "duration")?,
                         song_url: String::new(),
                         copyright: SongCopyright::Unknown,
+                        track_number: None,
+                        year: None,
+                    genre: None,
                     });
                 }
             }
@@ -399,6 +435,9 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         duration: get_val!(v, "duration")?,
                         song_url: String::new(),
                         copyright: SongCopyright::Unknown,
+                        track_number: None,
+                        year: None,
+                    genre: None,
                     });
                 }
             }
@@ -422,6 +461,9 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         duration: get_val!(v, "dt")?,
                         song_url: String::new(),
                         copyright: SongCopyright::Unknown,
+                        track_number: None,
+                        year: None,
+                    genre: None,
                     });
                 }
             }
@@ -439,6 +481,9 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         duration: get_val!(v, "dt")?,
                         song_url: String::new(),
                         copyright: SongCopyright::Unknown,
+                        track_number: None,
+                        year: None,
+                    genre: None,
                     });
                 }
             }
@@ -462,6 +507,9 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         duration: get_val!(v, "dt")?,
                         song_url: String::new(),
                         copyright: SongCopyright::Unknown,
+                        track_number: None,
+                        year: None,
+                    genre: None,
                     });
                 }
             }
@@ -480,6 +528,9 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         duration: get_val!(v, "duration")?,
                         song_url: String::new(),
                         copyright: SongCopyright::Unknown,
+                        track_number: None,
+                        year: None,
+                    genre: None,
                     });
                     num -= 1;
                 }
@@ -505,6 +556,9 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         duration: get_val!(v, "songInfo", "dt")?,
                         song_url: String::new(),
                         copyright: SongCopyright::Unknown,
+                        track_number: None,
+                        year: None,
+                    genre: None,
                     });
                 }
             }
@@ -529,6 +583,9 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         duration: get_val!(v, "duration")?,
                         song_url: String::new(),
                         copyright: SongCopyright::Unknown,
+                        track_number: None,
+                        year: None,
+                    genre: None,
                     });
                 }
             }
@@ -586,6 +643,9 @@ pub fn to_mix_detail(json: &Value) -> Result<PlayListDetail> {
                 duration: get_val!(v, "dt")?,
                 song_url: String::new(),
                 copyright: SongCopyright::from_privilege(p)?,
+                track_number: None,
+                year: None,
+            genre: None,
             });
         }
 
@@ -634,6 +694,9 @@ pub fn to_artist_detail(json: String) -> Result<ArtistDetail> {
             duration: get_val!(v, "dt")?,
             song_url: String::new(),
             copyright: SongCopyright::Unknown,
+            track_number: None,
+            year: None,
+            genre: None,
         });
     }
 
@@ -661,6 +724,8 @@ pub fn to_album_detail(json: String) -> Result<AlbumDetail> {
     let unk = "unknown".to_string();
     let empty_vec = Vec::new();
     let songs_array: &Vec<Value> = get_val!(value, "songs").unwrap_or(&empty_vec);
+    let album_tags: String = get_val!(value, "album", "tags").unwrap_or_default();
+    let album_genre = if album_tags.is_empty() { None } else { Some(album_tags.clone()) };
     let album_artist = get_val!(@as &Value, value, "album", "artist")
         .ok()
         .or_else(|| {
@@ -688,6 +753,9 @@ pub fn to_album_detail(json: String) -> Result<AlbumDetail> {
             duration: get_val!(song, "dt")?,
             song_url: String::new(),
             copyright: SongCopyright::Unknown,
+            track_number: None,
+            year: None,
+            genre: album_genre.clone(),
         });
     }
 
@@ -709,6 +777,7 @@ pub fn to_album_detail(json: String) -> Result<AlbumDetail> {
             .unwrap_or_default(),
         track_count: get_val!(value, "album", "size").unwrap_or(songs.len() as u32),
         publish_time: get_val!(value, "album", "publishTime").unwrap_or(0),
+        tags: album_tags,
         songs,
     })
 }
@@ -740,6 +809,8 @@ pub struct SongList {
     pub name: String,
     pub cover_img_url: String,
     pub author: String,
+    pub creator_id: u64,
+    pub subscribed: bool,
 }
 
 pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
@@ -755,6 +826,8 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         name: get_val!(v, "name")?,
                         cover_img_url: get_val!(v, "coverImgUrl")?,
                         author: get_val!(v, "creator", "nickname")?,
+                        creator_id: get_val!(v, "creator", "userId").unwrap_or(0),
+                        subscribed: get_val!(v, "subscribed").unwrap_or(true),
                     });
                 }
             }
@@ -766,6 +839,8 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         name: get_val!(v, "name")?,
                         cover_img_url: get_val!(v, "picUrl").unwrap_or_default(),
                         author: get_val!(v, "creator", "nickname")?,
+                        creator_id: 0,
+                        subscribed: false,
                     });
                 }
             }
@@ -777,6 +852,8 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         name: get_val!(v, "name")?,
                         cover_img_url: get_val!(v, "picUrl")?,
                         author: get_val!(v, "artist", "name")?,
+                        creator_id: 0,
+                        subscribed: false,
                     });
                 }
             }
@@ -788,6 +865,8 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         name: get_val!(v, "name")?,
                         cover_img_url: get_val!(v, "coverImgUrl")?,
                         author: get_val!(v, "creator", "nickname")?,
+                        creator_id: 0,
+                        subscribed: false,
                     });
                 }
             }
@@ -799,6 +878,8 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         name: get_val!(v, "name")?,
                         cover_img_url: get_val!(v, "coverImgUrl")?,
                         author: get_val!(v, "creator", "nickname")?,
+                        creator_id: 0,
+                        subscribed: false,
                     });
                 }
             }
@@ -810,6 +891,8 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         name: get_val!(v, "name")?,
                         cover_img_url: get_val!(v, "picUrl")?,
                         author: get_val!(v, "artist", "name")?,
+                        creator_id: 0,
+                        subscribed: false,
                     });
                 }
             }
@@ -825,6 +908,8 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                             .map_or(std::result::Result::Ok(String::new()), |v: &Value| {
                                 get_val!(v, "name")
                             })?,
+                        creator_id: 0,
+                        subscribed: false,
                     });
                 }
             }
@@ -836,6 +921,8 @@ pub fn to_song_list(json: String, parse: Parse) -> Result<Vec<SongList>> {
                         name: get_val!(v, "name")?,
                         cover_img_url: get_val!(v, "picUrl")?,
                         author: get_val!(v, "dj", "nickname")?,
+                        creator_id: 0,
+                        subscribed: false,
                     });
                 }
             }
@@ -1085,6 +1172,9 @@ pub fn to_search_response(json: String, search_type: SearchType) -> Result<Searc
                     duration: get_val!(v, "dt")?,
                     song_url: String::new(),
                     copyright: SongCopyright::Unknown,
+                    track_number: None,
+                    year: None,
+                genre: None,
                 });
             }
         }
@@ -1099,6 +1189,8 @@ pub fn to_search_response(json: String, search_type: SearchType) -> Result<Searc
                     name: get_val!(v, "name")?,
                     cover_img_url: get_val!(v, "picUrl").unwrap_or_default(),
                     author: get_val!(v, "artist", "name").unwrap_or_else(|_| unk.clone()),
+                    creator_id: 0,
+                    subscribed: false,
                 });
             }
         }
@@ -1114,6 +1206,8 @@ pub fn to_search_response(json: String, search_type: SearchType) -> Result<Searc
                     name: get_val!(v, "name")?,
                     cover_img_url: get_val!(v, "picUrl").unwrap_or_default(),
                     author: String::new(), // Artists don't have an author
+                    creator_id: 0,
+                    subscribed: false,
                 });
             }
         }
@@ -1128,6 +1222,8 @@ pub fn to_search_response(json: String, search_type: SearchType) -> Result<Searc
                     name: get_val!(v, "name")?,
                     cover_img_url: get_val!(v, "coverImgUrl").unwrap_or_default(),
                     author: get_val!(v, "creator", "nickname").unwrap_or_else(|_| unk.clone()),
+                    creator_id: 0,
+                    subscribed: false,
                 });
             }
         }

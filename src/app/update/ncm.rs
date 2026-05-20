@@ -65,36 +65,12 @@ fn format_social_count(value: u64) -> String {
 
 impl App {
     pub(crate) fn ncm_song_to_db_song(song_info: &crate::api::SongInfo) -> crate::database::DbSong {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-
-        crate::database::DbSong {
-            id: -(song_info.id as i64),
-            file_path: String::new(),
-            title: song_info.name.clone(),
-            artist: song_info.singer.clone(),
-            album: song_info.album.clone(),
-            duration_secs: (song_info.duration / 1000) as i64,
-            track_number: None,
-            year: None,
-            genre: None,
-            cover_path: if song_info.pic_url.is_empty() {
-                None
-            } else {
-                Some(song_info.pic_url.clone())
-            },
-            file_hash: None,
-            file_size: 0,
-            format: Some("mp3".to_string()),
-            normalization_gain: None,
-            play_count: 0,
-            last_played: Some(now),
-            last_modified: now,
-            is_missing: false,
-            created_at: now,
+        let metadata = crate::metadata::SongMetadata::from(song_info);
+        let mut db_song = metadata.to_db_song(-(song_info.id as i64));
+        if db_song.format.is_none() {
+            db_song.format = Some("mp3".to_string());
         }
+        db_song
     }
 
     /// Set the NCM client and sync quality settings
@@ -142,10 +118,16 @@ impl App {
         let is_daily_recommend = playlist_id == 0;
 
         if !is_daily_recommend && self.is_viewing_ncm_playlist(playlist_id) {
-            debug!(
-                "Already viewing NCM playlist {}, skipping load",
-                playlist_id
-            );
+            if let Some(ref mut playlist) = self.ui.playlist_page.current {
+                for song in &mut playlist.songs {
+                    song.source = crate::utils::compute_source(
+                        "",
+                        song.id,
+                        Some(&song.artist),
+                        Some(&song.title),
+                    );
+                }
+            }
             return Task::none();
         }
 
@@ -1224,31 +1206,7 @@ impl App {
 
                 let db_songs: Vec<crate::database::DbSong> = songs
                     .iter()
-                    .map(|song| crate::database::DbSong {
-                        id: -(song.id as i64),
-                        file_path: String::new(),
-                        title: song.name.clone(),
-                        artist: song.singer.clone(),
-                        album: song.album.clone(),
-                        duration_secs: (song.duration / 1000) as i64,
-                        track_number: None,
-                        year: None,
-                        genre: None,
-                        cover_path: if song.pic_url.is_empty() {
-                            None
-                        } else {
-                            Some(song.pic_url.clone())
-                        },
-                        file_hash: None,
-                        file_size: 0,
-                        format: Some("mp3".to_string()),
-                        normalization_gain: None,
-                        play_count: 0,
-                        last_played: None,
-                        last_modified: 0,
-                        is_missing: false,
-                        created_at: 0,
-                    })
+                    .map(|song| Self::ncm_song_to_db_song(song))
                     .collect();
 
                 if self.is_fm_mode() && !*play_now {
@@ -1274,6 +1232,24 @@ impl App {
 
             Message::UserPlaylistsLoaded(playlists) => {
                 self.ui.home.user_playlists = playlists.clone();
+                // Trigger cover downloads for all playlists
+                if let Some(ref client) = self.core.ncm_client {
+                    let tasks: Vec<_> = playlists.iter().filter_map(|pl| {
+                        if pl.cover_img_url.is_empty() { return None; }
+                        let c = client.clone();
+                        let id = pl.id;
+                        let url = pl.cover_img_url.clone();
+                        Some(Task::perform(
+                            async move {
+                                crate::utils::download_playlist_cover(&c, id, &url).await;
+                            },
+                            |_| Message::Noop,
+                        ))
+                    }).collect();
+                    if !tasks.is_empty() {
+                        return Some(Task::batch(tasks));
+                    }
+                }
                 Some(Task::none())
             }
 
@@ -1547,6 +1523,15 @@ impl App {
                 // Update existing playlist view with songs
                 if let Some(playlist) = &mut self.ui.playlist_page.current {
                     if playlist.id == *playlist_id {
+                        // Recompute sources with real download dir (async callers used None)
+                        for song in &mut song_views {
+                            song.source = crate::utils::compute_source(
+                                "",
+                                song.id,
+                                Some(&song.artist),
+                                Some(&song.title),
+                            );
+                        }
                         playlist.songs = song_views.clone();
                         if let Some(avatar) = avatar_path {
                             playlist.owner_avatar_path = Some(avatar.clone());
@@ -2614,6 +2599,50 @@ impl App {
                     "已取消收藏"
                 };
                 Some(Self::toast_success(msg.to_string()))
+            }
+
+            Message::AddToNcmPlaylist(song_id, playlist_id) => {
+                require_logged_in!(self);
+                if let Some(client) = &self.core.ncm_client {
+                    let client = client.clone();
+                    let sid = *song_id;
+                    let pid = *playlist_id;
+                    let locale = self.core.locale;
+                    return Some(Task::perform(
+                        async move {
+                            client
+                                .client
+                                .playlist_add_tracks(pid, &sid.to_string(), "add")
+                                .await
+                        },
+                        move |result| match result {
+                            Ok(()) => {
+                                Message::NcmPlaylistAddResult(sid, pid, Ok(()))
+                            }
+                            Err(e) => {
+                                Message::NcmPlaylistAddResult(sid, pid, Err(e.to_string()))
+                            }
+                        },
+                    ));
+                }
+                Some(Task::none())
+            }
+
+            Message::NcmPlaylistAddResult(song_id, playlist_id, result) => {
+                self.ui.overlay_stack.pop();
+                match result {
+                    Ok(()) => {
+                        let msg = self.core.locale.get(crate::i18n::Key::SongAddedToPlaylist);
+                        Some(Self::toast_success(msg.to_string()))
+                    }
+                    Err(e) => {
+                        Some(Self::toast_error(format!(
+                            "{}: {}",
+                            self.core.locale.get(crate::i18n::Key::SongEditFailed),
+                            e
+                        )))
+                    }
+                }
             }
 
             _ => None,

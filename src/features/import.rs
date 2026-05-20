@@ -17,17 +17,15 @@ mod scanner;
 mod watcher;
 
 pub use cover::{CoverCache, default_cache_dir};
-pub use metadata::{extract_track_gain, resolve_track_gain};
+pub use metadata::{AudioMetadata, MetadataEdits, extract_metadata, extract_track_gain, resolve_track_gain, save_metadata};
 pub use progress::{ScanHandle, ScanProgress, ScanState, progress_channel};
 pub use scanner::{ScanConfig, ScanResult, scan_and_import, scan_audio_file};
 pub use watcher::{FolderWatcher, WatchEvent, spawn_debounced_processor, watch_channel};
 
 use std::path::PathBuf;
 
-/// Supported audio file extensions
-pub const AUDIO_EXTENSIONS: &[&str] = &[
-    "mp3", "flac", "wav", "m4a", "ogg", "opus", "aac", "wma", "aiff",
-];
+/// Supported audio file extensions (re-exported from utils)
+pub use crate::utils::AUDIO_EXTENSIONS;
 
 /// Check if a file extension is a supported audio format
 pub fn is_audio_file(path: &PathBuf) -> bool {

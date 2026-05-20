@@ -2,7 +2,7 @@
 //!
 //! Displays the NCM trending chart (飙升榜) with hover effects.
 
-use iced::widget::{Space, button, column, container, image, row, svg, text};
+use iced::widget::{Space, button, column, container, image, mouse_area, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Padding};
 
 use crate::api::SongInfo;
@@ -233,6 +233,7 @@ fn view_song_item<'a>(
             })
             .on_press(Message::PlayNcmSong(song.clone())),
     )
+    .on_right_press(Message::RightClickNcmSong(song.clone()))
     .on_enter(Message::HoverTrendingSong(Some(song_id)))
     .on_exit(Message::HoverTrendingSong(None))
     .into()

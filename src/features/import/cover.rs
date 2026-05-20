@@ -136,9 +136,7 @@ impl CoverCache {
 
 /// Get the default cover cache directory
 pub fn default_cache_dir() -> PathBuf {
-    directories::ProjectDirs::from("com", "rustle", "Rustle")
-        .map(|dirs| dirs.cache_dir().join("covers"))
-        .unwrap_or_else(|| PathBuf::from(".cache/covers"))
+    crate::utils::covers_cache_dir()
 }
 
 #[cfg(test)]

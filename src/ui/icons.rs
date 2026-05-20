@@ -220,3 +220,33 @@ pub const LOADING: &str = r#"<svg viewBox="0 0 24 24" fill="currentColor">
     <circle cx="6.34" cy="17.66" r="2" opacity="0.4"/>
     <circle cx="17.66" cy="6.34" r="2" opacity="0.8"/>
 </svg>"#;
+
+/// Folder icon
+pub const FOLDER: &str = r#"<svg viewBox="0 0 24 24" fill="currentColor">
+    <path d="M10 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2h-8l-2-2z"/>
+</svg>"#;
+
+/// Disc/Album icon  
+pub const DISC: &str = r#"<svg viewBox="0 0 24 24" fill="currentColor">
+    <circle cx="12" cy="12" r="10" fill="none" stroke="currentColor" stroke-width="2"/>
+    <circle cx="12" cy="12" r="3" fill="currentColor"/>
+    <circle cx="12" cy="12" r="1" fill="none" stroke="currentColor" stroke-width="1.5"/>
+</svg>"#;
+
+
+/// Hard drive icon (for local source badge)
+pub const HARD_DRIVE: &str = r#"<svg viewBox="0 0 24 24" fill="currentColor">
+    <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12z"/>
+    <circle cx="8" cy="16" r="1.5"/>
+    <circle cx="16" cy="16" r="1.5"/>
+</svg>"#;
+
+/// Download cloud icon (for cached source badge)
+pub const DOWNLOAD_CLOUD: &str = r#"<svg viewBox="0 0 24 24" fill="currentColor">
+    <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96zM17 13l-5 5-5-5h3V9h4v4h3z"/>
+</svg>"#;
+
+/// Cloud icon (for online source badge)
+pub const CLOUD: &str = r#"<svg viewBox="0 0 24 24" fill="currentColor">
+    <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/>
+</svg>"#;

@@ -2,16 +2,30 @@
 //! Keyboard and action message handlers
 
 use iced::Task;
+use iced::keyboard::Key;
 
 use crate::app::message::Message;
 use crate::app::state::{App, Route};
 use crate::features::Action;
+use crate::ui::overlay::OverlayKind;
 
 impl App {
     /// Handle keyboard-related messages
     pub fn handle_keyboard(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
             Message::KeyPressed(key, modifiers) => {
+                // Escape key: dismiss topmost overlay if escape_close allows it
+                if *key == Key::Named(iced::keyboard::key::Named::Escape) && modifiers.is_empty() {
+                    let can_dismiss = self.ui.overlay_stack.last()
+                        .map(|entry| match &entry.kind {
+                            OverlayKind::Modal(_, config) => config.escape_close,
+                        })
+                        .unwrap_or(false);
+                    if can_dismiss {
+                        return Some(Task::done(Message::DismissTopModal));
+                    }
+                }
+
                 // If editing a keybinding, capture the key press for that
                 if self.ui.editing_keybinding.is_some() {
                     return Some(

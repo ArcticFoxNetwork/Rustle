@@ -17,7 +17,7 @@ bytemuck = { version = "1.25", features = ["derive"] }
 tokio = { version = "1.50", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "fs", "net", "io-util"] }
 rodio = { version = "0.21.1", features = ["symphonia-all"] }
 spectrum-analyzer = "1.7.0"
-rtrb = "0.3.3"
+
 sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio-rustls", "macros"] }
 lofty = "0.22.4"
 walkdir = "2.5.0"
@@ -35,6 +35,7 @@ encoding_rs = "0.8.35"
 notify = { version = "8.2", features = ["serde"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+interprocess = { version = "2", features = ["tokio"] }
 rfd = "0.15.4"
 async-stream = "0.3.6"
 rand = "0.9"
@@ -51,9 +52,9 @@ discord-rich-presence = "1.1.0"
 
 # Netease Cloud Music API
 qrcode-generator = "5.0"
-cookie_store = "0.21.1"
+
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "cookies", "json", "gzip", "stream"] }
-urlqstring = "0.2"
+
 md5 = "0.7"
 aes = "0.8"
 cbc = "0.1"
@@ -64,6 +65,7 @@ base64 = "0.22"
 regex = "1.12"
 urlencoding = "2.1"
 chrono = { version = "0.4.44", default-features = false, features = ["clock"] }
+sysuri = "0.4.0"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 mpris-server = "0.9.0"
@@ -72,6 +74,10 @@ ksni = { version = "0.3.3", default-features = false, features = ["tokio"] }
 [patch.crates-io]
 iced = { git = "https://github.com/Fei-xiangShi/iced.git", branch = "master" }
 smithay-client-toolkit = { git = "https://github.com/Fei-xiangShi/client-toolkit.git", branch = "master" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = "0.3"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos"))'.dependencies]
 tray-icon = "0.21.3"

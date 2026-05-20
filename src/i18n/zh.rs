@@ -22,7 +22,8 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::LibraryRecentlyPlayed, "最近播放");
     m.insert(Key::ImportLocalPlaylist, "导入本地歌单");
     // Library - Cloud
-    m.insert(Key::CloudPlaylistsTitle, "云端歌单");
+    m.insert(Key::CloudPlaylistsTitle, "我的歌单");
+    m.insert(Key::CollectedPlaylistsTitle, "收藏的歌单");
     m.insert(Key::CloudPlaylistsNotLoggedIn, "登录以查看云端歌单");
 
     // User
@@ -260,6 +261,81 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     );
     m.insert(Key::ExitDialogExit, "退出");
     m.insert(Key::ExitDialogMinimize, "最小化到托盘");
+
+    // Context Menu
+    m.insert(Key::ContextMenuEditTags, "编辑标签");
+
+    // Song Info Dialog
+    m.insert(Key::SongInfoTitle, "歌曲信息");
+    m.insert(Key::SongInfoBasicSection, "基本信息");
+    m.insert(Key::SongInfoDetailSection, "详细信息");
+    m.insert(Key::SongInfoFileSection, "文件信息");
+    m.insert(Key::SongInfoStatsSection, "统计信息");
+    m.insert(Key::SongInfoTrackNumber, "曲目号");
+    m.insert(Key::SongInfoYear, "年份");
+    m.insert(Key::SongInfoGenre, "流派");
+    m.insert(Key::SongInfoDuration, "时长");
+    m.insert(Key::SongInfoFormat, "格式");
+    m.insert(Key::SongInfoFilePath, "文件路径");
+    m.insert(Key::SongInfoFileSize, "文件大小");
+    m.insert(Key::SongInfoPlayCount, "播放次数");
+    m.insert(Key::SongInfoLastPlayed, "最后播放");
+    m.insert(Key::SongInfoEditButton, "编辑标签");
+    m.insert(Key::SongInfoCloseButton, "关闭");
+
+    // Song Edit Dialog
+    m.insert(Key::SongEditTitle, "编辑歌曲标签");
+    m.insert(Key::SongEditLabelTitle, "标题");
+    m.insert(Key::SongEditLabelArtist, "艺人");
+    m.insert(Key::SongEditLabelAlbum, "专辑");
+    m.insert(Key::SongEditCoverReplace, "替换封面");
+    m.insert(Key::SongEditCancel, "取消");
+    m.insert(Key::SongEditSave, "保存");
+    m.insert(Key::SongEditSaved, "标签已保存");
+    m.insert(Key::SongEditFailed, "保存失败");
+    m.insert(Key::SongAddedToPlaylist, "已添加到歌单");
+
+    // Context Menu Items
+    m.insert(Key::ContextMenuPlayNow, "立即播放");
+    m.insert(Key::ContextMenuPlayNext, "下一首播放");
+    m.insert(Key::ContextMenuAddFavorites, "收藏到喜欢");
+    m.insert(Key::ContextMenuRemoveFavorites, "取消喜欢");
+    m.insert(Key::ContextMenuAddPlaylist, "添加到歌单...");
+    m.insert(Key::ContextMenuViewArtist, "查看歌手");
+    m.insert(Key::ContextMenuViewAlbum, "查看专辑");
+    m.insert(Key::ContextMenuShowInFolder, "在文件夹中显示");
+    m.insert(Key::ContextMenuRemoveFromList, "从列表中移除");
+    m.insert(Key::ContextMenuDownload, "下载");
+
+    // Playlist Picker
+    m.insert(Key::PlaylistPickerTitle, "选择歌单");
+    m.insert(Key::PlaylistPickerConfirm, "确定");
+    m.insert(Key::PlaylistPickerCancel, "取消");
+
+    // Navigation
+    m.insert(Key::NavDownloads, "下载");
+
+    // Download
+    m.insert(Key::DownloadPanelTitle, "下载管理");
+    m.insert(Key::DownloadActive, "下载中");
+    m.insert(Key::DownloadCompleted, "已完成");
+    m.insert(Key::DownloadPending, "等待中");
+    m.insert(Key::DownloadNoActive, "没有正在下载的任务");
+    m.insert(Key::DownloadNoCompleted, "暂无已下载的文件");
+    m.insert(Key::DownloadSpeed, "速度");
+    m.insert(Key::DownloadCancel, "取消");
+    m.insert(Key::DownloadRetry, "重试");
+    m.insert(Key::DownloadQueued, "已加入下载队列");
+    m.insert(Key::DownloadFailed, "下载失败");
+
+    // Settings - Download
+    m.insert(Key::SettingsDownloadLocation, "下载位置");
+    m.insert(Key::SettingsDownloadQuality, "下载音质");
+    m.insert(
+        Key::SettingsDownloadLocationDesc,
+        "下载的歌曲将保存在此目录",
+    );
+    m.insert(Key::SettingsDownloadChange, "修改");
 
     m
 });

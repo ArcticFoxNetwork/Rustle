@@ -13,9 +13,8 @@ pub mod animation;
 pub mod components;
 pub mod effects;
 pub mod icons;
+pub mod overlay;
 pub mod pages;
 pub mod primitives;
 pub mod theme;
 pub mod widgets;
-
-// Re-export interlude_dots from shader/lyrics_engine for backward compatibility

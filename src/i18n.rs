@@ -52,6 +52,7 @@ pub enum Key {
     NavHome,
     NavDiscover,
     NavRadio,
+    NavDownloads,
     NavSettings,
     NavAudioEngine,
 
@@ -61,6 +62,7 @@ pub enum Key {
     ImportLocalPlaylist,
     // Library - Cloud
     CloudPlaylistsTitle,
+    CollectedPlaylistsTitle,
     CloudPlaylistsNotLoggedIn,
 
     // User
@@ -277,6 +279,75 @@ pub enum Key {
     ExitDialogMessage,
     ExitDialogExit,
     ExitDialogMinimize,
+
+    // Context Menu
+    ContextMenuEditTags,
+
+    // Song Info Dialog
+    SongInfoTitle,
+    SongInfoBasicSection,
+    SongInfoDetailSection,
+    SongInfoFileSection,
+    SongInfoStatsSection,
+    SongInfoTrackNumber,
+    SongInfoYear,
+    SongInfoGenre,
+    SongInfoDuration,
+    SongInfoFormat,
+    SongInfoFilePath,
+    SongInfoFileSize,
+    SongInfoPlayCount,
+    SongInfoLastPlayed,
+    SongInfoEditButton,
+    SongInfoCloseButton,
+
+    // Song Edit Dialog
+    SongEditTitle,
+    SongEditLabelTitle,
+    SongEditLabelArtist,
+    SongEditLabelAlbum,
+    SongEditCoverReplace,
+    SongEditCancel,
+    SongEditSave,
+    SongEditSaved,
+    SongEditFailed,
+    SongAddedToPlaylist,
+
+    // Context Menu Items
+    ContextMenuPlayNow,
+    ContextMenuPlayNext,
+    ContextMenuAddFavorites,
+    ContextMenuRemoveFavorites,
+    ContextMenuAddPlaylist,
+    ContextMenuViewArtist,
+    ContextMenuViewAlbum,
+    ContextMenuShowInFolder,
+    ContextMenuRemoveFromList,
+    ContextMenuDownload,
+
+    // Playlist Picker
+    PlaylistPickerTitle,
+    PlaylistPickerConfirm,
+    PlaylistPickerCancel,
+
+    // Download
+    DownloadPanelTitle,
+    DownloadActive,
+    DownloadCompleted,
+    DownloadPending,
+    DownloadNoActive,
+    DownloadNoCompleted,
+    DownloadSpeed,
+    DownloadCancel,
+    DownloadRetry,
+    DownloadQueued,
+    DownloadFailed,
+
+    // Settings - Download
+    SettingsDownloadLocation,
+    SettingsDownloadQuality,
+    SettingsDownloadLocationDesc,
+    SettingsDownloadChange,
 }
 
 /// Get translation for a key in the specified language

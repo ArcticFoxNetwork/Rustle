@@ -1111,3 +1111,41 @@ fn get_cpal_devices() -> Vec<AudioDevice> {
 
     devices
 }
+
+/// Classified playback error types for UI display
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PlaybackError {
+    FileNotFound(String),
+    UnsupportedFormat(String),
+    IoError(String),
+    DecodeError(String),
+}
+
+impl std::fmt::Display for PlaybackError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PlaybackError::FileNotFound(m) => write!(f, "File not found: {}", m),
+            PlaybackError::UnsupportedFormat(m) => write!(f, "Unsupported format: {}", m),
+            PlaybackError::IoError(m) => write!(f, "IO error: {}", m),
+            PlaybackError::DecodeError(m) => write!(f, "Decode error: {}", m),
+        }
+    }
+}
+
+/// Classify an error message from rodio/IO into a PlaybackError.
+pub fn classify_playback_error(error_msg: &str) -> PlaybackError {
+    let lower = error_msg.to_lowercase();
+    if lower.contains("not found") || lower.contains("no such file") {
+        PlaybackError::FileNotFound(error_msg.to_string())
+    } else if lower.contains("format")
+        || lower.contains("codec")
+        || lower.contains("unsupported")
+        || lower.contains("decode")
+    {
+        PlaybackError::UnsupportedFormat(error_msg.to_string())
+    } else if lower.contains("permission") || lower.contains("denied") || lower.contains("io") {
+        PlaybackError::IoError(error_msg.to_string())
+    } else {
+        PlaybackError::DecodeError(error_msg.to_string())
+    }
+}

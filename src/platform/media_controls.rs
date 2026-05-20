@@ -31,6 +31,8 @@ pub enum MediaCommand {
     SetVolume(f64),
     Raise,
     Quit,
+    /// Open a URI (rustle:// or other supported scheme)
+    OpenUri(String),
 }
 
 /// Track metadata for media controls

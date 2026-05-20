@@ -13,7 +13,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::LazyLock;
 
-use iced::widget::{Space, button, column, container, image, row, svg, text};
+use iced::widget::{Space, button, column, container, image, mouse_area, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
 use crate::app::Message;
@@ -21,6 +21,7 @@ use crate::i18n::{Key, Locale};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::widgets::{VirtualList, VirtualListState};
 use crate::ui::{icons, theme};
+use crate::utils::Source;
 
 /// Song row height constant for virtual list
 pub const SONG_ROW_HEIGHT: f32 = 62.0;
@@ -68,6 +69,8 @@ pub struct SongItem {
     pub pic_url: Option<String>,
     /// Pre-loaded image handle (None = use placeholder)
     pub cover_handle: Option<image::Handle>,
+    /// Song source for display badge
+    pub source: Source,
 }
 
 impl SongItem {
@@ -81,9 +84,10 @@ impl SongItem {
         duration: String,
         added_date: String,
         cover_path: Option<String>,
+        source: Source,
     ) -> Self {
         Self::with_pic_url(
-            id, index, title, artist, album, duration, added_date, cover_path, None,
+            id, index, title, artist, album, duration, added_date, cover_path, None, source,
         )
     }
 
@@ -98,6 +102,7 @@ impl SongItem {
         added_date: String,
         cover_path: Option<String>,
         pic_url: Option<String>,
+        source: Source,
     ) -> Self {
         // Pre-compute display strings
         let display_title = truncate_string(&title, MAX_TITLE_LEN);
@@ -128,6 +133,7 @@ impl SongItem {
             cover_path,
             pic_url,
             cover_handle,
+            source,
         }
     }
 }
@@ -182,16 +188,6 @@ impl PlaylistColumns {
             show_like: true,
             show_added_date: false,
             show_album: true,
-        }
-    }
-
-    /// Minimal configuration (just title, artist, duration)
-    #[allow(dead_code)]
-    pub fn minimal() -> Self {
-        Self {
-            show_like: false,
-            show_added_date: false,
-            show_album: false,
         }
     }
 }
@@ -411,11 +407,16 @@ fn build_song_row(
                 })
             })
             .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
-        text(display_artist)
-            .size(theme::TEXT_SIZE_LABEL)
-            .style(move |theme| text::Style {
-                color: Some(theme::animated_text(theme, animation_progress))
-            }),
+        row![
+            super::source_badge::source_badge(song.source),
+            text(display_artist)
+                .size(theme::TEXT_SIZE_LABEL)
+                .style(move |theme| text::Style {
+                    color: Some(theme::animated_text(theme, animation_progress))
+                }),
+        ]
+        .align_y(iced::Alignment::Center)
+        .spacing(6),
     ]
     .spacing(3);
 
@@ -523,7 +524,9 @@ fn build_song_row(
         .on_press(Message::PlaySong(song_id));
 
     // Hover is now handled by VirtualList's on_item_hover for reliable tracking
-    btn.into()
+    mouse_area(btn)
+        .on_right_press(Message::RightClickSong(song_id))
+        .into()
 }
 
 /// Build song cover image or placeholder

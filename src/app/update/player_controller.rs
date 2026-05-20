@@ -700,12 +700,23 @@ impl App {
         &mut self,
         request_id: Option<u64>,
         message: String,
+        error_kind: Option<crate::audio::PlaybackError>,
     ) -> Task<Message> {
         tracing::error!(
-            "Audio error: request_id={:?}, message={}",
+            "Audio error: request_id={:?}, message={}, kind={:?}",
             request_id,
-            message
+            message,
+            error_kind
         );
+
+        let toast_message = match error_kind {
+            Some(crate::audio::PlaybackError::UnsupportedFormat(_)) => {
+                "不支持的音频格式".to_string()
+            }
+            Some(crate::audio::PlaybackError::FileNotFound(_)) => "文件不存在".to_string(),
+            Some(crate::audio::PlaybackError::IoError(_)) => "文件读取出错".to_string(),
+            _ => format!("播放错误: {}", message),
+        };
 
         if let Some(request_id) = request_id {
             let Some(pending) = self.take_pending_playback_request(request_id) else {
@@ -718,16 +729,16 @@ impl App {
                     if let Some(idx) = pending.queue_index {
                         self.handle_playback_failure(idx, &message)
                     } else {
-                        Self::toast_error(format!("播放错误: {}", message))
+                        Self::toast_error(toast_message)
                     }
                 }
                 PendingPlaybackKind::LoadPausedTrack | PendingPlaybackKind::RestartCurrentTrack => {
-                    Self::toast_error(format!("播放错误: {}", message))
+                    Self::toast_error(toast_message)
                 }
             };
         }
 
-        Self::toast_error(format!("播放错误: {}", message))
+        Self::toast_error(toast_message)
     }
 
     pub fn pause_current_playback(&mut self) {

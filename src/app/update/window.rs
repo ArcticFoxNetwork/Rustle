@@ -7,6 +7,7 @@ use crate::app::message::Message;
 use crate::app::state::{App, WindowVisibilityState};
 use crate::features::CloseBehavior;
 use crate::platform::window;
+use crate::ui::overlay::{ModalKind, OverlayKind};
 
 impl App {
     fn is_window_hidden(&self) -> bool {
@@ -104,8 +105,17 @@ impl App {
             Message::RequestClose => {
                 match self.core.settings.close_behavior {
                     CloseBehavior::Ask => {
-                        self.ui.dialogs.exit_open = true;
-                        self.ui.dialogs.exit_animation.start();
+                        use crate::ui::overlay::{
+                            ModalConfig, ModalKind, OverlayEntry, OverlayKind,
+                        };
+                        self.ui.overlay_stack.push(OverlayEntry::new(
+                            OverlayKind::Modal(
+                                ModalKind::ExitConfirm {
+                                    remember_choice: false,
+                                },
+                                ModalConfig::default().width(380.0).no_backdrop_dismiss(),
+                            ),
+                        ));
                     }
                     CloseBehavior::Exit => {
                         return Some(iced::exit());
@@ -118,7 +128,8 @@ impl App {
             }
 
             Message::ConfirmExit => {
-                if self.ui.dialogs.exit_remember {
+                let remember = self.exit_remember_from_overlay();
+                if remember {
                     self.core.settings.close_behavior = CloseBehavior::Exit;
                     let _ = self.core.settings.save();
                 }
@@ -126,23 +137,23 @@ impl App {
             }
 
             Message::MinimizeToTray => {
-                if self.ui.dialogs.exit_remember {
+                let remember = self.exit_remember_from_overlay();
+                if remember {
                     self.core.settings.close_behavior = CloseBehavior::MinimizeToTray;
                     let _ = self.core.settings.save();
                 }
-                self.ui.dialogs.exit_open = false;
-                self.ui.dialogs.exit_animation.stop();
+                self.ui.overlay_stack.clear();
                 Some(self.begin_hide_window())
             }
 
-            Message::CancelExit => {
-                self.ui.dialogs.exit_open = false;
-                self.ui.dialogs.exit_animation.stop();
-                Some(Task::none())
-            }
-
             Message::ExitDialogRememberChanged(checked) => {
-                self.ui.dialogs.exit_remember = *checked;
+                if let Some(entry) = self.ui.overlay_stack.last_mut() {
+                    if let OverlayKind::Modal(ModalKind::ExitConfirm { remember_choice: r }, _) =
+                        &mut entry.kind
+                    {
+                        *r = *checked;
+                    }
+                }
                 Some(Task::none())
             }
 
@@ -196,6 +207,19 @@ impl App {
 
             _ => None,
         }
+    }
+
+    fn exit_remember_from_overlay(&self) -> bool {
+        self.ui
+            .overlay_stack
+            .last()
+            .and_then(|e| match &e.kind {
+                OverlayKind::Modal(ModalKind::ExitConfirm { remember_choice }, _) => {
+                    Some(*remember_choice)
+                }
+                _ => None,
+            })
+            .unwrap_or(false)
     }
 }
 

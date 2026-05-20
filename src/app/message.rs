@@ -113,6 +113,10 @@ pub enum Message {
     UpdatePowerSavingMode(bool),
     /// Update storage settings
     UpdateMaxCacheMb(u64),
+    UpdateDownloadDir(Option<String>),
+    /// Open folder dialog for download directory
+    UpdateDownloadDirDialog,
+    UpdateDownloadQuality(crate::features::MusicQuality),
     ClearCache,
     /// Cache cleared result (files_deleted, bytes_freed)
     CacheCleared(usize, u64),
@@ -156,6 +160,8 @@ pub enum Message {
     PlaybackStateLoaded(DbPlaybackState),
     /// Queue restored from database on startup (does not auto-play)
     QueueRestored(Vec<DbSong>),
+    /// Download history loaded from database
+    DownloadsLoaded(Vec<crate::database::DownloadRow>),
     /// NCM song resolved during app startup restore
     /// (queue_index, resolved_result, saved_position_secs)
     SongResolvedForRestore(
@@ -207,8 +213,6 @@ pub enum Message {
     RequestDeletePlaylist(i64),
     /// Confirm playlist deletion
     ConfirmDeletePlaylist,
-    /// Cancel playlist deletion
-    CancelDeletePlaylist,
     /// Playlist deleted confirmation
     PlaylistDeleted(i64),
     /// Playlist view loaded from database
@@ -244,8 +248,6 @@ pub enum Message {
     // ============ Edit dialog ============
     /// Edit playlist (open edit dialog)
     EditPlaylist(i64),
-    /// Close edit dialog
-    CloseEditDialog,
     /// Edit form: name changed
     EditPlaylistNameChanged(String),
     /// Edit form: description changed
@@ -363,6 +365,30 @@ pub enum Message {
     /// Clear the entire queue
     ClearQueue,
 
+    // ============ Download ============
+    /// Download a single song by song_id
+    DownloadSong(i64),
+    /// Download URL resolved (song_id, ncm_id, url, metadata)
+    DownloadUrlResolved(i64, u64, String, crate::metadata::SongMetadata),
+    /// Download all songs in a playlist
+    DownloadPlaylist(i64),
+    /// Playlist download URLs resolved (vec of (song_id, ncm_id, url, title, artist, pic_url))
+    DownloadBatchEnqueue(Vec<(i64, u64, String, String, String, String)>),
+    /// Cancel a download
+    DownloadCancel(i64),
+    /// Download progress update (song_id, downloaded_bytes, total_bytes)
+    DownloadProgress(i64, u64, u64),
+    /// Download completed (song_id, file_path)
+    DownloadCompleted(i64, String),
+    /// Download failed (song_id, error_message)
+    DownloadError(i64, String),
+    /// Delete a download history entry by song_id
+    DeleteDownloadHistory(i64),
+    /// Open the downloads panel
+    OpenDownloads,
+    /// Switch download panel tab
+    SwitchDownloadTab(crate::app::DownloadTab),
+
     // ============ Keyboard events ============
     /// Keyboard key pressed
     KeyPressed(Key, Modifiers),
@@ -376,9 +402,7 @@ pub enum Message {
     ConfirmExit,
     /// Minimize to system tray
     MinimizeToTray,
-    /// Cancel exit dialog
-    CancelExit,
-    /// Toggle "remember my choice" checkbox
+    /// Toggle "remember my choice" checkbox in exit dialog
     ExitDialogRememberChanged(bool),
 
     // ============ System Tray ============
@@ -600,6 +624,78 @@ pub enum Message {
     DiscordUpdatePresence,
     /// Clear Discord presence
     DiscordClearPresence,
+
+    // ============ Protocol (rustle://) ============
+    /// URI received from OS protocol handler or IPC
+    UriReceived(String),
+
+    // ============ Context Menu ============
+    /// Show context menu for a local song (triggered by right-click)
+    RightClickSong(i64),
+    /// Show context menu for an NCM/online song
+    RightClickNcmSong(SongInfo),
+    /// Show context menu for a song with explicit position
+    ShowContextMenu {
+        song_id: i64,
+        x: f32,
+        y: f32,
+        has_file_on_disk: bool,
+        is_ncm: bool,
+    },
+    /// Close context menu
+    CloseContextMenu,
+    /// Context menu item selected
+    ContextMenuAction(ContextMenuAction, i64),
+    /// Confirm adding a song to a playlist from the picker modal (song_id, playlist_id)
+    PlaylistPickerConfirm(i64, i64),
+    /// Add an NCM song to an NCM online playlist (song_ncm_id, ncm_playlist_id)
+    AddToNcmPlaylist(u64, u64),
+    /// Result of adding song to NCM playlist
+    NcmPlaylistAddResult(u64, u64, Result<(), String>),
+
+    // ============ Overlay System (Unified) ============
+    /// Dismiss the topmost dismissible overlay
+    DismissTopModal,
+
+    // ============ Song Edit ============
+    /// Open song edit dialog
+    EditSongTags(i64),
+    /// Open edit dialog with resolved metadata (DbSong, SongMetadata, cover_path)
+    OpenSongEditDialog(Box<(crate::database::DbSong, crate::metadata::SongMetadata, Option<PathBuf>)>),
+    /// Song edit field changed
+    SongEditFieldChanged {
+        song_id: i64,
+        field: String,
+        value: String,
+    },
+    /// Song cover replaced
+    SongEditCoverReplaced(i64, PathBuf),
+    /// Pick a cover image for song edit
+    PickSongEditCover(i64),
+    /// Save song edits to file
+    SaveSongEdits(),
+    /// Song edits saved successfully
+    SongEditsSaved(i64),
+    /// Song edits save failed
+    SongEditsFailed {
+        song_id: i64,
+        error: String,
+    },
+}
+
+/// Context menu action types
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextMenuAction {
+    PlayNow,
+    PlayNext,
+    AddToFavorites,
+    AddToPlaylist,
+    ViewArtist,
+    ViewAlbum,
+    ShowInFolder,
+    EditSongTags,
+    Download,
+    RemoveFromList,
 }
 
 /// Icon identifiers for hover tracking
@@ -796,6 +892,9 @@ impl std::fmt::Debug for Message {
             Self::UpdateAppLanguage(l) => simple!("UpdateAppLanguage", "{}", l),
             Self::UpdatePowerSavingMode(b) => simple!("UpdatePowerSavingMode", "{}", b),
             Self::UpdateMaxCacheMb(m) => simple!("UpdateMaxCacheMb", "{}", m),
+            Self::UpdateDownloadQuality(q) => simple!("UpdateDownloadQuality", "{:?}", q),
+            Self::UpdateDownloadDir(d) => simple!("UpdateDownloadDir", "{:?}", d),
+            Self::UpdateDownloadDirDialog => simple!("UpdateDownloadDirDialog"),
             Self::ClearCache => simple!("ClearCache"),
             Self::CacheCleared(n, b) => simple!("CacheCleared", "{} files, {} bytes", n, b),
             Self::RefreshCacheStats => simple!("RefreshCacheStats"),
@@ -839,7 +938,6 @@ impl std::fmt::Debug for Message {
             Self::OpenPlaylist(id) => simple!("OpenPlaylist", "{}", id),
             Self::RequestDeletePlaylist(id) => simple!("RequestDeletePlaylist", "{}", id),
             Self::ConfirmDeletePlaylist => simple!("ConfirmDeletePlaylist"),
-            Self::CancelDeletePlaylist => simple!("CancelDeletePlaylist"),
             Self::PlaylistDeleted(id) => simple!("PlaylistDeleted", "{}", id),
             Self::PlaySong(id) => simple!("PlaySong", "{}", id),
             Self::HoverSong(id) => simple!("HoverSong", "{:?}", id),
@@ -852,7 +950,6 @@ impl std::fmt::Debug for Message {
 
             // Edit dialog
             Self::EditPlaylist(id) => simple!("EditPlaylist", "{}", id),
-            Self::CloseEditDialog => simple!("CloseEditDialog"),
             Self::EditPlaylistNameChanged(_) => simple!("EditPlaylistNameChanged"),
             Self::EditPlaylistDescriptionChanged(_) => simple!("EditPlaylistDescriptionChanged"),
             Self::EditPlaylistWatchEnabledChanged(enabled) => {
@@ -954,7 +1051,6 @@ impl std::fmt::Debug for Message {
             Self::RequestClose => simple!("RequestClose"),
             Self::ConfirmExit => simple!("ConfirmExit"),
             Self::MinimizeToTray => simple!("MinimizeToTray"),
-            Self::CancelExit => simple!("CancelExit"),
             Self::ExitDialogRememberChanged(b) => simple!("ExitDialogRememberChanged", "{}", b),
 
             // Tray
@@ -1086,6 +1182,73 @@ impl std::fmt::Debug for Message {
             // Discord
             Self::DiscordUpdatePresence => simple!("DiscordUpdatePresence"),
             Self::DiscordClearPresence => simple!("DiscordClearPresence"),
+
+            // Protocol
+            Self::UriReceived(uri) => simple!("UriReceived", "{}", uri),
+
+            // Context Menu
+            Self::RightClickSong(id) => simple!("RightClickSong", "{}", id),
+            Self::RightClickNcmSong(info) => simple!("RightClickNcmSong", "{}", info.id),
+            Self::ShowContextMenu {
+                song_id,
+                x: _,
+                y: _,
+                has_file_on_disk: _,
+                is_ncm: _,
+            } => simple!("ShowContextMenu", "song_id={}", song_id),
+            Self::CloseContextMenu => simple!("CloseContextMenu"),
+            Self::ContextMenuAction(action, id) => {
+                simple!("ContextMenuAction", "{:?}, {}", action, id)
+            }
+            Self::PlaylistPickerConfirm(song_id, playlist_id) => {
+                simple!("PlaylistPickerConfirm", "song={}, playlist={}", song_id, playlist_id)
+            }
+            Self::AddToNcmPlaylist(song_id, playlist_id) => {
+                simple!("AddToNcmPlaylist", "song={}, playlist={}", song_id, playlist_id)
+            }
+            Self::NcmPlaylistAddResult(song_id, playlist_id, result) => {
+                simple!("NcmPlaylistAddResult", "song={}, playlist={}, ok={}", song_id, playlist_id, result.is_ok())
+            }
+
+            // Overlay System
+            Self::DismissTopModal => simple!("DismissTopModal"),
+
+            Self::EditSongTags(id) => simple!("EditSongTags", "{}", id),
+            Self::OpenSongEditDialog(_) => simple!("OpenSongEditDialog"),
+            Self::SongEditFieldChanged {
+                song_id,
+                field,
+                value: _,
+            } => simple!("SongEditFieldChanged", "{}, {}", song_id, field),
+            Self::SongEditCoverReplaced(id, _) => simple!("SongEditCoverReplaced", "{}", id),
+            Self::PickSongEditCover(id) => simple!("PickSongEditCover", "{}", id),
+            Self::SaveSongEdits(id) => simple!("SaveSongEdits", "{}", id),
+            Self::SongEditsSaved(id) => simple!("SongEditsSaved", "{}", id),
+            Self::SongEditsFailed { song_id, error: _ } => {
+                simple!("SongEditsFailed", "{}", song_id)
+            }
+
+            // Download
+            Self::DownloadSong(id) => simple!("DownloadSong", "{}", id),
+            Self::DownloadUrlResolved(sid, nid, ..) => {
+                simple!("DownloadUrlResolved", "{}, ncm={}", sid, nid)
+            }
+            Self::DownloadPlaylist(id) => simple!("DownloadPlaylist", "{}", id),
+            Self::DownloadCancel(id) => simple!("DownloadCancel", "{}", id),
+            Self::DownloadProgress(sid, dl, total) => {
+                simple!("DownloadProgress", "{}, {}/{}", sid, dl, total)
+            }
+            Self::DownloadCompleted(sid, path) => {
+                simple!("DownloadCompleted", "{}, {}", sid, path)
+            }
+            Self::DownloadError(sid, e) => simple!("DownloadError", "{}, {}", sid, e),
+            Self::DeleteDownloadHistory(sid) => simple!("DeleteDownloadHistory", "{}", sid),
+            Self::OpenDownloads => simple!("OpenDownloads"),
+            Self::SwitchDownloadTab(_) => simple!("SwitchDownloadTab"),
+            Self::DownloadBatchEnqueue(items) => {
+                simple!("DownloadBatchEnqueue", "{} items", items.len())
+            }
+            Self::DownloadsLoaded(v) => simple!("DownloadsLoaded", "{} downloads", v.len()),
         }
     }
 }

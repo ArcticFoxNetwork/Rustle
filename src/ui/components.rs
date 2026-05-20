@@ -16,7 +16,9 @@
 //! - **Components** (this module): Business-specific UI with Message handling
 
 pub mod carousel_banner;
-pub mod delete_playlist_dialog;
+pub mod context_menu;
+pub mod cover_thumb;
+pub mod download_panel;
 pub mod edit_dialog;
 pub mod exit_dialog;
 pub mod importing_card;
@@ -28,6 +30,8 @@ pub mod queue_panel;
 pub mod search_bar;
 pub mod sidebar;
 pub mod sidebar_resize_handle;
+pub mod song_info_dialog;
+pub mod source_badge;
 pub mod trending_list;
 pub mod window_controls;
 

@@ -331,7 +331,8 @@ impl App {
             AudioEvent::Error {
                 request_id,
                 message,
-            } => return self.handle_audio_error_event(request_id, message),
+                error_kind,
+            } => return self.handle_audio_error_event(request_id, message, error_kind),
         }
 
         if should_sync_mpris {

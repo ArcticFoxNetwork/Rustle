@@ -2,7 +2,7 @@
 //! Rounded search input with icon and placeholder text
 
 use iced::widget::{Space, container, row, svg, text_input};
-use iced::{Alignment, Element, Padding};
+use iced::{Alignment, Element, Fill, Padding};
 
 use crate::app::Message;
 use crate::i18n::{Key, Locale};
@@ -25,7 +25,7 @@ pub struct SearchBarStyle {
 impl SearchBarStyle {
     pub const fn top_bar() -> Self {
         Self {
-            width: 320.0,
+            width: 0.0, // signal: Fill + max_width(240)
             icon_size: 16.0,
             horizontal_padding: 12.0,
             icon_spacing: 8.0,
@@ -87,16 +87,34 @@ pub fn view(search_query: &str, locale: Locale, style: SearchBarStyle) -> Elemen
     ]
     .align_y(Alignment::Center);
 
-    container(content)
-        .width(style.width)
-        .style(move |theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(style.background)),
-            border: iced::Border {
-                radius: style.radius.into(),
-                width: 1.0,
-                color: theme::border_color(theme),
-            },
-            ..Default::default()
-        })
+    if style.width > 0.0 {
+        container(content)
+            .width(style.width)
+            .style(move |theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(style.background)),
+                border: iced::Border {
+                    radius: style.radius.into(),
+                    width: 1.0,
+                    color: theme::border_color(theme),
+                },
+                ..Default::default()
+            })
+            .into()
+    } else {
+        // Web-like: outer Fill fills flex space, inner max_width caps visual size
+        container(container(content).max_width(320.0).style(move |theme| {
+            iced::widget::container::Style {
+                background: Some(iced::Background::Color(style.background)),
+                border: iced::Border {
+                    radius: style.radius.into(),
+                    width: 1.0,
+                    color: theme::border_color(theme),
+                },
+                ..Default::default()
+            }
+        }))
+        .width(Fill)
+        .align_x(Alignment::Start)
         .into()
+    }
 }

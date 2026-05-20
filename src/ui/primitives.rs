@@ -12,14 +12,11 @@
 //!
 //! # Contents
 //!
-//! - [`SquareCoverWidget`] - Maintains 1:1 aspect ratio for cover art
 //! - [`ProgressRing`] - Circular progress indicator using Canvas
 //! - [`VirtualList`] - High-performance virtualized list
 
 pub mod progress_ring;
-pub mod square_cover;
 pub mod virtual_list;
 
 pub use progress_ring::{ProgressRing, view_progress_ring_styled};
-pub use square_cover::view as square_cover;
 pub use virtual_list::{VirtualList, VirtualListState};

@@ -235,7 +235,7 @@ pub fn start(
                     MediaControlEvent::SetVolume(volume) => Some(MediaCommand::SetVolume(volume)),
                     MediaControlEvent::Raise => Some(MediaCommand::Raise),
                     MediaControlEvent::Quit => Some(MediaCommand::Quit),
-                    MediaControlEvent::OpenUri(_) => None, // Not supported
+                    MediaControlEvent::OpenUri(uri) => Some(MediaCommand::OpenUri(uri)),
                 };
 
                 if let Some(cmd) = cmd {

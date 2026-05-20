@@ -260,6 +260,16 @@ pub struct StorageSettings {
     pub max_cache_mb: u64,
     /// Cache directory path
     pub cache_dir: Option<String>,
+    /// Download directory path (None = use system Music folder)
+    #[serde(default)]
+    pub download_dir: Option<String>,
+    /// Download audio quality
+    #[serde(default = "default_download_quality")]
+    pub download_quality: MusicQuality,
+}
+
+fn default_download_quality() -> MusicQuality {
+    MusicQuality::High
 }
 
 /// System settings
@@ -459,7 +469,31 @@ impl Default for StorageSettings {
         Self {
             max_cache_mb: 1024, // 1GB default
             cache_dir: None,
+            download_dir: None,
+            download_quality: MusicQuality::High,
         }
+    }
+}
+
+impl StorageSettings {
+    /// Get the effective download directory, resolving defaults
+    pub fn effective_download_dir(&self) -> PathBuf {
+        if let Some(ref dir) = self.download_dir {
+            let path = PathBuf::from(dir);
+            if path.exists() || path.parent().map(|p| p.exists()).unwrap_or(false) {
+                return path;
+            }
+        }
+        // Default: system Music folder / Rustle
+        directories::UserDirs::new()
+            .and_then(|dirs| dirs.audio_dir().map(|p| p.join("Rustle")))
+            .or_else(|| {
+                // XDG spec default: $HOME/Music when XDG_MUSIC_DIR is unset
+                std::env::var("HOME")
+                    .ok()
+                    .map(|home| PathBuf::from(home).join("Music").join("Rustle"))
+            })
+            .unwrap_or_else(|| PathBuf::from("."))
     }
 }
 

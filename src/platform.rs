@@ -17,6 +17,7 @@ pub const APP_ID: &str = "life.fxs.rustle";
 pub mod discord;
 pub mod keybindings;
 pub mod media_controls;
+pub mod protocol;
 pub mod theme;
 pub mod tray;
 pub mod window;
@@ -24,4 +25,27 @@ pub mod window;
 pub fn init() {
     theme::configure_iced_font_system();
     window::initialize_process();
+}
+
+/// Open the parent directory of the given file path in the system file manager.
+pub fn open_in_file_manager(path: &std::path::Path) {
+    let dir = path.parent().unwrap_or(path);
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("explorer")
+            .arg("/select,")
+            .arg(path)
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open")
+            .arg("-R")
+            .arg(path)
+            .spawn();
+    }
 }

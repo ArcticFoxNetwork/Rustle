@@ -293,7 +293,7 @@ pub fn avatars_cache_dir() -> PathBuf {
 // ============================================================================
 
 /// Common audio file extensions for cache lookup
-pub const AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "m4a", "aac", "ogg", "wav"];
+pub const AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "m4a", "aac", "ogg", "wav", "opus", "wma", "aiff"];
 
 /// Find an existing cached audio file with any common extension
 ///
@@ -340,6 +340,11 @@ pub fn detect_audio_format(bytes: &[u8]) -> &'static str {
 
     // OGG: 4F 67 67 53 (OggS)
     if bytes.starts_with(&[0x4F, 0x67, 0x67, 0x53]) {
+        // Check for Opus codec inside the Ogg container
+        // OpusHead magic: first page contains "OpusHead" after the Ogg page header
+        if bytes.windows(8).any(|w| w == b"OpusHead") {
+            return "opus";
+        }
         return "ogg";
     }
 
@@ -437,8 +442,62 @@ fn normalize_cached_image_path(path: PathBuf) -> Option<PathBuf> {
 /// * `client` - The NCM client for downloading
 /// * `url` - The image URL
 /// * `base_path` - The base local path (extension will be replaced based on actual format)
+// ============================================================================
+// Unified Cover Image Resolution
+// ============================================================================
+
+/// Pending cover downloads (id, is_playlist).
+static PENDING: std::sync::Mutex<Vec<(u64, bool)>> = std::sync::Mutex::new(Vec::new());
+
+pub fn drain_pending_covers() -> Vec<(u64, bool)> {
+    let mut q = PENDING.lock().unwrap();
+    std::mem::take(&mut *q)
+}
+
+/// Find cached song cover. If missing, queues background download via API.
+pub fn find_song_cover(ncm_id: u64) -> Option<std::path::PathBuf> {
+    let stem = format!("cover_{}", ncm_id);
+    if let Some(p) = find_cached_image(&covers_cache_dir(), &stem).filter(|p| p.exists()) {
+        return Some(p);
+    }
+    if let Ok(mut q) = PENDING.lock() {
+        q.push((ncm_id, false));
+    }
+    None
+}
+
+/// Find cached playlist cover. If missing, queues background download via API.
+pub fn find_playlist_cover(playlist_id: u64) -> Option<std::path::PathBuf> {
+    let stem = format!("playlist_{}", playlist_id);
+    if let Some(p) = find_cached_image(&covers_cache_dir(), &stem).filter(|p| p.exists()) {
+        return Some(p);
+    }
+    if let Ok(mut q) = PENDING.lock() {
+        q.push((playlist_id, true));
+    }
+    None
+}
+
 /// * `width` - Resize width (for NCM image API)
 /// * `height` - Resize height (for NCM image API)
+/// Download raw bytes and MIME type from a URL
+pub async fn download_bytes(url: &str) -> Option<(Vec<u8>, String)> {
+    let client = reqwest::Client::new();
+    let resp = client.get(url).send().await.ok()?;
+    let mime = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("image/jpeg")
+        .to_string();
+    let data = resp.bytes().await.ok()?;
+    if data.is_empty() {
+        None
+    } else {
+        Some((data.to_vec(), mime))
+    }
+}
+
 pub async fn download_img(
     client: &crate::api::NcmClient,
     url: &str,
@@ -608,3 +667,84 @@ pub fn format_time_padded(seconds: f32) -> String {
         "00:00".to_string()
     }
 }
+
+// ============================================================================
+// Source Detection
+// ============================================================================
+
+/// Song source origin for display badges
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    /// Local file with absolute path that exists on disk (imported or downloaded)
+    Local,
+    /// NCM song cached in cache directory from streaming playback
+    Cached,
+    /// NCM song only available online (not downloaded or cached)
+    Online,
+}
+
+/// Determine the source of a song at runtime by checking file system state
+///
+/// Checks in order:
+/// 1. Absolute path exists on disk → Local
+/// 2. NCM song with cached audio in streaming cache → Cached
+/// 3. NCM song with downloaded file in download dir → Local
+/// 4. Otherwise → Online
+pub fn compute_source(
+    file_path: &str,
+    song_id: i64,
+    artist: Option<&str>,
+    title: Option<&str>,
+) -> Source {
+    let path = Path::new(file_path);
+    if path.is_absolute() && path.exists() {
+        return Source::Local;
+    }
+    if song_id < 0 {
+        let ncm_id = (-song_id) as u64;
+        // Downloaded file takes priority over streaming cache
+        if let (Some(a), Some(t)) = (artist, title) {
+            let dl = crate::features::settings::StorageSettings::default().effective_download_dir();
+            let stem = format!(
+                "{} - {}",
+                sanitize_filename(a),
+                sanitize_filename(t)
+            );
+            if AUDIO_EXTENSIONS
+                .iter()
+                .map(|e| dl.join(format!("{}.{}", stem, e)))
+                .any(|p| p.exists())
+            {
+                return Source::Local;
+            }
+        }
+        if find_cached_audio(&songs_cache_dir(), &ncm_id.to_string()).is_some() {
+            return Source::Cached;
+        }
+    }
+    Source::Online
+}
+pub fn sanitize_filename(input: &str) -> String {
+    let mut result: String = input
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
+            '\0' => '\0', // will be removed below
+            other => other,
+        })
+        .collect();
+    result.retain(|c| c != '\0');
+    // Limit length, keeping extension intact
+    if result.len() > 200 {
+        if let Some(dot) = result.rfind('.') {
+            let ext = result[dot..].to_string();
+            let mut name = result[..dot].to_string();
+            name.truncate(200 - ext.len());
+            result = format!("{}{}", name, ext);
+        } else {
+            result.truncate(200);
+        }
+    }
+    result
+}
+

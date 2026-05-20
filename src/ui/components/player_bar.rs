@@ -1,6 +1,6 @@
 //! Bottom player bar component
 
-use iced::widget::{Space, button, column, container, image, opaque, row, svg, text};
+use iced::widget::{Space, button, column, container, opaque, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
 use crate::app::Message;
@@ -26,6 +26,7 @@ pub fn view(
     download_progress: Option<f32>, // Download progress 0.0 to 1.0 (None if not streaming)
     is_fm_mode: bool,               // Whether in Personal FM mode
     is_first_song: bool,            // Whether at first song in queue
+    current_song_cover: Option<&iced::widget::image::Handle>,
 ) -> Element<'static, Message> {
     // Format time as mm:ss
     let format_time = |secs: f32| -> String {
@@ -45,63 +46,11 @@ pub fn view(
         let song_clone = song.clone();
 
         // Cover - clickable to open lyrics page
+        let s = crate::ui::components::cover_thumb::CoverSize::Medium;
         let cover_content: Element<'static, Message> =
-            if let Some(cover_path) = song.cover_path.clone() {
-                // Skip URL covers - they need to be downloaded first
-                if cover_path.starts_with("http://") || cover_path.starts_with("https://") {
-                    // Show placeholder for URL covers (waiting for download)
-                    container(
-                        svg(svg::Handle::from_memory(icons::MUSIC.as_bytes()))
-                            .width(24)
-                            .height(24)
-                            .style(|theme, _status| svg::Style {
-                                color: Some(theme::icon_muted(theme)),
-                            }),
-                    )
-                    .width(56)
-                    .height(56)
-                    .center_x(56)
-                    .center_y(56)
-                    .style(|theme| iced::widget::container::Style {
-                        background: Some(iced::Background::Color(theme::surface_container(theme))),
-                        border: iced::Border {
-                            radius: 4.0.into(),
-                            ..Default::default()
-                        },
-                        ..Default::default()
-                    })
-                    .into()
-                } else {
-                    image(image::Handle::from_path(&cover_path))
-                        .width(56)
-                        .height(56)
-                        .content_fit(iced::ContentFit::Cover)
-                        .border_radius(4.0)
-                        .into()
-                }
-            } else {
-                container(
-                    svg(svg::Handle::from_memory(icons::MUSIC.as_bytes()))
-                        .width(24)
-                        .height(24)
-                        .style(|theme, _status| svg::Style {
-                            color: Some(theme::icon_muted(theme)),
-                        }),
-                )
-                .width(56)
-                .height(56)
-                .center_x(56)
-                .center_y(56)
-                .style(|theme| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(theme::surface_container(theme))),
-                    border: iced::Border {
-                        radius: 4.0.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                })
-                .into()
-            };
+            crate::ui::components::cover_thumb::thumb(
+                current_song_cover, s.px(), s.radius(),
+            );
 
         let cover_btn = button(cover_content)
             .padding(0)
