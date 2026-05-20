@@ -44,7 +44,7 @@ pub fn is_protocol_registered() -> bool {
 #[cfg(target_os = "macos")]
 pub fn setup_macos_url_handler(tx: crate::protocol::ipc::IpcSender) {
     use std::sync::Mutex;
-    use objc2::{define_class, sel};
+    use objc2::{define_class, msg_send, sel, ClassType};
     use objc2::rc::Retained;
     use objc2::runtime::{NSObject, NSObjectProtocol};
     use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventManager};
@@ -96,12 +96,13 @@ pub fn setup_macos_url_handler(tx: crate::protocol::ipc::IpcSender) {
     let manager = unsafe { NSAppleEventManager::sharedAppleEventManager() };
 
     unsafe {
-        manager.setEventHandler_andSelector_forEventClass_andEventID(
-            &handler,
-            sel!(handleGetURLEvent:withReplyEvent:),
-            event_class,
-            event_id,
-        );
+        let _: () = msg_send![
+            &manager,
+            setEventHandler: &*handler,
+            andSelector: sel!(handleGetURLEvent:withReplyEvent:),
+            forEventClass: event_class,
+            andEventID: event_id,
+        ];
     }
 
     *HANDLER.lock().unwrap() = Some(handler);
