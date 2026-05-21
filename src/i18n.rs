@@ -266,6 +266,11 @@ pub enum Key {
     DeletePlaylistTitle,
     DeletePlaylistConfirm,
 
+    // Download Playlist Dialog
+    DownloadPlaylistTitle,
+    DownloadPlaylistConfirm,
+    DownloadPlaylistConfirmBtn,
+
     // Edit Playlist Dialog
     EditPlaylistTitle,
     EditPlaylistChangeCover,

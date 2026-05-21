@@ -360,6 +360,11 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::DownloadQueued, "Added to download queue");
     m.insert(Key::DownloadFailed, "Download failed");
 
+    // Download Playlist Dialog
+    m.insert(Key::DownloadPlaylistTitle, "Download Playlist");
+    m.insert(Key::DownloadPlaylistConfirm, "Download {count} songs from \"{name}\"?");
+    m.insert(Key::DownloadPlaylistConfirmBtn, "Download");
+
     // Settings - Download
     m.insert(Key::SettingsDownloadLocation, "Download Location");
     m.insert(Key::SettingsDownloadQuality, "Download Quality");

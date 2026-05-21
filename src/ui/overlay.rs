@@ -42,6 +42,12 @@ pub enum ModalKind {
         playlist_id: i64,
         playlist_name: String,
     },
+    /// Batch download confirmation prompt.
+    DownloadConfirm {
+        playlist_id: i64,
+        playlist_name: String,
+        song_count: u32,
+    },
     /// Exit application confirmation prompt.
     ExitConfirm { remember_choice: bool },
     /// Pick a target playlist for adding a song.

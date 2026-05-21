@@ -515,6 +515,36 @@ impl App {
                                     ]),
                                 )
                             }
+                            ModalKind::DownloadConfirm {
+                                playlist_id: _,
+                                playlist_name,
+                                song_count,
+                            } => {
+                                let title = locale
+                                    .get(crate::i18n::Key::DownloadPlaylistTitle)
+                                    .to_string();
+                                let template = locale
+                                    .get(crate::i18n::Key::DownloadPlaylistConfirm);
+                                let body = template
+                                    .replace("{name}", playlist_name)
+                                    .replace("{count}", &song_count.to_string());
+                                let confirm_label = locale
+                                    .get(crate::i18n::Key::DownloadPlaylistConfirmBtn)
+                                    .to_string();
+                                overlay::modal_section(
+                                    title,
+                                    Message::DismissTopModal,
+                                    overlay::modal_body(
+                                        text(body)
+                                        .size(14)
+                                        .into(),
+                                    ),
+                                    overlay::modal_footer(vec![
+                                        cancel_btn(locale),
+                                        accent_btn(confirm_label, Message::ConfirmDownloadPlaylist),
+                                    ]),
+                                )
+                            }
                             ModalKind::ExitConfirm { remember_choice } => {
                                 let body =
                                     components::exit_dialog::view_body(*remember_choice, locale);

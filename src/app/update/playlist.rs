@@ -105,6 +105,41 @@ impl App {
                 Some(Task::none())
             }
 
+            Message::RequestDownloadPlaylist(playlist_id, name, count) => {
+                tracing::info!(
+                    "Requesting download for playlist: {} ({} songs)",
+                    playlist_id,
+                    count
+                );
+                use crate::ui::overlay::{ModalConfig, ModalKind, OverlayEntry, OverlayKind};
+                self.ui.overlay_stack.push(OverlayEntry::new(
+                    OverlayKind::Modal(
+                        ModalKind::DownloadConfirm {
+                            playlist_id: *playlist_id,
+                            playlist_name: name.clone(),
+                            song_count: *count,
+                        },
+                        ModalConfig::default().width(380.0),
+                    ),
+                ));
+                Some(Task::none())
+            }
+
+            Message::ConfirmDownloadPlaylist => {
+                let playlist_id = self.ui.overlay_stack.last().and_then(|e| match &e.kind {
+                    OverlayKind::Modal(ModalKind::DownloadConfirm { playlist_id, .. }, _) => {
+                        Some(*playlist_id)
+                    }
+                    _ => None,
+                });
+                if let Some(playlist_id) = playlist_id {
+                    tracing::info!("Confirming download for playlist: {}", playlist_id);
+                    self.ui.overlay_stack.clear();
+                    return Some(Task::done(Message::DownloadPlaylist(playlist_id)));
+                }
+                Some(Task::none())
+            }
+
             Message::PlaylistDeleted(id) => {
                 tracing::info!("Playlist {} deleted", id);
                 // Remove from sidebar list

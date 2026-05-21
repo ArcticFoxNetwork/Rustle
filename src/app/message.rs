@@ -395,6 +395,10 @@ pub enum Message {
     DownloadUrlResolved(i64, u64, String, crate::metadata::SongMetadata),
     /// Download all songs in a playlist
     DownloadPlaylist(i64),
+    /// Request download playlist with confirmation (playlist_id, name, song_count)
+    RequestDownloadPlaylist(i64, String, u32),
+    /// Confirm batch download from confirmation dialog
+    ConfirmDownloadPlaylist,
     /// Playlist download URLs resolved (vec of (song_id, ncm_id, url, title, artist, pic_url))
     DownloadBatchEnqueue(Vec<(i64, u64, String, String, String, String)>),
     /// Cancel a download
@@ -1274,6 +1278,10 @@ impl std::fmt::Debug for Message {
             Self::DownloadBatchEnqueue(items) => {
                 simple!("DownloadBatchEnqueue", "{} items", items.len())
             }
+            Self::RequestDownloadPlaylist(id, name, count) => {
+                simple!("RequestDownloadPlaylist", "{}, {}, {}", id, name, count)
+            }
+            Self::ConfirmDownloadPlaylist => simple!("ConfirmDownloadPlaylist"),
             Self::DownloadsLoaded(v) => simple!("DownloadsLoaded", "{} downloads", v.len()),
         }
     }

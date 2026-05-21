@@ -330,6 +330,11 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::DownloadQueued, "已加入下载队列");
     m.insert(Key::DownloadFailed, "下载失败");
 
+    // Download Playlist Dialog
+    m.insert(Key::DownloadPlaylistTitle, "下载歌单");
+    m.insert(Key::DownloadPlaylistConfirm, "确定要下载歌单「{name}」中的 {count} 首歌曲吗？");
+    m.insert(Key::DownloadPlaylistConfirmBtn, "下载");
+
     // Settings - Download
     m.insert(Key::SettingsDownloadLocation, "下载位置");
     m.insert(Key::SettingsDownloadQuality, "下载音质");

@@ -677,7 +677,11 @@ pub(crate) fn build_controls<'a>(
                     }),
             )
             .style(theme::transparent_btn)
-            .on_press(Message::PlayHero),
+            .on_press(Message::RequestDownloadPlaylist(
+                playlist_id,
+                playlist.name.clone(),
+                playlist.song_count,
+            )),
         )
         .on_enter(Message::HoverIcon(Some(IconId::Download)))
         .on_exit(Message::HoverIcon(None));
