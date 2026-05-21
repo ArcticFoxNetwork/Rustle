@@ -16,6 +16,7 @@ use crate::features::Action;
 use crate::features::import::{CoverCache, ScanProgress, WatchEvent};
 use crate::ui::components::{LibraryItem, NavItem};
 use crate::ui::pages;
+use crate::utils::Source;
 
 /// Settings sections for navigation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -661,8 +662,7 @@ pub enum Message {
         song_id: i64,
         x: f32,
         y: f32,
-        has_file_on_disk: bool,
-        is_ncm: bool,
+        source: Source,
     },
     /// Close context menu
     CloseContextMenu,
@@ -1220,8 +1220,7 @@ impl std::fmt::Debug for Message {
                 song_id,
                 x: _,
                 y: _,
-                has_file_on_disk: _,
-                is_ncm: _,
+                source: _,
             } => simple!("ShowContextMenu", "song_id={}", song_id),
             Self::CloseContextMenu => simple!("CloseContextMenu"),
             Self::ContextMenuAction(action, id) => {

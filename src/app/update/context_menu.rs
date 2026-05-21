@@ -17,27 +17,28 @@ impl App {
             Message::RightClickSong(song_id) => {
                 let pos = self.core.mouse_position;
                 let song = self.find_song_anywhere(*song_id);
-                let (has_file, is_ncm) = song
+                let (source, is_liked) = song
                     .as_ref()
                     .map(|s| {
-                        let has = !s.file_path.is_empty()
-                            && std::path::Path::new(&s.file_path).exists();
-                        (has, s.id < 0)
+                        let src = crate::utils::compute_source(
+                            &s.file_path, s.id,
+                            Some(&s.artist), Some(&s.title),
+                        );
+                        let liked = if s.id < 0 {
+                            self.core.user_info.as_ref()
+                                .map(|u| u.like_songs.contains(&((-s.id) as u64)))
+                                .unwrap_or(false)
+                        } else {
+                            false
+                        };
+                        (src, liked)
                     })
-                    .unwrap_or((false, *song_id < 0));
-                let is_liked = if is_ncm {
-                    self.core.user_info.as_ref()
-                        .map(|u| u.like_songs.contains(&((-song_id) as u64)))
-                        .unwrap_or(false)
-                } else {
-                    false
-                };
+                    .unwrap_or((crate::utils::Source::Online, false));
                 self.ui.context_menu = Some(crate::app::state::ContextMenuState {
                     song_id: *song_id,
                     x: pos.x,
                     y: pos.y,
-                    has_file_on_disk: has_file,
-                    is_ncm,
+                    source,
                     is_liked,
                 });
                 Some(Task::none())
@@ -46,27 +47,24 @@ impl App {
                 let pos = self.core.mouse_position;
                 let id = -(info.id as i64);
                 let song = self.find_song_anywhere(id);
-                let (has_file, is_ncm) = song
+                let (source, is_liked) = song
                     .as_ref()
                     .map(|s| {
-                        let has = !s.file_path.is_empty()
-                            && std::path::Path::new(&s.file_path).exists();
-                        (has, s.id < 0 && !has)
+                        let src = crate::utils::compute_source(
+                            &s.file_path, s.id,
+                            Some(&s.artist), Some(&s.title),
+                        );
+                        let liked = self.core.user_info.as_ref()
+                            .map(|u| u.like_songs.contains(&info.id))
+                            .unwrap_or(false);
+                        (src, liked)
                     })
-                    .unwrap_or((false, true));
-                let is_liked = if is_ncm {
-                    self.core.user_info.as_ref()
-                        .map(|u| u.like_songs.contains(&info.id))
-                        .unwrap_or(false)
-                } else {
-                    false
-                };
+                    .unwrap_or((crate::utils::Source::Online, true));
                 self.ui.context_menu = Some(crate::app::state::ContextMenuState {
                     song_id: id,
                     x: pos.x,
                     y: pos.y,
-                    has_file_on_disk: has_file,
-                    is_ncm,
+                    source,
                     is_liked,
                 });
                 Some(Task::none())
@@ -75,10 +73,9 @@ impl App {
                 song_id,
                 x,
                 y,
-                has_file_on_disk,
-                is_ncm,
+                source,
             } => {
-                let is_liked = if *is_ncm {
+                let is_liked = if *source != crate::utils::Source::Local {
                     self.core.user_info.as_ref()
                         .map(|u| u.like_songs.contains(&(song_id.unsigned_abs())))
                         .unwrap_or(false)
@@ -89,8 +86,7 @@ impl App {
                     song_id: *song_id,
                     x: *x,
                     y: *y,
-                    has_file_on_disk: *has_file_on_disk,
-                    is_ncm: *is_ncm,
+                    source: *source,
                     is_liked,
                 });
                 Some(Task::none())
@@ -474,8 +470,7 @@ impl App {
                 .find(|s| s.id == ncm_id)
             {
                 let mut song = Self::ncm_song_to_db_song(info);
-                // If the file exists on disk, set the real path so resolve()
-                // can extract metadata directly from the file
+                // Try download dir first, then streaming cache dir
                 let dl = crate::features::settings::StorageSettings::default()
                     .effective_download_dir();
                 let stem = format!(
@@ -488,6 +483,11 @@ impl App {
                     .map(|e| dl.join(format!("{}.{}", stem, e)))
                     .find(|p| p.exists())
                 {
+                    song.file_path = p.to_string_lossy().to_string();
+                } else if let Some(p) = crate::utils::find_cached_audio(
+                    &crate::utils::songs_cache_dir(),
+                    &ncm_id.to_string(),
+                ) {
                     song.file_path = p.to_string_lossy().to_string();
                 }
                 return Some(song);

@@ -7,6 +7,7 @@ use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 use crate::app::{ContextMenuAction, ContextMenuState, Message};
 use crate::i18n::{Key, Locale};
 use crate::ui::{icons, theme};
+use crate::utils::Source;
 
 const W: f32 = 240.0;
 const H: f32 = 36.0;
@@ -16,15 +17,15 @@ const DIV_V: f32 = 4.0;
 const DIV_X: f32 = 12.0;
 
 pub fn view(menu: &ContextMenuState, locale: Locale, sw: f32, sh: f32) -> Element<'_, Message> {
-    let is_ncm = menu.is_ncm;
-    let has_file = menu.has_file_on_disk;
+    let source = menu.source;
     let is_liked = menu.is_liked;
-    let can_edit = !is_ncm && has_file;
-    let can_download = is_ncm;
+    let can_show_folder = source != Source::Online;
+    let can_download = source != Source::Local;
+    let can_edit = source == Source::Local;
 
     let always_items: f32 = 7.0;
     let mut n = always_items;
-    if has_file {
+    if can_show_folder {
         n += 1.0;
     }
     if can_download {
@@ -111,7 +112,7 @@ pub fn view(menu: &ContextMenuState, locale: Locale, sw: f32, sh: f32) -> Elemen
         msg(ViewAlbum, id),
     ));
     items.push(div());
-    if has_file {
+    if can_show_folder {
         items.push(item(
             ic!(icons::FOLDER),
             locale.get(Key::ContextMenuShowInFolder),

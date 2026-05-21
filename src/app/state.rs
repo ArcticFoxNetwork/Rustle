@@ -18,6 +18,7 @@ use crate::platform::media_controls::{MediaCommand, MediaHandle};
 use crate::ui::animation::{HoverAnimations, SingleHoverAnimation};
 use crate::ui::components::{ImportingPlaylist, NavItem};
 use crate::ui::effects::background::LyricsBackgroundProgram;
+use crate::utils::Source;
 use crate::ui::effects::textured_background::TexturedBackgroundProgram;
 use crate::ui::overlay::OverlayEntry;
 use crate::ui::pages;
@@ -768,10 +769,8 @@ pub struct ContextMenuState {
     pub song_id: i64,
     pub x: f32,
     pub y: f32,
-    /// Whether the song has an audio file on disk (local import or cached NCM)
-    pub has_file_on_disk: bool,
-    /// Whether this is an NCM/online song (may need download button)
-    pub is_ncm: bool,
+    /// Song source origin (Local / Cached / Online)
+    pub source: Source,
     /// Whether this song is liked/favorited by the current user
     pub is_liked: bool,
 }
