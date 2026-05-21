@@ -724,8 +724,8 @@ pub struct UiState {
     pub active_settings_section: SettingsSection,
     /// Runtime-measured Y positions of each settings section (for scroll→tab mapping)
     pub section_positions: Vec<(SettingsSection, f32)>,
-    /// Section being snapped to with countdown for calibration (cleared when animation settles)
-    pub pending_snap_section: Option<(SettingsSection, u8)>,
+    /// Whether section positions have been measured from the actual widget tree
+    pub positions_measured: bool,
     pub editing_keybinding: Option<crate::features::Action>,
     pub queue_visible: bool,
 
@@ -813,7 +813,7 @@ impl UiState {
                 (SettingsSection::Shortcuts, 1390.0),
                 (SettingsSection::About, 1965.0),
             ],
-            pending_snap_section: None,
+            positions_measured: false,
             editing_keybinding: None,
             queue_visible: false,
             seek_preview_position: None,

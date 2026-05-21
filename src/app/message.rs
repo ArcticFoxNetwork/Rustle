@@ -156,6 +156,10 @@ pub enum Message {
     ScrollToSection(SettingsSection),
     /// Settings page scrolled (y offset in pixels)
     SettingsScrolled(f32),
+    /// Trigger measurement of section widget positions
+    MeasureSectionPositions,
+    /// Section positions measured from the widget tree
+    SectionPositionsMeasured(Vec<(SettingsSection, f32)>),
     /// Start editing a keybinding for an action
     StartEditingKeybinding(Action),
     /// Cancel keybinding edit
@@ -927,6 +931,10 @@ impl std::fmt::Debug for Message {
             Self::ApplyProxySettings => simple!("ApplyProxySettings"),
             Self::ScrollToSection(s) => simple!("ScrollToSection", "{:?}", s),
             Self::SettingsScrolled(y) => simple!("SettingsScrolled", "{:.0}", y),
+            Self::MeasureSectionPositions => simple!("MeasureSectionPositions"),
+            Self::SectionPositionsMeasured(p) => {
+                simple!("SectionPositionsMeasured", "{} positions", p.len())
+            }
             Self::StartEditingKeybinding(a) => simple!("StartEditingKeybinding", "{:?}", a),
             Self::CancelEditingKeybinding => simple!("CancelEditingKeybinding"),
             Self::KeybindingKeyPressed(_, _) => simple!("KeybindingKeyPressed"),

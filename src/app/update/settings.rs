@@ -1,17 +1,93 @@
 //! Settings update handlers
 
+use crate::app::SettingsSection;
 use crate::app::message::Message;
 use crate::app::state::{App, Route};
-use crate::app::SettingsSection;
 use crate::cache;
 use crate::features::keybindings::{KeyBinding, KeyCode, ModifierSet};
 use iced::Task;
 use iced::keyboard::Key;
+use iced::widget::Id;
+use iced::Rectangle;
+use iced::advanced::widget::operation::{self as widget_op, Operation, Outcome, Scrollable};
 
-/// Number of scroll events to keep calibrating a section's position after snap_to
-pub(crate) const SNAP_CALIBRATE_COUNT: u8 = 5;
+fn match_section(id: &Id) -> Option<SettingsSection> {
+    let all = [
+        SettingsSection::Account,
+        SettingsSection::Playback,
+        SettingsSection::Display,
+        SettingsSection::System,
+        SettingsSection::Network,
+        SettingsSection::Storage,
+        SettingsSection::Shortcuts,
+        SettingsSection::About,
+    ];
+    all.into_iter().find(|s| id == &s.widget_id())
+}
+
+/// Custom operation that traverses the widget tree and measures
+/// the Y position of each settings section container relative to
+/// the scrollable content origin.
+fn measure_section_positions() -> impl Operation<Vec<(SettingsSection, f32)>> {
+    struct MeasurePositions {
+        positions: Vec<(SettingsSection, f32)>,
+        /// Absolute Y of the scrollable content origin (captured from scrollable callback)
+        content_origin_y: Option<f32>,
+    }
+
+    impl Operation<Vec<(SettingsSection, f32)>> for MeasurePositions {
+        fn traverse(
+            &mut self,
+            operate: &mut dyn FnMut(&mut dyn Operation<Vec<(SettingsSection, f32)>>),
+        ) {
+            operate(self);
+        }
+
+        fn scrollable(
+            &mut self,
+            id: Option<&Id>,
+            _bounds: Rectangle,
+            content_bounds: Rectangle,
+            _translation: iced::Vector,
+            _state: &mut dyn Scrollable,
+        ) {
+            if id == Some(&Id::new("settings_scroll")) {
+                self.content_origin_y = Some(content_bounds.y);
+            }
+        }
+
+        fn container(&mut self, id: Option<&Id>, bounds: Rectangle) {
+            if let (Some(origin_y), Some(id)) = (self.content_origin_y, id) {
+                if let Some(section) = match_section(id) {
+                    // bounds.y is absolute (window-relative); subtract content
+                    // origin to get scrollable-content-relative position
+                    self.positions.push((section, bounds.y - origin_y));
+                }
+            }
+        }
+
+        fn finish(&self) -> Outcome<Vec<(SettingsSection, f32)>> {
+            Outcome::Some(self.positions.clone())
+        }
+    }
+
+    MeasurePositions {
+        positions: Vec::new(),
+        content_origin_y: None,
+    }
+}
 
 impl App {
+    /// Look up the scroll position of a section (from measured or seed positions)
+    fn section_scroll_position(&self, section: SettingsSection) -> f32 {
+        self.ui
+            .section_positions
+            .iter()
+            .find(|(s, _)| *s == section)
+            .map(|(_, p)| *p)
+            .unwrap_or(0.0)
+    }
+
     /// Get which section corresponds to a scroll Y offset (for tab highlight)
     fn section_at_position(&self, y_offset: f32) -> SettingsSection {
         let mut current = SettingsSection::Account;
@@ -383,31 +459,42 @@ impl App {
             }
             Message::ScrollToSection(section) => {
                 self.sync_settings_section_route(*section);
-                self.ui.pending_snap_section = Some((*section, SNAP_CALIBRATE_COUNT));
-                Some(iced::widget::operation::snap_to(
-                    section.widget_id(),
-                    iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
+                let target_y = self.section_scroll_position(*section);
+                Some(iced::widget::operation::scroll_to(
+                    iced::widget::Id::new("settings_scroll"),
+                    iced::widget::scrollable::AbsoluteOffset {
+                        x: Some(0.0),
+                        y: Some(target_y),
+                    },
                 ))
             }
             Message::SettingsScrolled(y_offset) => {
-                let section = if let Some((pending, countdown)) = self.ui.pending_snap_section {
-                    // Calibrate: snap_to animation in progress — record section position
-                    self.ui.section_positions.retain(|(s, _)| *s != pending);
-                    self.ui.section_positions.push((pending, *y_offset));
-                    self.ui
-                        .section_positions
-                        .sort_by_key(|(_, p)| (*p * 100.0) as i32);
-                    if countdown > 1 {
-                        self.ui.pending_snap_section = Some((pending, countdown - 1));
-                    } else {
-                        self.ui.pending_snap_section = None;
-                    }
-                    pending
-                } else {
-                    self.section_at_position(*y_offset)
-                };
-                self.sync_settings_section_route(section);
+                // Self-calibrate: update the nearest section's position
+                let nearest = self.section_at_position(*y_offset);
+                self.ui.section_positions.retain(|(s, _)| *s != nearest);
+                self.ui.section_positions.push((nearest, *y_offset));
+                self.ui
+                    .section_positions
+                    .sort_by_key(|(_, p)| (*p * 100.0) as i32);
+                self.sync_settings_section_route(nearest);
                 Some(Task::none())
+            }
+            Message::SectionPositionsMeasured(positions) => {
+                // Replace seed positions with actual measured positions
+                for (section, pos) in positions {
+                    self.ui.section_positions.retain(|(s, _)| *s != *section);
+                    self.ui.section_positions.push((*section, *pos));
+                }
+                self.ui.section_positions.sort_by_key(|(_, p)| (*p * 100.0) as i32);
+                self.ui.positions_measured = true;
+                tracing::info!("Settings section positions measured: {:?}", self.ui.section_positions);
+                Some(Task::none())
+            }
+            Message::MeasureSectionPositions => {
+                Some(iced_runtime::task::widget(widget_op::map(
+                    measure_section_positions(),
+                    |positions| Message::SectionPositionsMeasured(positions),
+                )))
             }
             Message::StartEditingKeybinding(action) => {
                 self.ui.editing_keybinding = Some(*action);

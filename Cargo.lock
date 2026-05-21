@@ -5137,6 +5137,7 @@ dependencies = [
  "hex",
  "iced",
  "iced_anim",
+ "iced_runtime",
  "image",
  "interprocess",
  "ksni",

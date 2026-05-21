@@ -12,6 +12,7 @@ categories = ["multimedia::audio"]
 
 [dependencies]
 iced = { version = "=0.15.0-dev", features = ["tokio", "advanced", "canvas", "image", "svg", "debug"] }
+iced_runtime = { version = "=0.15.0-dev" }
 iced_anim = "0.3.1"
 bytemuck = { version = "1.25", features = ["derive"] }
 tokio = { version = "1.50", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "fs", "net", "io-util"] }
@@ -73,6 +74,7 @@ ksni = { version = "0.3.3", default-features = false, features = ["tokio"] }
 
 [patch.crates-io]
 iced = { git = "https://github.com/Fei-xiangShi/iced.git", branch = "master" }
+iced_runtime = { git = "https://github.com/Fei-xiangShi/iced.git", branch = "master" }
 smithay-client-toolkit = { git = "https://github.com/Fei-xiangShi/client-toolkit.git", branch = "master" }
 
 [target.'cfg(target_os = "macos")'.dependencies]

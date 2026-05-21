@@ -146,12 +146,25 @@ impl App {
             Route::Downloads => Task::none(),
             Route::Settings(section) => {
                 self.refresh_cache_stats();
-                self.ui.pending_snap_section =
-                    Some((*section, super::settings::SNAP_CALIBRATE_COUNT));
-                iced::widget::operation::snap_to(
-                    section.widget_id(),
-                    iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
-                )
+                let target_y = self.ui
+                    .section_positions
+                    .iter()
+                    .find(|(s, _)| *s == *section)
+                    .map(|(_, p)| *p)
+                    .unwrap_or(0.0);
+                let scroll = iced::widget::operation::scroll_to(
+                    iced::widget::Id::new("settings_scroll"),
+                    iced::widget::scrollable::AbsoluteOffset {
+                        x: Some(0.0),
+                        y: Some(target_y),
+                    },
+                );
+                // Trigger position measurement if not yet done
+                if !self.ui.positions_measured {
+                    Task::batch([scroll, Task::done(Message::MeasureSectionPositions).map(|op| op)])
+                } else {
+                    scroll
+                }
             }
             Route::AudioEngine => iced::widget::operation::snap_to(
                 iced::widget::Id::new("audio_engine_scroll"),
