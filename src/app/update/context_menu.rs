@@ -149,6 +149,28 @@ impl App {
                         }
                     }
                 }
+                // Also update overlay entry so the view reads current values
+                if let Some(entry) = self.ui.overlay_stack.last_mut() {
+                    if let OverlayKind::Modal(ModalKind::SongEdit(state), _) =
+                        &mut entry.kind
+                    {
+                        if state.song_id == *song_id {
+                            match field.as_str() {
+                                "title" => state.title = value.clone(),
+                                "artist" => state.artist = value.clone(),
+                                "album" => state.album = value.clone(),
+                                "track_number" => {
+                                    state.track_number = value.parse::<u32>().ok();
+                                }
+                                "year" => {
+                                    state.year = value.parse::<u32>().ok();
+                                }
+                                "genre" => state.genre = value.clone(),
+                                _ => {}
+                            }
+                        }
+                    }
+                }
                 Some(Task::none())
             }
             Message::SaveSongEdits(song_id) => self.save_song_edits(*song_id),
