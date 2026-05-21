@@ -51,10 +51,12 @@ jobs:
           }
 
           $url = "https://github.com/${{ github.repository }}/releases/download/$tag/${{ env.APP_NAME }}-windows-x86_64.exe"
+          $releaseNotesUrl = "https://github.com/${{ github.repository }}/releases/tag/$tag"
 
           "tag=$tag" >> $env:GITHUB_OUTPUT
           "version=$version" >> $env:GITHUB_OUTPUT
           "url=$url" >> $env:GITHUB_OUTPUT
+          "releaseNotesUrl=$releaseNotesUrl" >> $env:GITHUB_OUTPUT
 
       - name: Skip when token is not configured
         if: ${{ env.WINGET_CREATE_TOKEN == '' }}
@@ -75,5 +77,6 @@ jobs:
           .\wingetcreate.exe update "${{ env.PACKAGE_ID }}" `
             -u "${{ steps.release.outputs.url }}" `
             -v "${{ steps.release.outputs.version }}" `
+            --release-notes-url "${{ steps.release.outputs.releaseNotesUrl }}" `
             -t "$env:WINGET_CREATE_TOKEN" `
             --submit
