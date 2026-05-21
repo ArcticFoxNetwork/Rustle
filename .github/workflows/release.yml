@@ -155,6 +155,17 @@ jobs:
               <string>APPL</string>
               <key>LSMinimumSystemVersion</key>
               <string>10.13</string>
+              <key>CFBundleURLTypes</key>
+              <array>
+                  <dict>
+                      <key>CFBundleURLName</key>
+                      <string>Rustle Music Player</string>
+                      <key>CFBundleURLSchemes</key>
+                      <array>
+                          <string>rustle</string>
+                      </array>
+                  </dict>
+              </array>
               <key>NSHighResolutionCapable</key>
               <true/>
           </dict>

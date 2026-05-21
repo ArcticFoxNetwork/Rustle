@@ -111,18 +111,6 @@ impl App {
             }),
             Task::done(Message::TryAutoLogin(0)),
             Task::done(Message::EnforceCacheLimit),
-            Task::perform(
-                async {
-                    crate::platform::protocol::register_protocol_scheme()
-                        .map(|_| {
-                            tracing::info!("rustle:// protocol registered");
-                        })
-                        .unwrap_or_else(|e| {
-                            tracing::warn!("rustle:// protocol registration failed: {}", e);
-                        })
-                },
-                |_| Message::Noop,
-            ),
             audio_listener_task,
         ]);
 

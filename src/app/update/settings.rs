@@ -79,7 +79,7 @@ fn measure_section_positions() -> impl Operation<Vec<(SettingsSection, f32)>> {
 
 impl App {
     /// Look up the scroll position of a section (from measured or seed positions)
-    fn section_scroll_position(&self, section: SettingsSection) -> f32 {
+    pub(super) fn section_scroll_position(&self, section: SettingsSection) -> f32 {
         self.ui
             .section_positions
             .iter()
@@ -469,14 +469,9 @@ impl App {
                 ))
             }
             Message::SettingsScrolled(y_offset) => {
-                // Self-calibrate: update the nearest section's position
-                let nearest = self.section_at_position(*y_offset);
-                self.ui.section_positions.retain(|(s, _)| *s != nearest);
-                self.ui.section_positions.push((nearest, *y_offset));
-                self.ui
-                    .section_positions
-                    .sort_by_key(|(_, p)| (*p * 100.0) as i32);
-                self.sync_settings_section_route(nearest);
+                // Only update active tab highlight — do NOT overwrite measured positions
+                let section = self.section_at_position(*y_offset);
+                self.sync_settings_section_route(section);
                 Some(Task::none())
             }
             Message::SectionPositionsMeasured(positions) => {

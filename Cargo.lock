@@ -5163,7 +5163,6 @@ dependencies = [
  "souvlaki",
  "spectrum-analyzer",
  "sqlx",
- "sysuri",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -6169,18 +6168,6 @@ dependencies = [
  "pkg-config",
  "toml 0.8.2",
  "version-compare",
-]
-
-[[package]]
-name = "sysuri"
-version = "0.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fafd8ce5caa95ec5bd707f5670ac7938f84dcbc38a052f1c9acf4f916c44c2ed"
-dependencies = [
- "core-foundation 0.10.1",
- "once_cell",
- "thiserror 2.0.18",
- "winreg",
 ]
 
 [[package]]
@@ -8135,16 +8122,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a90e88e4667264a994d34e6d1ab2d26d398dcdca8b7f52bec8668957517fc7d8"
 dependencies = [
  "memchr",
-]
-
-[[package]]
-name = "winreg"
-version = "0.52.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a277a57398d4bfa075df44f501a17cfdf8542d224f0d36095a2adc7aee4ef0a5"
-dependencies = [
- "cfg-if",
- "windows-sys 0.48.0",
 ]
 
 [[package]]

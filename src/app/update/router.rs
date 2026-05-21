@@ -146,12 +146,8 @@ impl App {
             Route::Downloads => Task::none(),
             Route::Settings(section) => {
                 self.refresh_cache_stats();
-                let target_y = self.ui
-                    .section_positions
-                    .iter()
-                    .find(|(s, _)| *s == *section)
-                    .map(|(_, p)| *p)
-                    .unwrap_or(0.0);
+                let target_y = self
+                    .section_scroll_position(*section);
                 let scroll = iced::widget::operation::scroll_to(
                     iced::widget::Id::new("settings_scroll"),
                     iced::widget::scrollable::AbsoluteOffset {
@@ -159,12 +155,8 @@ impl App {
                         y: Some(target_y),
                     },
                 );
-                // Trigger position measurement if not yet done
-                if !self.ui.positions_measured {
-                    Task::batch([scroll, Task::done(Message::MeasureSectionPositions).map(|op| op)])
-                } else {
-                    scroll
-                }
+                // Always re-measure on entry in case content changed (login state, etc.)
+                Task::batch([scroll, Task::done(Message::MeasureSectionPositions)])
             }
             Route::AudioEngine => iced::widget::operation::snap_to(
                 iced::widget::Id::new("audio_engine_scroll"),
