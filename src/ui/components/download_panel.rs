@@ -69,7 +69,6 @@ pub fn download_panel(
                     manager
                         .completed
                         .iter()
-                        .rev()
                         .take(100)
                         .map(|t| build_completed_card(t))
                         .collect::<Vec<_>>(),
