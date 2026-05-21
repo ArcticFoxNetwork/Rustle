@@ -85,10 +85,12 @@ pub fn setup_macos_url_handler(tx: crate::protocol::ipc::IpcSender) {
         }
     );
 
-    // Constructor: ClassType::alloc() + NSObject.init()
+    // Constructor: alloc → set_ivars → super init
+    // set_ivars(()) transitions Allocated → PartialInit, which is required
+    // for msg_send![super(..), init] to work.
     impl RustleURLHandler {
         fn new() -> Retained<Self> {
-            let this = Self::alloc();
+            let this = Self::alloc().set_ivars(());
             unsafe { msg_send![super(this), init] }
         }
     }
