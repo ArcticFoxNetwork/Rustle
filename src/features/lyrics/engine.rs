@@ -36,12 +36,10 @@ pub mod vertex;
 pub use interlude_dots::InterludeDots;
 pub use line_animation::{AnimationBuffers, LineAnimationManager};
 pub use physics::{ScrollPhysics, ScrollState};
-pub use sdf_cache::SdfPreGenerator;
+pub use sdf_cache::{SharedFontSystem, pre_generate_sdf_batch};
 pub use text_shaper::TextShaper;
 pub use types::{FontSizeConfig, LyricLineData, WordData, lyrics_are_non_dynamic};
 
-use cosmic_text::FontSystem;
-use parking_lot::Mutex;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -188,9 +186,6 @@ impl Default for LyricsEngineConfig {
     }
 }
 
-/// Shared font system type
-pub type SharedFontSystem = Arc<Mutex<FontSystem>>;
-
 /// 缓存的 shaped line 数据
 /// 文本布局的唯一数据源
 #[derive(Debug, Clone)]
@@ -283,7 +278,7 @@ impl LyricsEngine {
     ///
     /// The font system should be created once at app startup and shared
     /// to avoid the expensive FontSystem::new() call.
-    pub fn new_with_font_system(config: LyricsEngineConfig, font_system: SharedFontSystem) -> Self {
+    pub fn new_with_font_system(config: LyricsEngineConfig, font_system: sdf_cache::SharedFontSystem) -> Self {
         let mut physics = ScrollPhysics::new(800.0, config.line_height);
         physics.set_friction(config.scroll_friction);
         physics.set_snap_threshold(config.snap_threshold);

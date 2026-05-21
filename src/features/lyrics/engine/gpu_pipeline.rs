@@ -25,11 +25,9 @@
 //! ```
 
 use bytemuck::{Pod, Zeroable};
-use cosmic_text::FontSystem;
 use iced::wgpu;
 use iced::wgpu::{Device, Queue, TextureFormat};
-use parking_lot::{Mutex, RwLock};
-use std::sync::Arc;
+use parking_lot::RwLock;
 
 use super::CachedShapedLine;
 use super::interlude_dots::{InterludeDots, dot_padding_x, dot_padding_y, dot_size, dot_spacing};
@@ -158,10 +156,6 @@ impl DotsUniform {
     }
 }
 
-/// 文本 shaping 和字形缓存的共享字体系统
-/// 关键：CacheKey 包含 font_id，必须匹配
-pub type SharedFontSystem = Arc<Mutex<FontSystem>>;
-
 /// Maximum number of glyphs per frame
 const MAX_GLYPHS: usize = 8192;
 /// Maximum number of lines
@@ -220,15 +214,9 @@ impl LyricsGpuPipeline {
 
     /// Create a new GPU pipeline with custom font configuration
     pub fn with_config(device: &Device, format: TextureFormat, font_config: FontConfig) -> Self {
-        // Create SHARED font system - critical for CacheKey matching!
-        let mut font_system = FontSystem::new();
-        crate::platform::theme::configure_cosmic_font_system(&mut font_system);
-
-        let font_system: SharedFontSystem = Arc::new(Mutex::new(font_system));
-
-        // SdfCache uses the shared FontSystem so cache keys stay aligned with shaping.
+        // SdfCache uses the global shared FontSystem so cache keys stay aligned with shaping.
         let sdf_cache =
-            SdfCache::with_debug(device, Arc::clone(&font_system), font_config.debug_logging);
+            SdfCache::with_debug(device, font_config.debug_logging);
 
         // Create bind group layout for lyrics rendering
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

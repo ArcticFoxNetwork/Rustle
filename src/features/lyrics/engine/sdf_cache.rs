@@ -12,9 +12,36 @@ use crate::features::lyrics::engine::sdf_generator::{SdfBitmap, SdfGenerator};
 use cosmic_text::{CacheKey, FontSystem, SwashCache};
 use iced::wgpu;
 use iced::wgpu::{Device, Queue};
-use parking_lot::Mutex;
+use parking_lot::{Mutex, RwLock};
 use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
+
+/// 共享字体系统类型
+pub type SharedFontSystem = Arc<Mutex<FontSystem>>;
+
+// ---- 全局单例 ----
+
+/// 全局 FontStore — 所有 SdfCache / pre_generate_sdf_batch 共享同一份字体二进制缓存
+static GLOBAL_FONT_STORE: LazyLock<Mutex<FontStore>> =
+    LazyLock::new(|| Mutex::new(FontStore::new()));
+
+/// 全局 FontSystem — 整个应用只有一个实例
+static GLOBAL_FONT_SYSTEM: LazyLock<RwLock<Option<SharedFontSystem>>> =
+    LazyLock::new(|| RwLock::new(None));
+
+/// 注册全局 FontSystem（在 `init_font_system()` 完成后调用）
+pub fn set_global_font_system(fs: SharedFontSystem) {
+    *GLOBAL_FONT_SYSTEM.write() = Some(fs);
+}
+
+/// 获取全局 FontSystem
+pub fn global_font_system() -> SharedFontSystem {
+    GLOBAL_FONT_SYSTEM
+        .read()
+        .as_ref()
+        .cloned()
+        .expect("Global FontSystem not initialized. Call set_global_font_system first.")
+}
 
 /// 全局预生成缓存
 /// 用于在后台线程生成 SDF 位图后，在主线程导入到 SdfCache
@@ -290,14 +317,6 @@ impl FontStore {
         }
     }
 
-    /// Create with debug logging enabled
-    pub fn with_debug(debug_logging: bool) -> Self {
-        Self {
-            fonts: HashMap::new(),
-            debug_logging,
-        }
-    }
-
     /// 获取或加载字体数据
     /// 返回 (font_data, face_index)
     pub fn get_or_load(
@@ -362,9 +381,6 @@ impl Default for FontStore {
     }
 }
 
-/// 共享字体系统类型
-pub type SharedFontSystem = Arc<Mutex<FontSystem>>;
-
 /// 预生成的 SDF 位图（用于异步生成）
 #[derive(Clone)]
 pub struct PreGeneratedSdf {
@@ -375,12 +391,8 @@ pub struct PreGeneratedSdf {
 pub struct SdfCache {
     /// SDF 生成器
     generator: SdfGenerator,
-    /// 字体存储
-    font_store: Mutex<FontStore>,
     /// 纹理图集
     atlas: Mutex<SdfAtlas>,
-    /// 共享字体系统（必须与 TextShaper 使用同一实例）
-    font_system: SharedFontSystem,
     /// Enable debug logging
     debug_logging: bool,
     /// 预生成的 SDF 位图缓存（用于异步生成后在主线程上传）
@@ -409,7 +421,7 @@ impl SdfCache {
     }
 
     /// Create with debug logging enabled
-    pub fn with_debug(device: &Device, font_system: SharedFontSystem, debug_logging: bool) -> Self {
+    pub fn with_debug(device: &Device, debug_logging: bool) -> Self {
         Self {
             // base_size = 64px, buffer = 12px
             // 64px 是速度和质量的平衡点：
@@ -417,9 +429,7 @@ impl SdfCache {
             // - 质量足够好，适合大多数显示器
             // - 更大的 buffer 能给 glow/blur 留出真实采样空间，减少矩形外推带来的颗粒感
             generator: SdfGenerator::new(SDF_BASE_SIZE, SDF_BUFFER_SIZE),
-            font_store: Mutex::new(FontStore::with_debug(debug_logging)),
             atlas: Mutex::new(SdfAtlas::new(device)),
-            font_system,
             debug_logging,
             pre_generated: Mutex::new(HashMap::new()),
         }
@@ -458,9 +468,9 @@ impl SdfCache {
             pre_gen.bitmap
         } else {
             // 需要同步生成（慢速路径）
-            // 获取字体数据和 face index
-            let mut font_system = self.font_system.lock();
-            let mut font_store = self.font_store.lock();
+            let font_system = global_font_system();
+            let mut font_system = font_system.lock();
+            let mut font_store = GLOBAL_FONT_STORE.lock();
 
             // Check if font_id exists in the font system
             let font_info = font_system.db().face(cache_key.font_id);
@@ -505,110 +515,43 @@ impl SdfCache {
     }
 }
 
-/// 独立的 SDF 预生成器
-///
-/// 这个结构体可以在后台线程中使用，不需要 GPU 资源。
-/// 生成的位图可以通过 `take_all` 方法获取，
-/// 然后在主线程中上传到 GPU。
-///
-/// ## 使用方式
-///
-/// ```ignore
-/// // 在后台线程中
-/// let pre_gen = SdfPreGenerator::new(font_system.clone());
-/// let cache_keys: Vec<CacheKey> = shaped_lines.iter()
-///     .flat_map(|line| line.main.glyphs.iter().map(|g| g.cache_key))
-///     .collect();
-/// pre_gen.generate_all(&cache_keys);
-/// let bitmaps = pre_gen.take_all();
-///
-/// // 在主线程中
-/// import_to_global_cache(bitmaps);
-/// ```
-pub struct SdfPreGenerator {
-    /// SDF 生成器
-    generator: SdfGenerator,
-    /// 字体存储
-    font_store: Mutex<FontStore>,
-    /// 共享字体系统
-    font_system: SharedFontSystem,
-    /// 预生成的位图
-    pre_generated: Mutex<HashMap<CacheKey, SdfBitmap>>,
-}
+/// 批量预生成 SDF 位图（无 GPU，可在后台线程使用）
+pub fn pre_generate_sdf_batch(cache_keys: &[CacheKey]) -> HashMap<CacheKey, SdfBitmap> {
+    let generator = SdfGenerator::new(SDF_BASE_SIZE, SDF_BUFFER_SIZE);
+    let mut bitmaps = HashMap::new();
 
-impl SdfPreGenerator {
-    fn sdf_cache_key(cache_key: CacheKey, base_size: u32) -> CacheKey {
-        CacheKey {
-            font_size_bits: (base_size as f32).to_bits(),
+    for &cache_key in cache_keys {
+        let sdf_key = CacheKey {
+            font_size_bits: (SDF_BASE_SIZE as f32).to_bits(),
             ..cache_key
-        }
-    }
-
-    /// 创建新的预生成器
-    pub fn new(font_system: SharedFontSystem) -> Self {
-        Self {
-            // 使用与 SdfCache 相同的配置
-            generator: SdfGenerator::new(SDF_BASE_SIZE, SDF_BUFFER_SIZE),
-            font_store: Mutex::new(FontStore::new()),
-            font_system,
-            pre_generated: Mutex::new(HashMap::new()),
-        }
-    }
-
-    /// 预生成单个字形
-    pub fn generate(&self, cache_key: CacheKey) -> bool {
-        let sdf_key = Self::sdf_cache_key(cache_key, self.generator.config().base_size);
-
-        // 检查是否已经生成
-        {
-            let pre_gen = self.pre_generated.lock();
-            if pre_gen.contains_key(&sdf_key) {
-                return true;
-            }
-        }
-
-        // 获取字体数据
-        let mut font_system = self.font_system.lock();
-        let mut font_store = self.font_store.lock();
-
-        let Some((_font_data, _face_index)) =
-            font_store.get_or_load(&font_system, cache_key.font_id)
-        else {
-            return false;
         };
+
+        if bitmaps.contains_key(&sdf_key) {
+            continue;
+        }
+
+        let font_system = global_font_system();
+        let mut font_system = font_system.lock();
+        let mut font_store = GLOBAL_FONT_STORE.lock();
+        if font_store
+            .get_or_load(&font_system, cache_key.font_id)
+            .is_none()
+        {
+            continue;
+        }
         drop(font_store);
 
         let mut swash_cache = SwashCache::new();
         let Some(image) = swash_cache.get_image_uncached(&mut font_system, sdf_key) else {
-            return false;
+            continue;
         };
         drop(font_system);
 
-        let Some(bitmap) = self.generator.generate_from_swash_image(&image) else {
-            return false;
+        let Some(bitmap) = generator.generate_from_swash_image(&image) else {
+            continue;
         };
-
-        // 缓存
-        let mut pre_gen = self.pre_generated.lock();
-        pre_gen.insert(sdf_key, bitmap);
-
-        true
+        bitmaps.insert(sdf_key, bitmap);
     }
 
-    /// 批量预生成字形
-    pub fn generate_all(&self, cache_keys: &[CacheKey]) -> usize {
-        let mut generated = 0;
-        for key in cache_keys {
-            if self.generate(*key) {
-                generated += 1;
-            }
-        }
-        generated
-    }
-
-    /// 获取所有预生成的位图并清空缓存
-    pub fn take_all(&self) -> HashMap<CacheKey, SdfBitmap> {
-        let mut pre_gen = self.pre_generated.lock();
-        std::mem::take(&mut *pre_gen)
-    }
+    bitmaps
 }

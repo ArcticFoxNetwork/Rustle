@@ -577,7 +577,7 @@ impl App {
             async move {
                 tokio::task::spawn_blocking(move || {
                     use crate::features::lyrics::engine::{
-                        CachedShapedLine, SdfPreGenerator, TextShaper,
+                        CachedShapedLine, TextShaper, pre_generate_sdf_batch,
                     };
 
                     let trans_height_ratio = 0.5;
@@ -650,7 +650,6 @@ impl App {
                         .collect();
 
                     let start = std::time::Instant::now();
-                    let sdf_pre_gen = SdfPreGenerator::new(font_system);
 
                     let cache_keys: Vec<cosmic_text::CacheKey> = shaped_lines
                         .iter()
@@ -668,12 +667,11 @@ impl App {
                         })
                         .collect();
 
-                    let generated = sdf_pre_gen.generate_all(&cache_keys);
-                    let pre_generated_bitmaps = sdf_pre_gen.take_all();
+                    let pre_generated_bitmaps = pre_generate_sdf_batch(&cache_keys);
 
                     tracing::info!(
                         "Pre-generated {} SDF glyphs in {:?} (total keys: {})",
-                        generated,
+                        pre_generated_bitmaps.len(),
                         start.elapsed(),
                         cache_keys.len()
                     );
@@ -729,7 +727,7 @@ impl App {
             async move {
                 tokio::task::spawn_blocking(move || {
                     use crate::features::lyrics::engine::{
-                        CachedShapedLine, SdfPreGenerator, TextShaper,
+                        CachedShapedLine, TextShaper, pre_generate_sdf_batch,
                     };
 
                     let trans_height_ratio = 0.5;
@@ -801,8 +799,6 @@ impl App {
                         })
                         .collect();
 
-                    let sdf_pre_gen = SdfPreGenerator::new(font_system);
-
                     let cache_keys: Vec<cosmic_text::CacheKey> = shaped_lines
                         .iter()
                         .flat_map(|line| {
@@ -819,8 +815,7 @@ impl App {
                         })
                         .collect();
 
-                    sdf_pre_gen.generate_all(&cache_keys);
-                    let pre_generated_bitmaps = sdf_pre_gen.take_all();
+                    let pre_generated_bitmaps = pre_generate_sdf_batch(&cache_keys);
 
                     tracing::info!(
                         "Background shaped {} lines + {} SDF glyphs for song {}",

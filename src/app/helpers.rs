@@ -178,8 +178,12 @@ pub async fn init_font_system() -> crate::features::lyrics::engine::SharedFontSy
 
         // Warm up font cache with common character sets
         // This pre-loads font fallback information for CJK and Latin characters
-        let font_system = std::sync::Arc::new(parking_lot::Mutex::new(font_system));
+        let font_system: crate::features::lyrics::engine::SharedFontSystem =
+            std::sync::Arc::new(parking_lot::Mutex::new(font_system));
         warm_up_font_cache(&font_system);
+
+        // Register as the global singleton — all font consumers use this single instance
+        crate::features::lyrics::engine::sdf_cache::set_global_font_system(font_system.clone());
 
         font_system
     })
