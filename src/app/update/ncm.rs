@@ -2603,6 +2603,19 @@ impl App {
 
             Message::AddToNcmPlaylist(song_id, playlist_id) => {
                 require_logged_in!(self);
+                // If targeting the liked songs playlist (always first in user_playlists),
+                // toggle the like status instead of adding to the playlist.
+                let is_liked_songs_playlist = self
+                    .ui
+                    .home
+                    .user_playlists
+                    .first()
+                    .map(|pl| pl.id == *playlist_id)
+                    .unwrap_or(false);
+                if is_liked_songs_playlist {
+                    self.ui.overlay_stack.pop();
+                    return Some(Task::done(Message::ToggleFavorite(*song_id)));
+                }
                 if let Some(client) = &self.core.ncm_client {
                     let client = client.clone();
                     let sid = *song_id;
