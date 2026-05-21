@@ -1091,9 +1091,6 @@ pub struct SearchPageState {
     pub card_animations: HoverAnimations<u64>,
     /// Search result cover image handles keyed by (tab, item_id)
     pub result_covers: std::collections::HashMap<(SearchTab, u64), iced::widget::image::Handle>,
-    /// GPU allocations to keep search result covers in GPU memory
-    pub result_cover_allocations:
-        std::collections::HashMap<(SearchTab, u64), iced::widget::image::Allocation>,
     /// Content area width for responsive grid layouts
     pub content_width: f32,
 }
@@ -1115,7 +1112,6 @@ impl Default for SearchPageState {
             song_animations: Default::default(),
             card_animations: Default::default(),
             result_covers: std::collections::HashMap::new(),
-            result_cover_allocations: std::collections::HashMap::new(),
             content_width: 936.0,
         }
     }
@@ -1132,9 +1128,6 @@ pub struct DiscoverPageState {
     /// Cover image handle cache: playlist_id -> image::Handle
     /// Using Handle instead of PathBuf for instant rendering (no disk IO in render loop)
     pub playlist_covers: std::collections::HashMap<u64, iced::widget::image::Handle>,
-    /// GPU allocations to keep covers in GPU memory even when not rendered
-    /// This prevents re-loading from disk when returning to the discover page
-    pub playlist_cover_allocations: std::collections::HashMap<u64, iced::widget::image::Allocation>,
     /// Hover animations for playlist cards
     pub card_animations: HoverAnimations<u64>,
     /// Loading state for recommended playlists
@@ -1158,7 +1151,6 @@ impl Default for DiscoverPageState {
             recommended_playlists: Vec::new(),
             hot_playlists: Vec::new(),
             playlist_covers: std::collections::HashMap::new(),
-            playlist_cover_allocations: std::collections::HashMap::new(),
             card_animations: Default::default(),
             recommended_loading: false,
             hot_loading: false,

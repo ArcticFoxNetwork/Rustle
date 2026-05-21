@@ -587,11 +587,6 @@ pub enum Message {
     HotPlaylistsLoaded(Vec<SongList>, bool),
     /// Discover playlist cover loaded (playlist_id, local_path)
     DiscoverPlaylistCoverLoaded(u64, PathBuf),
-    /// Discover playlist cover GPU allocation completed
-    DiscoverCoverAllocated(
-        u64,
-        Result<iced::widget::image::Allocation, iced::widget::image::Error>,
-    ),
     /// Hover over a discover playlist card
     HoverDiscoverPlaylist(Option<u64>),
     /// Play a playlist from discover page
@@ -620,12 +615,6 @@ pub enum Message {
     HoverSearchCard(Option<u64>),
     /// Search result cover loaded from disk/network
     SearchCoverLoaded(crate::app::state::SearchTab, u64, PathBuf),
-    /// Search result cover GPU allocation completed
-    SearchCoverAllocated(
-        crate::app::state::SearchTab,
-        u64,
-        Result<iced::widget::image::Allocation, iced::widget::image::Error>,
-    ),
     /// Measured content area resized
     ContentWidthResized(ContentWidthTarget, iced::Size),
     /// Play search result song
@@ -1155,7 +1144,6 @@ impl std::fmt::Debug for Message {
             Self::DiscoverPlaylistCoverLoaded(id, _) => {
                 simple!("DiscoverPlaylistCoverLoaded", "{}", id)
             }
-            Self::DiscoverCoverAllocated(id, _) => simple!("DiscoverCoverAllocated", "{}", id),
             Self::HoverDiscoverPlaylist(id) => simple!("HoverDiscoverPlaylist", "{:?}", id),
             Self::PlayDiscoverPlaylist(id) => simple!("PlayDiscoverPlaylist", "{}", id),
             Self::LoadMoreHotPlaylists => simple!("LoadMoreHotPlaylists"),
@@ -1181,9 +1169,6 @@ impl std::fmt::Debug for Message {
             Self::HoverSearchCard(id) => simple!("HoverSearchCard", "{:?}", id),
             Self::SearchCoverLoaded(tab, id, _) => {
                 simple!("SearchCoverLoaded", "tab={:?}, id={}", tab, id)
-            }
-            Self::SearchCoverAllocated(tab, id, _) => {
-                simple!("SearchCoverAllocated", "tab={:?}, id={}", tab, id)
             }
             Self::ContentWidthResized(target, size) => {
                 simple!(

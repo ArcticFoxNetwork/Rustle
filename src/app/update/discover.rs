@@ -31,7 +31,6 @@ fn shuffle_daily(playlists: &mut [SongList]) {
 impl App {
     pub(super) fn clear_discover_cover_cache(&mut self) {
         self.ui.discover.playlist_covers.clear();
-        self.ui.discover.playlist_cover_allocations.clear();
     }
 
     pub(super) fn restore_discover_cover_cache(&mut self) -> Task<Message> {
@@ -136,33 +135,11 @@ impl App {
                 if !self.has_active_discover_playlist(*playlist_id) {
                     return Some(Task::none());
                 }
-                // Create image handle from path for instant rendering
                 let handle = iced::widget::image::Handle::from_path(path);
                 self.ui
                     .discover
                     .playlist_covers
-                    .insert(*playlist_id, handle.clone());
-
-                // Request GPU allocation to keep the image in GPU memory
-                // This prevents re-loading from disk when returning to the page
-                let playlist_id = *playlist_id;
-                Some(
-                    iced::widget::image::allocate(handle)
-                        .map(move |result| Message::DiscoverCoverAllocated(playlist_id, result)),
-                )
-            }
-
-            Message::DiscoverCoverAllocated(playlist_id, result) => {
-                if !self.has_active_discover_playlist(*playlist_id) {
-                    return Some(Task::none());
-                }
-                // Store the allocation to keep the image in GPU memory
-                if let Ok(allocation) = result.clone() {
-                    self.ui
-                        .discover
-                        .playlist_cover_allocations
-                        .insert(*playlist_id, allocation);
-                }
+                    .insert(*playlist_id, handle);
                 Some(Task::none())
             }
 
@@ -349,39 +326,24 @@ impl App {
     }
 
     /// Pre-populate covers from local disk cache (synchronous)
-    /// Returns a task to allocate the images in GPU memory
     fn preload_covers(&mut self, playlists: &[SongList]) -> Task<Message> {
         let covers_dir = crate::utils::covers_cache_dir();
-        let mut allocation_tasks = Vec::new();
 
         for playlist in playlists.iter() {
-            // Skip if already in memory
             if self.ui.discover.playlist_covers.contains_key(&playlist.id) {
                 continue;
             }
 
-            // Check disk cache and create image handle
             let cover_stem = format!("playlist_{}", playlist.id);
             if let Some(cover_path) = crate::utils::find_cached_image(&covers_dir, &cover_stem) {
                 let handle = iced::widget::image::Handle::from_path(&cover_path);
                 self.ui
                     .discover
                     .playlist_covers
-                    .insert(playlist.id, handle.clone());
-
-                // Request GPU allocation to keep the image in GPU memory
-                let playlist_id = playlist.id;
-                allocation_tasks.push(
-                    iced::widget::image::allocate(handle)
-                        .map(move |result| Message::DiscoverCoverAllocated(playlist_id, result)),
-                );
+                    .insert(playlist.id, handle);
             }
         }
 
-        if allocation_tasks.is_empty() {
-            Task::none()
-        } else {
-            Task::batch(allocation_tasks)
-        }
+        Task::none()
     }
 }

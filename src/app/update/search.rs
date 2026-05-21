@@ -14,7 +14,6 @@ const PAGE_SIZE: u32 = 50;
 impl App {
     pub(super) fn clear_search_cover_cache(&mut self) {
         self.ui.search.result_covers.clear();
-        self.ui.search.result_cover_allocations.clear();
     }
 
     fn is_active_search_cover(&self, tab: SearchTab, id: u64) -> bool {
@@ -112,26 +111,7 @@ impl App {
                     return Some(Task::none());
                 }
                 let handle = iced::widget::image::Handle::from_path(path);
-                self.ui.search.result_covers.insert(key, handle.clone());
-                let tab = *tab;
-                let id = *id;
-
-                Some(
-                    iced::widget::image::allocate(handle)
-                        .map(move |result| Message::SearchCoverAllocated(tab, id, result)),
-                )
-            }
-
-            Message::SearchCoverAllocated(tab, id, result) => {
-                if !self.is_active_search_cover(*tab, *id) {
-                    return Some(Task::none());
-                }
-                if let Ok(allocation) = result.clone() {
-                    self.ui
-                        .search
-                        .result_cover_allocations
-                        .insert((*tab, *id), allocation);
-                }
+                self.ui.search.result_covers.insert(key, handle);
                 Some(Task::none())
             }
 
@@ -230,7 +210,6 @@ impl App {
         items: &[SongList],
     ) -> Task<Message> {
         let covers_dir = crate::utils::covers_cache_dir();
-        let mut allocation_tasks = Vec::new();
 
         for item in items {
             let key = (tab, item.id);
@@ -244,20 +223,11 @@ impl App {
 
             if let Some(cover_path) = crate::utils::find_cached_image(&covers_dir, &cover_stem) {
                 let handle = iced::widget::image::Handle::from_path(&cover_path);
-                self.ui.search.result_covers.insert(key, handle.clone());
-                let item_id = item.id;
-                allocation_tasks.push(
-                    iced::widget::image::allocate(handle)
-                        .map(move |result| Message::SearchCoverAllocated(tab, item_id, result)),
-                );
+                self.ui.search.result_covers.insert(key, handle);
             }
         }
 
-        if allocation_tasks.is_empty() {
-            Task::none()
-        } else {
-            Task::batch(allocation_tasks)
-        }
+        Task::none()
     }
 
     fn download_result_covers(&self, tab: SearchTab, items: &[SongList]) -> Task<Message> {
