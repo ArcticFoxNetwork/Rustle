@@ -8,33 +8,12 @@
 
 use iced::Task;
 
-use crate::app::lyrics_cache_manager::DisplayFetchAction;
 use crate::app::message::Message;
 use crate::app::state::App;
+use crate::app::update::lyrics_preload_manager::DisplayFetchAction;
 use crate::ui::effects::background::color_to_array;
 
 impl App {
-    pub(super) fn clear_lyrics_page_cache(&mut self) {
-        self.ui.lyrics.displayed_song_id = None;
-        self.ui.lyrics.pending_song_id = None;
-        self.ui.lyrics.lines.clear();
-        self.ui.lyrics.cached_engine_lines = None;
-        self.ui.lyrics.cached_shaped_lines = None;
-        self.ui.lyrics.current_line_idx = None;
-        self.ui.lyrics.last_update = None;
-        self.ui.lyrics.shaped_content_width = 0.0;
-        self.ui.lyrics.shaped_font_size = 0.0;
-        self.ui.lyrics.shape_generation = self.ui.lyrics.shape_generation.wrapping_add(1);
-        self.ui.lyrics.is_loading = false;
-        self.ui.lyrics.load_error = None;
-
-        if let Some(engine_cell) = &self.ui.lyrics.engine {
-            let mut engine = engine_cell.borrow_mut();
-            engine.reset_for_new_lyrics();
-            engine.set_cached_shaped_lines(Vec::new());
-        }
-    }
-
     /// Handle lyrics page related messages
     pub fn handle_lyrics(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
@@ -43,6 +22,27 @@ impl App {
                 if let Some(song) = self.playback.current_song.clone() {
                     self.ui.lyrics.is_open = true;
                     self.ui.lyrics.animation.start();
+
+                    // Render-ready source of truth: LyricsRenderManager
+                    let viewport = self.current_lyrics_shape_metrics();
+                    let render_ready = viewport.is_some_and(|(cw, fs)| {
+                        self.playback
+                            .lyrics_render_manager
+                            .is_render_ready(song.id, cw, fs)
+                    });
+
+                    if render_ready {
+                        // Pre-rendered result exists — install into UI/engine
+                        if self.install_current_lyrics_render_if_ready(song.id) {
+                            tracing::debug!(
+                                "Installed/restored pre-rendered lyrics for song: {} (id={})",
+                                song.title,
+                                song.id
+                            );
+                        }
+
+                        return Some(self.update_background_async(&song));
+                    }
 
                     let lyrics_need_load = self.should_load_lyrics_for_song(song.id);
 
@@ -55,6 +55,7 @@ impl App {
                             song.title,
                             song.id
                         );
+                        self.restore_cached_shaped_lines_to_engine();
                         // Still need to update background if cover changed
                         return Some(self.update_background_async(&song));
                     }
@@ -74,25 +75,12 @@ impl App {
             }
 
             Message::LyricsViewportResized(size) => {
-                if (self.ui.lyrics.viewport_width - size.width).abs() < 0.5
-                    && (self.ui.lyrics.viewport_height - size.height).abs() < 0.5
-                {
+                if self.ui.lyrics.animation.is_animating() {
+                    self.ui.lyrics.pending_viewport_size = Some(*size);
                     return Some(Task::none());
                 }
 
-                self.ui.lyrics.viewport_width = size.width.max(100.0);
-                self.ui.lyrics.viewport_height = size.height.max(100.0);
-                self.ui.lyrics.viewport_initialized = true;
-
-                if let Some(engine_cell) = &self.ui.lyrics.engine {
-                    let mut engine = engine_cell.borrow_mut();
-                    engine
-                        .line_animations_mut()
-                        .set_viewport_height(self.ui.lyrics.viewport_height);
-                    engine.invalidate_layout();
-                }
-
-                Some(self.request_lyrics_shaping_for_current_viewport())
+                Some(self.apply_lyrics_viewport_size(*size))
             }
 
             Message::WindowResized(size) => {
@@ -145,8 +133,8 @@ impl App {
                     self.ui.lyrics.cached_shaped_lines.as_ref(),
                 ) {
                     let mut engine = engine_cell.borrow_mut();
-                    engine.set_cached_shaped_lines_with_metrics(
-                        shaped_lines.as_ref().clone(),
+                    engine.set_cached_shaped_lines_arc_with_metrics(
+                        shaped_lines.clone(),
                         self.ui.lyrics.shaped_content_width,
                         self.ui.lyrics.shaped_font_size,
                     );
@@ -165,7 +153,7 @@ impl App {
 
                 match self
                     .playback
-                    .lyrics_cache_manager
+                    .lyrics_preload_manager
                     .register_display_fetch(song_id, ncm_id)
                 {
                     DisplayFetchAction::UseCache => {
@@ -191,7 +179,7 @@ impl App {
                             ))
                         } else {
                             self.playback
-                                .lyrics_cache_manager
+                                .lyrics_preload_manager
                                 .finish_warmup(song_id, Err("No NCM client".to_string()));
                             Some(Task::done(Message::LyricsLoadFailed(
                                 song_id,
@@ -208,7 +196,7 @@ impl App {
 
                 if !self
                     .playback
-                    .lyrics_cache_manager
+                    .lyrics_preload_manager
                     .begin_warmup(song_id, ncm_id)
                 {
                     return Some(Task::none());
@@ -240,8 +228,16 @@ impl App {
                     }
                 }
                 self.playback
-                    .lyrics_cache_manager
+                    .lyrics_preload_manager
                     .finish_warmup(*song_id, result.clone());
+                if result.is_ok() {
+                    self.playback
+                        .preload_coordinator
+                        .ensure_lyrics_slot(*song_id);
+                    self.playback
+                        .preload_coordinator
+                        .mark_lyrics_text_ready(*song_id);
+                }
 
                 if self.ui.lyrics.pending_song_id == Some(*song_id) {
                     return Some(match result {
@@ -251,12 +247,18 @@ impl App {
                         }
                     });
                 }
+                if result.is_ok() && self.ui.lyrics.is_open {
+                    return Some(self.schedule_adjacent_lyrics_render_prep());
+                }
                 Some(Task::none())
             }
 
             Message::LyricsLoaded(song_id, lines) => {
                 if self.ui.lyrics.pending_song_id == Some(*song_id) {
                     self.note_lyrics_cache_ready_if_available(*song_id);
+                    self.playback
+                        .preload_coordinator
+                        .mark_lyrics_text_ready(*song_id);
                     self.apply_lyrics_lines(*song_id, lines.clone());
                     tracing::info!(
                         "Loaded {} online lyrics lines for song {}",
@@ -273,7 +275,7 @@ impl App {
                 if self.ui.lyrics.pending_song_id == Some(*song_id) {
                     if *song_id < 0 {
                         self.playback
-                            .lyrics_cache_manager
+                            .lyrics_preload_manager
                             .finish_warmup(*song_id, Err(error.clone()));
                     }
                     self.apply_lyrics_error(*song_id, error.clone());
@@ -285,6 +287,9 @@ impl App {
             Message::LocalLyricsReady(song_id, lines) => {
                 if self.ui.lyrics.pending_song_id == Some(*song_id) {
                     self.note_lyrics_cache_ready_if_available(*song_id);
+                    self.playback
+                        .preload_coordinator
+                        .mark_lyrics_text_ready(*song_id);
                     self.apply_lyrics_lines(*song_id, lines.clone());
                     tracing::info!(
                         "Loaded {} local/cached lyrics lines for song {}",
@@ -299,6 +304,17 @@ impl App {
 
             // Handle pre-computed engine lines
             Message::LyricsEngineLinesReady(song_id, engine_lines) => {
+                // Store in render manager regardless of display state
+                self.playback
+                    .lyrics_render_manager
+                    .store_engine_lines(*song_id, engine_lines.clone());
+                self.playback
+                    .preload_coordinator
+                    .ensure_lyrics_slot(*song_id);
+                self.playback
+                    .preload_coordinator
+                    .mark_lyrics_engine_lines_ready(*song_id);
+
                 if self.ui.lyrics.displayed_song_id == Some(*song_id) {
                     self.ui.lyrics.cached_engine_lines = Some(engine_lines.clone());
                     tracing::info!(
@@ -308,6 +324,29 @@ impl App {
                     );
 
                     return Some(self.request_lyrics_shaping_for_current_viewport());
+                }
+
+                // For adjacent songs with lyrics page open, trigger background shaping
+                if self.ui.lyrics.is_open {
+                    if let (Some((cw, fs)), Some(font_system)) = (
+                        self.current_lyrics_shape_metrics(),
+                        self.ui.lyrics.shared_font_system.clone(),
+                    ) {
+                        let gen_val = self
+                            .playback
+                            .lyrics_render_manager
+                            .get(*song_id)
+                            .map(|e| e.shape_generation.wrapping_add(1))
+                            .unwrap_or(1);
+                        return Some(Self::request_lyrics_shaping_for_song(
+                            *song_id,
+                            engine_lines.clone(),
+                            font_system,
+                            cw,
+                            fs,
+                            gen_val,
+                        ));
+                    }
                 }
                 Some(Task::none())
             }
@@ -321,54 +360,87 @@ impl App {
                 content_width,
                 font_size,
             ) => {
+                // Store in render manager for ALL songs (enables adjacent preload)
+                self.playback.lyrics_render_manager.store_shaped_lines(
+                    *song_id,
+                    shaped_lines.clone(),
+                    *generation,
+                    *content_width,
+                    *font_size,
+                );
+                self.playback
+                    .preload_coordinator
+                    .ensure_lyrics_slot(*song_id);
+                self.playback
+                    .preload_coordinator
+                    .mark_lyrics_shaped_lines_ready(
+                        *song_id,
+                        *generation,
+                        *content_width,
+                        *font_size,
+                    );
+
+                // Import SDF bitmaps to global cache regardless of display state
+                // This warms the glyph cache for adjacent songs
+                if !pre_generated_bitmaps.is_empty() {
+                    crate::features::lyrics::engine::sdf_cache::import_to_global_cache(
+                        pre_generated_bitmaps.clone(),
+                    );
+                    tracing::info!(
+                        "Imported {} pre-generated MSDF bitmaps to global cache for song {}",
+                        pre_generated_bitmaps.len(),
+                        song_id
+                    );
+                }
+
+                // Update UI and engine only if this is the displayed song with matching generation
                 if self.ui.lyrics.displayed_song_id == Some(*song_id)
                     && self.ui.lyrics.shape_generation == *generation
                 {
                     self.ui.lyrics.cached_shaped_lines = Some(shaped_lines.clone());
                     self.ui.lyrics.shaped_content_width = *content_width;
                     self.ui.lyrics.shaped_font_size = *font_size;
-                    tracing::info!(
-                        "Shaped lines ready for song {}: {} lines",
-                        song_id,
-                        shaped_lines.len()
-                    );
 
-                    // Update engine with pre-computed shaped lines
+                    // Install shaped lines into engine (critical: without this, engine
+                    // falls back to its own layout/shaping path on the next frame)
                     if let Some(engine_cell) = &self.ui.lyrics.engine {
                         let mut engine = engine_cell.borrow_mut();
-                        engine.set_cached_shaped_lines_with_metrics(
-                            shaped_lines.as_ref().clone(),
+                        engine.set_cached_shaped_lines_arc_with_metrics(
+                            shaped_lines.clone(),
                             *content_width,
                             *font_size,
                         );
                     }
 
-                    // Import pre-generated MSDF bitmaps to global cache
-                    // The GPU pipeline will use these during first render
-                    if !pre_generated_bitmaps.is_empty() {
-                        crate::features::lyrics::engine::sdf_cache::import_to_global_cache(
-                            pre_generated_bitmaps.clone(),
-                        );
-                        tracing::info!(
-                            "Imported {} pre-generated MSDF bitmaps to global cache for song {}",
-                            pre_generated_bitmaps.len(),
-                            song_id
-                        );
-                    }
+                    tracing::info!(
+                        "Shaped lines ready for song {}: {} lines",
+                        song_id,
+                        shaped_lines.len()
+                    );
                 }
                 Some(Task::none())
             }
 
-            // NEW: Handle async background colors
-            Message::LyricsBackgroundReady(song_id, primary, secondary, tertiary) => {
-                // Only apply if this is still the current song
-                if self.playback.current_song.as_ref().map(|s| s.id) == Some(*song_id) {
-                    self.ui
-                        .lyrics
-                        .bg_shader
-                        .set_colors(*primary, *secondary, *tertiary);
+            // Background color extraction result
+            Message::LyricsBackgroundReady(song_id, cover_path, primary, secondary, tertiary) => {
+                // Always store in coordinator for any song in the window
+                self.playback.preload_coordinator.store_background_colors(
+                    *song_id,
+                    *primary,
+                    *secondary,
+                    *tertiary,
+                );
 
-                    // Convert to iced Color for bg_colors
+                // Install into shader only if this is the current song
+                if self.playback.current_song.as_ref().map(|s| s.id) == Some(*song_id)
+                    && self
+                        .playback
+                        .current_song
+                        .as_ref()
+                        .and_then(|song| song.cover_path.as_ref())
+                        == Some(cover_path)
+                {
+                    self.ui.lyrics.bg_shader.set_colors(*primary, *secondary, *tertiary);
                     self.ui.lyrics.bg_colors = crate::utils::DominantColors {
                         primary: iced::Color::from_rgba(
                             primary[0], primary[1], primary[2], primary[3],
@@ -387,24 +459,38 @@ impl App {
                         ),
                         brightness: (primary[0] * 0.299 + primary[1] * 0.587 + primary[2] * 0.114),
                     };
-
                     tracing::debug!("Applied background colors for song {}", song_id);
                 }
                 Some(Task::none())
             }
 
-            // NEW: Handle async cover image loading for textured background
-            Message::LyricsCoverImageReady(song_id, image_data, width, height) => {
-                if self.playback.current_song.as_ref().map(|s| s.id) == Some(*song_id) {
-                    // Convert raw bytes back to DynamicImage
+            // Cover image loading result
+            Message::LyricsCoverImageReady(song_id, cover_path, image_data, width, height) => {
+                // Always store in coordinator for any song in the window
+                self.playback.preload_coordinator.store_background_texture(
+                    *song_id,
+                    image_data.clone(),
+                    *width,
+                    *height,
+                );
+
+                // Install into shader only if this is the current song
+                if self.playback.current_song.as_ref().map(|s| s.id) == Some(*song_id)
+                    && self
+                        .playback
+                        .current_song
+                        .as_ref()
+                        .and_then(|song| song.cover_path.as_ref())
+                        == Some(cover_path)
+                {
                     if let Some(img) =
                         image::RgbImage::from_raw(*width, *height, image_data.clone())
                     {
                         let dynamic_img = image::DynamicImage::ImageRgb8(img);
-                        self.ui
-                            .lyrics
-                            .textured_bg_shader
-                            .set_album_image(dynamic_img, None);
+                        self.ui.lyrics.textured_bg_shader.set_album_image(
+                            dynamic_img,
+                            Some(std::path::PathBuf::from(cover_path.as_str())),
+                        );
                         tracing::debug!(
                             "Applied cover image for song {} ({}x{})",
                             song_id,
@@ -420,7 +506,7 @@ impl App {
         }
     }
 
-    fn current_lyrics_shape_metrics(&self) -> Option<(f32, f32)> {
+    pub(super) fn current_lyrics_shape_metrics(&self) -> Option<(f32, f32)> {
         if !self.ui.lyrics.viewport_initialized {
             return None;
         }
@@ -432,6 +518,28 @@ impl App {
             .calculate_font_size(viewport_width, viewport_height);
 
         Some((content_width, font_size))
+    }
+
+    fn apply_lyrics_viewport_size(&mut self, size: iced::Size) -> Task<Message> {
+        if (self.ui.lyrics.viewport_width - size.width).abs() < 0.5
+            && (self.ui.lyrics.viewport_height - size.height).abs() < 0.5
+        {
+            return Task::none();
+        }
+
+        self.ui.lyrics.viewport_width = size.width.max(100.0);
+        self.ui.lyrics.viewport_height = size.height.max(100.0);
+        self.ui.lyrics.viewport_initialized = true;
+
+        if let Some(engine_cell) = &self.ui.lyrics.engine {
+            let mut engine = engine_cell.borrow_mut();
+            engine
+                .line_animations_mut()
+                .set_viewport_height(self.ui.lyrics.viewport_height);
+            engine.invalidate_layout();
+        }
+
+        self.request_lyrics_shaping_for_current_viewport()
     }
 
     fn request_lyrics_shaping_for_current_viewport(&mut self) -> Task<Message> {
@@ -607,10 +715,473 @@ impl App {
         )
     }
 
+    /// Generalized shaping for any song_id (not just the displayed one).
+    /// Used for background render preparation of adjacent songs.
+    fn request_lyrics_shaping_for_song(
+        song_id: i64,
+        engine_lines: std::sync::Arc<Vec<crate::features::lyrics::engine::LyricLineData>>,
+        font_system: crate::features::lyrics::engine::SharedFontSystem,
+        content_width: f32,
+        font_size: f32,
+        generation: u64,
+    ) -> Task<Message> {
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    use crate::features::lyrics::engine::{
+                        CachedShapedLine, SdfPreGenerator, TextShaper,
+                    };
+
+                    let trans_height_ratio = 0.5;
+                    let roman_height_ratio = 0.5;
+                    let bg_font_size_ratio = 0.7;
+
+                    let text_shaper = TextShaper::new(font_system.clone());
+
+                    let shaped_lines: Vec<CachedShapedLine> = engine_lines
+                        .iter()
+                        .map(|line| {
+                            let main_font_size = if line.is_bg {
+                                font_size * bg_font_size_ratio
+                            } else {
+                                font_size
+                            };
+                            let trans_font_size = (main_font_size * trans_height_ratio).max(10.0);
+                            let roman_font_size = (main_font_size * roman_height_ratio).max(10.0);
+
+                            let main_shaped = text_shaper.shape_line(
+                                &line.text,
+                                &line.words,
+                                main_font_size,
+                                content_width,
+                            );
+                            let mut total_height = main_shaped.height;
+
+                            let translation_shaped = if let Some(ref translated) = line.translated {
+                                if !translated.is_empty() {
+                                    let shaped = text_shaper.shape_simple(
+                                        translated,
+                                        trans_font_size,
+                                        content_width,
+                                    );
+                                    total_height += shaped.height;
+                                    Some(shaped)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                            let romanized_shaped = if let Some(ref romanized) = line.romanized {
+                                if !romanized.is_empty() {
+                                    let shaped = text_shaper.shape_simple(
+                                        romanized,
+                                        roman_font_size,
+                                        content_width,
+                                    );
+                                    total_height += shaped.height;
+                                    Some(shaped)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            };
+
+                            CachedShapedLine {
+                                main: main_shaped,
+                                main_font_size,
+                                translation: translation_shaped,
+                                translation_font_size: trans_font_size,
+                                romanized: romanized_shaped,
+                                romanized_font_size: roman_font_size,
+                                total_height,
+                            }
+                        })
+                        .collect();
+
+                    let sdf_pre_gen = SdfPreGenerator::new(font_system);
+
+                    let cache_keys: Vec<cosmic_text::CacheKey> = shaped_lines
+                        .iter()
+                        .flat_map(|line| {
+                            let main_keys = line.main.glyphs.iter().map(|g| g.cache_key);
+                            let trans_keys = line
+                                .translation
+                                .iter()
+                                .flat_map(|t| t.glyphs.iter().map(|g| g.cache_key));
+                            let roman_keys = line
+                                .romanized
+                                .iter()
+                                .flat_map(|r| r.glyphs.iter().map(|g| g.cache_key));
+                            main_keys.chain(trans_keys).chain(roman_keys)
+                        })
+                        .collect();
+
+                    sdf_pre_gen.generate_all(&cache_keys);
+                    let pre_generated_bitmaps = sdf_pre_gen.take_all();
+
+                    tracing::info!(
+                        "Background shaped {} lines + {} SDF glyphs for song {}",
+                        shaped_lines.len(),
+                        pre_generated_bitmaps.len(),
+                        song_id
+                    );
+
+                    (
+                        song_id,
+                        generation,
+                        std::sync::Arc::new(shaped_lines),
+                        pre_generated_bitmaps,
+                        content_width,
+                        font_size,
+                    )
+                })
+                .await
+                .ok()
+            },
+            |result| {
+                if let Some((
+                    song_id,
+                    generation,
+                    shaped_lines,
+                    pre_generated_bitmaps,
+                    content_width,
+                    font_size,
+                )) = result
+                {
+                    Message::LyricsShapedLinesReady(
+                        song_id,
+                        generation,
+                        shaped_lines,
+                        pre_generated_bitmaps,
+                        content_width,
+                        font_size,
+                    )
+                } else {
+                    Message::Noop
+                }
+            },
+        )
+    }
+
+    /// Schedule render preparation for adjacent songs when lyrics page is open.
+    /// This triggers engine lines → shaped lines → SDF in the background.
+    pub(super) fn schedule_adjacent_lyrics_render_prep(&self) -> Task<Message> {
+        let window = self.playback.preload_coordinator.window();
+        let shape_metrics = self.current_lyrics_shape_metrics();
+        let font_system = self.ui.lyrics.shared_font_system.clone();
+        let mut tasks = Vec::new();
+
+        for song_id in [window.next_song_id, window.prev_song_id]
+            .into_iter()
+            .flatten()
+        {
+            if let Some((cw, fs)) = shape_metrics {
+                if self
+                    .playback
+                    .lyrics_render_manager
+                    .is_render_ready(song_id, cw, fs)
+                {
+                    continue;
+                }
+            }
+
+            if let Some(entry) = self.playback.lyrics_render_manager.get(song_id) {
+                if let (Some(engine_lines), Some((cw, fs)), Some(font_system)) =
+                    (&entry.engine_lines, shape_metrics, font_system.clone())
+                {
+                    let generation = entry.shape_generation.wrapping_add(1);
+                    tasks.push(Self::request_lyrics_shaping_for_song(
+                        song_id,
+                        engine_lines.clone(),
+                        font_system,
+                        cw,
+                        fs,
+                        generation,
+                    ));
+                }
+                continue;
+            }
+
+            // Check if lyrics text is cached on disk
+            let ncm_id = if song_id < 0 {
+                (-song_id) as u64
+            } else {
+                continue;
+            };
+            let Some(raw_lines) = crate::features::lyrics::load_cached_lyrics(ncm_id) else {
+                continue;
+            };
+            let ui_lines = crate::features::lyrics::to_ui_lyrics(raw_lines);
+
+            tracing::info!(
+                "Background render prep: preparing engine lines for adjacent song {}",
+                song_id
+            );
+
+            // Prepare engine lines (the handler will store in manager and trigger shaping)
+            tasks.push(Self::prepare_engine_lines_task(song_id, ui_lines));
+        }
+
+        if tasks.is_empty() {
+            Task::none()
+        } else {
+            Task::batch(tasks)
+        }
+    }
+
+    /// Async background preparation for a single song (colors + cover image).
+    /// Returns two independent tasks that store results in coordinator via messages.
+    fn prepare_background_for_song_task(
+        song_id: i64,
+        cover_path: String,
+    ) -> (Task<Message>, Task<Message>) {
+        use crate::ui::effects::background::color_to_array;
+
+        let path_for_image = cover_path.clone();
+        let path_for_colors = cover_path;
+        let path_msg_img = path_for_image.clone();
+        let path_msg_colors = path_for_colors.clone();
+
+        let image_task = Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || match image::open(&path_for_image) {
+                    Ok(img) => {
+                        let rgb = img.to_rgb8();
+                        let (width, height) = rgb.dimensions();
+                        Some((song_id, path_msg_img, rgb.into_raw(), width, height))
+                    }
+                    Err(e) => {
+                        tracing::warn!("Background prep: failed to load cover: {}", e);
+                        None
+                    }
+                })
+                .await
+                .ok()
+                .flatten()
+            },
+            |result| match result {
+                Some((song_id, path, data, w, h)) => {
+                    Message::LyricsCoverImageReady(song_id, path, data, w, h)
+                }
+                None => Message::Noop,
+            },
+        );
+
+        let colors_task = Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    crate::utils::DominantColors::from_image_path(&path_for_colors).map(|colors| {
+                        (
+                            song_id,
+                            path_msg_colors,
+                            color_to_array(colors.primary),
+                            color_to_array(colors.secondary),
+                            color_to_array(colors.tertiary),
+                        )
+                    })
+                })
+                .await
+                .ok()
+                .flatten()
+            },
+            |result| match result {
+                Some((song_id, path, primary, secondary, tertiary)) => {
+                    Message::LyricsBackgroundReady(song_id, path, primary, secondary, tertiary)
+                }
+                None => Message::Noop,
+            },
+        );
+
+        (image_task, colors_task)
+    }
+
+    /// Schedule background prep for adjacent songs in the preload window.
+    pub(super) fn schedule_background_prep(&self) -> Task<Message> {
+        let window = self.playback.preload_coordinator.window();
+        let mut tasks = Vec::new();
+
+        for song_id in [window.next_song_id, window.prev_song_id].into_iter().flatten() {
+            // Find cover path from queue
+            let cover_path = self
+                .playback
+                .queue
+                .iter()
+                .find(|s| s.id == song_id)
+                .and_then(|s| s.cover_path.clone())
+                .filter(|p| !p.starts_with("http://") && !p.starts_with("https://"));
+
+            let Some(cover_path) = cover_path else {
+                continue;
+            };
+
+            // Skip if already cached
+            if self
+                .playback
+                .preload_coordinator
+                .is_background_ready(song_id, Some(&cover_path))
+            {
+                continue;
+            }
+
+            tracing::info!(
+                "Background prep: preparing cover for adjacent song {}",
+                song_id
+            );
+
+            let (img, colors) = Self::prepare_background_for_song_task(song_id, cover_path);
+            tasks.push(img);
+            tasks.push(colors);
+        }
+
+        if tasks.is_empty() {
+            Task::none()
+        } else {
+            Task::batch(tasks)
+        }
+    }
+
     fn should_load_lyrics_for_song(&self, song_id: i64) -> bool {
         (self.ui.lyrics.displayed_song_id != Some(song_id)
             && self.ui.lyrics.pending_song_id != Some(song_id))
             || self.ui.lyrics.load_error.is_some()
+    }
+
+    fn restore_cached_shaped_lines_to_engine(&mut self) {
+        let (Some(engine_cell), Some(shaped_lines)) = (
+            &self.ui.lyrics.engine,
+            self.ui.lyrics.cached_shaped_lines.as_ref(),
+        ) else {
+            return;
+        };
+
+        let mut engine = engine_cell.borrow_mut();
+        engine.set_cached_shaped_lines_arc_with_metrics(
+            shaped_lines.clone(),
+            self.ui.lyrics.shaped_content_width,
+            self.ui.lyrics.shaped_font_size,
+        );
+    }
+
+    /// Install pre-rendered lyrics from the render manager into UI state and engine.
+    pub(super) fn install_current_lyrics_render_if_ready(&mut self, song_id: i64) -> bool {
+        let Some((content_width, font_size)) = self.current_lyrics_shape_metrics() else {
+            return false;
+        };
+        if !self
+            .playback
+            .lyrics_render_manager
+            .is_render_ready(song_id, content_width, font_size)
+        {
+            return false;
+        }
+
+        if self.ui.lyrics.displayed_song_id == Some(song_id)
+            && self.ui.lyrics.cached_shaped_lines.is_some()
+        {
+            self.restore_cached_shaped_lines_to_engine();
+            return true;
+        }
+
+        self.install_lyrics_from_render_manager(song_id)
+    }
+
+    /// Install pre-rendered lyrics from the render manager into UI state and engine.
+    /// Used when the render manager has shaped lines for the current song but
+    /// UI cache hasn't been populated yet (e.g., background render prep completed first).
+    fn install_lyrics_from_render_manager(&mut self, song_id: i64) -> bool {
+        let Some(entry) = self.playback.lyrics_render_manager.get(song_id) else {
+            return false;
+        };
+        let (Some(shaped_lines), Some(engine_lines)) = (&entry.shaped_lines, &entry.engine_lines)
+        else {
+            return false;
+        };
+
+        self.ui.lyrics.displayed_song_id = Some(song_id);
+        self.ui.lyrics.pending_song_id = None;
+        self.ui.lyrics.lines = Self::engine_lines_to_ui_lines(engine_lines);
+        self.ui.lyrics.cached_engine_lines = Some(engine_lines.clone());
+        self.ui.lyrics.cached_shaped_lines = Some(shaped_lines.clone());
+        self.ui.lyrics.shaped_content_width = entry.content_width;
+        self.ui.lyrics.shaped_font_size = entry.font_size;
+        self.ui.lyrics.shape_generation = entry.shape_generation;
+        self.ui.lyrics.is_loading = false;
+        self.ui.lyrics.load_error = None;
+
+        if let Some(engine_cell) = &self.ui.lyrics.engine {
+            let mut engine = engine_cell.borrow_mut();
+            engine.set_cached_shaped_lines_arc_with_metrics(
+                shaped_lines.clone(),
+                entry.content_width,
+                entry.font_size,
+            );
+        }
+
+        tracing::info!(
+            "Installed pre-rendered lyrics for song {} from render manager",
+            song_id
+        );
+        true
+    }
+
+    /// Install cached background colors + texture from coordinator into shader.
+    fn install_background_from_coordinator(&mut self, song_id: i64) {
+        let Some((primary, secondary, tertiary, image_data, width, height)) =
+            self.playback.preload_coordinator.take_background_data(song_id)
+        else {
+            return;
+        };
+
+        self.ui.lyrics.bg_shader.set_colors(primary, secondary, tertiary);
+        self.ui.lyrics.bg_colors = crate::utils::DominantColors {
+            primary: iced::Color::from_rgba(primary[0], primary[1], primary[2], primary[3]),
+            secondary: iced::Color::from_rgba(
+                secondary[0],
+                secondary[1],
+                secondary[2],
+                secondary[3],
+            ),
+            tertiary: iced::Color::from_rgba(tertiary[0], tertiary[1], tertiary[2], tertiary[3]),
+            brightness: primary[0] * 0.299 + primary[1] * 0.587 + primary[2] * 0.114,
+        };
+
+        if let Some(img) = image::RgbImage::from_raw(width, height, image_data) {
+            let dynamic_img = image::DynamicImage::ImageRgb8(img);
+            self.ui.lyrics
+                .textured_bg_shader
+                .set_album_image(dynamic_img, None);
+        }
+
+        tracing::info!("Installed cached background for song {} from coordinator", song_id);
+    }
+
+    fn engine_lines_to_ui_lines(
+        engine_lines: &[crate::features::lyrics::engine::LyricLineData],
+    ) -> Vec<crate::ui::pages::LyricLine> {
+        engine_lines
+            .iter()
+            .map(|line| crate::ui::pages::LyricLine {
+                start_ms: line.start_ms,
+                end_ms: line.end_ms,
+                text: line.text.clone(),
+                words: line
+                    .words
+                    .iter()
+                    .map(|word| crate::ui::pages::LyricWord {
+                        start_ms: word.start_ms,
+                        end_ms: word.end_ms,
+                        word: word.text.clone(),
+                    })
+                    .collect(),
+                translated: line.translated.clone(),
+                romanized: line.romanized.clone(),
+                is_background: line.is_bg,
+                is_duet: line.is_duet,
+            })
+            .collect()
     }
 
     fn prepare_display_lyrics_load(&mut self, song_id: i64) {
@@ -621,6 +1192,7 @@ impl App {
         self.ui.lyrics.cached_shaped_lines = None;
         self.ui.lyrics.shaped_content_width = 0.0;
         self.ui.lyrics.shaped_font_size = 0.0;
+        self.ui.lyrics.pending_viewport_size = None;
         self.ui.lyrics.shape_generation = self.ui.lyrics.shape_generation.wrapping_add(1);
         self.ui.lyrics.current_line_idx = None;
         self.ui.lyrics.is_loading = true;
@@ -682,7 +1254,7 @@ impl App {
             let ncm_id = (-song_id) as u64;
             if crate::features::lyrics::load_cached_lyrics(ncm_id).is_some() {
                 self.playback
-                    .lyrics_cache_manager
+                    .lyrics_preload_manager
                     .mark_ready(song_id, ncm_id);
             }
         }
@@ -770,8 +1342,24 @@ impl App {
         let progress = self.ui.lyrics.animation.progress();
         if progress < 0.01 && !self.ui.lyrics.animation.is_animating() && self.ui.lyrics.is_open {
             self.ui.lyrics.is_open = false;
-            self.clear_lyrics_page_cache();
+            self.ui.lyrics.pending_viewport_size = None;
+            self.ui.lyrics.last_update = None;
         }
+    }
+
+    pub fn flush_pending_lyrics_viewport_after_animation(&mut self) -> Task<Message> {
+        if self.ui.lyrics.animation.progress() < 0.99
+            || self.ui.lyrics.animation.is_animating()
+            || !self.ui.lyrics.is_open
+        {
+            return Task::none();
+        }
+
+        let Some(size) = self.ui.lyrics.pending_viewport_size.take() else {
+            return Task::none();
+        };
+
+        self.apply_lyrics_viewport_size(size)
     }
 
     /// Update lyrics line animations based on current playback position
@@ -825,6 +1413,8 @@ impl App {
         let just_initialized = false;
 
         let engine_lines = self.get_or_create_engine_lines();
+        let defer_layout_until_transition_finishes = self.ui.lyrics.animation.is_animating()
+            && self.ui.lyrics.pending_viewport_size.is_some();
 
         let content_width = self.ui.lyrics.viewport_width * 0.9;
         let font_size = crate::features::lyrics::engine::FontSizeConfig::default()
@@ -855,13 +1445,23 @@ impl App {
 
             engine.update(delta_secs);
 
-            engine.set_viewport_info(
-                &engine_lines,
-                content_width,
-                font_size,
-                viewport_height,
-                self.ui.lyrics.viewport_width,
-            );
+            if !defer_layout_until_transition_finishes
+                && engine.needs_viewport_info_update(
+                    engine_lines.len(),
+                    content_width,
+                    font_size,
+                    viewport_height,
+                    self.ui.lyrics.viewport_width,
+                )
+            {
+                engine.set_viewport_info(
+                    &engine_lines,
+                    content_width,
+                    font_size,
+                    viewport_height,
+                    self.ui.lyrics.viewport_width,
+                );
+            }
 
             if is_playing {
                 engine.resume();
@@ -947,6 +1547,9 @@ impl App {
             song.id
         );
         self.prepare_display_lyrics_load(song.id);
+        self.playback
+            .preload_coordinator
+            .ensure_lyrics_slot(song.id);
 
         let song_id = song.id;
         let file_path = song.file_path.clone();
@@ -1016,6 +1619,10 @@ impl App {
         let song_id = song.id;
         let cover_path = song.cover_path.clone();
 
+        self.playback
+            .preload_coordinator
+            .ensure_background_slot(song_id, cover_path.clone());
+
         // Reset shader time if needed
         if self.ui.lyrics.shader_start_time.is_none() {
             self.ui.lyrics.shader_start_time = Some(std::time::Instant::now());
@@ -1033,16 +1640,45 @@ impl App {
             return Task::none();
         }
 
-        // Check if we already have this image cached (fast path)
+        // Fast path: coordinator has cached data for this song + cover — install directly
+        if self
+            .playback
+            .preload_coordinator
+            .is_background_ready(song_id, Some(path.as_str()))
+        {
+            self.install_background_from_coordinator(song_id);
+            return Task::none();
+        }
+
+        // Check if we already have this image installed in shader (even faster path)
         let path_obj = std::path::Path::new(&path);
+        if self
+            .playback
+            .preload_coordinator
+            .is_background_ready(song_id, Some(path.as_str()))
+            && self.ui.lyrics.textured_bg_shader.is_same_image(path_obj)
+        {
+            tracing::debug!("Cover image already cached for song {}", song_id);
+            return Task::none();
+        }
+
         if self.ui.lyrics.textured_bg_shader.is_same_image(path_obj) {
             tracing::debug!("Cover image already cached for song {}", song_id);
+            // Sync coordinator state — background is effectively ready
+            self.playback
+                .preload_coordinator
+                .mark_background_colors_ready(song_id);
+            self.playback
+                .preload_coordinator
+                .mark_background_texture_ready(song_id);
             return Task::none();
         }
 
         // Load both image and colors asynchronously
         let path_for_image = path.clone();
         let path_for_colors = path.clone();
+        let path_for_image_msg = path.clone();
+        let path_for_colors_msg = path.clone();
 
         // Task 1: Load cover image for textured background
         let image_task = Task::perform(
@@ -1052,7 +1688,7 @@ impl App {
                         let rgb = img.to_rgb8();
                         let (width, height) = rgb.dimensions();
                         let data = rgb.into_raw();
-                        Some((song_id, data, width, height))
+                        Some((song_id, path_for_image_msg, data, width, height))
                     }
                     Err(e) => {
                         tracing::warn!("Failed to load cover image: {}", e);
@@ -1064,8 +1700,8 @@ impl App {
                 .flatten()
             },
             |result| match result {
-                Some((song_id, data, width, height)) => {
-                    Message::LyricsCoverImageReady(song_id, data, width, height)
+                Some((song_id, path, data, width, height)) => {
+                    Message::LyricsCoverImageReady(song_id, path, data, width, height)
                 }
                 None => Message::Noop,
             },
@@ -1081,7 +1717,7 @@ impl App {
                         let primary = color_to_array(colors.primary);
                         let secondary = color_to_array(colors.secondary);
                         let tertiary = color_to_array(colors.tertiary);
-                        Some((song_id, primary, secondary, tertiary))
+                        Some((song_id, path_for_colors_msg, primary, secondary, tertiary))
                     } else {
                         None
                     }
@@ -1091,8 +1727,8 @@ impl App {
                 .flatten()
             },
             |result| match result {
-                Some((song_id, primary, secondary, tertiary)) => {
-                    Message::LyricsBackgroundReady(song_id, primary, secondary, tertiary)
+                Some((song_id, path, primary, secondary, tertiary)) => {
+                    Message::LyricsBackgroundReady(song_id, path, primary, secondary, tertiary)
                 }
                 None => Message::Noop,
             },

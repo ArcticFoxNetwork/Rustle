@@ -25,19 +25,30 @@ static GLOBAL_PRE_GENERATED: LazyLock<Mutex<HashMap<CacheKey, SdfBitmap>>> =
 pub fn import_to_global_cache(bitmaps: HashMap<CacheKey, SdfBitmap>) {
     let mut cache = GLOBAL_PRE_GENERATED.lock();
     for (key, bitmap) in bitmaps {
-        cache.insert(key, bitmap);
+        cache.insert(base_sdf_cache_key(key), bitmap);
     }
 }
 
 /// 从全局缓存中获取预生成的位图
 pub fn take_from_global_cache(key: &CacheKey) -> Option<SdfBitmap> {
-    GLOBAL_PRE_GENERATED.lock().remove(key)
+    GLOBAL_PRE_GENERATED
+        .lock()
+        .remove(&base_sdf_cache_key(*key))
+}
+
+fn base_sdf_cache_key(cache_key: CacheKey) -> CacheKey {
+    CacheKey {
+        font_size_bits: (SDF_BASE_SIZE as f32).to_bits(),
+        ..cache_key
+    }
 }
 
 /// 纹理图集大小
 /// 4096x4096 可以容纳更多字形，减少清空重建的频率
 /// 对于中文歌词，常用汉字约 3000-5000 个，加上标点和英文，4096x4096 足够
 const ATLAS_SIZE: u32 = 4096;
+const SDF_BASE_SIZE: u32 = 64;
+const SDF_BUFFER_SIZE: usize = 12;
 /// 字形之间的间距（gutter），防止双线性插值时边缘渗透
 /// 4 像素足够防止相邻字形的颜色混合（线性插值需要 1 像素，安全边距 3 像素）
 const ATLAS_GUTTER: u32 = 4;
@@ -405,7 +416,7 @@ impl SdfCache {
             // - 比 96px 快约 2 倍
             // - 质量足够好，适合大多数显示器
             // - 更大的 buffer 能给 glow/blur 留出真实采样空间，减少矩形外推带来的颗粒感
-            generator: SdfGenerator::new(64, 12),
+            generator: SdfGenerator::new(SDF_BASE_SIZE, SDF_BUFFER_SIZE),
             font_store: Mutex::new(FontStore::with_debug(debug_logging)),
             atlas: Mutex::new(SdfAtlas::new(device)),
             font_system,
@@ -421,10 +432,12 @@ impl SdfCache {
     ///
     /// 当图集空间不足时，会自动清空图集并重试。
     pub fn get_glyph(&self, queue: &Queue, cache_key: CacheKey) -> Option<SdfGlyphInfo> {
+        let atlas_key = Self::sdf_cache_key(cache_key, self.generator.config().base_size);
+
         // 先检查图集缓存
         {
             let atlas = self.atlas.lock();
-            if let Some(info) = atlas.get(&cache_key) {
+            if let Some(info) = atlas.get(&atlas_key) {
                 return Some(info);
             }
         }
@@ -432,12 +445,12 @@ impl SdfCache {
         // 检查本地预生成缓存
         let pre_gen_bitmap = {
             let mut pre_gen = self.pre_generated.lock();
-            pre_gen.remove(&cache_key)
+            pre_gen.remove(&atlas_key)
         };
 
         // 如果本地缓存没有，检查全局预生成缓存
         let pre_gen_bitmap = pre_gen_bitmap.or_else(|| {
-            take_from_global_cache(&cache_key).map(|bitmap| PreGeneratedSdf { bitmap })
+            take_from_global_cache(&atlas_key).map(|bitmap| PreGeneratedSdf { bitmap })
         });
 
         let bitmap = if let Some(pre_gen) = pre_gen_bitmap {
@@ -470,7 +483,7 @@ impl SdfCache {
         let mut atlas = self.atlas.lock();
 
         // 尝试缓存，如果失败（图集满了），清空后重试
-        match atlas.cache(queue, cache_key, &bitmap) {
+        match atlas.cache(queue, atlas_key, &bitmap) {
             Some(info) => Some(info),
             None => {
                 // 图集空间不足，清空后重试
@@ -478,7 +491,7 @@ impl SdfCache {
                     tracing::info!("[SdfCache] Atlas full, clearing and retrying...");
                 }
                 atlas.clear(queue);
-                atlas.cache(queue, cache_key, &bitmap)
+                atlas.cache(queue, atlas_key, &bitmap)
             }
         }
     }
@@ -535,7 +548,7 @@ impl SdfPreGenerator {
     pub fn new(font_system: SharedFontSystem) -> Self {
         Self {
             // 使用与 SdfCache 相同的配置
-            generator: SdfGenerator::new(64, 12),
+            generator: SdfGenerator::new(SDF_BASE_SIZE, SDF_BUFFER_SIZE),
             font_store: Mutex::new(FontStore::new()),
             font_system,
             pre_generated: Mutex::new(HashMap::new()),
@@ -544,10 +557,12 @@ impl SdfPreGenerator {
 
     /// 预生成单个字形
     pub fn generate(&self, cache_key: CacheKey) -> bool {
+        let sdf_key = Self::sdf_cache_key(cache_key, self.generator.config().base_size);
+
         // 检查是否已经生成
         {
             let pre_gen = self.pre_generated.lock();
-            if pre_gen.contains_key(&cache_key) {
+            if pre_gen.contains_key(&sdf_key) {
                 return true;
             }
         }
@@ -563,9 +578,8 @@ impl SdfPreGenerator {
         };
         drop(font_store);
 
-        let base_key = Self::sdf_cache_key(cache_key, self.generator.config().base_size);
         let mut swash_cache = SwashCache::new();
-        let Some(image) = swash_cache.get_image_uncached(&mut font_system, base_key) else {
+        let Some(image) = swash_cache.get_image_uncached(&mut font_system, sdf_key) else {
             return false;
         };
         drop(font_system);
@@ -576,7 +590,7 @@ impl SdfPreGenerator {
 
         // 缓存
         let mut pre_gen = self.pre_generated.lock();
-        pre_gen.insert(cache_key, bitmap);
+        pre_gen.insert(sdf_key, bitmap);
 
         true
     }

@@ -4,8 +4,6 @@ use iced::Task;
 
 use super::{App, Message};
 
-
-
 impl App {
     pub fn handle_overlay(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {

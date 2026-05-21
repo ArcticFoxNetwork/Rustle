@@ -10,7 +10,7 @@ use crate::api::{
     UserDetail,
 };
 use crate::app::state::UserInfo;
-use crate::app::update::preload_manager::PreloadDirection;
+use crate::app::update::audio_preload_manager::PreloadDirection;
 use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong, DbWatchedFolder};
 use crate::features::Action;
 use crate::features::import::{CoverCache, ScanProgress, WatchEvent};
@@ -330,10 +330,10 @@ pub enum Message {
         f32,
         f32,
     ),
-    /// Background colors extracted asynchronously (song_id, primary, secondary, tertiary)
-    LyricsBackgroundReady(i64, [f32; 4], [f32; 4], [f32; 4]),
-    /// Album cover image loaded asynchronously for lyrics background (song_id, image_data, width, height)
-    LyricsCoverImageReady(i64, Vec<u8>, u32, u32),
+    /// Background colors extracted asynchronously (song_id, cover_path, primary, secondary, tertiary)
+    LyricsBackgroundReady(i64, String, [f32; 4], [f32; 4], [f32; 4]),
+    /// Album cover image loaded asynchronously for lyrics background (song_id, cover_path, image_data, width, height)
+    LyricsCoverImageReady(i64, String, Vec<u8>, u32, u32),
 
     // ============ Playback controls ============
     /// Toggle play/pause
@@ -676,7 +676,13 @@ pub enum Message {
     /// Open song edit dialog
     EditSongTags(i64),
     /// Open edit dialog with resolved metadata (DbSong, SongMetadata, cover_path)
-    OpenSongEditDialog(Box<(crate::database::DbSong, crate::metadata::SongMetadata, Option<PathBuf>)>),
+    OpenSongEditDialog(
+        Box<(
+            crate::database::DbSong,
+            crate::metadata::SongMetadata,
+            Option<PathBuf>,
+        )>,
+    ),
     /// Song edit field changed
     SongEditFieldChanged {
         song_id: i64,
@@ -1015,10 +1021,10 @@ impl std::fmt::Debug for Message {
                 lines.len(),
                 bitmaps.len()
             ),
-            Self::LyricsBackgroundReady(id, _, _, _) => {
+            Self::LyricsBackgroundReady(id, _, _, _, _) => {
                 simple!("LyricsBackgroundReady", "id={}", id)
             }
-            Self::LyricsCoverImageReady(id, _, w, h) => {
+            Self::LyricsCoverImageReady(id, _, _, w, h) => {
                 simple!("LyricsCoverImageReady", "id={}, {}x{}", id, w, h)
             }
 
@@ -1216,13 +1222,29 @@ impl std::fmt::Debug for Message {
                 simple!("ContextMenuAction", "{:?}, {}", action, id)
             }
             Self::PlaylistPickerConfirm(song_id, playlist_id) => {
-                simple!("PlaylistPickerConfirm", "song={}, playlist={}", song_id, playlist_id)
+                simple!(
+                    "PlaylistPickerConfirm",
+                    "song={}, playlist={}",
+                    song_id,
+                    playlist_id
+                )
             }
             Self::AddToNcmPlaylist(song_id, playlist_id) => {
-                simple!("AddToNcmPlaylist", "song={}, playlist={}", song_id, playlist_id)
+                simple!(
+                    "AddToNcmPlaylist",
+                    "song={}, playlist={}",
+                    song_id,
+                    playlist_id
+                )
             }
             Self::NcmPlaylistAddResult(song_id, playlist_id, result) => {
-                simple!("NcmPlaylistAddResult", "song={}, playlist={}, ok={}", song_id, playlist_id, result.is_ok())
+                simple!(
+                    "NcmPlaylistAddResult",
+                    "song={}, playlist={}, ok={}",
+                    song_id,
+                    playlist_id,
+                    result.is_ok()
+                )
             }
 
             // Overlay System

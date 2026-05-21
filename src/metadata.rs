@@ -212,7 +212,6 @@ impl SongMetadata {
     }
 }
 
-
 // ---- From impls: each source type to SongMetadata ----
 
 impl From<crate::features::import::AudioMetadata> for SongMetadata {
@@ -243,9 +242,21 @@ impl From<&crate::api::SongInfo> for SongMetadata {
             Some(CoverSource::Url(s.pic_url.clone()))
         };
         SongMetadata {
-            title: if s.name.is_empty() { "Unknown Title".into() } else { s.name.clone() },
-            artist: if s.singer.is_empty() { "Unknown Artist".into() } else { s.singer.clone() },
-            album: if s.album.is_empty() { "Unknown Album".into() } else { s.album.clone() },
+            title: if s.name.is_empty() {
+                "Unknown Title".into()
+            } else {
+                s.name.clone()
+            },
+            artist: if s.singer.is_empty() {
+                "Unknown Artist".into()
+            } else {
+                s.singer.clone()
+            },
+            album: if s.album.is_empty() {
+                "Unknown Album".into()
+            } else {
+                s.album.clone()
+            },
             duration: Duration::from_millis(s.duration),
             track_number: s.track_number,
             year: s.year,
@@ -266,9 +277,21 @@ impl From<&crate::database::DbSong> for SongMetadata {
             }
         });
         SongMetadata {
-            title: if s.title.is_empty() { "Unknown Title".into() } else { s.title.clone() },
-            artist: if s.artist.is_empty() { "Unknown Artist".into() } else { s.artist.clone() },
-            album: if s.album.is_empty() { "Unknown Album".into() } else { s.album.clone() },
+            title: if s.title.is_empty() {
+                "Unknown Title".into()
+            } else {
+                s.title.clone()
+            },
+            artist: if s.artist.is_empty() {
+                "Unknown Artist".into()
+            } else {
+                s.artist.clone()
+            },
+            album: if s.album.is_empty() {
+                "Unknown Album".into()
+            } else {
+                s.album.clone()
+            },
             duration: Duration::from_secs(s.duration_secs as u64),
             track_number: s.track_number.map(|n| n as u32),
             year: s.year.map(|y| y as u32),

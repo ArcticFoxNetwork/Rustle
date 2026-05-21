@@ -233,7 +233,6 @@ pub const DISC: &str = r#"<svg viewBox="0 0 24 24" fill="currentColor">
     <circle cx="12" cy="12" r="1" fill="none" stroke="currentColor" stroke-width="1.5"/>
 </svg>"#;
 
-
 /// Hard drive icon (for local source badge)
 pub const HARD_DRIVE: &str = r#"<svg viewBox="0 0 24 24" fill="currentColor">
     <path d="M20 4H4c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V6c0-1.1-.9-2-2-2zm0 14H4V6h16v12z"/>

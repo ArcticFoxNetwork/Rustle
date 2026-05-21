@@ -140,9 +140,9 @@ impl<'a> QueueNavigator<'a> {
         }
     }
 
-    /// Check if LoopOne mode (same song repeats)
-    pub fn is_loop_one(&self) -> bool {
-        self.play_mode == PlayMode::LoopOne
+    /// Current index used for navigation
+    pub fn current_index(&self) -> Option<usize> {
+        Some(self.current_idx)
     }
 }
 

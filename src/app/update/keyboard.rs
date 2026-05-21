@@ -16,7 +16,10 @@ impl App {
             Message::KeyPressed(key, modifiers) => {
                 // Escape key: dismiss topmost overlay if escape_close allows it
                 if *key == Key::Named(iced::keyboard::key::Named::Escape) && modifiers.is_empty() {
-                    let can_dismiss = self.ui.overlay_stack.last()
+                    let can_dismiss = self
+                        .ui
+                        .overlay_stack
+                        .last()
                         .map(|entry| match &entry.kind {
                             OverlayKind::Modal(_, config) => config.escape_close,
                         })

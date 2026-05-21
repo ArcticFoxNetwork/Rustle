@@ -53,7 +53,8 @@ impl App {
                         // Clear shuffle cache and re-calculate for new mode
                         self.clear_shuffle_cache();
                         self.cache_shuffle_indices();
-                        let _ = self.preload_adjacent_tracks_with_ncm();
+                        self.refresh_preload_window();
+                        let preload_task = self.preload_adjacent_tracks_with_ncm();
                         let (title, artist) = self
                             .playback
                             .current_song
@@ -62,6 +63,7 @@ impl App {
                             .unwrap_or((None, None));
                         let is_playing = self.playback_is_playing();
                         update_tray_state_full(is_playing, title, artist, *mode);
+                        return Some(preload_task);
                     }
                     TrayCommand::ToggleFavorite => {
                         // Toggle favorite for current NCM song

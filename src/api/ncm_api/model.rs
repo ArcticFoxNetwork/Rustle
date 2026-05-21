@@ -339,7 +339,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         copyright: SongCopyright::Unknown,
                         track_number: get_val!(v, "no").ok(),
                         year: timestamp_to_year(publish_ts),
-                    genre: None,
+                        genre: None,
                     });
                 }
             }
@@ -359,7 +359,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         copyright: SongCopyright::Unknown,
                         track_number: None,
                         year: None,
-                    genre: None,
+                        genre: None,
                     });
                 }
             }
@@ -385,7 +385,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         copyright: SongCopyright::Unknown,
                         track_number: None,
                         year: None,
-                    genre: None,
+                        genre: None,
                     });
                 }
             }
@@ -411,7 +411,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         copyright: SongCopyright::Unknown,
                         track_number: None,
                         year: None,
-                    genre: None,
+                        genre: None,
                     });
                 }
             }
@@ -437,7 +437,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         copyright: SongCopyright::Unknown,
                         track_number: None,
                         year: None,
-                    genre: None,
+                        genre: None,
                     });
                 }
             }
@@ -463,7 +463,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         copyright: SongCopyright::Unknown,
                         track_number: None,
                         year: None,
-                    genre: None,
+                        genre: None,
                     });
                 }
             }
@@ -483,7 +483,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         copyright: SongCopyright::Unknown,
                         track_number: None,
                         year: None,
-                    genre: None,
+                        genre: None,
                     });
                 }
             }
@@ -509,7 +509,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         copyright: SongCopyright::Unknown,
                         track_number: None,
                         year: None,
-                    genre: None,
+                        genre: None,
                     });
                 }
             }
@@ -530,7 +530,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         copyright: SongCopyright::Unknown,
                         track_number: None,
                         year: None,
-                    genre: None,
+                        genre: None,
                     });
                     num -= 1;
                 }
@@ -558,7 +558,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         copyright: SongCopyright::Unknown,
                         track_number: None,
                         year: None,
-                    genre: None,
+                        genre: None,
                     });
                 }
             }
@@ -585,7 +585,7 @@ pub fn to_song_info(json: String, parse: Parse) -> Result<Vec<SongInfo>> {
                         copyright: SongCopyright::Unknown,
                         track_number: None,
                         year: None,
-                    genre: None,
+                        genre: None,
                     });
                 }
             }
@@ -645,7 +645,7 @@ pub fn to_mix_detail(json: &Value) -> Result<PlayListDetail> {
                 copyright: SongCopyright::from_privilege(p)?,
                 track_number: None,
                 year: None,
-            genre: None,
+                genre: None,
             });
         }
 
@@ -725,7 +725,11 @@ pub fn to_album_detail(json: String) -> Result<AlbumDetail> {
     let empty_vec = Vec::new();
     let songs_array: &Vec<Value> = get_val!(value, "songs").unwrap_or(&empty_vec);
     let album_tags: String = get_val!(value, "album", "tags").unwrap_or_default();
-    let album_genre = if album_tags.is_empty() { None } else { Some(album_tags.clone()) };
+    let album_genre = if album_tags.is_empty() {
+        None
+    } else {
+        Some(album_tags.clone())
+    };
     let album_artist = get_val!(@as &Value, value, "album", "artist")
         .ok()
         .or_else(|| {
@@ -1174,7 +1178,7 @@ pub fn to_search_response(json: String, search_type: SearchType) -> Result<Searc
                     copyright: SongCopyright::Unknown,
                     track_number: None,
                     year: None,
-                genre: None,
+                    genre: None,
                 });
             }
         }

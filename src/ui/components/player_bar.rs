@@ -48,9 +48,7 @@ pub fn view(
         // Cover - clickable to open lyrics page
         let s = crate::ui::components::cover_thumb::CoverSize::Medium;
         let cover_content: Element<'static, Message> =
-            crate::ui::components::cover_thumb::thumb(
-                current_song_cover, s.px(), s.radius(),
-            );
+            crate::ui::components::cover_thumb::thumb(current_song_cover, s.px(), s.radius());
 
         let cover_btn = button(cover_content)
             .padding(0)

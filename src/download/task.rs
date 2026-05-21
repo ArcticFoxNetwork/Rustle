@@ -9,7 +9,9 @@ use std::path::{Path, PathBuf};
 
 use tracing::{info, warn};
 
-use crate::utils::{detect_audio_format, download_bytes, find_cached_audio, sanitize_filename, songs_cache_dir};
+use crate::utils::{
+    detect_audio_format, download_bytes, find_cached_audio, sanitize_filename, songs_cache_dir,
+};
 
 /// Verify downloaded audio file integrity using lofty
 pub fn verify_integrity(path: &Path) -> Result<(), String> {

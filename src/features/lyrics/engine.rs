@@ -242,7 +242,7 @@ pub struct LyricsEngine {
     last_update: Instant,
     /// Cached shaped lines (Single Source of Truth for text layout)
     /// Contains all glyph positions, heights, and word bounds
-    cached_shaped_lines: Vec<CachedShapedLine>,
+    cached_shaped_lines: Arc<Vec<CachedShapedLine>>,
     /// Cached line heights (derived from cached_shaped_lines for convenience)
     cached_line_heights: Vec<f32>,
     /// Last known content width for invalidation
@@ -321,7 +321,7 @@ impl LyricsEngine {
             buffered_lines: std::collections::HashSet::new(),
             hot_lines: std::collections::HashSet::new(),
             last_update: Instant::now(),
-            cached_shaped_lines: Vec::new(),
+            cached_shaped_lines: Arc::new(Vec::new()),
             cached_line_heights: Vec::new(),
             last_content_width: 0.0,
             last_font_size: 0.0,
@@ -385,6 +385,33 @@ impl LyricsEngine {
     /// Get mutable line animation manager
     pub fn line_animations_mut(&mut self) -> &mut LineAnimationManager {
         &mut self.line_animations
+    }
+
+    /// Whether viewport/text metrics changed enough to require syncing layout inputs.
+    ///
+    /// This is intentionally separate from per-frame animation updates. Font shaping
+    /// and viewport-dependent layout inputs should only be refreshed when metrics
+    /// change or when no shaped cache is available yet.
+    pub fn needs_viewport_info_update(
+        &self,
+        line_count: usize,
+        content_width: f32,
+        font_size: f32,
+        viewport_height: f32,
+        viewport_width: f32,
+    ) -> bool {
+        let viewport_changed = (self.viewport_height - viewport_height).abs() > 0.5
+            || (self.viewport_width - viewport_width).abs() > 0.5;
+        let content_width_changed = (self.last_content_width - content_width).abs() > 1.0;
+        let font_changed = (self.last_font_size - font_size).abs() > 0.1;
+        let line_count_changed = self.cached_shaped_lines.len() != line_count;
+        let missing_shape_cache = line_count > 0 && self.cached_shaped_lines.is_empty();
+
+        viewport_changed
+            || content_width_changed
+            || font_changed
+            || line_count_changed
+            || missing_shape_cache
     }
 
     /// Invalidate layout cache to force re-calculation on next update
@@ -699,7 +726,7 @@ impl LyricsEngine {
         }
 
         // Shape all lines and cache the results (Single Source of Truth)
-        self.cached_shaped_lines = lines
+        let shaped_lines: Vec<CachedShapedLine> = lines
             .iter()
             .map(|line| {
                 let main_font_size = if line.is_bg {
@@ -766,11 +793,8 @@ impl LyricsEngine {
             .collect();
 
         // Update cached line heights (for convenience)
-        self.cached_line_heights = self
-            .cached_shaped_lines
-            .iter()
-            .map(|s| s.total_height)
-            .collect();
+        self.cached_line_heights = shaped_lines.iter().map(|s| s.total_height).collect();
+        self.cached_shaped_lines = Arc::new(shaped_lines);
 
         self.last_content_width = content_width;
         self.last_font_size = font_size;
@@ -783,8 +807,8 @@ impl LyricsEngine {
     }
 
     /// Get cached shaped lines (Single Source of Truth for GPU rendering)
-    pub fn cached_shaped_lines(&self) -> &[CachedShapedLine] {
-        &self.cached_shaped_lines
+    pub fn cached_shaped_lines(&self) -> Arc<Vec<CachedShapedLine>> {
+        Arc::clone(&self.cached_shaped_lines)
     }
 
     /// 设置异步任务预计算的 shaped lines
@@ -798,6 +822,20 @@ impl LyricsEngine {
     pub fn set_cached_shaped_lines_with_metrics(
         &mut self,
         shaped_lines: Vec<CachedShapedLine>,
+        content_width: f32,
+        font_size: f32,
+    ) {
+        self.set_cached_shaped_lines_arc_with_metrics(
+            Arc::new(shaped_lines),
+            content_width,
+            font_size,
+        );
+    }
+
+    /// Sets async pre-computed shaped lines without copying the shaped glyph data.
+    pub fn set_cached_shaped_lines_arc_with_metrics(
+        &mut self,
+        shaped_lines: Arc<Vec<CachedShapedLine>>,
         content_width: f32,
         font_size: f32,
     ) {

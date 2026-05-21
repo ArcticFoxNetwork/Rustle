@@ -20,7 +20,8 @@ impl App {
         if self.ui.lyrics.is_open {
             self.ui.lyrics.is_open = false;
             self.ui.lyrics.animation.stop();
-            self.clear_lyrics_page_cache();
+            self.ui.lyrics.pending_viewport_size = None;
+            self.ui.lyrics.last_update = None;
         }
     }
 
@@ -146,8 +147,7 @@ impl App {
             Route::Downloads => Task::none(),
             Route::Settings(section) => {
                 self.refresh_cache_stats();
-                let target_y = self
-                    .section_scroll_position(*section);
+                let target_y = self.section_scroll_position(*section);
                 let scroll = iced::widget::operation::scroll_to(
                     iced::widget::Id::new("settings_scroll"),
                     iced::widget::scrollable::AbsoluteOffset {

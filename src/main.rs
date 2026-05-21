@@ -25,7 +25,8 @@ fn main() -> iced::Result {
 
     // Handle rustle:// protocol URL from CLI.
     // The desktop file passes the URL directly as the first argument via %u.
-    if args.len() >= 2 && (args[1].starts_with("rustle://") || args[1].starts_with("rustle-dev://")) {
+    if args.len() >= 2 && (args[1].starts_with("rustle://") || args[1].starts_with("rustle-dev://"))
+    {
         let uri = args[1].clone();
         match protocol::ipc::forward_uri_to_primary(&uri) {
             Ok(()) => {

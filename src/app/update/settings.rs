@@ -5,11 +5,11 @@ use crate::app::message::Message;
 use crate::app::state::{App, Route};
 use crate::cache;
 use crate::features::keybindings::{KeyBinding, KeyCode, ModifierSet};
+use iced::Rectangle;
 use iced::Task;
+use iced::advanced::widget::operation::{self as widget_op, Operation, Outcome, Scrollable};
 use iced::keyboard::Key;
 use iced::widget::Id;
-use iced::Rectangle;
-use iced::advanced::widget::operation::{self as widget_op, Operation, Outcome, Scrollable};
 
 fn match_section(id: &Id) -> Option<SettingsSection> {
     let all = [
@@ -480,17 +480,20 @@ impl App {
                     self.ui.section_positions.retain(|(s, _)| *s != *section);
                     self.ui.section_positions.push((*section, *pos));
                 }
-                self.ui.section_positions.sort_by_key(|(_, p)| (*p * 100.0) as i32);
+                self.ui
+                    .section_positions
+                    .sort_by_key(|(_, p)| (*p * 100.0) as i32);
                 self.ui.positions_measured = true;
-                tracing::info!("Settings section positions measured: {:?}", self.ui.section_positions);
+                tracing::info!(
+                    "Settings section positions measured: {:?}",
+                    self.ui.section_positions
+                );
                 Some(Task::none())
             }
-            Message::MeasureSectionPositions => {
-                Some(iced_runtime::task::widget(widget_op::map(
-                    measure_section_positions(),
-                    |positions| Message::SectionPositionsMeasured(positions),
-                )))
-            }
+            Message::MeasureSectionPositions => Some(iced_runtime::task::widget(widget_op::map(
+                measure_section_positions(),
+                |positions| Message::SectionPositionsMeasured(positions),
+            ))),
             Message::StartEditingKeybinding(action) => {
                 self.ui.editing_keybinding = Some(*action);
                 Some(Task::none())

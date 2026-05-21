@@ -131,8 +131,9 @@ impl App {
                         });
                     }
 
-                    // Re-preload adjacent tracks after queue change
-                    let _ = self.preload_adjacent_tracks_with_ncm();
+                    // Refresh coordinator window and re-preload adjacent tracks
+                    self.refresh_preload_window();
+                    return Some(self.preload_adjacent_tracks_with_ncm());
                 }
                 Some(Task::none())
             }
@@ -140,6 +141,10 @@ impl App {
             Message::ClearQueue => {
                 self.playback.queue.clear();
                 self.playback.current_index = None;
+                self.playback.preload_coordinator.clear_window();
+                // Release audio preload sinks
+                let released = self.playback.audio_preload_manager.reset();
+                self.release_preload_requests(released);
 
                 if let Some(db) = &self.core.db {
                     let db = db.clone();

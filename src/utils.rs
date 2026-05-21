@@ -293,7 +293,9 @@ pub fn avatars_cache_dir() -> PathBuf {
 // ============================================================================
 
 /// Common audio file extensions for cache lookup
-pub const AUDIO_EXTENSIONS: &[&str] = &["mp3", "flac", "m4a", "aac", "ogg", "wav", "opus", "wma", "aiff"];
+pub const AUDIO_EXTENSIONS: &[&str] = &[
+    "mp3", "flac", "m4a", "aac", "ogg", "wav", "opus", "wma", "aiff",
+];
 
 /// Find an existing cached audio file with any common extension
 ///
@@ -705,11 +707,7 @@ pub fn compute_source(
         // Downloaded file takes priority over streaming cache
         if let (Some(a), Some(t)) = (artist, title) {
             let dl = crate::features::settings::StorageSettings::default().effective_download_dir();
-            let stem = format!(
-                "{} - {}",
-                sanitize_filename(a),
-                sanitize_filename(t)
-            );
+            let stem = format!("{} - {}", sanitize_filename(a), sanitize_filename(t));
             if AUDIO_EXTENSIONS
                 .iter()
                 .map(|e| dl.join(format!("{}.{}", stem, e)))
@@ -747,4 +745,3 @@ pub fn sanitize_filename(input: &str) -> String {
     }
     result
 }
-

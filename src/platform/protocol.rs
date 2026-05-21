@@ -6,11 +6,11 @@
 /// This handler intercepts them and forwards URLs through the IPC channel.
 #[cfg(target_os = "macos")]
 pub fn setup_macos_url_handler(tx: crate::protocol::ipc::IpcSender) {
-    use std::sync::Mutex;
-    use objc2::{define_class, msg_send, sel, AnyThread};
     use objc2::rc::Retained;
     use objc2::runtime::{NSObject, NSObjectProtocol};
+    use objc2::{AnyThread, define_class, msg_send, sel};
     use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventManager};
+    use std::sync::Mutex;
 
     tracing::info!("Setting up macOS URL handler for rustle://");
 

@@ -2,8 +2,8 @@
 //!
 //! This module uses the new architecture:
 //! - QueueNavigator for consistent index calculations (Single Source of Truth)
-//! - PreloadManager for state tracking (prevents duplicate requests)
-//! - PreloadSlot contains request_id to reference sink in audio thread
+//! - AudioPreloadManager for state tracking (prevents duplicate requests)
+//! - AudioPreloadSlot contains request_id to reference sink in audio thread
 //! - Sinks are created and stored in the audio thread via AudioHandle commands
 
 use std::path::PathBuf;
@@ -15,9 +15,9 @@ use iced::Task;
 use crate::app::message::Message;
 use crate::app::state::App;
 
+use super::audio_preload_manager::{self, PreloadDirection, SlotState};
 use super::player_controller::PlaybackSource;
-use super::preload_manager::{self, PreloadDirection, SlotState};
-use super::queue_navigator::{self, QueueNavigator};
+use super::queue_navigator;
 
 impl App {
     fn release_preload_request_ids<I>(&self, request_ids: I)
@@ -27,21 +27,10 @@ impl App {
         self.release_preload_requests(request_ids);
     }
 
-    /// Create a QueueNavigator for the current state
-    pub(super) fn queue_navigator(&self) -> QueueNavigator<'_> {
-        QueueNavigator::new(
-            self.playback.queue.len(),
-            self.playback.current_index,
-            self.effective_queue_play_mode(),
-            &self.playback.shuffle_cache,
-        )
-    }
-
     /// 触发相邻曲目预加载
-    /// 歌曲开始播放后调用
+    /// 歌曲开始播放后调用。使用 coordinator 窗口作为唯一数据源。
     pub fn preload_adjacent_tracks_with_ncm(&mut self) -> Task<Message> {
-        let nav = self.queue_navigator();
-        let adjacent = nav.adjacent_indices();
+        let (next_idx, prev_idx) = self.playback.preload_coordinator.adjacent_indices();
 
         tracing::info!(
             "Preload scan: current_index={:?}, queue_len={}, play_mode={:?}, effective_mode={:?}, next={:?}, prev={:?}",
@@ -49,28 +38,27 @@ impl App {
             self.playback.queue.len(),
             self.core.settings.play_mode,
             self.effective_queue_play_mode(),
-            adjacent.next,
-            adjacent.prev
+            next_idx,
+            prev_idx
         );
 
-        // Skip preloading for LoopOne mode (same song)
-        if nav.is_loop_one() {
-            tracing::debug!("Preload scan skipped: loop-one mode");
+        // Skip preloading if next/prev are the same as current (LoopOne mode)
+        let current_idx = self.playback.current_index;
+        if next_idx == current_idx && prev_idx == current_idx {
+            tracing::debug!("Preload scan skipped: next and prev are same as current");
             return Task::none();
         }
-
-        // Invalidate stale preloads
         let stale_request_ids = self
             .playback
-            .preload_manager
-            .invalidate_stale(adjacent.next, adjacent.prev);
+            .audio_preload_manager
+            .invalidate_stale(next_idx, prev_idx);
         self.release_preload_request_ids(stale_request_ids);
 
         let mut tasks = Vec::new();
 
         for (candidate_idx, direction) in [
-            (adjacent.next, PreloadDirection::Next),
-            (adjacent.prev, PreloadDirection::Previous),
+            (next_idx, PreloadDirection::Next),
+            (prev_idx, PreloadDirection::Previous),
         ] {
             if let Some(idx) = candidate_idx {
                 if let Some(task) = self.preload_track(idx, direction) {
@@ -80,13 +68,8 @@ impl App {
         }
 
         if tasks.is_empty() {
-            tracing::debug!("Preload scan finished: no preload task scheduled");
             Task::none()
         } else {
-            tracing::debug!(
-                "Preload scan finished: {} preload task(s) scheduled",
-                tasks.len()
-            );
             Task::batch(tasks)
         }
     }
@@ -97,7 +80,11 @@ impl App {
         let song = self.playback.queue.get(idx)?.clone();
 
         // Check if we should preload
-        if !self.playback.preload_manager.should_preload(idx, direction) {
+        if !self
+            .playback
+            .audio_preload_manager
+            .should_preload(idx, direction)
+        {
             tracing::debug!(
                 "Preload skipped ({}): idx={}, reason=slot_not_eligible",
                 direction,
@@ -123,9 +110,11 @@ impl App {
                     request_id
                 );
 
-                let released_request_id =
-                    self.playback.preload_manager.mark_pending(idx, direction);
-                if let Some(slot) = self.playback.preload_manager.slot_mut(direction) {
+                let released_request_id = self
+                    .playback
+                    .audio_preload_manager
+                    .mark_pending(idx, direction);
+                if let Some(slot) = self.playback.audio_preload_manager.slot_mut(direction) {
                     slot.set_pending_request_id(request_id);
                 }
                 self.release_preload_request_ids(released_request_id);
@@ -152,7 +141,10 @@ impl App {
         }
 
         // Mark as pending and create download task
-        let released_request_id = self.playback.preload_manager.mark_pending(idx, direction);
+        let released_request_id = self
+            .playback
+            .audio_preload_manager
+            .mark_pending(idx, direction);
         self.release_preload_request_ids(released_request_id);
 
         // Create async download task
@@ -165,7 +157,7 @@ impl App {
                 song.id,
                 song.title
             );
-            Some(preload_manager::create_preload_task(
+            Some(audio_preload_manager::create_preload_task(
                 client, idx, song, direction,
             ))
         } else {
@@ -198,7 +190,9 @@ impl App {
 
             Message::PreloadAudioFailed(idx, direction) => {
                 tracing::warn!("Preload failed ({}): idx={}", direction, idx);
-                self.playback.preload_manager.mark_failed(*idx, *direction);
+                self.playback
+                    .audio_preload_manager
+                    .mark_failed(*idx, *direction);
                 Some(Task::none())
             }
 
@@ -216,7 +210,7 @@ impl App {
         for direction in PreloadDirection::ALL {
             let matches = self
                 .playback
-                .preload_manager
+                .audio_preload_manager
                 .slot(direction)
                 .map(|slot| slot.has_pending_request(request_id))
                 .unwrap_or(false);
@@ -225,7 +219,7 @@ impl App {
                 continue;
             }
 
-            if let Some(slot) = self.playback.preload_manager.slot_mut(direction) {
+            if let Some(slot) = self.playback.audio_preload_manager.slot_mut(direction) {
                 slot.request_id = Some(request_id);
                 slot.pending_request_id = None;
                 slot.path = path.clone();
@@ -276,7 +270,7 @@ impl App {
         if let Ok(request_id) =
             self.create_preload_sink_for_file(PathBuf::from(&file_path), track_gain)
         {
-            if let Some(slot) = self.playback.preload_manager.slot_mut(direction) {
+            if let Some(slot) = self.playback.audio_preload_manager.slot_mut(direction) {
                 slot.set_pending_request_id(request_id);
             }
             tracing::info!(
@@ -296,7 +290,9 @@ impl App {
             idx,
             file_path
         );
-        self.playback.preload_manager.mark_failed(idx, direction);
+        self.playback
+            .audio_preload_manager
+            .mark_failed(idx, direction);
         Some(Task::none())
     }
 
@@ -331,7 +327,7 @@ impl App {
             Duration::from_secs(duration_secs),
             track_gain,
         ) {
-            if let Some(slot) = self.playback.preload_manager.slot_mut(direction) {
+            if let Some(slot) = self.playback.audio_preload_manager.slot_mut(direction) {
                 slot.set_pending_request_id(request_id);
             }
             tracing::info!(
@@ -341,7 +337,7 @@ impl App {
                 request_id
             );
 
-            if let Some(slot) = self.playback.preload_manager.slot_mut(direction) {
+            if let Some(slot) = self.playback.audio_preload_manager.slot_mut(direction) {
                 slot.buffer = Some(buffer);
             }
 
@@ -355,7 +351,9 @@ impl App {
             idx,
             file_path
         );
-        self.playback.preload_manager.mark_failed(idx, direction);
+        self.playback
+            .audio_preload_manager
+            .mark_failed(idx, direction);
         Some(Task::none())
     }
 
@@ -364,7 +362,11 @@ impl App {
         idx: usize,
         direction: PreloadDirection,
     ) -> Option<PlaybackSource> {
-        if let Some(mut slot) = self.playback.preload_manager.take_ready(idx, direction) {
+        if let Some(mut slot) = self
+            .playback
+            .audio_preload_manager
+            .take_ready(idx, direction)
+        {
             if let Some(request_id) = slot.take_request_id() {
                 let path = slot.path.clone();
                 let buffer = slot.take_buffer();

@@ -244,7 +244,6 @@ pub fn view<'a>(
         .width(Fill)
         .height(Fill);
 
-    // Apply slide animation
     let slide_offset = (1.0 - animation_progress) * 30.0;
 
     // Use WGPU textured shader for animated background
@@ -290,9 +289,8 @@ fn build_left_panel<'a>(
 
     let s = crate::ui::components::cover_thumb::CoverSize::ExtraLarge;
     let cover_handle = crate::ui::components::cover_thumb::resolve_song_cover(song.id);
-    let cover = crate::ui::components::cover_thumb::thumb(
-        cover_handle.as_ref(), s.px(), s.radius(),
-    );
+    let cover =
+        crate::ui::components::cover_thumb::thumb(cover_handle.as_ref(), s.px(), s.radius());
 
     // Song title
     let title = text(&song.title)

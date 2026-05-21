@@ -15,7 +15,8 @@ use crate::database::DbSong;
 use crate::features::PlayMode;
 use crate::i18n::Key;
 
-use super::preload_manager::PreloadDirection;
+use super::audio_preload_manager::PreloadDirection;
+use super::preload_coordinator::WindowChange;
 use super::queue_navigator::QueueNavigator;
 use super::song_resolver::ResolvedSong;
 
@@ -580,6 +581,7 @@ impl App {
         let (song, needs_cover_download) = self.ensure_local_cover_path_with_download(idx, song);
         self.commit_current_song_playback_state(Some(idx), song.clone(), false);
         self.cache_shuffle_indices();
+        self.refresh_preload_window();
         self.schedule_post_switch_side_effects(&song, needs_cover_download)
     }
 
@@ -767,6 +769,9 @@ impl App {
         self.stop_audio_output();
         self.playback.current_song = None;
         self.playback.current_artist_id = None;
+        self.playback.preload_coordinator.clear_window();
+        let released = self.playback.audio_preload_manager.reset();
+        self.release_preload_requests(released);
     }
 
     pub fn seek_to_position(&mut self, position: std::time::Duration) {
@@ -863,6 +868,53 @@ impl App {
         }
     }
 
+    /// Refresh coordinator preload window from current playback state.
+    /// Uses refresh_window_with_indices to avoid QueueNavigator borrow conflicts.
+    pub(super) fn refresh_preload_window(&mut self) -> WindowChange {
+        let adjacent = {
+            let nav = QueueNavigator::new(
+                self.playback.queue.len(),
+                self.playback.current_index,
+                self.effective_queue_play_mode(),
+                &self.playback.shuffle_cache,
+            );
+            (nav.adjacent_indices(), nav.current_index())
+        };
+        let (adjacent, current_index) = adjacent;
+        let current_song_id = self.playback.current_song.as_ref().map(|s| s.id);
+        let next_song_id = adjacent
+            .next
+            .and_then(|idx| self.playback.queue.get(idx))
+            .map(|s| s.id);
+        let prev_song_id = adjacent
+            .prev
+            .and_then(|idx| self.playback.queue.get(idx))
+            .map(|s| s.id);
+        let change = self
+            .playback
+            .preload_coordinator
+            .refresh_window_with_indices(
+                current_song_id,
+                current_index,
+                adjacent.next,
+                next_song_id,
+                adjacent.prev,
+                prev_song_id,
+            );
+        // Sync render manager: keep only entries for songs in the current window
+        let window = self.playback.preload_coordinator.window();
+        let keep_ids: Vec<i64> = [
+            window.current_song_id,
+            window.next_song_id,
+            window.prev_song_id,
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        self.playback.lyrics_render_manager.retain(&keep_ids);
+        change
+    }
+
     fn on_song_started(&mut self, idx: usize, song: DbSong) -> Task<Message> {
         tracing::info!("Playing: {} - {}", song.title, song.artist);
 
@@ -889,8 +941,9 @@ impl App {
             });
         }
 
-        // Pre-calculate shuffle indices for consistent preloading
+        // Refresh preload coordinator window
         self.cache_shuffle_indices();
+        self.refresh_preload_window();
         self.schedule_post_switch_side_effects(&song, needs_cover_download)
     }
 
@@ -913,8 +966,9 @@ impl App {
             Task::none()
         };
         let lyrics_task = self.schedule_lyrics_prefetches(song);
+        let bg_task = self.schedule_background_prep();
 
-        Task::batch([audio_task, cover_task, lyrics_task])
+        Task::batch([audio_task, cover_task, lyrics_task, bg_task])
     }
 
     /// Schedule current-song lyrics display loading plus background cache warmup.
@@ -922,16 +976,32 @@ impl App {
         let mut tasks = Vec::new();
 
         if self.ui.lyrics.is_open {
-            tasks.push(self.load_lyrics_for_current_song(current_song));
+            // Render-ready source of truth: LyricsRenderManager
+            let lyrics_ready = self.current_lyrics_shape_metrics().is_some_and(|(cw, fs)| {
+                self.playback
+                    .lyrics_render_manager
+                    .is_render_ready(current_song.id, cw, fs)
+            });
+
+            if lyrics_ready {
+                if self.install_current_lyrics_render_if_ready(current_song.id) {
+                    tracing::debug!(
+                        "Lyrics render-ready for current song {}, installed without prefetch",
+                        current_song.id
+                    );
+                }
+            } else {
+                tasks.push(self.load_lyrics_for_current_song(current_song));
+            }
         } else {
             tasks.push(self.warm_lyrics_cache_for_song(current_song));
         }
 
-        let nav = self.queue_navigator();
-        let adjacent = nav.adjacent_indices();
+        // Use coordinator window for adjacent indices
+        let window = self.playback.preload_coordinator.window();
         let mut scheduled_song_ids = HashSet::from([current_song.id]);
 
-        for idx in [adjacent.next, adjacent.prev].into_iter().flatten() {
+        for idx in [window.next_index, window.prev_index].into_iter().flatten() {
             let Some(candidate) = self.playback.queue.get(idx).cloned() else {
                 continue;
             };
@@ -941,6 +1011,11 @@ impl App {
             }
 
             tasks.push(self.warm_lyrics_cache_for_song(&candidate));
+        }
+
+        // When lyrics page is open, also trigger render prep for adjacent songs
+        if self.ui.lyrics.is_open {
+            tasks.push(self.schedule_adjacent_lyrics_render_prep());
         }
 
         Task::batch(tasks)
@@ -1093,7 +1168,7 @@ impl App {
     /// Clear cached shuffle indices (call when queue or play mode changes)
     pub fn clear_shuffle_cache(&mut self) {
         self.playback.shuffle_cache.clear();
-        let released_request_ids = self.playback.preload_manager.reset();
+        let released_request_ids = self.playback.audio_preload_manager.reset();
         self.release_preload_requests(released_request_ids);
     }
 
@@ -1387,12 +1462,15 @@ impl App {
 
         if !self
             .playback
-            .lyrics_cache_manager
+            .lyrics_preload_manager
             .should_schedule_warmup(song.id, ncm_id)
         {
             return Task::none();
         }
 
+        self.playback
+            .preload_coordinator
+            .ensure_lyrics_slot(song.id);
         Task::done(Message::WarmLyricsCache(song.id, ncm_id))
     }
 }

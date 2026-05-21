@@ -68,15 +68,15 @@ impl App {
                     .map(|p| p.name.as_str())
                     .unwrap_or("Unknown");
                 use crate::ui::overlay::{ModalConfig, ModalKind, OverlayEntry, OverlayKind};
-                self.ui.overlay_stack.push(OverlayEntry::new(
-                    OverlayKind::Modal(
+                self.ui
+                    .overlay_stack
+                    .push(OverlayEntry::new(OverlayKind::Modal(
                         ModalKind::DeleteConfirm {
                             playlist_id: *id,
                             playlist_name: name.to_string(),
                         },
                         ModalConfig::default().width(380.0),
-                    ),
-                ));
+                    )));
                 Some(Task::none())
             }
 
@@ -112,16 +112,16 @@ impl App {
                     count
                 );
                 use crate::ui::overlay::{ModalConfig, ModalKind, OverlayEntry, OverlayKind};
-                self.ui.overlay_stack.push(OverlayEntry::new(
-                    OverlayKind::Modal(
+                self.ui
+                    .overlay_stack
+                    .push(OverlayEntry::new(OverlayKind::Modal(
                         ModalKind::DownloadConfirm {
                             playlist_id: *playlist_id,
                             playlist_name: name.clone(),
                             song_count: *count,
                         },
                         ModalConfig::default().width(380.0),
-                    ),
-                ));
+                    )));
                 Some(Task::none())
             }
 
@@ -208,20 +208,23 @@ impl App {
                 // 清理已完成的淡出动画
                 self.ui.cleanup_animations(now);
 
+                let lyrics_viewport_task = self.flush_pending_lyrics_viewport_after_animation();
+
                 // Lazy load covers for visible songs in playlist
                 if let Some(task) = self.check_visible_song_covers() {
-                    return Some(task);
+                    return Some(Task::batch([lyrics_viewport_task, task]));
                 }
 
-                Some(Task::none())
+                Some(lyrics_viewport_task)
             }
 
             Message::EditPlaylist(id) => {
                 tracing::info!("Edit playlist: {}", id);
                 if let Some(playlist) = &self.ui.playlist_page.current {
                     use crate::ui::overlay::{ModalConfig, ModalKind, OverlayEntry, OverlayKind};
-                    self.ui.overlay_stack.push(OverlayEntry::new(
-                        OverlayKind::Modal(
+                    self.ui
+                        .overlay_stack
+                        .push(OverlayEntry::new(OverlayKind::Modal(
                             ModalKind::PlaylistEdit {
                                 playlist_id: *id,
                                 name: playlist.name.clone(),
@@ -232,8 +235,7 @@ impl App {
                                 watch_path: playlist.watched_folder_path.clone(),
                             },
                             ModalConfig::default().width(480.0),
-                        ),
-                    ));
+                        )));
                 }
                 Some(Task::none())
             }

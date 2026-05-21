@@ -216,7 +216,11 @@ pub async fn refresh_song_metadata(pool: &Pool<Sqlite>, song: &DbSong) -> Result
     .bind(song.track_number)
     .bind(song.year)
     .bind(song.genre.as_deref())
-    .bind(song.cover_path.as_deref().filter(|p| !p.starts_with("http")))
+    .bind(
+        song.cover_path
+            .as_deref()
+            .filter(|p| !p.starts_with("http")),
+    )
     .bind(song.format.as_deref())
     .bind(now)
     .bind(song.id)

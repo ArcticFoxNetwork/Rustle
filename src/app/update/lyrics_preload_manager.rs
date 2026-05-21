@@ -1,16 +1,22 @@
+//! Lyrics preload manager - tracks per-song lyrics cache warmup and display fetch state
+//!
+//! Coordinates between background warmup (when lyrics page is closed) and
+//! display fetch (when lyrics page is opened for a song), avoiding duplicate
+//! network requests.
+
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LyricsCacheStatus {
+pub enum LyricsPreloadStatus {
     Fetching,
     Ready,
     Failed,
 }
 
 #[derive(Debug, Clone)]
-pub struct LyricsCacheEntry {
+pub struct LyricsPreloadEntry {
     pub ncm_id: u64,
-    pub status: LyricsCacheStatus,
+    pub status: LyricsPreloadStatus,
     pub last_error: Option<String>,
 }
 
@@ -22,11 +28,11 @@ pub enum DisplayFetchAction {
 }
 
 #[derive(Debug, Default, Clone)]
-pub struct LyricsCacheManagerState {
-    pub entries: HashMap<i64, LyricsCacheEntry>,
+pub struct LyricsPreloadManager {
+    pub entries: HashMap<i64, LyricsPreloadEntry>,
 }
 
-impl LyricsCacheManagerState {
+impl LyricsPreloadManager {
     fn has_usable_cache(ncm_id: u64) -> bool {
         crate::features::lyrics::load_cached_lyrics(ncm_id).is_some()
     }
@@ -40,7 +46,7 @@ impl LyricsCacheManagerState {
         if self
             .entries
             .get(&song_id)
-            .is_some_and(|entry| entry.status == LyricsCacheStatus::Ready)
+            .is_some_and(|entry| entry.status == LyricsPreloadStatus::Ready)
         {
             self.entries.remove(&song_id);
             return true;
@@ -48,7 +54,7 @@ impl LyricsCacheManagerState {
 
         !matches!(
             self.entries.get(&song_id).map(|entry| entry.status),
-            Some(LyricsCacheStatus::Fetching) | Some(LyricsCacheStatus::Failed)
+            Some(LyricsPreloadStatus::Fetching) | Some(LyricsPreloadStatus::Failed)
         )
     }
 
@@ -61,23 +67,23 @@ impl LyricsCacheManagerState {
         if self
             .entries
             .get(&song_id)
-            .is_some_and(|entry| entry.status == LyricsCacheStatus::Ready)
+            .is_some_and(|entry| entry.status == LyricsPreloadStatus::Ready)
         {
             self.entries.remove(&song_id);
         }
 
         if matches!(
             self.entries.get(&song_id).map(|entry| entry.status),
-            Some(LyricsCacheStatus::Fetching)
+            Some(LyricsPreloadStatus::Fetching)
         ) {
             return false;
         }
 
         self.entries.insert(
             song_id,
-            LyricsCacheEntry {
+            LyricsPreloadEntry {
                 ncm_id,
-                status: LyricsCacheStatus::Fetching,
+                status: LyricsPreloadStatus::Fetching,
                 last_error: None,
             },
         );
@@ -86,16 +92,16 @@ impl LyricsCacheManagerState {
 
     pub fn register_display_fetch(&mut self, song_id: i64, ncm_id: u64) -> DisplayFetchAction {
         match self.entries.get(&song_id).map(|entry| entry.status) {
-            Some(LyricsCacheStatus::Ready) if Self::has_usable_cache(ncm_id) => {
+            Some(LyricsPreloadStatus::Ready) if Self::has_usable_cache(ncm_id) => {
                 DisplayFetchAction::UseCache
             }
-            Some(LyricsCacheStatus::Ready) => {
+            Some(LyricsPreloadStatus::Ready) => {
                 self.entries.remove(&song_id);
                 self.begin_fetch_entry(song_id, ncm_id);
                 DisplayFetchAction::StartFetch
             }
-            Some(LyricsCacheStatus::Fetching) => DisplayFetchAction::AwaitExisting,
-            Some(LyricsCacheStatus::Failed) | None => {
+            Some(LyricsPreloadStatus::Fetching) => DisplayFetchAction::AwaitExisting,
+            Some(LyricsPreloadStatus::Failed) | None => {
                 self.begin_fetch_entry(song_id, ncm_id);
                 DisplayFetchAction::StartFetch
             }
@@ -110,15 +116,15 @@ impl LyricsCacheManagerState {
         match result {
             Ok(()) => {
                 if Self::has_usable_cache(entry.ncm_id) {
-                    entry.status = LyricsCacheStatus::Ready;
+                    entry.status = LyricsPreloadStatus::Ready;
                     entry.last_error = None;
                 } else {
-                    entry.status = LyricsCacheStatus::Failed;
+                    entry.status = LyricsPreloadStatus::Failed;
                     entry.last_error = Some("Lyrics fetched but cache file was not created".into());
                 }
             }
             Err(error) => {
-                entry.status = LyricsCacheStatus::Failed;
+                entry.status = LyricsPreloadStatus::Failed;
                 entry.last_error = Some(error);
             }
         }
@@ -127,9 +133,9 @@ impl LyricsCacheManagerState {
     pub fn mark_ready(&mut self, song_id: i64, ncm_id: u64) {
         self.entries.insert(
             song_id,
-            LyricsCacheEntry {
+            LyricsPreloadEntry {
                 ncm_id,
-                status: LyricsCacheStatus::Ready,
+                status: LyricsPreloadStatus::Ready,
                 last_error: None,
             },
         );
@@ -138,9 +144,9 @@ impl LyricsCacheManagerState {
     fn begin_fetch_entry(&mut self, song_id: i64, ncm_id: u64) {
         self.entries.insert(
             song_id,
-            LyricsCacheEntry {
+            LyricsPreloadEntry {
                 ncm_id,
-                status: LyricsCacheStatus::Fetching,
+                status: LyricsPreloadStatus::Fetching,
                 last_error: None,
             },
         );

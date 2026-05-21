@@ -337,10 +337,7 @@ impl App {
             let cover_stem = format!("playlist_{}", playlist.id);
             if let Some(cover_path) = crate::utils::find_cached_image(&covers_dir, &cover_stem) {
                 let handle = iced::widget::image::Handle::from_path(&cover_path);
-                self.ui
-                    .discover
-                    .playlist_covers
-                    .insert(playlist.id, handle);
+                self.ui.discover.playlist_covers.insert(playlist.id, handle);
             }
         }
 

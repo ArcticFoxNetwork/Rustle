@@ -92,8 +92,11 @@ impl App {
                 // Clear shuffle cache and re-calculate for new mode
                 self.clear_shuffle_cache();
                 self.cache_shuffle_indices();
-                let _ = self.preload_adjacent_tracks_with_ncm();
-                Some(Task::none())
+
+                // Refresh coordinator window (adjacent indices may have changed)
+                self.refresh_preload_window();
+
+                return Some(self.preload_adjacent_tracks_with_ncm());
             }
 
             // Streaming playback messages
@@ -198,6 +201,7 @@ impl App {
         };
 
         self.check_lyrics_page_close();
+        let lyrics_viewport_task = self.flush_pending_lyrics_viewport_after_animation();
 
         // Auto-save position every 5 seconds
         self.ui.save_position_counter += 1;
@@ -219,7 +223,7 @@ impl App {
             }
         }
 
-        lyrics_scroll_task
+        Task::batch([lyrics_scroll_task, lyrics_viewport_task])
     }
 
     pub fn handle_audio_event(&mut self, event: AudioEvent) -> Task<Message> {

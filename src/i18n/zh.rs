@@ -332,7 +332,10 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
 
     // Download Playlist Dialog
     m.insert(Key::DownloadPlaylistTitle, "下载歌单");
-    m.insert(Key::DownloadPlaylistConfirm, "确定要下载歌单「{name}」中的 {count} 首歌曲吗？");
+    m.insert(
+        Key::DownloadPlaylistConfirm,
+        "确定要下载歌单「{name}」中的 {count} 首歌曲吗？",
+    );
     m.insert(Key::DownloadPlaylistConfirmBtn, "下载");
 
     // Settings - Download

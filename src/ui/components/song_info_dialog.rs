@@ -20,7 +20,12 @@ pub fn view_edit_body(e: &SongEditDialogState, locale: Locale) -> Element<'_, Me
         spacer(32.0),
         column![
             inp(locale.get(Key::SongEditLabelTitle), &e.title, id, "title"),
-            inp(locale.get(Key::SongEditLabelArtist), &e.artist, id, "artist"),
+            inp(
+                locale.get(Key::SongEditLabelArtist),
+                &e.artist,
+                id,
+                "artist"
+            ),
             inp(locale.get(Key::SongEditLabelAlbum), &e.album, id, "album"),
             spacer(2.0),
             row![
@@ -54,13 +59,17 @@ fn edit_cover_block<'a>(
     replace_label: &str,
     song_id: i64,
 ) -> Element<'a, Message> {
-    let handle = path.as_ref()
+    let handle = path
+        .as_ref()
         .filter(|p| p.exists())
         .map(|p| iced::widget::image::Handle::from_path(p.clone()));
     let img = crate::ui::components::cover_thumb::thumb(handle.as_ref(), COVER_SIZE, 12.0);
     let label = replace_label.to_string();
     column![
-        container(img).width(COVER_SIZE).height(COVER_SIZE).style(cover_border),
+        container(img)
+            .width(COVER_SIZE)
+            .height(COVER_SIZE)
+            .style(cover_border),
         spacer(6.0),
         button(text(label).size(11.0))
             .style(dim_btn)
@@ -175,5 +184,12 @@ fn st(f: fn(&iced::Theme) -> Color) -> impl Fn(&iced::Theme) -> text::Style {
 }
 
 fn cover_border(t: &iced::Theme) -> container::Style {
-    container::Style { border: Border { radius: Radius::new(12.0), width: 1.0, color: glass_border(t) }, ..Default::default() }
+    container::Style {
+        border: Border {
+            radius: Radius::new(12.0),
+            width: 1.0,
+            color: glass_border(t),
+        },
+        ..Default::default()
+    }
 }

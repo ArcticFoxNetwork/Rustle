@@ -640,12 +640,7 @@ impl MusicApi {
 
     /// 添加/删除歌曲到歌单
     /// op: "add" | "del", track_ids: comma-separated
-    pub async fn playlist_add_tracks(
-        &self,
-        pid: u64,
-        track_ids: &str,
-        op: &str,
-    ) -> Result<()> {
+    pub async fn playlist_add_tracks(&self, pid: u64, track_ids: &str, op: &str) -> Result<()> {
         let path = "/weapi/playlist/manipulate/tracks";
         let mut params = HashMap::new();
         let pid_str = pid.to_string();

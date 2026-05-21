@@ -1234,18 +1234,23 @@ impl App {
                 self.ui.home.user_playlists = playlists.clone();
                 // Trigger cover downloads for all playlists
                 if let Some(ref client) = self.core.ncm_client {
-                    let tasks: Vec<_> = playlists.iter().filter_map(|pl| {
-                        if pl.cover_img_url.is_empty() { return None; }
-                        let c = client.clone();
-                        let id = pl.id;
-                        let url = pl.cover_img_url.clone();
-                        Some(Task::perform(
-                            async move {
-                                crate::utils::download_playlist_cover(&c, id, &url).await;
-                            },
-                            |_| Message::Noop,
-                        ))
-                    }).collect();
+                    let tasks: Vec<_> = playlists
+                        .iter()
+                        .filter_map(|pl| {
+                            if pl.cover_img_url.is_empty() {
+                                return None;
+                            }
+                            let c = client.clone();
+                            let id = pl.id;
+                            let url = pl.cover_img_url.clone();
+                            Some(Task::perform(
+                                async move {
+                                    crate::utils::download_playlist_cover(&c, id, &url).await;
+                                },
+                                |_| Message::Noop,
+                            ))
+                        })
+                        .collect();
                     if !tasks.is_empty() {
                         return Some(Task::batch(tasks));
                     }
@@ -2268,6 +2273,11 @@ impl App {
                     path
                 );
 
+                // Update coordinator background slot
+                self.playback
+                    .preload_coordinator
+                    .ensure_background_slot(*song_id, Some(path.clone()));
+
                 // Update current_song's cover_path
                 if let Some(current) = &mut self.playback.current_song {
                     if current.id == *song_id {
@@ -2629,12 +2639,8 @@ impl App {
                                 .await
                         },
                         move |result| match result {
-                            Ok(()) => {
-                                Message::NcmPlaylistAddResult(sid, pid, Ok(()))
-                            }
-                            Err(e) => {
-                                Message::NcmPlaylistAddResult(sid, pid, Err(e.to_string()))
-                            }
+                            Ok(()) => Message::NcmPlaylistAddResult(sid, pid, Ok(())),
+                            Err(e) => Message::NcmPlaylistAddResult(sid, pid, Err(e.to_string())),
                         },
                     ));
                 }
@@ -2648,13 +2654,11 @@ impl App {
                         let msg = self.core.locale.get(crate::i18n::Key::SongAddedToPlaylist);
                         Some(Self::toast_success(msg.to_string()))
                     }
-                    Err(e) => {
-                        Some(Self::toast_error(format!(
-                            "{}: {}",
-                            self.core.locale.get(crate::i18n::Key::SongEditFailed),
-                            e
-                        )))
-                    }
+                    Err(e) => Some(Self::toast_error(format!(
+                        "{}: {}",
+                        self.core.locale.get(crate::i18n::Key::SongEditFailed),
+                        e
+                    ))),
                 }
             }
 

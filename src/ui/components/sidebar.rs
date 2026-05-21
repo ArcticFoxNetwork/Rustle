@@ -166,11 +166,15 @@ pub fn view(
         let is_active = matches!(current_route, Route::Playlist(current_id) if *current_id == id);
         let hover_progress = sidebar_animations.get_progress(&SidebarId::Playlist(id));
         let s = crate::ui::components::cover_thumb::CoverSize::Tiny;
-        let cover_handle = playlist.cover_path.as_deref()
+        let cover_handle = playlist
+            .cover_path
+            .as_deref()
             .filter(|p| !p.is_empty() && std::path::Path::new(p).exists())
             .map(|p| iced::widget::image::Handle::from_path(std::path::PathBuf::from(p)));
         let cover_el = Some(crate::ui::components::cover_thumb::thumb(
-            cover_handle.as_ref(), s.px(), s.radius(),
+            cover_handle.as_ref(),
+            s.px(),
+            s.radius(),
         ));
         library_items.push(sidebar_button_animated_opt_cover(
             crate::ui::icons::MUSIC,
@@ -199,35 +203,35 @@ pub fn view(
     // Only show cloud playlists section if logged in
     if is_logged_in {
         // Split user playlists into owned and collected
-        let (owned_playlists, collected_playlists): (Vec<_>, Vec<_>) = user_playlists
-            .iter()
-            .partition(|pl| !pl.subscribed);
+        let (owned_playlists, collected_playlists): (Vec<_>, Vec<_>) =
+            user_playlists.iter().partition(|pl| !pl.subscribed);
 
         // Helper to render a playlist button
-        let render_playlist_btn =
-            |playlist: &crate::api::SongList| -> Element<'static, Message> {
-                let name = playlist.name.clone();
-                let id = playlist.id;
-                let is_active =
-                    matches!(current_route, Route::NcmPlaylist(current_id) if *current_id == id);
-                let hover_progress = sidebar_animations.get_progress(&SidebarId::UserPlaylist(id));
+        let render_playlist_btn = |playlist: &crate::api::SongList| -> Element<'static, Message> {
+            let name = playlist.name.clone();
+            let id = playlist.id;
+            let is_active =
+                matches!(current_route, Route::NcmPlaylist(current_id) if *current_id == id);
+            let hover_progress = sidebar_animations.get_progress(&SidebarId::UserPlaylist(id));
 
-                let s = crate::ui::components::cover_thumb::CoverSize::Tiny;
-                let cover_handle = crate::utils::find_playlist_cover(id)
-                    .map(iced::widget::image::Handle::from_path);
-                let cover_el = crate::ui::components::cover_thumb::thumb(
-                    cover_handle.as_ref(), s.px(), s.radius(),
-                );
-                sidebar_button_animated_opt_cover(
-                    crate::ui::icons::MUSIC,
-                    Some(cover_el),
-                    name,
-                    is_active,
-                    hover_progress,
-                    SidebarId::UserPlaylist(id),
-                    Message::OpenNcmPlaylist(id),
-                )
-            };
+            let s = crate::ui::components::cover_thumb::CoverSize::Tiny;
+            let cover_handle =
+                crate::utils::find_playlist_cover(id).map(iced::widget::image::Handle::from_path);
+            let cover_el = crate::ui::components::cover_thumb::thumb(
+                cover_handle.as_ref(),
+                s.px(),
+                s.radius(),
+            );
+            sidebar_button_animated_opt_cover(
+                crate::ui::icons::MUSIC,
+                Some(cover_el),
+                name,
+                is_active,
+                hover_progress,
+                SidebarId::UserPlaylist(id),
+                Message::OpenNcmPlaylist(id),
+            )
+        };
 
         scrollable_items.push(Space::new().height(20).into());
 
@@ -243,8 +247,10 @@ pub fn view(
                 .padding(Padding::new(0.0).left(14.0).bottom(8.0))
                 .into(),
         );
-        let my_items: Vec<Element<'static, Message>> =
-            owned_playlists.into_iter().map(render_playlist_btn).collect();
+        let my_items: Vec<Element<'static, Message>> = owned_playlists
+            .into_iter()
+            .map(render_playlist_btn)
+            .collect();
         scrollable_items.push(column(my_items).spacing(4).into());
 
         // "Collected Playlists" section
@@ -261,8 +267,10 @@ pub fn view(
                     .padding(Padding::new(0.0).left(14.0).bottom(8.0))
                     .into(),
             );
-            let collected_items: Vec<Element<'static, Message>> =
-                collected_playlists.into_iter().map(render_playlist_btn).collect();
+            let collected_items: Vec<Element<'static, Message>> = collected_playlists
+                .into_iter()
+                .map(render_playlist_btn)
+                .collect();
             scrollable_items.push(column(collected_items).spacing(4).into());
         }
     }
@@ -327,7 +335,15 @@ fn sidebar_button_animated(
     sidebar_id: SidebarId,
     on_press: Message,
 ) -> Element<'static, Message> {
-    sidebar_button_animated_opt_cover(icon_svg, None, label, is_active, hover_progress, sidebar_id, on_press)
+    sidebar_button_animated_opt_cover(
+        icon_svg,
+        None,
+        label,
+        is_active,
+        hover_progress,
+        sidebar_id,
+        on_press,
+    )
 }
 
 fn sidebar_button_animated_opt_cover(

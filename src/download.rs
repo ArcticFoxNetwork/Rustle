@@ -57,7 +57,9 @@ impl DownloadManager {
         // Block if already in pending or active.
         // For completed downloads, allow re-download if the file was deleted.
         let blocked = self
-            .pending.iter().map(|t| t.song_id)
+            .pending
+            .iter()
+            .map(|t| t.song_id)
             .chain(self.active.iter().map(|t| t.song_id))
             .chain(self.completed.iter().filter_map(|t| {
                 match &t.status {

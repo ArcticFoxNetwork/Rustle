@@ -82,9 +82,15 @@ pub fn view(menu: &ContextMenuState, locale: Locale, sw: f32, sh: f32) -> Elemen
     ));
     items.push(div());
     let (heart_icon, heart_label) = if is_liked {
-        (ic!(icons::HEART), locale.get(Key::ContextMenuRemoveFavorites))
+        (
+            ic!(icons::HEART),
+            locale.get(Key::ContextMenuRemoveFavorites),
+        )
     } else {
-        (ic!(icons::HEART_OUTLINE), locale.get(Key::ContextMenuAddFavorites))
+        (
+            ic!(icons::HEART_OUTLINE),
+            locale.get(Key::ContextMenuAddFavorites),
+        )
     };
     items.push(item(
         heart_icon,

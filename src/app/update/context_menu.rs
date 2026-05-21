@@ -21,11 +21,15 @@ impl App {
                     .as_ref()
                     .map(|s| {
                         let src = crate::utils::compute_source(
-                            &s.file_path, s.id,
-                            Some(&s.artist), Some(&s.title),
+                            &s.file_path,
+                            s.id,
+                            Some(&s.artist),
+                            Some(&s.title),
                         );
                         let liked = if s.id < 0 {
-                            self.core.user_info.as_ref()
+                            self.core
+                                .user_info
+                                .as_ref()
                                 .map(|u| u.like_songs.contains(&((-s.id) as u64)))
                                 .unwrap_or(false)
                         } else {
@@ -51,10 +55,15 @@ impl App {
                     .as_ref()
                     .map(|s| {
                         let src = crate::utils::compute_source(
-                            &s.file_path, s.id,
-                            Some(&s.artist), Some(&s.title),
+                            &s.file_path,
+                            s.id,
+                            Some(&s.artist),
+                            Some(&s.title),
                         );
-                        let liked = self.core.user_info.as_ref()
+                        let liked = self
+                            .core
+                            .user_info
+                            .as_ref()
                             .map(|u| u.like_songs.contains(&info.id))
                             .unwrap_or(false);
                         (src, liked)
@@ -76,7 +85,9 @@ impl App {
                 source,
             } => {
                 let is_liked = if *source != crate::utils::Source::Local {
-                    self.core.user_info.as_ref()
+                    self.core
+                        .user_info
+                        .as_ref()
                         .map(|u| u.like_songs.contains(&(song_id.unsigned_abs())))
                         .unwrap_or(false)
                 } else {
@@ -115,12 +126,12 @@ impl App {
                 };
                 self.ui.song_edit_dialog = Some(edit_state.clone());
                 use crate::ui::overlay::{ModalConfig, ModalKind, OverlayEntry, OverlayKind};
-                self.ui.overlay_stack.push(OverlayEntry::new(
-                    OverlayKind::Modal(
+                self.ui
+                    .overlay_stack
+                    .push(OverlayEntry::new(OverlayKind::Modal(
                         ModalKind::SongEdit(edit_state),
                         ModalConfig::default().width(600.0),
-                    ),
-                ));
+                    )));
                 Some(Task::none())
             }
             Message::SongEditFieldChanged {
@@ -147,9 +158,7 @@ impl App {
                 }
                 // Also update overlay entry so the view reads current values
                 if let Some(entry) = self.ui.overlay_stack.last_mut() {
-                    if let OverlayKind::Modal(ModalKind::SongEdit(state), _) =
-                        &mut entry.kind
-                    {
+                    if let OverlayKind::Modal(ModalKind::SongEdit(state), _) = &mut entry.kind {
                         if state.song_id == *song_id {
                             match field.as_str() {
                                 "title" => state.title = value.clone(),
@@ -195,9 +204,7 @@ impl App {
                 }
                 // Also update overlay entry
                 if let Some(entry) = self.ui.overlay_stack.last_mut() {
-                    if let OverlayKind::Modal(ModalKind::SongEdit(state), _) =
-                        &mut entry.kind
-                    {
+                    if let OverlayKind::Modal(ModalKind::SongEdit(state), _) = &mut entry.kind {
                         if state.song_id == *song_id {
                             state.cover_path = Some(p);
                         }
@@ -230,13 +237,11 @@ impl App {
                     Self::toast_success(self.core.locale.get(Key::SongEditSaved).to_string()),
                 ]))
             }
-            Message::SongEditsFailed { error, .. } => {
-                Some(Self::toast_error(format!(
-                    "{}: {}",
-                    self.core.locale.get(Key::SongEditFailed),
-                    error
-                )))
-            }
+            Message::SongEditsFailed { error, .. } => Some(Self::toast_error(format!(
+                "{}: {}",
+                self.core.locale.get(Key::SongEditFailed),
+                error
+            ))),
             _ => None,
         }
     }
@@ -366,15 +371,15 @@ impl App {
         } else {
             None
         };
-        self.ui.overlay_stack.push(OverlayEntry::new(
-            OverlayKind::Modal(
+        self.ui
+            .overlay_stack
+            .push(OverlayEntry::new(OverlayKind::Modal(
                 ModalKind::PlaylistPicker {
                     song_id,
                     ncm_playlists,
                 },
                 ModalConfig::default().width(360.0),
-            ),
-        ));
+            )));
         Some(Task::none())
     }
 
@@ -393,9 +398,7 @@ impl App {
                         async move {
                             let _ = db.remove_song_from_playlist(pid, song_id).await;
                         },
-                        move |_| {
-                            Message::ShowSuccessToast("已从歌单中删除".to_string())
-                        },
+                        move |_| Message::ShowSuccessToast("已从歌单中删除".to_string()),
                     ));
                 }
                 removed = true;
@@ -405,24 +408,23 @@ impl App {
                 self.ui.playlist_page.current.as_mut().map(|p| {
                     p.songs.retain(|s| s.id != song_id);
                 });
-                self.ui.home.current_ncm_playlist_songs
+                self.ui
+                    .home
+                    .current_ncm_playlist_songs
                     .retain(|s| s.id != (-song_id) as u64);
                 if let Some(ref client) = self.core.ncm_client {
                     let client = client.clone();
                     let ncm_id = (-song_id) as u64;
                     return Some(Task::perform(
                         async move {
-                            client.client.playlist_add_tracks(
-                                playlist_id, &ncm_id.to_string(), "del",
-                            ).await
+                            client
+                                .client
+                                .playlist_add_tracks(playlist_id, &ncm_id.to_string(), "del")
+                                .await
                         },
                         move |result| match result {
-                            Ok(()) => Message::ShowSuccessToast(
-                                "已从歌单中删除".to_string()
-                            ),
-                            Err(e) => Message::ShowErrorToast(
-                                format!("删除失败: {}", e)
-                            ),
+                            Ok(()) => Message::ShowSuccessToast("已从歌单中删除".to_string()),
+                            Err(e) => Message::ShowErrorToast(format!("删除失败: {}", e)),
                         },
                     ));
                 }
@@ -471,8 +473,8 @@ impl App {
             {
                 let mut song = Self::ncm_song_to_db_song(info);
                 // Try download dir first, then streaming cache dir
-                let dl = crate::features::settings::StorageSettings::default()
-                    .effective_download_dir();
+                let dl =
+                    crate::features::settings::StorageSettings::default().effective_download_dir();
                 let stem = format!(
                     "{} - {}",
                     crate::utils::sanitize_filename(&song.artist),
@@ -500,7 +502,8 @@ impl App {
         let song = self.find_song_anywhere(song_id);
         Task::perform(
             async move {
-                let file_path = song.as_ref()
+                let file_path = song
+                    .as_ref()
                     .map(|s| s.file_path.clone())
                     .unwrap_or_default();
                 if !file_path.is_empty() {

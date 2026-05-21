@@ -1,5 +1,6 @@
 //! Message update handlers - thin dispatcher delegating to submodules
 
+pub mod audio_preload_manager;
 mod context_menu;
 mod database;
 mod discord;
@@ -8,6 +9,8 @@ mod import;
 mod keyboard;
 mod layout;
 mod lyrics;
+pub mod lyrics_preload_manager;
+pub mod lyrics_render_manager;
 mod mpris;
 mod navigation;
 mod ncm;
@@ -17,7 +20,7 @@ mod playback;
 mod player_controller;
 mod playlist;
 mod preload;
-pub mod preload_manager;
+pub mod preload_coordinator;
 mod protocol;
 mod queue;
 pub mod queue_navigator;
@@ -132,8 +135,11 @@ impl App {
                             if let Ok(detail) = c.client.song_list_detail(id).await {
                                 if !detail.cover_img_url.is_empty() {
                                     crate::utils::download_playlist_cover(
-                                        &c, id, &detail.cover_img_url,
-                                    ).await;
+                                        &c,
+                                        id,
+                                        &detail.cover_img_url,
+                                    )
+                                    .await;
                                 }
                             }
                         },
@@ -155,6 +161,10 @@ impl App {
                 }
             })
             .collect();
-        if tasks.is_empty() { None } else { Some(Task::batch(tasks)) }
+        if tasks.is_empty() {
+            None
+        } else {
+            Some(Task::batch(tasks))
+        }
     }
 }

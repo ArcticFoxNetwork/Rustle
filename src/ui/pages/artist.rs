@@ -167,7 +167,9 @@ fn build_header(
         if has_description && is_long {
             if description_expanded {
                 let scrollable_desc = scrollable(
-                    container(desc_widget).width(Fill).padding(Padding::new(4.0).left(0.0)),
+                    container(desc_widget)
+                        .width(Fill)
+                        .padding(Padding::new(4.0).left(0.0)),
                 )
                 .direction(scrollable::Direction::Vertical(
                     iced::widget::scrollable::Scrollbar::new()

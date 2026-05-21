@@ -1,4 +1,3 @@
-
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -7,8 +6,8 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::app::App;
-use crate::download::{DownloadTask, DownloadStatus};
 use crate::download::task;
+use crate::download::{DownloadStatus, DownloadTask};
 use crate::features::settings::MusicQuality;
 use crate::metadata::SongMetadata;
 
@@ -60,7 +59,8 @@ impl App {
             }
             Message::DownloadProgress(song_id, downloaded, total) => {
                 if let Some(task) = self
-                    .core.download_manager
+                    .core
+                    .download_manager
                     .active
                     .iter_mut()
                     .find(|t| t.song_id == *song_id)
@@ -83,7 +83,8 @@ impl App {
                 let path_buf = PathBuf::from(path_str.as_str());
                 let actual_size = path_buf.metadata().map(|m| m.len()).unwrap_or(0);
                 if let Some(task) = self
-                    .core.download_manager
+                    .core
+                    .download_manager
                     .active
                     .iter_mut()
                     .find(|t| t.song_id == *song_id)
@@ -92,7 +93,8 @@ impl App {
                 }
                 let ncm_id = if *song_id < 0 { (-song_id) as u64 } else { 0 };
                 let track_title = self
-                    .core.download_manager
+                    .core
+                    .download_manager
                     .active
                     .iter()
                     .find(|t| t.song_id == *song_id)
@@ -108,7 +110,8 @@ impl App {
                         let new_path_for_cover = path_buf.clone();
                         let title = track_title.clone();
                         let artist = self
-                            .core.download_manager
+                            .core
+                            .download_manager
                             .active
                             .iter()
                             .find(|t| t.song_id == *song_id)
@@ -128,15 +131,14 @@ impl App {
                                         .map(|data| {
                                             let dir = crate::utils::covers_cache_dir();
                                             let _ = std::fs::create_dir_all(&dir);
-                                            let path = dir.join(format!("song_{}.jpg", song_id_val));
+                                            let path =
+                                                dir.join(format!("song_{}.jpg", song_id_val));
                                             let _ = std::fs::write(&path, &data);
                                             path.to_string_lossy().to_string()
                                         });
                                 let _ = db.update_song_path(&old_path, &new_path).await;
                                 if let Some(ref cp) = cover_path {
-                                    let _ = db
-                                        .update_song_cover(song_id_val, cp)
-                                        .await;
+                                    let _ = db.update_song_cover(song_id_val, cp).await;
                                 }
                                 let _ = db
                                     .insert_download(
@@ -159,7 +161,9 @@ impl App {
                     Task::none()
                 };
 
-                self.core.download_manager.complete(*song_id, path_buf.clone());
+                self.core
+                    .download_manager
+                    .complete(*song_id, path_buf.clone());
                 let new_path = path_buf.to_string_lossy().to_string();
                 if let Some(ref mut playlist) = self.ui.playlist_page.current {
                     for item in &mut playlist.songs {
@@ -192,7 +196,10 @@ impl App {
             Message::DeleteDownloadHistory(song_id) => {
                 let song_id = *song_id;
                 // Remove from in-memory completed list
-                self.core.download_manager.completed.retain(|t| t.song_id != song_id);
+                self.core
+                    .download_manager
+                    .completed
+                    .retain(|t| t.song_id != song_id);
                 // Delete from DB
                 let task = if let Some(ref db) = self.core.db {
                     let db = Arc::clone(db);
@@ -287,7 +294,11 @@ impl App {
                             Ok(urls) => urls
                                 .first()
                                 .and_then(|u| {
-                                    if u.url.is_empty() { None } else { Some(u.url.clone()) }
+                                    if u.url.is_empty() {
+                                        None
+                                    } else {
+                                        Some(u.url.clone())
+                                    }
                                 })
                                 .unwrap_or_default(),
                             Err(e) => {
@@ -320,7 +331,12 @@ impl App {
         let quality = self.core.settings.storage.download_quality;
         let download_dir = self.core.settings.storage.effective_download_dir();
         let enqueued = self.core.download_manager.enqueue_song(
-            song_id, ncm_id, url, quality, download_dir, meta.clone(),
+            song_id,
+            ncm_id,
+            url,
+            quality,
+            download_dir,
+            meta.clone(),
         );
         if enqueued {
             info!(
@@ -372,9 +388,10 @@ impl App {
                 let items: Vec<(i64, u64, String, SongMetadata)> = data
                     .into_iter()
                     .filter_map(|(sid, nid, meta)| {
-                        url_map.iter().find(|(id, _)| *id == nid).map(|(_, url)| {
-                            (sid, nid, url.clone(), meta)
-                        })
+                        url_map
+                            .iter()
+                            .find(|(id, _)| *id == nid)
+                            .map(|(_, url)| (sid, nid, url.clone(), meta))
                     })
                     .collect();
                 if items.is_empty() {
@@ -429,7 +446,10 @@ impl App {
                 },
             )
             .abortable();
-            self.core.download_manager.abort_handles.insert(song_id, handle);
+            self.core
+                .download_manager
+                .abort_handles
+                .insert(song_id, handle);
 
             let progress_stream = Task::run(
                 async_stream::stream! { while let Some(msg) = rx.recv().await { yield msg; } },

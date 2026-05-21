@@ -189,23 +189,25 @@ fn build_header(
     // Cover: playlist own cover → first song cover → NCM cache → placeholder
     let cover_path_opt = {
         let meta = crate::metadata::SongMetadata {
-            cover: playlist.cover_path.as_ref().map(|p| {
-                crate::metadata::CoverSource::Path(std::path::PathBuf::from(p))
-            }),
+            cover: playlist
+                .cover_path
+                .as_ref()
+                .map(|p| crate::metadata::CoverSource::Path(std::path::PathBuf::from(p))),
             ..Default::default()
         };
-        meta.resolve_cover(None, playlist.id)
-            .or_else(|| {
-                playlist.songs.first().and_then(|s| {
-                    // Use resolve_cover with the song's cover_path
-                    crate::metadata::SongMetadata {
-                        cover: s.cover_path.as_ref().map(|p| {
-                            crate::metadata::CoverSource::Path(std::path::PathBuf::from(p))
-                        }),
-                        ..Default::default()
-                    }.resolve_cover(None, s.id)
-                })
+        meta.resolve_cover(None, playlist.id).or_else(|| {
+            playlist.songs.first().and_then(|s| {
+                // Use resolve_cover with the song's cover_path
+                crate::metadata::SongMetadata {
+                    cover: s
+                        .cover_path
+                        .as_ref()
+                        .map(|p| crate::metadata::CoverSource::Path(std::path::PathBuf::from(p))),
+                    ..Default::default()
+                }
+                .resolve_cover(None, s.id)
             })
+        })
     };
 
     let s = crate::ui::components::cover_thumb::CoverSize::Large;
@@ -259,7 +261,9 @@ fn build_header(
             if description_expanded {
                 // Expanded: scrollable description with "收起" button
                 let scrollable_desc = scrollable(
-                    container(desc_widget).width(Fill).padding(Padding::new(4.0).left(0.0)),
+                    container(desc_widget)
+                        .width(Fill)
+                        .padding(Padding::new(4.0).left(0.0)),
                 )
                 .direction(scrollable::Direction::Vertical(
                     iced::widget::scrollable::Scrollbar::new()
@@ -799,7 +803,6 @@ pub(crate) fn build_controls<'a>(
     // No background - gradient continues from header
     container(controls).width(Fill).into()
 }
-
 
 /// Build owner avatar placeholder (first letter on pink background)
 fn build_owner_avatar_placeholder(owner_name: &str) -> Element<'static, Message> {

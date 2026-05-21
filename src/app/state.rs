@@ -18,11 +18,11 @@ use crate::platform::media_controls::{MediaCommand, MediaHandle};
 use crate::ui::animation::{HoverAnimations, SingleHoverAnimation};
 use crate::ui::components::{ImportingPlaylist, NavItem};
 use crate::ui::effects::background::LyricsBackgroundProgram;
-use crate::utils::Source;
 use crate::ui::effects::textured_background::TexturedBackgroundProgram;
 use crate::ui::overlay::OverlayEntry;
 use crate::ui::pages;
 use crate::ui::widgets::Toast;
+use crate::utils::Source;
 
 /// Main application state
 pub struct App {
@@ -517,10 +517,14 @@ pub struct PlaybackSessionState {
     pub personal_fm_mode: bool,
     /// Queue navigation cache used as the single source of truth for shuffle order.
     pub shuffle_cache: crate::app::update::queue_navigator::ShuffleCache,
-    /// Preload state machine for adjacent tracks.
-    pub preload_manager: crate::app::update::preload_manager::PreloadManager,
-    /// Background lyrics cache warmup state.
-    pub lyrics_cache_manager: crate::app::lyrics_cache_manager::LyricsCacheManagerState,
+    /// Audio preload state machine for adjacent tracks.
+    pub audio_preload_manager: crate::app::update::audio_preload_manager::AudioPreloadManager,
+    /// Background lyrics preload state.
+    pub lyrics_preload_manager: crate::app::update::lyrics_preload_manager::LyricsPreloadManager,
+    /// Per-song lyrics render cache (engine lines, shaped lines).
+    pub lyrics_render_manager: crate::app::update::lyrics_render_manager::LyricsRenderManager,
+    /// Central preload coordinator - owns the preload window lifecycle.
+    pub preload_coordinator: crate::app::update::preload_coordinator::PreloadCoordinator,
     /// Track index currently being resolved before playback starts.
     pub pending_resolution_index: Option<usize>,
     /// Playback request waiting for audio thread confirmation.
@@ -545,8 +549,10 @@ impl Default for PlaybackSessionState {
             current_index: None,
             personal_fm_mode: false,
             shuffle_cache: Default::default(),
-            preload_manager: Default::default(),
-            lyrics_cache_manager: Default::default(),
+            audio_preload_manager: Default::default(),
+            lyrics_preload_manager: Default::default(),
+            lyrics_render_manager: Default::default(),
+            preload_coordinator: Default::default(),
             pending_resolution_index: None,
             pending_playback_request: None,
             active_streaming_buffer: None,
@@ -868,6 +874,7 @@ impl UiState {
                 viewport_width: 800.0,  // Default, will be updated from view
                 viewport_height: 600.0, // Default, will be updated from view
                 viewport_initialized: false,
+                pending_viewport_size: None,
                 shaped_content_width: 0.0,
                 shaped_font_size: 0.0,
                 shape_generation: 0,
@@ -1013,6 +1020,8 @@ pub struct LyricsState {
     pub viewport_height: f32,
     /// Whether viewport metrics have been initialized from a real layout/window event.
     pub viewport_initialized: bool,
+    /// Last viewport size reported while the lyrics page transition was animating.
+    pub pending_viewport_size: Option<iced::Size>,
     /// Content width used by the latest accepted shaped lines.
     pub shaped_content_width: f32,
     /// Main font size used by the latest accepted shaped lines.

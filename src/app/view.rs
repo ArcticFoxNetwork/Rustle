@@ -2,7 +2,9 @@
 //! Application view rendering
 
 use iced::mouse::Interaction;
-use iced::widget::{Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text};
+use iced::widget::{
+    Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text,
+};
 use iced::{Alignment, Color, Element, Fill, Length};
 
 use super::message::Message;
@@ -523,8 +525,8 @@ impl App {
                                 let title = locale
                                     .get(crate::i18n::Key::DownloadPlaylistTitle)
                                     .to_string();
-                                let template = locale
-                                    .get(crate::i18n::Key::DownloadPlaylistConfirm);
+                                let template =
+                                    locale.get(crate::i18n::Key::DownloadPlaylistConfirm);
                                 let body = template
                                     .replace("{name}", playlist_name)
                                     .replace("{count}", &song_count.to_string());
@@ -534,11 +536,7 @@ impl App {
                                 overlay::modal_section(
                                     title,
                                     Message::DismissTopModal,
-                                    overlay::modal_body(
-                                        text(body)
-                                        .size(14)
-                                        .into(),
-                                    ),
+                                    overlay::modal_body(text(body).size(14).into()),
                                     overlay::modal_footer(vec![
                                         cancel_btn(locale),
                                         accent_btn(confirm_label, Message::ConfirmDownloadPlaylist),
@@ -561,26 +559,104 @@ impl App {
                                     ]),
                                 )
                             }
-                            ModalKind::PlaylistPicker { song_id, ncm_playlists } => {
+                            ModalKind::PlaylistPicker {
+                                song_id,
+                                ncm_playlists,
+                            } => {
                                 let song_id = *song_id;
                                 let title = locale
                                     .get(crate::i18n::Key::PlaylistPickerTitle)
                                     .to_string();
 
-                                let list: Element<'_, Message> =
-                                    match ncm_playlists {
-                                        // NCM: show online playlists with music icon
-                                        Some(pls) if !pls.is_empty() => {
+                                let list: Element<'_, Message> = match ncm_playlists {
+                                    // NCM: show online playlists with music icon
+                                    Some(pls) if !pls.is_empty() => {
+                                        let mut col = column![].spacing(4);
+                                        for pl in pls {
+                                            let pl_name = pl.name.clone();
+                                            let pl_id = pl.id;
+                                            let s = CoverSize::Picker;
+                                            let cover_handle =
+                                                cover_thumb::resolve_playlist_cover(pl_id);
+                                            col = col.push(
+                                                button(
+                                                    row![
+                                                        cover_thumb::thumb(
+                                                            cover_handle.as_ref(),
+                                                            s.px(),
+                                                            s.radius()
+                                                        ),
+                                                        Space::new().width(12),
+                                                        text(pl_name).size(13),
+                                                        Space::new().width(Fill),
+                                                    ]
+                                                    .align_y(Alignment::Center),
+                                                )
+                                                .padding([8, 14])
+                                                .width(Fill)
+                                                .style(|theme, status| {
+                                                    let bg =
+                                                        matches!(status, button::Status::Hovered)
+                                                            .then_some(iced::Background::Color(
+                                                                crate::ui::theme::hover_bg(theme),
+                                                            ));
+                                                    button::Style {
+                                                        background: bg,
+                                                        text_color: crate::ui::theme::text_primary(
+                                                            theme,
+                                                        ),
+                                                        border: iced::Border {
+                                                            radius: 8.0.into(),
+                                                            ..Default::default()
+                                                        },
+                                                        ..Default::default()
+                                                    }
+                                                })
+                                                .on_press(Message::AddToNcmPlaylist(
+                                                    song_id.unsigned_abs(),
+                                                    pl_id,
+                                                )),
+                                            );
+                                        }
+                                        scrollable(container(col).width(Fill))
+                                            .height(Length::Fixed(300.0))
+                                            .into()
+                                    }
+                                    _ => {
+                                        let playlists = self.library.playlists.clone();
+                                        if playlists.is_empty() {
+                                            text("No playlists available")
+                                                .size(14)
+                                                .style(|theme| text::Style {
+                                                    color: Some(crate::ui::theme::text_muted(
+                                                        theme,
+                                                    )),
+                                                })
+                                                .into()
+                                        } else {
                                             let mut col = column![].spacing(4);
-                                            for pl in pls {
-                                                let pl_name = pl.name.clone();
+                                            for pl in &playlists {
                                                 let pl_id = pl.id;
+                                                let pl_name = pl.name.clone();
                                                 let s = CoverSize::Picker;
-                                                let cover_handle = cover_thumb::resolve_playlist_cover(pl_id);
+                                                let cover_handle = pl
+                                                    .cover_path
+                                                    .as_ref()
+                                                    .filter(|p| std::path::Path::new(p).exists())
+                                                    .map(|p| {
+                                                        iced::widget::image::Handle::from_path(
+                                                            std::path::PathBuf::from(p),
+                                                        )
+                                                    });
+                                                let thumb = cover_thumb::thumb(
+                                                    cover_handle.as_ref(),
+                                                    s.px(),
+                                                    s.radius(),
+                                                );
                                                 col = col.push(
                                                     button(
                                                         row![
-                                                            cover_thumb::thumb(cover_handle.as_ref(), s.px(), s.radius()),
+                                                            thumb,
                                                             Space::new().width(12),
                                                             text(pl_name).size(13),
                                                             Space::new().width(Fill),
@@ -590,19 +666,19 @@ impl App {
                                                     .padding([8, 14])
                                                     .width(Fill)
                                                     .style(|theme, status| {
-                                                        let bg =
-                                                            matches!(
-                                                                status,
-                                                                button::Status::Hovered
-                                                            )
-                                                            .then_some(
-                                                                iced::Background::Color(
-                                                                    crate::ui::theme::hover_bg(theme),
-                                                                ),
-                                                            );
+                                                        let bg = matches!(
+                                                            status,
+                                                            button::Status::Hovered
+                                                        )
+                                                        .then_some(iced::Background::Color(
+                                                            crate::ui::theme::hover_bg(theme),
+                                                        ));
                                                         button::Style {
                                                             background: bg,
-                                                            text_color: crate::ui::theme::text_primary(theme),
+                                                            text_color:
+                                                                crate::ui::theme::text_primary(
+                                                                    theme,
+                                                                ),
                                                             border: iced::Border {
                                                                 radius: 8.0.into(),
                                                                 ..Default::default()
@@ -610,9 +686,8 @@ impl App {
                                                             ..Default::default()
                                                         }
                                                     })
-                                                    .on_press(Message::AddToNcmPlaylist(
-                                                        song_id.unsigned_abs(),
-                                                        pl_id,
+                                                    .on_press(Message::PlaylistPickerConfirm(
+                                                        song_id, pl_id,
                                                     )),
                                                 );
                                             }
@@ -620,71 +695,8 @@ impl App {
                                                 .height(Length::Fixed(300.0))
                                                 .into()
                                         }
-                                        _ => {
-                                            let playlists = self.library.playlists.clone();
-                                            if playlists.is_empty() {
-                                                text("No playlists available")
-                                                    .size(14)
-                                                    .style(|theme| text::Style {
-                                                        color: Some(crate::ui::theme::text_muted(theme)),
-                                                    })
-                                                    .into()
-                                            } else {
-                                                let mut col = column![].spacing(4);
-                                                for pl in &playlists {
-                                                    let pl_id = pl.id;
-                                                    let pl_name = pl.name.clone();
-                                                    let s = CoverSize::Picker;
-                                                    let cover_handle = pl.cover_path.as_ref()
-                                                        .filter(|p| std::path::Path::new(p).exists())
-                                                        .map(|p| iced::widget::image::Handle::from_path(std::path::PathBuf::from(p)));
-                                                    let thumb = cover_thumb::thumb(
-                                                        cover_handle.as_ref(), s.px(), s.radius(),
-                                                    );
-                                                    col = col.push(
-                                                        button(
-                                                            row![
-                                                                thumb,
-                                                                Space::new().width(12),
-                                                                text(pl_name).size(13),
-                                                                Space::new().width(Fill),
-                                                            ]
-                                                            .align_y(Alignment::Center),
-                                                        )
-                                                        .padding([8, 14])
-                                                        .width(Fill)
-                                                        .style(|theme, status| {
-                                                            let bg = matches!(
-                                                                status,
-                                                                button::Status::Hovered
-                                                            )
-                                                            .then_some(
-                                                                iced::Background::Color(
-                                                                    crate::ui::theme::hover_bg(theme),
-                                                                ),
-                                                            );
-                                                            button::Style {
-                                                                background: bg,
-                                                                text_color: crate::ui::theme::text_primary(theme),
-                                                                border: iced::Border {
-                                                                    radius: 8.0.into(),
-                                                                    ..Default::default()
-                                                                },
-                                                                ..Default::default()
-                                                            }
-                                                        })
-                                                        .on_press(Message::PlaylistPickerConfirm(
-                                                            song_id,
-                                                            pl_id,
-                                                        )),
-                                                    );
-                                                }
-                                                scrollable(container(col).width(Fill))
-                                                    .height(Length::Fixed(300.0))
-                                                    .into()
-                                            }
-                                        }
-                                    };
+                                    }
+                                };
 
                                 overlay::modal_section(
                                     title,
@@ -694,11 +706,7 @@ impl App {
                                 )
                             }
                         };
-                        overlay::modal_view(
-                            config,
-                            content,
-                            Message::DismissTopModal,
-                        )
+                        overlay::modal_view(config, content, Message::DismissTopModal)
                     }
                 },
                 _ => Space::new().width(0).height(0).into(),
@@ -871,4 +879,3 @@ fn accent_btn(label: String, msg: Message) -> Element<'static, Message> {
         .on_press(msg)
         .into()
 }
-

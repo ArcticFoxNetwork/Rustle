@@ -190,7 +190,7 @@ impl LyricsEnginePrimitive {
         }
 
         // Get cached shaped lines (Single Source of Truth)
-        let shaped_lines = Arc::new(engine.cached_shaped_lines().to_vec());
+        let shaped_lines = engine.cached_shaped_lines();
 
         // Now get immutable data
         let dots = engine.interlude_dots();

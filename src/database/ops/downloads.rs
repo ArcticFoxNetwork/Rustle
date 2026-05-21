@@ -44,4 +44,3 @@ pub async fn delete_download(pool: &Pool<Sqlite>, song_id: i64) -> Result<(), sq
         .await?;
     Ok(())
 }
-

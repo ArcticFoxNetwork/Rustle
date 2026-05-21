@@ -194,9 +194,8 @@ fn build_active_card(task: &DownloadTask) -> Element<'static, Message> {
 
     let s = crate::ui::components::cover_thumb::CoverSize::Medium;
     let cover_handle = crate::ui::components::cover_thumb::resolve_song_cover(task.song_id);
-    let cover = crate::ui::components::cover_thumb::thumb(
-        cover_handle.as_ref(), s.px(), s.radius(),
-    );
+    let cover =
+        crate::ui::components::cover_thumb::thumb(cover_handle.as_ref(), s.px(), s.radius());
 
     let info = column![
         text(title)
@@ -334,15 +333,17 @@ fn build_completed_card(task: &DownloadTask) -> Element<'static, Message> {
     let actions = row![
         svg_btn(crate::ui::icons::PLAY, Message::PlaySong(song_id)),
         svg_btn(crate::ui::icons::EDIT, Message::EditSongTags(song_id)),
-        svg_btn(crate::ui::icons::TRASH, Message::DeleteDownloadHistory(song_id)),
+        svg_btn(
+            crate::ui::icons::TRASH,
+            Message::DeleteDownloadHistory(song_id)
+        ),
     ]
     .spacing(4);
 
     let s = crate::ui::components::cover_thumb::CoverSize::Medium;
     let cover_handle = crate::ui::components::cover_thumb::resolve_song_cover(task.song_id);
-    let cover = crate::ui::components::cover_thumb::thumb(
-        cover_handle.as_ref(), s.px(), s.radius(),
-    );
+    let cover =
+        crate::ui::components::cover_thumb::thumb(cover_handle.as_ref(), s.px(), s.radius());
 
     container(
         row![

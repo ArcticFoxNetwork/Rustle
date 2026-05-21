@@ -108,14 +108,14 @@ impl App {
                         use crate::ui::overlay::{
                             ModalConfig, ModalKind, OverlayEntry, OverlayKind,
                         };
-                        self.ui.overlay_stack.push(OverlayEntry::new(
-                            OverlayKind::Modal(
+                        self.ui
+                            .overlay_stack
+                            .push(OverlayEntry::new(OverlayKind::Modal(
                                 ModalKind::ExitConfirm {
                                     remember_choice: false,
                                 },
                                 ModalConfig::default().width(380.0).no_backdrop_dismiss(),
-                            ),
-                        ));
+                            )));
                     }
                     CloseBehavior::Exit => {
                         return Some(iced::exit());
