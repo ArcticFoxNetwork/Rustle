@@ -40,7 +40,7 @@ pub fn is_protocol_registered() -> bool {
 #[cfg(target_os = "macos")]
 pub fn setup_macos_url_handler(tx: crate::protocol::ipc::IpcSender) {
     use std::sync::Mutex;
-    use objc2::{define_class, msg_send, sel, ClassType};
+    use objc2::{define_class, msg_send, sel, AnyThread};
     use objc2::rc::Retained;
     use objc2::runtime::{NSObject, NSObjectProtocol};
     use objc2_foundation::{NSAppleEventDescriptor, NSAppleEventManager};
