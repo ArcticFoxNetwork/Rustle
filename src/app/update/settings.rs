@@ -1,65 +1,41 @@
 //! Settings update handlers
 
-use crate::app::SettingsSection;
 use crate::app::message::Message;
 use crate::app::state::{App, Route};
+use crate::app::SettingsSection;
 use crate::cache;
 use crate::features::keybindings::{KeyBinding, KeyCode, ModifierSet};
 use iced::Task;
 use iced::keyboard::Key;
 
-/// Section positions when user is NOT logged in
-const SECTION_POSITIONS_LOGGED_OUT: [(SettingsSection, f32); 8] = [
-    (SettingsSection::Account, 0.0),
-    (SettingsSection::Playback, 150.0),
-    (SettingsSection::Display, 500.0),
-    (SettingsSection::System, 850.0),
-    (SettingsSection::Network, 1000.0),
-    (SettingsSection::Storage, 1150.0),
-    (SettingsSection::Shortcuts, 1390.0),
-    (SettingsSection::About, 1965.0),
-];
+/// Number of scroll events to keep calibrating a section's position after snap_to
+pub(crate) const SNAP_CALIBRATE_COUNT: u8 = 5;
 
-/// Offset to add when user IS logged in (Account section is larger)
-const LOGGED_IN_OFFSET: f32 = 80.0;
-
-/// Get scroll position for a section based on login state
-fn get_section_scroll_position(section: SettingsSection, is_logged_in: bool) -> f32 {
-    let base_pos = SECTION_POSITIONS_LOGGED_OUT
-        .iter()
-        .find(|(s, _)| *s == section)
-        .map(|(_, pos)| *pos)
-        .unwrap_or(0.0);
-
-    // Add offset for logged in users (except Account which stays at 0)
-    if is_logged_in && section != SettingsSection::Account {
-        base_pos + LOGGED_IN_OFFSET
-    } else {
-        base_pos
+impl App {
+    /// Get which section corresponds to a scroll Y offset (for tab highlight)
+    fn section_at_position(&self, y_offset: f32) -> SettingsSection {
+        let mut current = SettingsSection::Account;
+        for (section, pos) in &self.ui.section_positions {
+            if y_offset >= *pos - 20.0 {
+                current = *section;
+            } else {
+                break;
+            }
+        }
+        current
     }
-}
 
-/// Get section from scroll position based on login state
-fn get_section_from_scroll_position(y_offset: f32, is_logged_in: bool) -> SettingsSection {
-    // Adjust offset for logged in state
-    let adjusted_y = if is_logged_in {
-        y_offset - LOGGED_IN_OFFSET
-    } else {
-        y_offset
-    };
-
-    // Add a small offset (50px) to trigger section change slightly before reaching it
-    let search_offset = adjusted_y + 50.0;
-
-    let mut current_section = SettingsSection::Account;
-    for (section, pos) in SECTION_POSITIONS_LOGGED_OUT.iter() {
-        if search_offset >= *pos {
-            current_section = *section;
-        } else {
-            break;
+    pub(super) fn sync_settings_section_route(&mut self, section: SettingsSection) {
+        self.ui.active_settings_section = section;
+        if matches!(self.ui.current_route, Route::Settings(_)) {
+            self.ui.current_route = Route::Settings(section);
+            self.ui
+                .nav_history
+                .replace_current(crate::app::state::NavigationEntry::Route(
+                    self.ui.current_route.clone(),
+                ));
         }
     }
-    current_section
 }
 
 /// Convert iced Key to our KeyCode
@@ -144,22 +120,6 @@ fn key_to_keycode(key: &Key) -> Option<KeyCode> {
 }
 
 impl App {
-    pub(super) fn settings_section_scroll_position(&self, section: SettingsSection) -> f32 {
-        get_section_scroll_position(section, self.core.is_logged_in)
-    }
-
-    pub(super) fn sync_settings_section_route(&mut self, section: SettingsSection) {
-        self.ui.active_settings_section = section;
-        if matches!(self.ui.current_route, Route::Settings(_)) {
-            self.ui.current_route = Route::Settings(section);
-            self.ui
-                .nav_history
-                .replace_current(crate::app::state::NavigationEntry::Route(
-                    self.ui.current_route.clone(),
-                ));
-        }
-    }
-
     pub(super) fn refresh_cache_stats(&mut self) {
         let stats = cache::calculate_cache_stats();
         self.ui.cache_stats = Some(stats);
@@ -423,21 +383,29 @@ impl App {
             }
             Message::ScrollToSection(section) => {
                 self.sync_settings_section_route(*section);
-                // Get target scroll position for section based on login state
-                let is_logged_in = self.core.is_logged_in;
-                let target_y = get_section_scroll_position(*section, is_logged_in);
-                Some(iced::widget::operation::scroll_to(
-                    iced::widget::Id::new("settings_scroll"),
-                    iced::widget::scrollable::AbsoluteOffset {
-                        x: Some(0.0),
-                        y: Some(target_y),
-                    },
+                self.ui.pending_snap_section = Some((*section, SNAP_CALIBRATE_COUNT));
+                Some(iced::widget::operation::snap_to(
+                    section.widget_id(),
+                    iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
                 ))
             }
             Message::SettingsScrolled(y_offset) => {
-                // Update active section based on scroll position and login state
-                let is_logged_in = self.core.is_logged_in;
-                let section = get_section_from_scroll_position(*y_offset, is_logged_in);
+                let section = if let Some((pending, countdown)) = self.ui.pending_snap_section {
+                    // Calibrate: snap_to animation in progress — record section position
+                    self.ui.section_positions.retain(|(s, _)| *s != pending);
+                    self.ui.section_positions.push((pending, *y_offset));
+                    self.ui
+                        .section_positions
+                        .sort_by_key(|(_, p)| (*p * 100.0) as i32);
+                    if countdown > 1 {
+                        self.ui.pending_snap_section = Some((pending, countdown - 1));
+                    } else {
+                        self.ui.pending_snap_section = None;
+                    }
+                    pending
+                } else {
+                    self.section_at_position(*y_offset)
+                };
                 self.sync_settings_section_route(section);
                 Some(Task::none())
             }

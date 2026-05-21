@@ -28,6 +28,7 @@ impl App {
         self.ui.playlist_page.search_expanded = false;
         self.ui.playlist_page.search_query.clear();
         self.ui.playlist_page.song_animations.cleanup_completed();
+        self.ui.playlist_page.description_expanded = false;
     }
 
     fn clear_playlist_route_markers(&mut self) {
@@ -145,12 +146,11 @@ impl App {
             Route::Downloads => Task::none(),
             Route::Settings(section) => {
                 self.refresh_cache_stats();
-                iced::widget::operation::scroll_to(
-                    iced::widget::Id::new("settings_scroll"),
-                    iced::widget::scrollable::AbsoluteOffset {
-                        x: Some(0.0),
-                        y: Some(self.settings_section_scroll_position(*section)),
-                    },
+                self.ui.pending_snap_section =
+                    Some((*section, super::settings::SNAP_CALIBRATE_COUNT));
+                iced::widget::operation::snap_to(
+                    section.widget_id(),
+                    iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
                 )
             }
             Route::AudioEngine => iced::widget::operation::snap_to(

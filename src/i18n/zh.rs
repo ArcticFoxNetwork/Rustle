@@ -228,6 +228,8 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
 
     // Playlist View
     m.insert(Key::PlaylistNoSongs, "暂无歌曲");
+    m.insert(Key::ExpandDescription, "展开 ▼");
+    m.insert(Key::CollapseDescription, "收起 ▲");
 
     // Login Popup
     m.insert(Key::LoginScanQr, "扫码登录");

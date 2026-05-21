@@ -193,46 +193,71 @@ fn all_sections_content(
     user_info: Option<&crate::app::UserInfo>,
     cache_stats: Option<&crate::cache::CacheStats>,
 ) -> Element<'static, Message> {
+    use crate::app::SettingsSection;
     column![
         // Account section
-        section_header(locale.get(Key::SettingsAccountTitle)),
-        Space::new().height(16),
-        account_section(is_logged_in, user_info, locale),
+        container(column![
+            section_header(locale.get(Key::SettingsAccountTitle)),
+            Space::new().height(16),
+            account_section(is_logged_in, user_info, locale),
+        ])
+        .id(SettingsSection::Account.widget_id()),
         Space::new().height(40),
         // Playback section
-        section_header(locale.get(Key::SettingsPlaybackTitle)),
-        Space::new().height(16),
-        playback_section(settings, locale),
+        container(column![
+            section_header(locale.get(Key::SettingsPlaybackTitle)),
+            Space::new().height(16),
+            playback_section(settings, locale),
+        ])
+        .id(SettingsSection::Playback.widget_id()),
         Space::new().height(40),
         // Display section
-        section_header(locale.get(Key::SettingsDisplayTitle)),
-        Space::new().height(16),
-        display_section(settings, locale),
+        container(column![
+            section_header(locale.get(Key::SettingsDisplayTitle)),
+            Space::new().height(16),
+            display_section(settings, locale),
+        ])
+        .id(SettingsSection::Display.widget_id()),
         Space::new().height(40),
         // System section
-        section_header(locale.get(Key::SettingsSystemTitle)),
-        Space::new().height(16),
-        system_section(settings, audio_devices, locale),
+        container(column![
+            section_header(locale.get(Key::SettingsSystemTitle)),
+            Space::new().height(16),
+            system_section(settings, audio_devices, locale),
+        ])
+        .id(SettingsSection::System.widget_id()),
         Space::new().height(40),
         // Network section
-        section_header(locale.get(Key::SettingsNetworkTitle)),
-        Space::new().height(16),
-        network_section(settings, locale),
+        container(column![
+            section_header(locale.get(Key::SettingsNetworkTitle)),
+            Space::new().height(16),
+            network_section(settings, locale),
+        ])
+        .id(SettingsSection::Network.widget_id()),
         Space::new().height(40),
         // Storage section
-        section_header(locale.get(Key::SettingsStorageTitle)),
-        Space::new().height(16),
-        storage_section(settings, locale, cache_stats),
+        container(column![
+            section_header(locale.get(Key::SettingsStorageTitle)),
+            Space::new().height(16),
+            storage_section(settings, locale, cache_stats),
+        ])
+        .id(SettingsSection::Storage.widget_id()),
         Space::new().height(40),
         // Shortcuts section
-        section_header(locale.get(Key::SettingsShortcutsTitle)),
-        Space::new().height(16),
-        shortcuts_section(&settings.keybindings, locale, editing_keybinding),
+        container(column![
+            section_header(locale.get(Key::SettingsShortcutsTitle)),
+            Space::new().height(16),
+            shortcuts_section(&settings.keybindings, locale, editing_keybinding),
+        ])
+        .id(SettingsSection::Shortcuts.widget_id()),
         Space::new().height(40),
         // About section
-        section_header(locale.get(Key::SettingsAboutTitle)),
-        Space::new().height(16),
-        about_section(locale),
+        container(column![
+            section_header(locale.get(Key::SettingsAboutTitle)),
+            Space::new().height(16),
+            about_section(locale),
+        ])
+        .id(SettingsSection::About.widget_id()),
     ]
     .spacing(0)
     .width(Fill)

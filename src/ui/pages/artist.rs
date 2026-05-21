@@ -4,11 +4,11 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use iced::widget::{Space, button, column, container, image, row, text};
+use iced::widget::{Space, button, column, container, image, row, scrollable, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
 use crate::app::{ContentWidthTarget, Message};
-use crate::i18n::Locale;
+use crate::i18n::{Key, Locale};
 use crate::ui::components::playlist_view::{self, PlaylistColumns};
 use crate::ui::pages::playlist::{self, ArtistPageTab, PlaylistView};
 use crate::ui::theme::BOLD_WEIGHT;
@@ -28,8 +28,9 @@ pub fn view<'a>(
     current_user_id: Option<u64>,
     current_playing_id: Option<i64>,
     content_width: f32,
+    description_expanded: bool,
 ) -> Element<'a, Message> {
-    let header = build_header(artist);
+    let header = build_header(artist, description_expanded, locale);
     let controls = playlist::build_controls(
         artist,
         icon_animations,
@@ -102,7 +103,11 @@ pub fn view<'a>(
         .into()
 }
 
-fn build_header(artist: &PlaylistView) -> Element<'static, Message> {
+fn build_header(
+    artist: &PlaylistView,
+    description_expanded: bool,
+    locale: Locale,
+) -> Element<'static, Message> {
     let avatar_size = 216.0;
     let avatar = circular_avatar(
         artist.cover_path.as_deref(),
@@ -134,25 +139,91 @@ fn build_header(artist: &PlaylistView) -> Element<'static, Message> {
         color: Some(theme::text_secondary(theme)),
     });
 
-    let intro = text(
-        artist
+    let intro: Element<'static, Message> = {
+        let desc_text = artist
             .description
             .clone()
             .filter(|text| !text.trim().is_empty())
-            .unwrap_or_else(|| "暂无简介".to_string()),
-    )
-    .size(theme::TEXT_SIZE_BODY_LARGE)
-    .style(|theme| iced::widget::text::Style {
-        color: Some(theme::text_muted(theme)),
-    })
-    .wrapping(iced::widget::text::Wrapping::WordOrGlyph);
+            .unwrap_or_else(|| "暂无简介".to_string());
+        let has_description = artist
+            .description
+            .as_ref()
+            .map_or(false, |d| !d.trim().is_empty());
+
+        let line_count = desc_text.lines().count()
+            + desc_text
+                .lines()
+                .map(|l| l.chars().count().saturating_sub(1) / 55)
+                .sum::<usize>();
+        let is_long = line_count > 2;
+
+        let desc_widget = text(desc_text)
+            .size(theme::TEXT_SIZE_BODY_LARGE)
+            .style(|theme| iced::widget::text::Style {
+                color: Some(theme::text_muted(theme)),
+            })
+            .wrapping(iced::widget::text::Wrapping::WordOrGlyph);
+
+        if has_description && is_long {
+            if description_expanded {
+                let scrollable_desc = scrollable(
+                    container(desc_widget).width(Fill).padding(Padding::new(4.0).left(0.0)),
+                )
+                .direction(scrollable::Direction::Vertical(
+                    iced::widget::scrollable::Scrollbar::new()
+                        .width(4)
+                        .scroller_width(4),
+                ))
+                .height(150);
+
+                let collapse_btn = button(
+                    text(locale.get(Key::CollapseDescription))
+                        .size(theme::TEXT_SIZE_CAPTION)
+                        .style(|_theme| iced::widget::text::Style {
+                            color: Some(theme::ACCENT_PINK),
+                        }),
+                )
+                .style(theme::transparent_btn)
+                .padding(Padding::new(2.0).left(0.0))
+                .on_press(Message::ToggleDescriptionExpand);
+
+                column![scrollable_desc, collapse_btn]
+                    .spacing(2)
+                    .width(Fill)
+                    .into()
+            } else {
+                let clamped_desc = container(desc_widget)
+                    .max_height(theme::TEXT_SIZE_BODY_LARGE * 1.5 * 2.0 + 4.0)
+                    .clip(true)
+                    .width(Fill);
+
+                let expand_btn = button(
+                    text(locale.get(Key::ExpandDescription))
+                        .size(theme::TEXT_SIZE_CAPTION)
+                        .style(|_theme| iced::widget::text::Style {
+                            color: Some(theme::ACCENT_PINK),
+                        }),
+                )
+                .style(theme::transparent_btn)
+                .padding(Padding::new(2.0).left(0.0))
+                .on_press(Message::ToggleDescriptionExpand);
+
+                column![clamped_desc, expand_btn]
+                    .spacing(2)
+                    .width(Fill)
+                    .into()
+            }
+        } else {
+            container(desc_widget).max_width(720).into()
+        }
+    };
 
     let info = column![
         title,
         Space::new().height(10),
         stats,
         Space::new().height(12),
-        container(intro).max_width(720),
+        intro,
     ]
     .align_x(Alignment::Start)
     .width(Fill);

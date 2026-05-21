@@ -387,6 +387,12 @@ impl App {
                 Some(Task::none())
             }
 
+            Message::ToggleDescriptionExpand => {
+                self.ui.playlist_page.description_expanded =
+                    !self.ui.playlist_page.description_expanded;
+                Some(Task::none())
+            }
+
             Message::PlaylistPickerConfirm(song_id, playlist_id) => {
                 let sid = *song_id;
                 let pid = *playlist_id;

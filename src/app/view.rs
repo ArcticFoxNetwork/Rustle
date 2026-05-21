@@ -142,6 +142,7 @@ impl App {
                         self.ui.playlist_page.scroll_state.clone(),
                         current_user_id,
                         current_playing_id,
+                        self.ui.playlist_page.description_expanded,
                     )
                 } else {
                     Space::new().width(Fill).height(Fill).into()
@@ -162,6 +163,7 @@ impl App {
                         current_user_id,
                         current_playing_id,
                         self.ui.playlist_page.content_width,
+                        self.ui.playlist_page.description_expanded,
                     )
                 } else {
                     Space::new().width(Fill).height(Fill).into()
@@ -183,6 +185,7 @@ impl App {
                         current_user_id,
                         current_playing_id,
                         self.ui.playlist_page.content_width,
+                        self.ui.playlist_page.description_expanded,
                     )
                 } else {
                     Space::new().width(Fill).height(Fill).into()

@@ -10,7 +10,7 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use iced::widget::{
-    Space, button, column, container, image, mouse_area, row, svg, text, text_input,
+    Space, button, column, container, image, mouse_area, row, scrollable, svg, text, text_input,
 };
 use iced::{Alignment, Color, Element, Fill, Padding};
 
@@ -86,9 +86,10 @@ pub fn view<'a>(
     scroll_state: Rc<RefCell<VirtualListState>>,
     current_user_id: Option<u64>,
     current_playing_id: Option<i64>,
+    description_expanded: bool,
 ) -> Element<'a, Message> {
     let palette = playlist.palette.clone();
-    let header = build_header(playlist, locale);
+    let header = build_header(playlist, locale, description_expanded);
     let controls = build_controls(
         playlist,
         icon_animations,
@@ -180,7 +181,11 @@ pub fn view<'a>(
 }
 
 /// Build the playlist header
-fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Message> {
+fn build_header(
+    playlist: &PlaylistView,
+    locale: Locale,
+    description_expanded: bool,
+) -> Element<'static, Message> {
     // Cover: playlist own cover → first song cover → NCM cache → placeholder
     let cover_path_opt = {
         let meta = crate::metadata::SongMetadata {
@@ -233,15 +238,79 @@ fn build_header(playlist: &PlaylistView, locale: Locale) -> Element<'static, Mes
         })
         .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
-    // Description (slightly muted but readable)
-    let description = if let Some(desc) = &playlist.description {
-        text(desc.clone())
+    // Description — clamped to 2 lines by default, expandable when long
+    let description: Element<'static, Message> = if let Some(desc) = &playlist.description {
+        let desc_text = desc.clone();
+        // Rough estimate: count newlines + approximate line wraps by char count
+        let line_count = desc_text.lines().count()
+            + desc_text
+                .lines()
+                .map(|l| l.chars().count().saturating_sub(1) / 55)
+                .sum::<usize>();
+        let is_long = line_count > 2;
+
+        let desc_widget = text(desc_text)
             .size(theme::TEXT_SIZE_BODY_LARGE)
             .style(|theme| text::Style {
                 color: Some(theme::text_secondary(theme)),
-            })
+            });
+
+        if is_long {
+            if description_expanded {
+                // Expanded: scrollable description with "收起" button
+                let scrollable_desc = scrollable(
+                    container(desc_widget).width(Fill).padding(Padding::new(4.0).left(0.0)),
+                )
+                .direction(scrollable::Direction::Vertical(
+                    iced::widget::scrollable::Scrollbar::new()
+                        .width(4)
+                        .scroller_width(4),
+                ))
+                .height(150);
+
+                let collapse_btn = button(
+                    text(locale.get(Key::CollapseDescription))
+                        .size(theme::TEXT_SIZE_CAPTION)
+                        .style(|_theme| text::Style {
+                            color: Some(theme::ACCENT_PINK),
+                        }),
+                )
+                .style(theme::transparent_btn)
+                .padding(Padding::new(2.0).left(0.0))
+                .on_press(Message::ToggleDescriptionExpand);
+
+                column![scrollable_desc, collapse_btn]
+                    .spacing(2)
+                    .width(Fill)
+                    .into()
+            } else {
+                // Collapsed: clamped to 2 lines with "展开" button
+                let clamped_desc = container(desc_widget)
+                    .max_height(theme::TEXT_SIZE_BODY_LARGE * 1.5 * 2.0 + 4.0)
+                    .clip(true)
+                    .width(Fill);
+
+                let expand_btn = button(
+                    text(locale.get(Key::ExpandDescription))
+                        .size(theme::TEXT_SIZE_CAPTION)
+                        .style(|_theme| text::Style {
+                            color: Some(theme::ACCENT_PINK),
+                        }),
+                )
+                .style(theme::transparent_btn)
+                .padding(Padding::new(2.0).left(0.0))
+                .on_press(Message::ToggleDescriptionExpand);
+
+                column![clamped_desc, expand_btn]
+                    .spacing(2)
+                    .width(Fill)
+                    .into()
+            }
+        } else {
+            desc_widget.into()
+        }
     } else {
-        text("").size(theme::TEXT_SIZE_BODY_LARGE)
+        text("").size(theme::TEXT_SIZE_BODY_LARGE).into()
     };
 
     // Owner avatar - use real avatar if available, otherwise show first letter

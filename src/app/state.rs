@@ -722,6 +722,10 @@ pub struct UiState {
 
     // Global UI Layout
     pub active_settings_section: SettingsSection,
+    /// Runtime-measured Y positions of each settings section (for scroll→tab mapping)
+    pub section_positions: Vec<(SettingsSection, f32)>,
+    /// Section being snapped to with countdown for calibration (cleared when animation settles)
+    pub pending_snap_section: Option<(SettingsSection, u8)>,
     pub editing_keybinding: Option<crate::features::Action>,
     pub queue_visible: bool,
 
@@ -799,6 +803,17 @@ impl UiState {
                 history
             },
             active_settings_section: SettingsSection::Account,
+            section_positions: vec![
+                (SettingsSection::Account, 0.0),
+                (SettingsSection::Playback, 150.0),
+                (SettingsSection::Display, 500.0),
+                (SettingsSection::System, 850.0),
+                (SettingsSection::Network, 1000.0),
+                (SettingsSection::Storage, 1150.0),
+                (SettingsSection::Shortcuts, 1390.0),
+                (SettingsSection::About, 1965.0),
+            ],
+            pending_snap_section: None,
             editing_keybinding: None,
             queue_visible: false,
             seek_preview_position: None,
@@ -828,6 +843,7 @@ impl UiState {
                 load_state: Default::default(),
                 content_width: 904.0,
                 artist_album_covers: std::collections::HashMap::new(),
+                description_expanded: false,
             },
 
             lyrics: LyricsState {
@@ -958,6 +974,8 @@ pub struct PlaylistPageState {
     pub content_width: f32,
     /// Cached cover handles for artist page album cards
     pub artist_album_covers: std::collections::HashMap<u64, iced::widget::image::Handle>,
+    /// Whether the playlist description is expanded (vs clamped to 2 lines)
+    pub description_expanded: bool,
 }
 
 pub struct LyricsState {

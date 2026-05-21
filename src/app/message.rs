@@ -30,6 +30,22 @@ pub enum SettingsSection {
     About,
 }
 
+impl SettingsSection {
+    /// Widget ID for snap_to scrolling in the settings page
+    pub fn widget_id(self) -> iced::widget::Id {
+        iced::widget::Id::new(match self {
+            SettingsSection::Account => "settings_section_account",
+            SettingsSection::Playback => "settings_section_playback",
+            SettingsSection::Display => "settings_section_display",
+            SettingsSection::System => "settings_section_system",
+            SettingsSection::Network => "settings_section_network",
+            SettingsSection::Storage => "settings_section_storage",
+            SettingsSection::Shortcuts => "settings_section_shortcuts",
+            SettingsSection::About => "settings_section_about",
+        })
+    }
+}
+
 /// Target state bucket for measured responsive content widths.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContentWidthTarget {
@@ -244,6 +260,8 @@ pub enum Message {
     PlaylistSearchSubmit,
     /// Playlist search input lost focus
     PlaylistSearchBlur,
+    /// Toggle playlist description expand/collapse
+    ToggleDescriptionExpand,
 
     // ============ Edit dialog ============
     /// Edit playlist (open edit dialog)
@@ -947,6 +965,7 @@ impl std::fmt::Debug for Message {
             Self::PlaylistSearchChanged(_) => simple!("PlaylistSearchChanged"),
             Self::PlaylistSearchSubmit => simple!("PlaylistSearchSubmit"),
             Self::PlaylistSearchBlur => simple!("PlaylistSearchBlur"),
+            Self::ToggleDescriptionExpand => simple!("ToggleDescriptionExpand"),
 
             // Edit dialog
             Self::EditPlaylist(id) => simple!("EditPlaylist", "{}", id),

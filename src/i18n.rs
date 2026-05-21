@@ -252,6 +252,8 @@ pub enum Key {
 
     // Playlist View
     PlaylistNoSongs,
+    ExpandDescription,
+    CollapseDescription,
 
     // Login Popup
     LoginScanQr,

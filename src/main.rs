@@ -24,8 +24,10 @@ fn main() -> iced::Result {
     let args: Vec<String> = std::env::args().collect();
 
     // Handle rustle:// protocol URL from CLI
-    if args.len() >= 3 && args[1] == "--protocol-handler" {
-        let uri = args[2].clone();
+    // sysuri registers the desktop file with "Exec=/path/to/rustle %u",
+    // so the URL arrives directly as args[1], not via a --protocol-handler flag.
+    if args.len() >= 2 && (args[1].starts_with("rustle://") || args[1].starts_with("rustle-dev://")) {
+        let uri = args[1].clone();
         match protocol::ipc::forward_uri_to_primary(&uri) {
             Ok(()) => {
                 tracing::info!("URI forwarded to primary instance, exiting");
