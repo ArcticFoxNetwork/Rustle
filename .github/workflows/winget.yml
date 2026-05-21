@@ -8,9 +8,10 @@
 name: WinGet
 
 on:
-  release:
+  workflow_run:
+    workflows: ["Release"]
     types:
-      - published
+      - completed
   workflow_dispatch:
     inputs:
       tag:
@@ -30,13 +31,13 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: read
-    if: github.event_name != 'release' || github.event.release.prerelease == false
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && startsWith(github.event.workflow_run.head_branch, 'v'))
     steps:
       - name: Resolve release metadata
         id: release
         shell: pwsh
         run: |
-          $tag = "${{ github.event.release.tag_name }}"
+          $tag = "${{ github.event.workflow_run.head_branch }}"
           if (-not $tag) {
             $tag = "${{ inputs.tag }}"
           }
