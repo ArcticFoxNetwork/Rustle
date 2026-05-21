@@ -8,14 +8,14 @@ pub use size::CoverSize;
 
 mod size {
     pub enum CoverSize {
-        Tiny, Picker, Small, Medium, Large,
+        Tiny, Picker, Small, Medium, Large, ExtraLarge,
     }
     impl CoverSize {
         pub fn px(&self) -> f32 {
-            match self { CoverSize::Tiny => 40.0, CoverSize::Picker => 40.0, CoverSize::Small => 48.0, CoverSize::Medium => 56.0, CoverSize::Large => 200.0 }
+            match self { CoverSize::Tiny => 40.0, CoverSize::Picker => 40.0, CoverSize::Small => 48.0, CoverSize::Medium => 56.0, CoverSize::Large => 200.0, CoverSize::ExtraLarge => 400.0 }
         }
         pub fn radius(&self) -> f32 {
-            match self { CoverSize::Tiny => 4.0, CoverSize::Picker => 8.0, CoverSize::Small => 4.0, CoverSize::Medium => 8.0, CoverSize::Large => 12.0 }
+            match self { CoverSize::Tiny => 4.0, CoverSize::Picker => 8.0, CoverSize::Small => 4.0, CoverSize::Medium => 8.0, CoverSize::Large => 12.0, CoverSize::ExtraLarge => 16.0 }
         }
     }
 }

@@ -288,7 +288,7 @@ fn build_left_panel<'a>(
     let current_time = format_time(position * duration_secs);
     let total_time = format_time(duration_secs);
 
-    let s = crate::ui::components::cover_thumb::CoverSize::Large;
+    let s = crate::ui::components::cover_thumb::CoverSize::ExtraLarge;
     let cover_handle = crate::ui::components::cover_thumb::resolve_song_cover(song.id);
     let cover = crate::ui::components::cover_thumb::thumb(
         cover_handle.as_ref(), s.px(), s.radius(),
