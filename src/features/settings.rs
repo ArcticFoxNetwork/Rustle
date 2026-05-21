@@ -480,20 +480,26 @@ impl StorageSettings {
     pub fn effective_download_dir(&self) -> PathBuf {
         if let Some(ref dir) = self.download_dir {
             let path = PathBuf::from(dir);
-            if path.exists() || path.parent().map(|p| p.exists()).unwrap_or(false) {
+            if path.exists() {
+                return path;
+            }
+            // Create if parent exists (path is valid)
+            if path.parent().map(|p| p.exists()).unwrap_or(false) {
+                let _ = std::fs::create_dir_all(&path);
                 return path;
             }
         }
         // Default: system Music folder / Rustle
-        directories::UserDirs::new()
+        let default_dir = directories::UserDirs::new()
             .and_then(|dirs| dirs.audio_dir().map(|p| p.join("Rustle")))
             .or_else(|| {
-                // XDG spec default: $HOME/Music when XDG_MUSIC_DIR is unset
                 std::env::var("HOME")
                     .ok()
                     .map(|home| PathBuf::from(home).join("Music").join("Rustle"))
             })
-            .unwrap_or_else(|| PathBuf::from("."))
+            .unwrap_or_else(|| PathBuf::from("."));
+        let _ = std::fs::create_dir_all(&default_dir);
+        default_dir
     }
 }
 

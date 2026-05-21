@@ -10,10 +10,7 @@ use crate::api::NcmClient;
 
 /// Lyrics cache directory
 fn lyrics_cache_dir() -> PathBuf {
-    directories::ProjectDirs::from("life", "fxs", "rustle")
-        .map(|dirs| dirs.cache_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("lyrics")
+    crate::utils::cache_dir().join("lyrics")
 }
 
 /// Get cached lyrics file path for a song

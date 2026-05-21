@@ -265,7 +265,7 @@ pub fn format_relative_time(timestamp: i64) -> String {
 pub fn cache_dir() -> PathBuf {
     directories::ProjectDirs::from("life", "fxs", "rustle")
         .map(|dirs| dirs.cache_dir().to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|| PathBuf::from("~/.cache/rustle"))
 }
 
 /// Get the covers cache directory

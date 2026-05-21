@@ -832,9 +832,7 @@ fn storage_section(
     cache_stats: Option<&crate::cache::CacheStats>,
 ) -> Element<'static, Message> {
     // Get cache directory path
-    let cache_dir = directories::ProjectDirs::from("life", "fxs", "rustle")
-        .map(|dirs| dirs.cache_dir().to_path_buf())
-        .unwrap_or_else(|| std::path::PathBuf::from("~/.cache/rustle"));
+    let cache_dir = crate::utils::cache_dir();
     let cache_path_str = cache_dir.to_string_lossy().to_string();
 
     // Use cached stats if available, otherwise calculate on-demand

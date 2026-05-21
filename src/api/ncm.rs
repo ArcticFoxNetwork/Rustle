@@ -144,12 +144,6 @@ impl NcmClient {
             .unwrap_or_else(|| PathBuf::from("."))
     }
 
-    fn cache_dir() -> PathBuf {
-        directories::ProjectDirs::from("life", "fxs", "rustle")
-            .map(|dirs| dirs.cache_dir().to_path_buf())
-            .unwrap_or_else(|| PathBuf::from("."))
-    }
-
     pub fn cookie_file_path() -> PathBuf {
         let data_dir = Self::data_dir();
         fs::create_dir_all(&data_dir).ok();
@@ -259,7 +253,7 @@ impl NcmClient {
 
     pub async fn create_qrcode(&self) -> Result<(PathBuf, String)> {
         let (qr_url, unikey) = self.client.login_qr_create().await?;
-        let cache_dir = Self::cache_dir();
+        let cache_dir = crate::utils::cache_dir();
         fs::create_dir_all(&cache_dir)?;
 
         // Clean up old QR code files
@@ -293,7 +287,7 @@ impl NcmClient {
     }
 
     pub async fn get_lyrics(&self, si: &SongInfo) -> Result<Vec<(u64, String)>> {
-        let cache_dir = Self::cache_dir();
+        let cache_dir = crate::utils::cache_dir();
         fs::create_dir_all(&cache_dir)?;
 
         let lyric_path = cache_dir.join(format!(
