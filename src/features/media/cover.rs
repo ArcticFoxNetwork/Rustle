@@ -179,17 +179,10 @@ pub fn extract_embedded_cover(audio_path: &Path, output_dir: &Path) -> Result<Op
         _ => return Ok(None),
     };
 
-    let (data, mime) = embedded;
+    let (data, _mime) = embedded;
 
-    // Determine extension from MIME type
-    let ext = match mime.as_str() {
-        "image/jpeg" => "jpg",
-        "image/png" => "png",
-        "image/gif" => "gif",
-        "image/webp" => "webp",
-        "image/bmp" => "bmp",
-        _ => "jpg",
-    };
+    // Determine extension from actual magic bytes, not the MIME type
+    let ext = crate::utils::detect_image_format(&data);
 
     // Create output filename based on audio file name
     let stem = audio_path
