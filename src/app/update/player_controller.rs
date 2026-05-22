@@ -239,47 +239,61 @@ impl App {
         song: &DbSong,
         gain_mode: TrackGainMode,
     ) -> f32 {
-        let (gain, cache_update) = if self.core.settings.playback.volume_normalization {
-            if let Some(cached_gain) = song.normalization_gain {
-                (cached_gain as f32, None)
-            } else {
-                let path = Path::new(&song.file_path);
-                if path.exists() {
-                    let resolved_gain = if matches!(gain_mode, TrackGainMode::AnalyzeIfMissing) {
-                        crate::features::resolve_track_gain(path)
-                    } else {
-                        crate::features::extract_track_gain(path)
-                    };
-
-                    if let Some(computed_gain) = resolved_gain {
-                        (computed_gain, Some(computed_gain as f64))
-                    } else {
-                        (1.0, None)
-                    }
-                } else {
-                    (1.0, None)
-                }
-            }
-        } else {
-            (1.0, None)
-        };
-
-        if let Some(normalization_gain) = cache_update {
-            self.cache_track_gain_in_memory(song, normalization_gain);
+        if !self.core.settings.playback.volume_normalization {
+            return 1.0;
         }
 
-        if let (Some(db), Some(normalization_gain)) = (&self.core.db, cache_update) {
-            let db = db.clone();
+        if let Some(cached_gain) = song.normalization_gain {
+            return cached_gain as f32;
+        }
+
+        let path = Path::new(&song.file_path);
+        if !path.exists() {
+            return 1.0;
+        }
+
+        // Try metadata tags first (fast, synchronous)
+        if let Some(tagged_gain) = crate::features::extract_track_gain(path) {
+            let gain = tagged_gain as f64;
+            self.cache_track_gain_in_memory(song, gain);
+            if let Some(db) = &self.core.db {
+                let db = db.clone();
+                let song_id = song.id;
+                let file_path = song.file_path.clone();
+                tokio::spawn(async move {
+                    let _ = db.update_song_normalization(song_id, &file_path, gain).await;
+                });
+            }
+            return tagged_gain;
+        }
+
+        // No tags available — launch waveform analysis in background if mode allows it.
+        // Play immediately with unity gain to avoid blocking the UI thread.
+        // Result is saved to DB for the next session; no in-memory update needed
+        // because the gain won't apply until the next play or restart anyway.
+        if matches!(gain_mode, TrackGainMode::AnalyzeIfMissing) {
+            let path_buf = path.to_path_buf();
+            let db = self.core.db.clone();
             let song_id = song.id;
             let file_path = song.file_path.clone();
+
             tokio::spawn(async move {
-                let _ = db
-                    .update_song_normalization(song_id, &file_path, normalization_gain)
-                    .await;
+                let result = tokio::task::spawn_blocking(move || {
+                    crate::features::resolve_track_gain(&path_buf)
+                })
+                .await;
+
+                if let Ok(Some(gain)) = result {
+                    if let Some(db) = db {
+                        let _ = db
+                            .update_song_normalization(song_id, &file_path, gain as f64)
+                            .await;
+                    }
+                }
             });
         }
 
-        gain
+        1.0
     }
 
     pub(super) fn play_audio_path_for_song(
