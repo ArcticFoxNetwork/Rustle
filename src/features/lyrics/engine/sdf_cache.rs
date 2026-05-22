@@ -21,11 +21,7 @@ pub type SharedFontSystem = Arc<Mutex<FontSystem>>;
 
 // ---- 全局单例 ----
 
-/// 全局 FontStore — 所有 SdfCache / pre_generate_sdf_batch 共享同一份字体二进制缓存
-static GLOBAL_FONT_STORE: LazyLock<Mutex<FontStore>> =
-    LazyLock::new(|| Mutex::new(FontStore::new()));
-
-/// 全局 FontSystem — 整个应用只有一个实例
+/// 全局 FontSystem — 整个应用只有一个实例, 字形光栅化由 cosmic-text 内部处理
 static GLOBAL_FONT_SYSTEM: LazyLock<RwLock<Option<SharedFontSystem>>> =
     LazyLock::new(|| RwLock::new(None));
 
@@ -299,88 +295,6 @@ fn sdf_to_rgba(sdf: &[u8]) -> Vec<u8> {
     rgba
 }
 
-/// 字体数据存储
-/// 存储加载的字体文件数据，供 MSDF 生成器使用
-pub struct FontStore {
-    /// 字体数据列表（font_id -> (font_data, face_index)）
-    fonts: HashMap<cosmic_text::fontdb::ID, (Arc<Vec<u8>>, u32)>,
-    /// Enable debug logging
-    debug_logging: bool,
-}
-
-impl FontStore {
-    /// 创建新的字体存储
-    pub fn new() -> Self {
-        Self {
-            fonts: HashMap::new(),
-            debug_logging: false,
-        }
-    }
-
-    /// 获取或加载字体数据
-    /// 返回 (font_data, face_index)
-    pub fn get_or_load(
-        &mut self,
-        font_system: &FontSystem,
-        font_id: cosmic_text::fontdb::ID,
-    ) -> Option<(Arc<Vec<u8>>, u32)> {
-        if let Some((data, index)) = self.fonts.get(&font_id) {
-            return Some((Arc::clone(data), *index));
-        }
-
-        // 从 fontdb 加载字体数据
-        let db = font_system.db();
-        let face_info = db.face(font_id)?;
-
-        // 获取 face index（对于 TTC 字体很重要）
-        let face_index = face_info.index;
-
-        // 读取字体文件
-        let source = &face_info.source;
-        let data = match source {
-            cosmic_text::fontdb::Source::Binary(data) => {
-                if self.debug_logging {
-                    tracing::debug!(
-                        "[SdfCache] Loading font from binary data, face_index={}",
-                        face_index
-                    );
-                }
-                Arc::new(data.as_ref().as_ref().to_vec())
-            }
-            cosmic_text::fontdb::Source::File(path) => {
-                if self.debug_logging {
-                    tracing::debug!(
-                        "[SdfCache] Loading font from file: {:?}, face_index={}",
-                        path,
-                        face_index
-                    );
-                }
-                let data = std::fs::read(path).ok()?;
-                Arc::new(data)
-            }
-            cosmic_text::fontdb::Source::SharedFile(path, data) => {
-                if self.debug_logging {
-                    tracing::debug!(
-                        "[SdfCache] Loading font from shared file: {:?}, face_index={}",
-                        path,
-                        face_index
-                    );
-                }
-                Arc::new(data.as_ref().as_ref().to_vec())
-            }
-        };
-
-        self.fonts.insert(font_id, (Arc::clone(&data), face_index));
-        Some((data, face_index))
-    }
-}
-
-impl Default for FontStore {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 /// 预生成的 SDF 位图（用于异步生成）
 #[derive(Clone)]
 pub struct PreGeneratedSdf {
@@ -411,8 +325,6 @@ impl SdfCache {
         &self,
         font_system: &mut FontSystem,
         cache_key: CacheKey,
-        _font_data: &[u8],
-        _face_index: u32,
     ) -> Option<SdfBitmap> {
         let base_key = Self::sdf_cache_key(cache_key, self.generator.config().base_size);
         let mut swash_cache = SwashCache::new();
@@ -470,7 +382,6 @@ impl SdfCache {
             // 需要同步生成（慢速路径）
             let font_system = global_font_system();
             let mut font_system = font_system.lock();
-            let mut font_store = GLOBAL_FONT_STORE.lock();
 
             // Check if font_id exists in the font system
             let font_info = font_system.db().face(cache_key.font_id);
@@ -481,12 +392,8 @@ impl SdfCache {
                 );
             }
 
-            let (font_data, face_index) =
-                font_store.get_or_load(&font_system, cache_key.font_id)?;
-            drop(font_store);
-
-            // 生成 SDF
-            self.generate_bitmap_from_swash(&mut font_system, cache_key, &font_data, face_index)?
+            // 生成 SDF（字形光栅化由 cosmic-text 的 SwashCache 内部处理）
+            self.generate_bitmap_from_swash(&mut font_system, cache_key)?
         };
 
         // 缓存到图集
@@ -532,14 +439,11 @@ pub fn pre_generate_sdf_batch(cache_keys: &[CacheKey]) -> HashMap<CacheKey, SdfB
 
         let font_system = global_font_system();
         let mut font_system = font_system.lock();
-        let mut font_store = GLOBAL_FONT_STORE.lock();
-        if font_store
-            .get_or_load(&font_system, cache_key.font_id)
-            .is_none()
-        {
+
+        // 验证字体存在
+        if font_system.db().face(cache_key.font_id).is_none() {
             continue;
         }
-        drop(font_store);
 
         let mut swash_cache = SwashCache::new();
         let Some(image) = swash_cache.get_image_uncached(&mut font_system, sdf_key) else {
