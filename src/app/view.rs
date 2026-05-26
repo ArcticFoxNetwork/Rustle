@@ -392,7 +392,6 @@ impl App {
                 .interaction(Interaction::Idle)
                 .on_press(Message::ToggleQueue),
             )
-            .into()
         } else {
             Space::new().width(0).height(0).into()
         };
@@ -424,7 +423,6 @@ impl App {
                         .padding(20)
                         .align_x(Alignment::Center),
                 )
-                .into()
             } else {
                 Space::new().width(0).height(0).into()
             }

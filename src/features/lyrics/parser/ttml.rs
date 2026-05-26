@@ -46,81 +46,64 @@ pub fn parse_ttml(data: impl BufRead) -> Result<TTMLLyric, String> {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
                 let name = e.name();
                 match name.as_ref() {
-                    b"tt" => {
-                        if status == ParseStatus::None {
-                            status = ParseStatus::InTtml;
+                    b"tt" if status == ParseStatus::None => {
+                        status = ParseStatus::InTtml;
+                    }
+                    b"head" if status == ParseStatus::InTtml => {
+                        status = ParseStatus::InHead;
+                    }
+                    b"metadata" if status == ParseStatus::InHead => {
+                        status = ParseStatus::InMetadata;
+                    }
+                    b"ttm:agent" if main_agent.is_empty() && status == ParseStatus::InMetadata => {
+                        let mut agent_type = Vec::new();
+                        let mut agent_id = Vec::new();
+                        for attr in e.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"type" => agent_type = attr.value.to_vec(),
+                                b"xml:id" => agent_id = attr.value.to_vec(),
+                                _ => {}
+                            }
+                        }
+                        if agent_type == b"person" {
+                            main_agent = agent_id;
                         }
                     }
-                    b"head" => {
-                        if status == ParseStatus::InTtml {
-                            status = ParseStatus::InHead;
-                        }
-                    }
-                    b"metadata" => {
-                        if status == ParseStatus::InHead {
-                            status = ParseStatus::InMetadata;
-                        }
-                    }
-                    b"ttm:agent" => {
-                        if main_agent.is_empty() && status == ParseStatus::InMetadata {
-                            let mut agent_type = Vec::new();
-                            let mut agent_id = Vec::new();
-                            for attr in e.attributes().flatten() {
-                                match attr.key.as_ref() {
-                                    b"type" => agent_type = attr.value.to_vec(),
-                                    b"xml:id" => agent_id = attr.value.to_vec(),
-                                    _ => {}
+                    b"amll:meta" if status == ParseStatus::InMetadata => {
+                        let mut meta_key = String::new();
+                        let mut meta_value = String::new();
+                        for attr in e.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"key" => {
+                                    meta_key = String::from_utf8_lossy(&attr.value).to_string();
                                 }
-                            }
-                            if agent_type == b"person" {
-                                main_agent = agent_id;
-                            }
-                        }
-                    }
-                    b"amll:meta" => {
-                        if status == ParseStatus::InMetadata {
-                            let mut meta_key = String::new();
-                            let mut meta_value = String::new();
-                            for attr in e.attributes().flatten() {
-                                match attr.key.as_ref() {
-                                    b"key" => {
-                                        meta_key = String::from_utf8_lossy(&attr.value).to_string();
-                                    }
-                                    b"value" => {
-                                        meta_value =
-                                            String::from_utf8_lossy(&attr.value).to_string();
-                                    }
-                                    _ => {}
+                                b"value" => {
+                                    meta_value = String::from_utf8_lossy(&attr.value).to_string();
                                 }
-                            }
-                            if !meta_key.is_empty() {
-                                if let Some(values) =
-                                    result.metadata.iter_mut().find(|x| x.0 == meta_key)
-                                {
-                                    values.1.push(meta_value);
-                                } else {
-                                    result.metadata.push((meta_key, vec![meta_value]));
-                                }
+                                _ => {}
                             }
                         }
-                    }
-                    b"body" => {
-                        if status == ParseStatus::InTtml {
-                            status = ParseStatus::InBody;
+                        if !meta_key.is_empty() {
+                            if let Some(values) =
+                                result.metadata.iter_mut().find(|x| x.0 == meta_key)
+                            {
+                                values.1.push(meta_value);
+                            } else {
+                                result.metadata.push((meta_key, vec![meta_value]));
+                            }
                         }
                     }
-                    b"div" => {
-                        if status == ParseStatus::InBody {
-                            status = ParseStatus::InDiv;
-                        }
+                    b"body" if status == ParseStatus::InTtml => {
+                        status = ParseStatus::InBody;
                     }
-                    b"p" => {
-                        if status == ParseStatus::InDiv {
-                            status = ParseStatus::InP;
-                            let mut new_line = LyricLineOwned::default();
-                            configure_line(&e, &main_agent, &mut new_line);
-                            result.lines.push(new_line);
-                        }
+                    b"div" if status == ParseStatus::InBody => {
+                        status = ParseStatus::InDiv;
+                    }
+                    b"p" if status == ParseStatus::InDiv => {
+                        status = ParseStatus::InP;
+                        let mut new_line = LyricLineOwned::default();
+                        configure_line(&e, &main_agent, &mut new_line);
+                        result.lines.push(new_line);
                     }
                     b"span" => match status {
                         ParseStatus::InP => {
@@ -196,38 +179,28 @@ pub fn parse_ttml(data: impl BufRead) -> Result<TTMLLyric, String> {
             }
             Ok(Event::End(e)) => match e.name().as_ref() {
                 b"tt" => status = ParseStatus::None,
-                b"head" => {
-                    if status == ParseStatus::InHead {
-                        status = ParseStatus::InTtml;
-                    }
+                b"head" if status == ParseStatus::InHead => {
+                    status = ParseStatus::InTtml;
                 }
-                b"metadata" => {
-                    if status == ParseStatus::InMetadata {
-                        status = ParseStatus::InHead;
-                    }
+                b"metadata" if status == ParseStatus::InMetadata => {
+                    status = ParseStatus::InHead;
                 }
-                b"body" => {
-                    if status == ParseStatus::InBody {
-                        status = ParseStatus::InTtml;
-                    }
+                b"body" if status == ParseStatus::InBody => {
+                    status = ParseStatus::InTtml;
                 }
-                b"div" => {
-                    if status == ParseStatus::InDiv {
-                        status = ParseStatus::InBody;
-                    }
+                b"div" if status == ParseStatus::InDiv => {
+                    status = ParseStatus::InBody;
                 }
-                b"p" => {
-                    if status == ParseStatus::InP {
-                        status = ParseStatus::InDiv;
-                    }
+                b"p" if status == ParseStatus::InP => {
+                    status = ParseStatus::InDiv;
                 }
                 b"span" => match status {
                     ParseStatus::InSpan => {
                         status = ParseStatus::InP;
-                        if let Some(line) = result.lines.last_mut() {
-                            if let Some(word) = line.words.last_mut() {
-                                word.word = str_buf.clone();
-                            }
+                        if let Some(line) = result.lines.last_mut()
+                            && let Some(word) = line.words.last_mut()
+                        {
+                            word.word = str_buf.clone();
                         }
                         str_buf.clear();
                     }
@@ -237,19 +210,19 @@ pub fn parse_ttml(data: impl BufRead) -> Result<TTMLLyric, String> {
                     }
                     ParseStatus::InSpanInBackgroundSpan => {
                         status = ParseStatus::InBackgroundSpan;
-                        if let Some(line) = result.lines.iter_mut().rev().find(|l| l.is_bg) {
-                            if let Some(word) = line.words.last_mut() {
-                                word.word = str_buf.clone();
-                            }
+                        if let Some(line) = result.lines.iter_mut().rev().find(|l| l.is_bg)
+                            && let Some(word) = line.words.last_mut()
+                        {
+                            word.word = str_buf.clone();
                         }
                         str_buf.clear();
                     }
                     ParseStatus::InTranslationSpan => {
                         status = ParseStatus::InP;
-                        if let Some(line) = result.lines.iter_mut().rev().find(|l| !l.is_bg) {
-                            if line.translated_lyric.is_empty() {
-                                line.translated_lyric = str_buf.clone();
-                            }
+                        if let Some(line) = result.lines.iter_mut().rev().find(|l| !l.is_bg)
+                            && line.translated_lyric.is_empty()
+                        {
+                            line.translated_lyric = str_buf.clone();
                         }
                         str_buf.clear();
                     }
@@ -318,27 +291,27 @@ pub fn parse_ttml(data: impl BufRead) -> Result<TTMLLyric, String> {
     // Post-process: strip parentheses from background vocals
     for line in result.lines.iter_mut() {
         if line.is_bg {
-            if let Some(first) = line.words.first_mut() {
-                if let Some(stripped) = first.word.strip_prefix('(') {
-                    first.word = stripped.to_string();
-                }
+            if let Some(first) = line.words.first_mut()
+                && let Some(stripped) = first.word.strip_prefix('(')
+            {
+                first.word = stripped.to_string();
             }
-            if let Some(last) = line.words.last_mut() {
-                if let Some(stripped) = last.word.strip_suffix(')') {
-                    last.word = stripped.to_string();
-                }
+            if let Some(last) = line.words.last_mut()
+                && let Some(stripped) = last.word.strip_suffix(')')
+            {
+                last.word = stripped.to_string();
             }
         }
         // Update line timing from words
-        if let Some(first) = line.words.first() {
-            if line.start_time == 0 {
-                line.start_time = first.start_time;
-            }
+        if let Some(first) = line.words.first()
+            && line.start_time == 0
+        {
+            line.start_time = first.start_time;
         }
-        if let Some(last) = line.words.last() {
-            if line.end_time == 0 {
-                line.end_time = last.end_time;
-            }
+        if let Some(last) = line.words.last()
+            && line.end_time == 0
+        {
+            line.end_time = last.end_time;
         }
     }
 

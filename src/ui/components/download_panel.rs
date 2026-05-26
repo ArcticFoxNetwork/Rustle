@@ -166,7 +166,7 @@ fn make_tab_button(label: String, active: bool, msg: Message) -> Element<'static
         )
         .on_press(msg)
         .padding([12, 0])
-        .style(|theme, status| {
+        .style(|_theme, status| {
             let bg = if status == button::Status::Hovered {
                 Background::Color(Color::from_rgba(1.0, 0.08, 0.55, 0.05))
             } else {

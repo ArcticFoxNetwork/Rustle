@@ -276,5 +276,5 @@ pub fn view(
 
     // Use opaque to block events from reaching underlying widgets without swallowing
     // interactions inside the player bar itself.
-    opaque(bar).into()
+    opaque(bar)
 }

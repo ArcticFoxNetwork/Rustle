@@ -60,10 +60,10 @@ impl App {
             (next_idx, PreloadDirection::Next),
             (prev_idx, PreloadDirection::Previous),
         ] {
-            if let Some(idx) = candidate_idx {
-                if let Some(task) = self.preload_track(idx, direction) {
-                    tasks.push(task);
-                }
+            if let Some(idx) = candidate_idx
+                && let Some(task) = self.preload_track(idx, direction)
+            {
+                tasks.push(task);
             }
         }
 
@@ -366,24 +366,23 @@ impl App {
             .playback
             .audio_preload_manager
             .take_ready(idx, direction)
+            && let Some(request_id) = slot.take_request_id()
         {
-            if let Some(request_id) = slot.take_request_id() {
-                let path = slot.path.clone();
-                let buffer = slot.take_buffer();
-                tracing::info!(
-                    "Using {} preloaded track: idx={}, request_id={}, path={:?}, streaming_buffer={}",
-                    direction,
-                    idx,
-                    request_id,
-                    path,
-                    buffer.is_some()
-                );
-                return Some(PlaybackSource::Preloaded {
-                    request_id,
-                    path,
-                    buffer,
-                });
-            }
+            let path = slot.path.clone();
+            let buffer = slot.take_buffer();
+            tracing::info!(
+                "Using {} preloaded track: idx={}, request_id={}, path={:?}, streaming_buffer={}",
+                direction,
+                idx,
+                request_id,
+                path,
+                buffer.is_some()
+            );
+            return Some(PlaybackSource::Preloaded {
+                request_id,
+                path,
+                buffer,
+            });
         }
         tracing::debug!("No {} preloaded track available for idx={}", direction, idx);
         None

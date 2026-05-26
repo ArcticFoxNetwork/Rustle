@@ -50,7 +50,7 @@ pub struct ScrollBounds {
 /// buffers.update_from_manager(&line_animation_manager);
 /// // Now use buffers.positions(), buffers.scales(), etc.
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct AnimationBuffers {
     /// Y positions in logical pixels
     positions: Vec<f32>,
@@ -60,17 +60,6 @@ pub struct AnimationBuffers {
     blur_levels: Vec<f32>,
     /// Opacity values (0.0 - 1.0)
     opacities: Vec<f32>,
-}
-
-impl Default for AnimationBuffers {
-    fn default() -> Self {
-        Self {
-            positions: Vec::new(),
-            scales: Vec::new(),
-            blur_levels: Vec::new(),
-            opacities: Vec::new(),
-        }
-    }
 }
 
 impl AnimationBuffers {

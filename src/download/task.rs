@@ -162,23 +162,21 @@ pub async fn download_song(
 
     // 7. Write metadata tags, reusing the unified image cache when available
     let mut edits = meta.to_metadata_edits();
-    if edits.cover_data.is_none() {
-        if let Some(path) = crate::image::resolve_cached(crate::image::ImageKind::SongCover, ncm_id)
-        {
-            if let Ok(data) = fs::read(&path) {
-                edits.cover_mime = Some(
-                    match crate::utils::detect_image_format(&data) {
-                        "png" => "image/png",
-                        "gif" => "image/gif",
-                        "webp" => "image/webp",
-                        "bmp" => "image/bmp",
-                        _ => "image/jpeg",
-                    }
-                    .to_string(),
-                );
-                edits.cover_data = Some(data);
+    if edits.cover_data.is_none()
+        && let Some(path) = crate::image::resolve_cached(crate::image::ImageKind::SongCover, ncm_id)
+        && let Ok(data) = fs::read(&path)
+    {
+        edits.cover_mime = Some(
+            match crate::utils::detect_image_format(&data) {
+                "png" => "image/png",
+                "gif" => "image/gif",
+                "webp" => "image/webp",
+                "bmp" => "image/bmp",
+                _ => "image/jpeg",
             }
-        }
+            .to_string(),
+        );
+        edits.cover_data = Some(data);
     }
     if let Err(e) = crate::features::import::save_metadata(&dest, &edits) {
         warn!("Failed to write metadata tags to {:?}: {}", dest, e);

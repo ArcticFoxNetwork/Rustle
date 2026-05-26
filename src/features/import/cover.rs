@@ -89,10 +89,10 @@ impl CoverCache {
     pub fn cache_size(&self) -> Result<u64> {
         let mut total = 0u64;
         for entry in std::fs::read_dir(&self.cache_dir)? {
-            if let Ok(entry) = entry {
-                if let Ok(metadata) = entry.metadata() {
-                    total += metadata.len();
-                }
+            if let Ok(entry) = entry
+                && let Ok(metadata) = entry.metadata()
+            {
+                total += metadata.len();
             }
         }
         Ok(total)
@@ -113,12 +113,10 @@ impl CoverCache {
 
     /// Clear the entire cache
     pub fn clear(&self) -> Result<()> {
-        for entry in std::fs::read_dir(&self.cache_dir)? {
-            if let Ok(entry) = entry {
-                let path = entry.path();
-                if path.is_file() {
-                    std::fs::remove_file(path)?;
-                }
+        for entry in std::fs::read_dir(&self.cache_dir)?.flatten() {
+            let path = entry.path();
+            if path.is_file() {
+                std::fs::remove_file(path)?;
             }
         }
         Ok(())

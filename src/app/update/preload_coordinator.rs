@@ -103,7 +103,7 @@ impl PreloadCoordinator {
             prev_song_id,
         };
 
-        let change = if new_window.current_song_id.is_none() {
+        if new_window.current_song_id.is_none() {
             self.background_slots.clear();
             self.lyrics_slots.clear();
             self.window = new_window;
@@ -121,9 +121,7 @@ impl PreloadCoordinator {
             WindowChange::AdjacentChanged
         } else {
             WindowChange::Unchanged
-        };
-
-        change
+        }
     }
 
     pub fn clear_window(&mut self) {
@@ -254,9 +252,7 @@ impl PreloadCoordinator {
     // ── Lyrics slot ──
 
     pub fn ensure_lyrics_slot(&mut self, song_id: i64) {
-        self.lyrics_slots
-            .entry(song_id)
-            .or_insert_with(LyricsSlot::default);
+        self.lyrics_slots.entry(song_id).or_default();
     }
 
     pub fn mark_lyrics_text_ready(&mut self, song_id: i64) {

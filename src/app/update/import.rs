@@ -192,25 +192,24 @@ impl App {
                         Message::SongsLoaded,
                     )];
 
-                    if let Some(playlist_id) = playlist_id {
-                        if self
+                    if let Some(playlist_id) = playlist_id
+                        && self
                             .ui
                             .playlist_page
                             .current
                             .as_ref()
                             .map(|playlist| playlist.id)
                             == Some(*playlist_id)
-                        {
-                            let db_for_playlist = db.clone();
-                            let playlist_id = *playlist_id;
-                            tasks.push(Task::perform(
-                                load_playlist_view(db_for_playlist, playlist_id),
-                                |result| match result {
-                                    Some(payload) => Message::PlaylistViewLoaded(payload),
-                                    None => Message::DatabaseError("Playlist not found".into()),
-                                },
-                            ));
-                        }
+                    {
+                        let db_for_playlist = db.clone();
+                        let playlist_id = *playlist_id;
+                        tasks.push(Task::perform(
+                            load_playlist_view(db_for_playlist, playlist_id),
+                            |result| match result {
+                                Some(payload) => Message::PlaylistViewLoaded(payload),
+                                None => Message::DatabaseError("Playlist not found".into()),
+                            },
+                        ));
                     }
 
                     return Some(Task::batch(tasks));
@@ -463,10 +462,10 @@ impl App {
         let old_path_str = old_path.to_string_lossy().to_string();
         let new_path_str = new_path.to_string_lossy().to_string();
 
-        if let Some(song) = &mut self.playback.current_song {
-            if song.file_path == old_path_str {
-                song.file_path = new_path_str.clone();
-            }
+        if let Some(song) = &mut self.playback.current_song
+            && song.file_path == old_path_str
+        {
+            song.file_path = new_path_str.clone();
         }
 
         for song in &mut self.library.db_songs {

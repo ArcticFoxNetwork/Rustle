@@ -374,7 +374,7 @@ impl Primitive for LyricsEnginePrimitive {
         };
 
         // Get scale factor for physical pixels
-        let scale = viewport.scale_factor() as f32;
+        let scale = viewport.scale_factor();
 
         // Full viewport (window) size in physical pixels
         let full_viewport_width = viewport.physical_width() as f32;

@@ -54,7 +54,7 @@ pub fn focus_window<Message: Send + 'static>() -> Task<Message> {
 pub fn is_wayland_backend() -> bool {
     #[cfg(target_os = "linux")]
     {
-        return linux::is_wayland_backend();
+        linux::is_wayland_backend()
     }
 
     #[cfg(not(target_os = "linux"))]

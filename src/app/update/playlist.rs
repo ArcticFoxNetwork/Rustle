@@ -236,38 +236,35 @@ impl App {
             }
 
             Message::EditPlaylistNameChanged(name) => {
-                if let Some(entry) = self.ui.overlay_stack.last_mut() {
-                    if let OverlayKind::Modal(ModalKind::PlaylistEdit { name: n, .. }, _) =
+                if let Some(entry) = self.ui.overlay_stack.last_mut()
+                    && let OverlayKind::Modal(ModalKind::PlaylistEdit { name: n, .. }, _) =
                         &mut entry.kind
-                    {
-                        *n = name.clone();
-                    }
+                {
+                    *n = name.clone();
                 }
                 Some(Task::none())
             }
 
             Message::EditPlaylistDescriptionChanged(desc) => {
-                if let Some(entry) = self.ui.overlay_stack.last_mut() {
-                    if let OverlayKind::Modal(ModalKind::PlaylistEdit { description: d, .. }, _) =
+                if let Some(entry) = self.ui.overlay_stack.last_mut()
+                    && let OverlayKind::Modal(ModalKind::PlaylistEdit { description: d, .. }, _) =
                         &mut entry.kind
-                    {
-                        *d = desc.clone();
-                    }
+                {
+                    *d = desc.clone();
                 }
                 Some(Task::none())
             }
 
             Message::EditPlaylistWatchEnabledChanged(enabled) => {
-                if let Some(entry) = self.ui.overlay_stack.last_mut() {
-                    if let OverlayKind::Modal(
+                if let Some(entry) = self.ui.overlay_stack.last_mut()
+                    && let OverlayKind::Modal(
                         ModalKind::PlaylistEdit {
                             watch_enabled: w, ..
                         },
                         _,
                     ) = &mut entry.kind
-                    {
-                        *w = *enabled;
-                    }
+                {
+                    *w = *enabled;
                 }
                 Some(Task::none())
             }
@@ -284,16 +281,12 @@ impl App {
             )),
 
             Message::CoverImagePicked(path) => {
-                if let Some(p) = path {
-                    if let Some(entry) = self.ui.overlay_stack.last_mut() {
-                        if let OverlayKind::Modal(
-                            ModalKind::PlaylistEdit { cover_path: c, .. },
-                            _,
-                        ) = &mut entry.kind
-                        {
-                            *c = Some(p.clone());
-                        }
-                    }
+                if let Some(p) = path
+                    && let Some(entry) = self.ui.overlay_stack.last_mut()
+                    && let OverlayKind::Modal(ModalKind::PlaylistEdit { cover_path: c, .. }, _) =
+                        &mut entry.kind
+                {
+                    *c = Some(p.clone());
                 }
                 Some(Task::none())
             }
@@ -355,7 +348,7 @@ impl App {
                             }
                             playlist_id
                         },
-                        |id| Message::PlaylistUpdated(id),
+                        Message::PlaylistUpdated,
                     ));
                 }
                 Some(Task::none())

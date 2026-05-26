@@ -125,10 +125,10 @@ pub fn process_lyrics(lines: &mut [LyricLineOwned]) {
             lines[i].end_time = next_start.clamp(0, MAX_LRC_TIMESTAMP);
 
             // Also fix word end_time
-            if let Some(word) = lines[i].words.last_mut() {
-                if word.end_time == 0 {
-                    word.end_time = next_start.clamp(0, MAX_LRC_TIMESTAMP);
-                }
+            if let Some(word) = lines[i].words.last_mut()
+                && word.end_time == 0
+            {
+                word.end_time = next_start.clamp(0, MAX_LRC_TIMESTAMP);
             }
         }
     }

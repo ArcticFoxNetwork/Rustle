@@ -116,10 +116,10 @@ impl App {
             }
         }
 
-        if let Some(current_song) = &mut self.playback.current_song {
-            if current_song.id == song.id || current_song.file_path == song.file_path {
-                update_song(current_song);
-            }
+        if let Some(current_song) = &mut self.playback.current_song
+            && (current_song.id == song.id || current_song.file_path == song.file_path)
+        {
+            update_song(current_song);
         }
     }
 
@@ -285,12 +285,12 @@ impl App {
                 })
                 .await;
 
-                if let Ok(Some(gain)) = result {
-                    if let Some(db) = db {
-                        let _ = db
-                            .update_song_normalization(song_id, &file_path, gain as f64)
-                            .await;
-                    }
+                if let Ok(Some(gain)) = result
+                    && let Some(db) = db
+                {
+                    let _ = db
+                        .update_song_normalization(song_id, &file_path, gain as f64)
+                        .await;
                 }
             });
         }
@@ -845,20 +845,18 @@ impl App {
                         Self::audio_path_source_for_song(&song)
                     };
 
-                    if let Ok(source) = source {
-                        if let Ok(request_id) = self.start_audio_source_for_song(&song, source) {
-                            let queue_index = self.resolve_queue_index_for_song(&song);
-                            self.queue_pending_playback_request(
-                                request_id,
-                                queue_index,
-                                song,
-                                PendingPlaybackKind::RestartCurrentTrack,
-                            );
-                            if has_saved_position {
-                                if let Some(state) = &mut self.playback.saved_state {
-                                    state.position_secs = 0.0;
-                                }
-                            }
+                    if let Ok(source) = source
+                        && let Ok(request_id) = self.start_audio_source_for_song(&song, source)
+                    {
+                        let queue_index = self.resolve_queue_index_for_song(&song);
+                        self.queue_pending_playback_request(
+                            request_id,
+                            queue_index,
+                            song,
+                            PendingPlaybackKind::RestartCurrentTrack,
+                        );
+                        if has_saved_position && let Some(state) = &mut self.playback.saved_state {
+                            state.position_secs = 0.0;
                         }
                     }
                 }
@@ -1211,16 +1209,14 @@ impl App {
         };
 
         // Try to use preloaded track from PreloadManager (zero-delay playback)
-        if let Some(song) = self.playback.queue.get(next_idx).cloned() {
-            if let Some(source) = self.take_preloaded_source(next_idx, PreloadDirection::Next) {
-                tracing::info!("Playing preloaded next (index {}) - zero delay", next_idx);
-                return match self.start_queue_song_from_source(next_idx, song, source) {
-                    Ok(play_task) => Task::batch([fetch_task, play_task]),
-                    Err(err) => {
-                        Task::batch([fetch_task, self.handle_playback_failure(next_idx, &err)])
-                    }
-                };
-            }
+        if let Some(song) = self.playback.queue.get(next_idx).cloned()
+            && let Some(source) = self.take_preloaded_source(next_idx, PreloadDirection::Next)
+        {
+            tracing::info!("Playing preloaded next (index {}) - zero delay", next_idx);
+            return match self.start_queue_song_from_source(next_idx, song, source) {
+                Ok(play_task) => Task::batch([fetch_task, play_task]),
+                Err(err) => Task::batch([fetch_task, self.handle_playback_failure(next_idx, &err)]),
+            };
         }
 
         let play_task = self.play_song_at_index(next_idx);
@@ -1233,14 +1229,14 @@ impl App {
         };
 
         // Try to use preloaded track from PreloadManager (zero-delay playback)
-        if let Some(song) = self.playback.queue.get(prev_idx).cloned() {
-            if let Some(source) = self.take_preloaded_source(prev_idx, PreloadDirection::Previous) {
-                tracing::info!("Playing preloaded prev (index {}) - zero delay", prev_idx);
-                return match self.start_queue_song_from_source(prev_idx, song, source) {
-                    Ok(task) => task,
-                    Err(err) => self.handle_playback_failure(prev_idx, &err),
-                };
-            }
+        if let Some(song) = self.playback.queue.get(prev_idx).cloned()
+            && let Some(source) = self.take_preloaded_source(prev_idx, PreloadDirection::Previous)
+        {
+            tracing::info!("Playing preloaded prev (index {}) - zero delay", prev_idx);
+            return match self.start_queue_song_from_source(prev_idx, song, source) {
+                Ok(task) => task,
+                Err(err) => self.handle_playback_failure(prev_idx, &err),
+            };
         }
 
         self.play_song_at_index(prev_idx)

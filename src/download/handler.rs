@@ -246,7 +246,7 @@ impl App {
             Message::OpenDownloads => Some(Task::done(Message::Navigate(
                 crate::ui::components::NavItem::Downloads,
             ))),
-            _ => return None,
+            _ => None,
         }
     }
 

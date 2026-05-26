@@ -69,7 +69,7 @@ impl App {
             }
 
             Message::WindowMaximize => {
-                Some(iced::window::latest().and_then(|id| iced::window::toggle_maximize(id)))
+                Some(iced::window::latest().and_then(iced::window::toggle_maximize))
             }
 
             Message::MouseMoved(position) => {
@@ -95,7 +95,7 @@ impl App {
                 // Drag window if mouse is in top 48px area (title bar)
                 const DRAG_AREA_HEIGHT: f32 = 48.0;
                 if self.core.mouse_position.y < DRAG_AREA_HEIGHT {
-                    Some(iced::window::latest().and_then(|id| iced::window::drag(id)))
+                    Some(iced::window::latest().and_then(iced::window::drag))
                 } else {
                     Some(Task::none())
                 }

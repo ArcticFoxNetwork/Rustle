@@ -139,41 +139,40 @@ impl App {
                 field,
                 value,
             } => {
-                if let Some(ref mut e) = self.ui.song_edit_dialog {
-                    if e.song_id == *song_id {
-                        match field.as_str() {
-                            "title" => e.title = value.clone(),
-                            "artist" => e.artist = value.clone(),
-                            "album" => e.album = value.clone(),
-                            "track_number" => {
-                                e.track_number = value.parse::<u32>().ok();
-                            }
-                            "year" => {
-                                e.year = value.parse::<u32>().ok();
-                            }
-                            "genre" => e.genre = value.clone(),
-                            _ => {}
+                if let Some(ref mut e) = self.ui.song_edit_dialog
+                    && e.song_id == *song_id
+                {
+                    match field.as_str() {
+                        "title" => e.title = value.clone(),
+                        "artist" => e.artist = value.clone(),
+                        "album" => e.album = value.clone(),
+                        "track_number" => {
+                            e.track_number = value.parse::<u32>().ok();
                         }
+                        "year" => {
+                            e.year = value.parse::<u32>().ok();
+                        }
+                        "genre" => e.genre = value.clone(),
+                        _ => {}
                     }
                 }
                 // Also update overlay entry so the view reads current values
-                if let Some(entry) = self.ui.overlay_stack.last_mut() {
-                    if let OverlayKind::Modal(ModalKind::SongEdit(state), _) = &mut entry.kind {
-                        if state.song_id == *song_id {
-                            match field.as_str() {
-                                "title" => state.title = value.clone(),
-                                "artist" => state.artist = value.clone(),
-                                "album" => state.album = value.clone(),
-                                "track_number" => {
-                                    state.track_number = value.parse::<u32>().ok();
-                                }
-                                "year" => {
-                                    state.year = value.parse::<u32>().ok();
-                                }
-                                "genre" => state.genre = value.clone(),
-                                _ => {}
-                            }
+                if let Some(entry) = self.ui.overlay_stack.last_mut()
+                    && let OverlayKind::Modal(ModalKind::SongEdit(state), _) = &mut entry.kind
+                    && state.song_id == *song_id
+                {
+                    match field.as_str() {
+                        "title" => state.title = value.clone(),
+                        "artist" => state.artist = value.clone(),
+                        "album" => state.album = value.clone(),
+                        "track_number" => {
+                            state.track_number = value.parse::<u32>().ok();
                         }
+                        "year" => {
+                            state.year = value.parse::<u32>().ok();
+                        }
+                        "genre" => state.genre = value.clone(),
+                        _ => {}
                     }
                 }
                 Some(Task::none())
@@ -197,18 +196,17 @@ impl App {
             }
             Message::SongEditCoverReplaced(song_id, path) => {
                 let p = path.clone();
-                if let Some(ref mut e) = self.ui.song_edit_dialog {
-                    if e.song_id == *song_id {
-                        e.cover_path = Some(p.clone());
-                    }
+                if let Some(ref mut e) = self.ui.song_edit_dialog
+                    && e.song_id == *song_id
+                {
+                    e.cover_path = Some(p.clone());
                 }
                 // Also update overlay entry
-                if let Some(entry) = self.ui.overlay_stack.last_mut() {
-                    if let OverlayKind::Modal(ModalKind::SongEdit(state), _) = &mut entry.kind {
-                        if state.song_id == *song_id {
-                            state.cover_path = Some(p);
-                        }
-                    }
+                if let Some(entry) = self.ui.overlay_stack.last_mut()
+                    && let OverlayKind::Modal(ModalKind::SongEdit(state), _) = &mut entry.kind
+                    && state.song_id == *song_id
+                {
+                    state.cover_path = Some(p);
                 }
                 Some(Task::none())
             }
@@ -320,10 +318,10 @@ impl App {
         }
         // Fallback: search by artist name
         let song = self.find_song_anywhere(song_id);
-        if let Some(s) = song {
-            if !s.artist.is_empty() {
-                return Some(Task::done(Message::OpenArtistByName(s.artist)));
-            }
+        if let Some(s) = song
+            && !s.artist.is_empty()
+        {
+            return Some(Task::done(Message::OpenArtistByName(s.artist)));
         }
         Some(Self::toast_info("无法找到歌手信息".to_string()))
     }
@@ -388,9 +386,9 @@ impl App {
         // 1. Remove from current playlist if viewing one
         match self.ui.current_route {
             crate::app::Route::Playlist(playlist_id) => {
-                self.ui.playlist_page.current.as_mut().map(|p| {
+                if let Some(p) = self.ui.playlist_page.current.as_mut() {
                     p.songs.retain(|s| s.id != song_id);
-                });
+                }
                 if let Some(ref db) = self.core.db {
                     let db = std::sync::Arc::clone(db);
                     let pid = playlist_id;
@@ -405,9 +403,9 @@ impl App {
             }
             crate::app::Route::NcmPlaylist(playlist_id) => {
                 // Remove from in-memory view
-                self.ui.playlist_page.current.as_mut().map(|p| {
+                if let Some(p) = self.ui.playlist_page.current.as_mut() {
                     p.songs.retain(|s| s.id != song_id);
-                });
+                }
                 self.ui
                     .home
                     .current_ncm_playlist_songs

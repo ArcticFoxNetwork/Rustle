@@ -127,13 +127,13 @@ fn check_external_cover(audio_path: &Path) -> (Option<String>, Option<PathBuf>) 
     use crate::features::media::cover;
 
     // Try to find external cover file
-    if let Some(cover_source) = cover::find_cover_art(audio_path) {
-        if let Some(path) = cover_source.path() {
-            // External file found - use its path directly
-            // Generate a hash from the path for deduplication
-            let hash = format!("{:016x}", xxh3_64(path.to_string_lossy().as_bytes()));
-            return (Some(hash), Some(path.to_path_buf()));
-        }
+    if let Some(cover_source) = cover::find_cover_art(audio_path)
+        && let Some(path) = cover_source.path()
+    {
+        // External file found - use its path directly
+        // Generate a hash from the path for deduplication
+        let hash = format!("{:016x}", xxh3_64(path.to_string_lossy().as_bytes()));
+        return (Some(hash), Some(path.to_path_buf()));
     }
 
     (None, None)
@@ -157,10 +157,10 @@ pub fn scan_audio_file(
     let mut metadata = extract_metadata(path)?;
 
     // Apply smart filename parsing if enabled
-    if config.smart_parsing {
-        if let Some(filename) = path.file_name().and_then(|n| n.to_str()) {
-            apply_smart_parsing(&mut metadata, filename);
-        }
+    if config.smart_parsing
+        && let Some(filename) = path.file_name().and_then(|n| n.to_str())
+    {
+        apply_smart_parsing(&mut metadata, filename);
     }
 
     // Compute file hash if enabled

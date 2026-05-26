@@ -178,7 +178,7 @@ pub fn modal_view<'a>(
         backdrop_container.into()
     };
 
-    opaque(inner).into()
+    opaque(inner)
 }
 
 // ============================================================================

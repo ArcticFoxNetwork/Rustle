@@ -181,7 +181,7 @@ pub fn enforce_cache_limit(max_cache_mb: u64) -> Result<ClearResult, CacheError>
     }
 
     // Sort by modification time (oldest first)
-    all_entries.sort_by(|a, b| a.modified.cmp(&b.modified));
+    all_entries.sort_by_key(|a| a.modified);
 
     let mut freed: u64 = 0;
     let target_free = current_size - max_bytes;

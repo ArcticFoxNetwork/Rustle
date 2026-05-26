@@ -76,7 +76,6 @@ pub fn view<'a>(
         .width(Fill)
         .height(Fill),
     )
-    .into()
 }
 
 /// View for QR code login

@@ -67,11 +67,11 @@ impl App {
                     }
                     TrayCommand::ToggleFavorite => {
                         // Toggle favorite for current NCM song
-                        if let Some(song) = &self.playback.current_song {
-                            if song.id < 0 {
-                                let ncm_id = (-song.id) as u64;
-                                return Some(self.update(Message::ToggleFavorite(ncm_id)));
-                            }
+                        if let Some(song) = &self.playback.current_song
+                            && song.id < 0
+                        {
+                            let ncm_id = (-song.id) as u64;
+                            return Some(self.update(Message::ToggleFavorite(ncm_id)));
                         }
                     }
                     TrayCommand::Quit => {

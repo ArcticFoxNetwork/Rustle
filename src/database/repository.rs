@@ -201,7 +201,7 @@ impl Database {
         for song in songs {
             if song.id < 0 || song.file_path.starts_with("ncm://") {
                 // NCM song - upsert to database and get the real ID
-                let db_id = ops::upsert_ncm_song_tx(&mut *tx, song).await?;
+                let db_id = ops::upsert_ncm_song_tx(&mut tx, song).await?;
                 db_song_ids.push(db_id);
             } else {
                 // Local song - use existing ID
@@ -209,7 +209,7 @@ impl Database {
             }
         }
 
-        ops::set_queue_tx(&mut *tx, &db_song_ids, source_playlist_id).await?;
+        ops::set_queue_tx(&mut tx, &db_song_ids, source_playlist_id).await?;
 
         tx.commit().await?;
         Ok(())

@@ -46,9 +46,7 @@ impl LyricsRenderManager {
     }
 
     pub fn entry_mut(&mut self, song_id: i64) -> &mut LyricsRenderEntry {
-        self.entries
-            .entry(song_id)
-            .or_insert_with(LyricsRenderEntry::default)
+        self.entries.entry(song_id).or_default()
     }
 
     pub fn store_engine_lines(&mut self, song_id: i64, lines: Arc<Vec<LyricLineData>>) {
@@ -79,7 +77,7 @@ impl LyricsRenderManager {
 
     /// Remove entries for songs not in the given set
     pub fn retain(&mut self, song_ids: &[i64]) {
-        let ids: Vec<i64> = song_ids.iter().copied().collect();
+        let ids: Vec<i64> = song_ids.to_vec();
         self.entries.retain(|id, _| ids.contains(id));
     }
 }

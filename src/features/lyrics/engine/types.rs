@@ -121,7 +121,7 @@ impl FontSizeConfig {
 }
 
 /// Data for a single lyric line
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct LyricLineData {
     /// Text content
     pub text: String,
@@ -164,21 +164,6 @@ impl LyricLineData {
     }
 }
 
-impl Default for LyricLineData {
-    fn default() -> Self {
-        Self {
-            text: String::new(),
-            words: Vec::new(),
-            translated: None,
-            romanized: None,
-            start_ms: 0,
-            end_ms: 0,
-            is_duet: false,
-            is_bg: false,
-        }
-    }
-}
-
 /// Treats lyrics as non-dynamic when every line has at most one word.
 #[inline]
 pub fn lyrics_are_non_dynamic(lines: &[LyricLineData]) -> bool {
@@ -186,7 +171,7 @@ pub fn lyrics_are_non_dynamic(lines: &[LyricLineData]) -> bool {
 }
 
 /// Data for a single word within a lyric line
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct WordData {
     /// Word text
     pub text: String,
@@ -386,18 +371,6 @@ pub fn is_cjk_text(text: &str) -> bool {
             '\u{AC00}'..='\u{D7AF}'    // Hangul Syllables (outside the range but commonly needed)
         )
     })
-}
-
-impl Default for WordData {
-    fn default() -> Self {
-        Self {
-            text: String::new(),
-            start_ms: 0,
-            end_ms: 0,
-            emphasize: false,
-            is_last_word: false,
-        }
-    }
 }
 
 /// Computed visual style for a lyric line

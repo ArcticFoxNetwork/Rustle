@@ -28,14 +28,14 @@ const LYRICS_EXTENSIONS: &[&str] = &[
 /// 2. Embedded lyrics (USLT tag)
 pub fn find_lyrics(audio_path: &Path) -> Option<Vec<LyricLineOwned>> {
     // Priority 1: Check for same-name lyrics file (any supported format)
-    if let Some(lyrics_path) = find_lyrics_file(audio_path) {
-        if let Ok(content) = fs::read_to_string(&lyrics_path) {
-            let mut lines = lyrics::parse_lyrics(&content);
-            merge_local_translation_sidecar(&lyrics_path, &mut lines);
-            if !lines.is_empty() {
-                tracing::debug!("Loaded {} lyrics lines from {:?}", lines.len(), lyrics_path);
-                return Some(lines);
-            }
+    if let Some(lyrics_path) = find_lyrics_file(audio_path)
+        && let Ok(content) = fs::read_to_string(&lyrics_path)
+    {
+        let mut lines = lyrics::parse_lyrics(&content);
+        merge_local_translation_sidecar(&lyrics_path, &mut lines);
+        if !lines.is_empty() {
+            tracing::debug!("Loaded {} lyrics lines from {:?}", lines.len(), lyrics_path);
+            return Some(lines);
         }
     }
 
@@ -142,10 +142,10 @@ fn extract_embedded_lyrics(audio_path: &Path) -> Option<String> {
         .or_else(|| tagged_file.first_tag())?;
 
     // Try USLT (Unsynchronized Lyrics) first
-    if let Some(lyrics) = tag.get_string(&ItemKey::Lyrics) {
-        if !lyrics.is_empty() {
-            return Some(lyrics.to_string());
-        }
+    if let Some(lyrics) = tag.get_string(&ItemKey::Lyrics)
+        && !lyrics.is_empty()
+    {
+        return Some(lyrics.to_string());
     }
 
     None

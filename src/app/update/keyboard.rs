@@ -43,7 +43,7 @@ impl App {
                 Some(Task::none())
             }
 
-            Message::ExecuteAction(action) => Some(self.execute_action(action.clone())),
+            Message::ExecuteAction(action) => Some(self.execute_action(*action)),
 
             _ => None,
         }

@@ -325,7 +325,7 @@ impl App {
                 if let Some(resolved) = result {
                     tracing::info!("NCM song resolved for restore: {:?}", resolved.file_path);
 
-                    let _ = self.apply_resolved_song_to_queue(*idx, &resolved);
+                    let _ = self.apply_resolved_song_to_queue(*idx, resolved);
 
                     // Update current_song if this is the current song
                     if self.playback.current_index == Some(*idx) {

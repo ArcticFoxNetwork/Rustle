@@ -49,10 +49,8 @@ impl App {
                 if id <= 0 {
                     let ncm_songs = &self.ui.home.current_ncm_playlist_songs;
                     if !ncm_songs.is_empty() {
-                        let db_songs: Vec<crate::database::DbSong> = ncm_songs
-                            .iter()
-                            .map(|song| Self::ncm_song_to_db_song(song))
-                            .collect();
+                        let db_songs: Vec<crate::database::DbSong> =
+                            ncm_songs.iter().map(Self::ncm_song_to_db_song).collect();
 
                         self.playback.queue = db_songs.clone();
                         self.persist_queue_snapshot();

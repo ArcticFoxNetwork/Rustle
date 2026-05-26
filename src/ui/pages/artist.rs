@@ -157,7 +157,7 @@ fn build_header(
         let has_description = artist
             .description
             .as_ref()
-            .map_or(false, |d| !d.trim().is_empty());
+            .is_some_and(|d| !d.trim().is_empty());
 
         let line_count = desc_text.lines().count()
             + desc_text

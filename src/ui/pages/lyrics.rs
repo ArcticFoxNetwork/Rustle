@@ -264,7 +264,7 @@ pub fn view<'a>(
     // Use opaque to block events from reaching underlying widgets (main content behind lyrics page)
     // opaque only blocks events from propagating to widgets BELOW it in the stack,
     // it does NOT block events to widgets INSIDE it (like our buttons)
-    opaque(container(content_with_shader).width(Fill).height(Fill)).into()
+    opaque(container(content_with_shader).width(Fill).height(Fill))
 }
 
 /// Build the left panel with cover, song info, and controls

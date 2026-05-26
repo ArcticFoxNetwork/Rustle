@@ -516,7 +516,7 @@ pub(crate) fn build_controls<'a>(
     let is_album = playlist.kind == DetailPageKind::Album;
     let is_user = playlist.kind == DetailPageKind::User;
     let playlist_id = playlist.id;
-    let is_own_playlist = current_user_id.map_or(false, |uid| uid == playlist.creator_id);
+    let is_own_playlist = current_user_id == Some(playlist.creator_id);
     let is_subscribed = playlist.is_subscribed;
 
     // Helper to get icon color based on animation (using gray levels instead of opacity)

@@ -18,7 +18,7 @@ fn to_mpris_metadata(meta: &MediaMetadata) -> Metadata {
     if let Some(ref track_id) = meta.track_id {
         builder = builder.trackid(
             TrackId::try_from(format!("/org/{}/track/{}", APP_BINARY_NAME, track_id))
-                .unwrap_or_else(|_| TrackId::NO_TRACK),
+                .unwrap_or(TrackId::NO_TRACK),
         );
     }
 

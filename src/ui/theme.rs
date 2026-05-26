@@ -682,7 +682,7 @@ pub fn dark_scrollable(theme: &Theme, _status: scrollable::Status) -> scrollable
 
     scrollable::Style {
         container: container::Style::default(),
-        vertical_rail: scrollbar.clone(),
+        vertical_rail: scrollbar,
         horizontal_rail: scrollbar,
         gap: None,
         auto_scroll: scrollable::AutoScroll {

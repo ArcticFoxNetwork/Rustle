@@ -158,11 +158,11 @@ where
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerPressed { .. }) => {
                 if let Some(cursor_position) = cursor.position_over(bounds) {
-                    if let Some(new_value) = locate(cursor_position) {
-                        if (self.value - new_value).abs() > f32::EPSILON {
-                            shell.publish((self.on_change)(new_value));
-                            self.value = new_value;
-                        }
+                    if let Some(new_value) = locate(cursor_position)
+                        && (self.value - new_value).abs() > f32::EPSILON
+                    {
+                        shell.publish((self.on_change)(new_value));
+                        self.value = new_value;
                     }
                     state.is_dragging = true;
                     shell.capture_event();
@@ -170,51 +170,48 @@ where
             }
             Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
             | Event::Touch(touch::Event::FingerLifted { .. })
-            | Event::Touch(touch::Event::FingerLost { .. }) => {
-                if state.is_dragging {
-                    if let Some(on_release) = self.on_release.clone() {
-                        shell.publish(on_release);
-                    }
-                    state.is_dragging = false;
+            | Event::Touch(touch::Event::FingerLost { .. })
+                if state.is_dragging =>
+            {
+                if let Some(on_release) = self.on_release.clone() {
+                    shell.publish(on_release);
                 }
+                state.is_dragging = false;
             }
             Event::Mouse(mouse::Event::CursorMoved { .. })
-            | Event::Touch(touch::Event::FingerMoved { .. }) => {
-                if state.is_dragging {
-                    if let Some(pos) = cursor.land().position() {
-                        if let Some(new_value) = locate(pos) {
-                            if (self.value - new_value).abs() > f32::EPSILON {
-                                shell.publish((self.on_change)(new_value));
-                                self.value = new_value;
-                            }
-                        }
-                    }
-                    shell.capture_event();
+            | Event::Touch(touch::Event::FingerMoved { .. })
+                if state.is_dragging =>
+            {
+                if let Some(pos) = cursor.land().position()
+                    && let Some(new_value) = locate(pos)
+                    && (self.value - new_value).abs() > f32::EPSILON
+                {
+                    shell.publish((self.on_change)(new_value));
+                    self.value = new_value;
                 }
+                shell.capture_event();
             }
-            Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
-                if cursor.is_over(bounds) {
-                    let step = self.step;
-                    let current = self.value;
-                    match key {
-                        Key::Named(key::Named::ArrowUp) | Key::Named(key::Named::ArrowRight) => {
-                            let new_value = (current + step).min(*self.range.end());
-                            if (self.value - new_value).abs() > f32::EPSILON {
-                                shell.publish((self.on_change)(new_value));
-                                self.value = new_value;
-                            }
-                            shell.capture_event();
+            Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) if cursor.is_over(bounds) => {
+                let step = self.step;
+                let current = self.value;
+                match key {
+                    Key::Named(key::Named::ArrowUp) | Key::Named(key::Named::ArrowRight) => {
+                        let new_value = (current + step).min(*self.range.end());
+                        if (self.value - new_value).abs() > f32::EPSILON {
+                            shell.publish((self.on_change)(new_value));
+                            self.value = new_value;
                         }
-                        Key::Named(key::Named::ArrowDown) | Key::Named(key::Named::ArrowLeft) => {
-                            let new_value = (current - step).max(*self.range.start());
-                            if (self.value - new_value).abs() > f32::EPSILON {
-                                shell.publish((self.on_change)(new_value));
-                                self.value = new_value;
-                            }
-                            shell.capture_event();
-                        }
-                        _ => (),
+                        shell.capture_event();
                     }
+                    Key::Named(key::Named::ArrowDown) | Key::Named(key::Named::ArrowLeft) => {
+                        let new_value = (current - step).max(*self.range.start());
+                        if (self.value - new_value).abs() > f32::EPSILON {
+                            shell.publish((self.on_change)(new_value));
+                            self.value = new_value;
+                        }
+                        shell.capture_event();
+                    }
+                    _ => (),
                 }
             }
             _ => {}

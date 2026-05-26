@@ -22,22 +22,22 @@ fn parse_line(src: &str) -> Option<LyricLineOwned> {
 
     while pos < src.len() {
         // Try to parse a timestamp
-        if src[pos..].starts_with('[') {
-            if let Some(bracket_end) = src[pos..].find(']') {
-                let time_str = &src[pos..pos + bracket_end + 1];
+        if src[pos..].starts_with('[')
+            && let Some(bracket_end) = src[pos..].find(']')
+        {
+            let time_str = &src[pos..pos + bracket_end + 1];
 
-                // Try to parse as LRC timestamp
-                if let Some((_, time)) = parse_lrc_time(time_str) {
-                    if current_start_time.is_some() {
-                        // This timestamp is the end time of the previous word
-                        if let Some(last_word) = result.words.last_mut() {
-                            last_word.end_time = time;
-                        }
+            // Try to parse as LRC timestamp
+            if let Some((_, time)) = parse_lrc_time(time_str) {
+                if current_start_time.is_some() {
+                    // This timestamp is the end time of the previous word
+                    if let Some(last_word) = result.words.last_mut() {
+                        last_word.end_time = time;
                     }
-                    current_start_time = Some(time);
-                    pos += bracket_end + 1;
-                    continue;
                 }
+                current_start_time = Some(time);
+                pos += bracket_end + 1;
+                continue;
             }
         }
 
@@ -45,15 +45,15 @@ fn parse_line(src: &str) -> Option<LyricLineOwned> {
         let word_end = src[pos..].find('[').map(|i| pos + i).unwrap_or(src.len());
         let word_text = &src[pos..word_end];
 
-        if !word_text.is_empty() {
-            if let Some(start) = current_start_time {
-                result.words.push(LyricWordOwned {
-                    start_time: start,
-                    end_time: 0, // Will be set by next timestamp
-                    word: word_text.to_string(),
-                    roman_word: String::new(),
-                });
-            }
+        if !word_text.is_empty()
+            && let Some(start) = current_start_time
+        {
+            result.words.push(LyricWordOwned {
+                start_time: start,
+                end_time: 0, // Will be set by next timestamp
+                word: word_text.to_string(),
+                roman_word: String::new(),
+            });
         }
 
         pos = word_end;
@@ -76,15 +76,14 @@ fn parse_lrc_time(src: &str) -> Option<(usize, u64)> {
     let time_str = &src[1..end_bracket];
 
     // Skip metadata tags
-    if time_str.contains(':') {
-        if let Some(first_char) = time_str.chars().next() {
-            if first_char.is_alphabetic() {
-                return None;
-            }
-        }
+    if time_str.contains(':')
+        && let Some(first_char) = time_str.chars().next()
+        && first_char.is_alphabetic()
+    {
+        return None;
     }
 
-    let parts: Vec<&str> = time_str.split(|c| c == ':' || c == '.').collect();
+    let parts: Vec<&str> = time_str.split([':', '.']).collect();
 
     let time_ms = match parts.len() {
         2 => {

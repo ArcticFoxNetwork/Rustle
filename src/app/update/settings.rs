@@ -57,12 +57,12 @@ fn measure_section_positions() -> impl Operation<Vec<(SettingsSection, f32)>> {
         }
 
         fn container(&mut self, id: Option<&Id>, bounds: Rectangle) {
-            if let (Some(origin_y), Some(id)) = (self.content_origin_y, id) {
-                if let Some(section) = match_section(id) {
-                    // bounds.y is absolute (window-relative); subtract content
-                    // origin to get scrollable-content-relative position
-                    self.positions.push((section, bounds.y - origin_y));
-                }
+            if let (Some(origin_y), Some(id)) = (self.content_origin_y, id)
+                && let Some(section) = match_section(id)
+            {
+                // bounds.y is absolute (window-relative); subtract content
+                // origin to get scrollable-content-relative position
+                self.positions.push((section, bounds.y - origin_y));
             }
         }
 
@@ -492,7 +492,7 @@ impl App {
             }
             Message::MeasureSectionPositions => Some(iced_runtime::task::widget(widget_op::map(
                 measure_section_positions(),
-                |positions| Message::SectionPositionsMeasured(positions),
+                Message::SectionPositionsMeasured,
             ))),
             Message::StartEditingKeybinding(action) => {
                 self.ui.editing_keybinding = Some(*action);

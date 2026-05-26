@@ -53,10 +53,10 @@ pub async fn get_queue(pool: &Pool<Sqlite>) -> Result<Vec<DbSong>> {
 
     // Convert NCM song IDs to negative for consistency with the app
     for song in &mut songs {
-        if song.file_path.starts_with("ncm://") {
-            if let Ok(ncm_id) = song.file_path.trim_start_matches("ncm://").parse::<i64>() {
-                song.id = -ncm_id;
-            }
+        if song.file_path.starts_with("ncm://")
+            && let Ok(ncm_id) = song.file_path.trim_start_matches("ncm://").parse::<i64>()
+        {
+            song.id = -ncm_id;
         }
     }
 

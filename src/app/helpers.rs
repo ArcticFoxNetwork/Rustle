@@ -371,14 +371,14 @@ pub async fn load_playlist_view(
         .unwrap_or_default();
 
     let mut images = Vec::new();
-    if let (Ok(id), Some(path)) = (u64::try_from(playlist.id), playlist.cover_path.as_deref()) {
-        if crate::image::is_valid_local_path(path) {
-            images.push((
-                crate::image::ImageKind::LocalPlaylistCover,
-                id,
-                PathBuf::from(path),
-            ));
-        }
+    if let (Ok(id), Some(path)) = (u64::try_from(playlist.id), playlist.cover_path.as_deref())
+        && crate::image::is_valid_local_path(path)
+    {
+        images.push((
+            crate::image::ImageKind::LocalPlaylistCover,
+            id,
+            PathBuf::from(path),
+        ));
     }
     images.extend(songs.iter().filter_map(|song| {
         let path = song.song.cover_path.as_deref()?;

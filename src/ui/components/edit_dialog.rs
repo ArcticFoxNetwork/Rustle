@@ -340,7 +340,7 @@ pub fn view<'a>(
         .on_press(Message::Noop);
 
     // Use opaque to block all mouse button events from propagating to underlying widgets
-    opaque(event_blocker).into()
+    opaque(event_blocker)
 }
 
 /// Content-only body for unified modal layout (cover + form fields, no backdrop/title/buttons).

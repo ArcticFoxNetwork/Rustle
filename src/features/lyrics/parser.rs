@@ -83,16 +83,14 @@ pub fn detect_format(content: &str) -> LyricsFormat {
             }
 
             // LYS format: starts with [digit] property marker
-            if first_line.len() >= 3 && first_line.starts_with('[') {
-                if let Some(c) = first_line.chars().nth(1) {
-                    if c.is_ascii_digit() {
-                        if let Some(c2) = first_line.chars().nth(2) {
-                            if c2 == ']' {
-                                return LyricsFormat::Lys;
-                            }
-                        }
-                    }
-                }
+            if first_line.len() >= 3
+                && first_line.starts_with('[')
+                && let Some(c) = first_line.chars().nth(1)
+                && c.is_ascii_digit()
+                && let Some(c2) = first_line.chars().nth(2)
+                && c2 == ']'
+            {
+                return LyricsFormat::Lys;
             }
             // ESLrc: [mm:ss.xx]text[mm:ss.xx]
             // Check if there are multiple timestamps in a single line

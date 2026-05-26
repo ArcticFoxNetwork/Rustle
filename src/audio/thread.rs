@@ -721,80 +721,78 @@ fn handle_seek(
     // For streaming playback, check if target position has enough buffered data
     let is_streaming = player.is_streaming();
 
-    if is_streaming {
-        if let Some(buffer) = current_buffer {
-            let current_info = player.get_info();
-            let target_byte_pos =
-                estimate_byte_position(position, buffer.total_size(), current_info.duration);
-            let downloaded = buffer.downloaded();
-            let buffered_after_target = downloaded.saturating_sub(target_byte_pos);
+    if is_streaming && let Some(buffer) = current_buffer {
+        let current_info = player.get_info();
+        let target_byte_pos =
+            estimate_byte_position(position, buffer.total_size(), current_info.duration);
+        let downloaded = buffer.downloaded();
+        let buffered_after_target = downloaded.saturating_sub(target_byte_pos);
 
-            // Use HIGH_WATER_MARK to ensure smooth playback after seek
-            let has_enough_buffer =
-                buffered_after_target >= HIGH_WATER_MARK_BYTES || buffer.is_complete();
+        // Use HIGH_WATER_MARK to ensure smooth playback after seek
+        let has_enough_buffer =
+            buffered_after_target >= HIGH_WATER_MARK_BYTES || buffer.is_complete();
 
-            if has_enough_buffer {
-                // Enough data buffered
-                tracing::debug!(
-                    "Seek to position {:?} (byte {}): buffered {} bytes after target, executing immediately",
-                    position,
-                    target_byte_pos,
-                    buffered_after_target
-                );
-
-                let _ = event_tx.send(AudioEvent::SeekStarted {
-                    target_position: position,
-                });
-
-                // Data is in memory, this will complete instantly (no blocking)
-                match player.seek(position) {
-                    Ok(_) => {
-                        state.set_position(position);
-
-                        // If we were in Buffering state with a pending seek, clear it and exit Buffering
-                        let current_status = state.get_info().status;
-                        if matches!(current_status, PlaybackStatus::Buffering { .. }) {
-                            state.set_pending_seek(None);
-                            // Resume playback since we successfully seeked to buffered position
-                            player.play_sink();
-                            state.set_status(PlaybackStatus::Playing);
-                            let _ = event_tx.send(AudioEvent::BufferingEnded);
-                            tracing::info!(
-                                "Seek during Buffering to buffered position, exiting Buffering"
-                            );
-                        }
-
-                        let _ = event_tx.send(AudioEvent::SeekComplete { position });
-                    }
-                    Err(e) => {
-                        let _ = event_tx.send(AudioEvent::SeekFailed { error: e });
-                    }
-                }
-                return;
-            }
-
-            tracing::info!(
-                "Seek to position {:?} (byte {}): only {} bytes buffered after target (need {}), entering Buffering with pending seek",
+        if has_enough_buffer {
+            // Enough data buffered
+            tracing::debug!(
+                "Seek to position {:?} (byte {}): buffered {} bytes after target, executing immediately",
                 position,
                 target_byte_pos,
-                buffered_after_target,
-                HIGH_WATER_MARK_BYTES
+                buffered_after_target
             );
 
-            // Store pending seek target
-            state.set_pending_seek(Some(position));
-
-            // Emit seek started event
             let _ = event_tx.send(AudioEvent::SeekStarted {
                 target_position: position,
             });
 
-            // Enter Buffering state (reuse existing mechanism)
-            // Use current position as the buffering position (we haven't seeked yet)
-            enter_buffering(player, state, event_tx, current_info.position);
+            // Data is in memory, this will complete instantly (no blocking)
+            match player.seek(position) {
+                Ok(_) => {
+                    state.set_position(position);
 
+                    // If we were in Buffering state with a pending seek, clear it and exit Buffering
+                    let current_status = state.get_info().status;
+                    if matches!(current_status, PlaybackStatus::Buffering { .. }) {
+                        state.set_pending_seek(None);
+                        // Resume playback since we successfully seeked to buffered position
+                        player.play_sink();
+                        state.set_status(PlaybackStatus::Playing);
+                        let _ = event_tx.send(AudioEvent::BufferingEnded);
+                        tracing::info!(
+                            "Seek during Buffering to buffered position, exiting Buffering"
+                        );
+                    }
+
+                    let _ = event_tx.send(AudioEvent::SeekComplete { position });
+                }
+                Err(e) => {
+                    let _ = event_tx.send(AudioEvent::SeekFailed { error: e });
+                }
+            }
             return;
         }
+
+        tracing::info!(
+            "Seek to position {:?} (byte {}): only {} bytes buffered after target (need {}), entering Buffering with pending seek",
+            position,
+            target_byte_pos,
+            buffered_after_target,
+            HIGH_WATER_MARK_BYTES
+        );
+
+        // Store pending seek target
+        state.set_pending_seek(Some(position));
+
+        // Emit seek started event
+        let _ = event_tx.send(AudioEvent::SeekStarted {
+            target_position: position,
+        });
+
+        // Enter Buffering state (reuse existing mechanism)
+        // Use current position as the buffering position (we haven't seeked yet)
+        enter_buffering(player, state, event_tx, current_info.position);
+
+        return;
     }
 
     // Local file playback
@@ -1061,12 +1059,12 @@ fn check_buffer_status(
     let remaining_bytes = downloaded.saturating_sub(byte_pos);
 
     match &current_status {
-        PlaybackStatus::Playing => {
+        PlaybackStatus::Playing
             // Check if we need to enter Buffering (LOW water mark)
             // Only enter Buffering if:
             // 1. Remaining data is below LOW_WATER_MARK_BYTES, AND
             // 2. Download is not complete
-            if remaining_bytes < LOW_WATER_MARK_BYTES && !buffer.is_complete() {
+            if remaining_bytes < LOW_WATER_MARK_BYTES && !buffer.is_complete() => {
                 tracing::info!(
                     "Buffer low: remaining {} bytes < {} (low water mark), entering Buffering",
                     remaining_bytes,
@@ -1074,7 +1072,6 @@ fn check_buffer_status(
                 );
                 enter_buffering(player, state, event_tx, player_info.position);
             }
-        }
         PlaybackStatus::Buffering { .. } => {
             // Check if we can exit Buffering (HIGH water mark)
             // Exit Buffering if:
@@ -1190,10 +1187,10 @@ fn check_playback_finished(
     current_buffer: Option<&SharedBuffer>,
 ) {
     // For streaming playback, check if we should enter Buffering instead of finishing
-    if let Some(buffer) = current_buffer {
-        if !buffer.is_complete() {
-            return;
-        }
+    if let Some(buffer) = current_buffer
+        && !buffer.is_complete()
+    {
+        return;
     }
 
     if player.is_finished() {

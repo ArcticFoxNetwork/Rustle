@@ -343,12 +343,11 @@ impl LyricsEngine {
         self.physics.update(dt, self.is_hovering);
 
         // Check if we should return to auto-play using configured timeout
-        if self.physics.state() == ScrollState::Idle {
-            if self.physics.time_since_interaction() > self.config.scroll_timeout
-                && !self.is_hovering
-            {
-                self.physics.start_auto_play();
-            }
+        if self.physics.state() == ScrollState::Idle
+            && self.physics.time_since_interaction() > self.config.scroll_timeout
+            && !self.is_hovering
+        {
+            self.physics.start_auto_play();
         }
 
         // Update interlude dots animation
@@ -910,17 +909,19 @@ impl LyricsEngine {
         // Step 2: 找到新的热行（当前时间范围内的行）
         let mut added_ids: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for (i, line) in lines.iter().enumerate() {
-            if !line.is_bg && line.start_ms <= time && line.end_ms > time {
-                if !self.hot_lines.contains(&i) {
-                    self.hot_lines.insert(i);
-                    added_ids.insert(i);
-                    // 如果下一行是背景行，也加入
-                    if let Some(next) = lines.get(i + 1) {
-                        if next.is_bg {
-                            self.hot_lines.insert(i + 1);
-                            added_ids.insert(i + 1);
-                        }
-                    }
+            if !line.is_bg
+                && line.start_ms <= time
+                && line.end_ms > time
+                && !self.hot_lines.contains(&i)
+            {
+                self.hot_lines.insert(i);
+                added_ids.insert(i);
+                // 如果下一行是背景行，也加入
+                if let Some(next) = lines.get(i + 1)
+                    && next.is_bg
+                {
+                    self.hot_lines.insert(i + 1);
+                    added_ids.insert(i + 1);
                 }
             }
         }

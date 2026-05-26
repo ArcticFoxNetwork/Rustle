@@ -92,7 +92,7 @@ pub fn view(
 
 /// Tab bar with continuous bottom line - active tab portion highlighted
 fn tab_bar(active_section: SettingsSection, locale: Locale) -> Element<'static, Message> {
-    let tabs = vec![
+    let tabs = [
         (
             SettingsSection::Account,
             locale.get(Key::SettingsTabAccount),

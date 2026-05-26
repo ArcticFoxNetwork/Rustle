@@ -115,30 +115,28 @@ where
         let bounds = layout.bounds();
 
         match event {
-            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                if cursor.is_over(bounds) {
-                    state.is_dragging = true;
-                    if let Some(position) = cursor.position() {
-                        let new_value = self.value_from_position(position.y, bounds);
-                        shell.publish((self.on_change)(new_value));
-                    }
-                    shell.capture_event();
+            Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+                if cursor.is_over(bounds) =>
+            {
+                state.is_dragging = true;
+                if let Some(position) = cursor.position() {
+                    let new_value = self.value_from_position(position.y, bounds);
+                    shell.publish((self.on_change)(new_value));
                 }
+                shell.capture_event();
             }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                if state.is_dragging {
-                    state.is_dragging = false;
-                    shell.capture_event();
-                }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if state.is_dragging =>
+            {
+                state.is_dragging = false;
+                shell.capture_event();
             }
-            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
-                if state.is_dragging {
-                    if let Some(position) = cursor.position() {
-                        let new_value = self.value_from_position(position.y, bounds);
-                        shell.publish((self.on_change)(new_value));
-                    }
-                    shell.capture_event();
+            Event::Mouse(mouse::Event::CursorMoved { .. }) if state.is_dragging => {
+                if let Some(position) = cursor.position() {
+                    let new_value = self.value_from_position(position.y, bounds);
+                    shell.publish((self.on_change)(new_value));
                 }
+                shell.capture_event();
             }
             _ => {}
         }

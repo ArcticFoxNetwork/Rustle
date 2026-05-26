@@ -127,12 +127,11 @@ impl<K: Eq + Hash + Clone> HoverAnimations<K> {
     /// Clean up completed fade-out animations
     pub fn cleanup_completed(&mut self) {
         // Remove fading animation if it's done (reached 0)
-        if let Some(_) = &self.fading_key {
-            if *self.fading_anim.value() < 0.01
-                && self.fading_anim.value() == self.fading_anim.target()
-            {
-                self.fading_key = None;
-            }
+        if self.fading_key.is_some()
+            && *self.fading_anim.value() < 0.01
+            && self.fading_anim.value() == self.fading_anim.target()
+        {
+            self.fading_key = None;
         }
     }
 

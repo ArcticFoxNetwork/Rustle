@@ -159,7 +159,7 @@ impl App {
                     artists: vec![song.artist.clone()],
                     album: Some(song.album.clone()),
                     album_artists: vec![],
-                    length_us: Some(song.duration_secs as i64 * 1_000_000),
+                    length_us: Some(song.duration_secs * 1_000_000),
                     art_url,
                 }
             } else {

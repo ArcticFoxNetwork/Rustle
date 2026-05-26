@@ -531,7 +531,7 @@ fn cover_base_style(
 
 /// Pagination component
 fn pagination<'a>(state: &'a SearchPageState) -> Element<'a, Message> {
-    let total_pages = (state.total_count + PAGE_SIZE - 1) / PAGE_SIZE;
+    let total_pages = state.total_count.div_ceil(PAGE_SIZE);
     let current_page = state.current_page;
 
     let mut items: Vec<Element<'a, Message>> = Vec::new();

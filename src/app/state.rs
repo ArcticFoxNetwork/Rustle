@@ -542,6 +542,7 @@ impl UserInfo {
 }
 
 /// Business Logic Data
+#[derive(Default)]
 pub struct LibraryState {
     pub db_songs: Vec<DbSong>,
     pub playlists: Vec<DbPlaylist>,
@@ -555,25 +556,11 @@ pub struct LibraryState {
     pub watched_folders: Vec<DbWatchedFolder>,
 }
 
-impl Default for LibraryState {
-    fn default() -> Self {
-        Self {
-            db_songs: Vec::new(),
-            playlists: Vec::new(),
-            recently_played: Vec::new(),
-            scan_state: None,
-            scan_handle: None,
-            scan_progress: None,
-            folder_watcher: None,
-            watched_folders: Vec::new(),
-        }
-    }
-}
-
 /// Playback-owned session state.
 ///
 /// This is kept separate from `LibraryState` so playback coordination has a
 /// single home for queue ownership, preload state, and resume bookkeeping.
+#[derive(Default)]
 pub struct PlaybackSessionState {
     /// Current playing song reflected in UI/system integrations.
     pub current_song: Option<DbSong>,
@@ -609,30 +596,6 @@ pub struct PlaybackSessionState {
     pub consecutive_failures: u8,
     /// Startup restore coordination state.
     pub startup_restore: StartupRestoreState,
-}
-
-impl Default for PlaybackSessionState {
-    fn default() -> Self {
-        Self {
-            current_song: None,
-            current_artist_id: None,
-            saved_state: None,
-            queue: Vec::new(),
-            current_index: None,
-            personal_fm_mode: false,
-            shuffle_cache: Default::default(),
-            audio_preload_manager: Default::default(),
-            lyrics_preload_manager: Default::default(),
-            lyrics_render_manager: Default::default(),
-            preload_coordinator: Default::default(),
-            pending_resolution_index: None,
-            pending_playback_request: None,
-            active_streaming_buffer: None,
-            runtime: Default::default(),
-            consecutive_failures: 0,
-            startup_restore: Default::default(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -733,11 +696,11 @@ impl NavigationHistory {
 
     /// Replace the current history entry without changing stack length
     pub fn replace_current(&mut self, entry: NavigationEntry) {
-        if let Some(idx) = self.current_index {
-            if idx < self.entries.len() {
-                self.entries[idx] = entry;
-                return;
-            }
+        if let Some(idx) = self.current_index
+            && idx < self.entries.len()
+        {
+            self.entries[idx] = entry;
+            return;
         }
 
         self.push(entry);
@@ -745,22 +708,22 @@ impl NavigationHistory {
 
     /// Go back in history, returns the entry to navigate to
     pub fn go_back(&mut self) -> Option<NavigationEntry> {
-        if let Some(idx) = self.current_index {
-            if idx > 0 {
-                self.current_index = Some(idx - 1);
-                return self.entries.get(idx - 1).cloned();
-            }
+        if let Some(idx) = self.current_index
+            && idx > 0
+        {
+            self.current_index = Some(idx - 1);
+            return self.entries.get(idx - 1).cloned();
         }
         None
     }
 
     /// Go forward in history, returns the entry to navigate to
     pub fn go_forward(&mut self) -> Option<NavigationEntry> {
-        if let Some(idx) = self.current_index {
-            if idx + 1 < self.entries.len() {
-                self.current_index = Some(idx + 1);
-                return self.entries.get(idx + 1).cloned();
-            }
+        if let Some(idx) = self.current_index
+            && idx + 1 < self.entries.len()
+        {
+            self.current_index = Some(idx + 1);
+            return self.entries.get(idx + 1).cloned();
         }
         None
     }

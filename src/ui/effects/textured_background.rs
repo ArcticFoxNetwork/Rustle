@@ -657,11 +657,12 @@ impl TexturedBackgroundProgram {
         path_key: Option<PathBuf>,
     ) -> bool {
         // 如果路径一致，直接忽略，避免闪烁和性能浪费
-        if let Some(ref path) = path_key {
-            if self.current_image_path.as_ref() == Some(path) && self.has_cover {
-                tracing::debug!("Cache hit for background image: {:?}", path);
-                return false;
-            }
+        if let Some(ref path) = path_key
+            && self.current_image_path.as_ref() == Some(path)
+            && self.has_cover
+        {
+            tracing::debug!("Cache hit for background image: {:?}", path);
+            return false;
         }
 
         tracing::info!("Processing new background image...");
@@ -697,7 +698,7 @@ impl TexturedBackgroundProgram {
     /// Check if the given path matches the currently loaded image
     /// Used for async loading to avoid redundant loads
     pub fn is_same_image(&self, path: &std::path::Path) -> bool {
-        self.current_image_path.as_ref().map(|p| p.as_path()) == Some(path) && self.has_cover
+        self.current_image_path.as_deref() == Some(path) && self.has_cover
     }
 
     /// 清除封面（淡出）
@@ -729,11 +730,11 @@ impl TexturedBackgroundProgram {
         // Alpha 过渡 (一致: deltaFactor = delta / 500)
         let delta_factor = delta / 500.0;
 
-        if let Some(latest) = self.mesh_states.last_mut() {
-            if self.has_cover {
-                // 有封面时，最新状态的 alpha 逐渐增加到 1.0
-                latest.alpha = (latest.alpha + delta_factor).min(1.0);
-            }
+        if let Some(latest) = self.mesh_states.last_mut()
+            && self.has_cover
+        {
+            // 有封面时，最新状态的 alpha 逐渐增加到 1.0
+            latest.alpha = (latest.alpha + delta_factor).min(1.0);
         }
 
         if self.has_cover {
@@ -743,13 +744,12 @@ impl TexturedBackgroundProgram {
                 .last()
                 .map(|s| s.alpha >= 1.0)
                 .unwrap_or(false)
+                && self.mesh_states.len() > 1
             {
-                if self.mesh_states.len() > 1 {
-                    // 保留最后一个，删除其他所有
-                    let last = self.mesh_states.pop().unwrap();
-                    self.mesh_states.clear();
-                    self.mesh_states.push(last);
-                }
+                // 保留最后一个，删除其他所有
+                let last = self.mesh_states.pop().unwrap();
+                self.mesh_states.clear();
+                self.mesh_states.push(last);
             }
         } else {
             // 没有封面时，所有状态的 alpha 逐渐减少 (一致)

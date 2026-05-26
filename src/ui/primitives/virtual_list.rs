@@ -453,23 +453,22 @@ where
 
         match event {
             Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
-                if let Some(position) = cursor.position() {
-                    if let Some(sb_bounds) = scrollbar_bounds {
-                        if sb_bounds.contains(position) {
-                            internal_state.scrollbar_dragging = true;
-                            internal_state.drag_start_offset = position.y - sb_bounds.y;
-                            shell.capture_event();
-                            return;
-                        }
-                    }
-                }
-            }
-            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) => {
-                if internal_state.scrollbar_dragging {
-                    internal_state.scrollbar_dragging = false;
+                if let Some(position) = cursor.position()
+                    && let Some(sb_bounds) = scrollbar_bounds
+                    && sb_bounds.contains(position)
+                {
+                    internal_state.scrollbar_dragging = true;
+                    internal_state.drag_start_offset = position.y - sb_bounds.y;
                     shell.capture_event();
                     return;
                 }
+            }
+            Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left))
+                if internal_state.scrollbar_dragging =>
+            {
+                internal_state.scrollbar_dragging = false;
+                shell.capture_event();
+                return;
             }
             Event::Mouse(mouse::Event::CursorMoved { position }) => {
                 if let Some(sb_bounds) = scrollbar_bounds {
@@ -542,25 +541,24 @@ where
             _ => {}
         }
 
-        if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event {
-            if let Some(position) = cursor.position() {
-                if bounds.contains(position) {
-                    let delta_y = match delta {
-                        mouse::ScrollDelta::Lines { y, .. } => y * 50.0,
-                        mouse::ScrollDelta::Pixels { y, .. } => *y,
-                    };
+        if let Event::Mouse(mouse::Event::WheelScrolled { delta }) = event
+            && let Some(position) = cursor.position()
+            && bounds.contains(position)
+        {
+            let delta_y = match delta {
+                mouse::ScrollDelta::Lines { y, .. } => y * 50.0,
+                mouse::ScrollDelta::Pixels { y, .. } => *y,
+            };
 
-                    let mut state = self.state.borrow_mut();
-                    let max_scroll = state.max_scroll();
-                    let new_offset = (state.scroll_offset - delta_y).clamp(0.0, max_scroll);
+            let mut state = self.state.borrow_mut();
+            let max_scroll = state.max_scroll();
+            let new_offset = (state.scroll_offset - delta_y).clamp(0.0, max_scroll);
 
-                    if (new_offset - state.scroll_offset).abs() > 0.01 {
-                        state.scroll_offset = new_offset;
-                        shell.invalidate_layout();
-                    }
-                    shell.capture_event();
-                }
+            if (new_offset - state.scroll_offset).abs() > 0.01 {
+                state.scroll_offset = new_offset;
+                shell.invalidate_layout();
             }
+            shell.capture_event();
         }
 
         if internal_state.scrollbar_dragging {
@@ -661,19 +659,19 @@ where
                 let (start, end) = internal_state.cached_visible_range;
                 let mut children = layout.children();
                 for item_idx in start..end {
-                    if let Some(child_layout) = children.next() {
-                        if let Some(child_tree) = internal_state.item_trees.get_mut(&item_idx) {
-                            let mut element = (self.item_builder)(item_idx);
-                            element.as_widget_mut().update(
-                                child_tree,
-                                event,
-                                child_layout,
-                                cursor,
-                                renderer,
-                                shell,
-                                viewport,
-                            );
-                        }
+                    if let Some(child_layout) = children.next()
+                        && let Some(child_tree) = internal_state.item_trees.get_mut(&item_idx)
+                    {
+                        let mut element = (self.item_builder)(item_idx);
+                        element.as_widget_mut().update(
+                            child_tree,
+                            event,
+                            child_layout,
+                            cursor,
+                            renderer,
+                            shell,
+                            viewport,
+                        );
                     }
                 }
             }
@@ -707,10 +705,10 @@ where
         }
 
         let state = self.state.borrow();
-        if let Some(sb_bounds) = self.calculate_scrollbar_bounds(bounds, &state) {
-            if sb_bounds.contains(cursor_pos) {
-                return mouse::Interaction::Grab;
-            }
+        if let Some(sb_bounds) = self.calculate_scrollbar_bounds(bounds, &state)
+            && sb_bounds.contains(cursor_pos)
+        {
+            return mouse::Interaction::Grab;
         }
         let scroll_offset = state.scroll_offset;
         drop(state);

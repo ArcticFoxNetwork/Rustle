@@ -226,7 +226,7 @@ impl SharedBuffer {
 
         if let Some(err) = self.inner.error.read().as_ref() {
             tracing::debug!("read_at: error at position {}: {}", position, err);
-            return Err(io::Error::new(io::ErrorKind::Other, err.clone()));
+            return Err(io::Error::other(err.clone()));
         }
 
         // Wait for data if needed
@@ -281,7 +281,7 @@ impl SharedBuffer {
                     position,
                     err
                 );
-                return Err(io::Error::new(io::ErrorKind::Other, err.clone()));
+                return Err(io::Error::other(err.clone()));
             }
 
             // Data not yet available, wait for download to progress
@@ -659,10 +659,8 @@ pub fn start_buffer_download(
         }
         tracing::debug!("Buffer download complete: {} bytes", downloaded);
 
-        if !playable_sent {
-            if let Some(tx) = &event_tx {
-                let _ = tx.send(StreamingEvent::Playable).await;
-            }
+        if !playable_sent && let Some(tx) = &event_tx {
+            let _ = tx.send(StreamingEvent::Playable).await;
         }
     });
 

@@ -147,12 +147,11 @@ impl App {
             }
 
             Message::ExitDialogRememberChanged(checked) => {
-                if let Some(entry) = self.ui.overlay_stack.last_mut() {
-                    if let OverlayKind::Modal(ModalKind::ExitConfirm { remember_choice: r }, _) =
+                if let Some(entry) = self.ui.overlay_stack.last_mut()
+                    && let OverlayKind::Modal(ModalKind::ExitConfirm { remember_choice: r }, _) =
                         &mut entry.kind
-                    {
-                        *r = *checked;
-                    }
+                {
+                    *r = *checked;
                 }
                 Some(Task::none())
             }

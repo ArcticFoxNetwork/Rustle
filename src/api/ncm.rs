@@ -69,10 +69,10 @@ impl NcmClient {
     /// 带代理创建客户端
     pub fn with_proxy(proxy_url: Option<String>) -> Self {
         let mut client = Self::new();
-        if let Some(url) = proxy_url {
-            if let Err(e) = client.set_proxy(url) {
-                tracing::warn!("Failed to set proxy: {}", e);
-            }
+        if let Some(url) = proxy_url
+            && let Err(e) = client.set_proxy(url)
+        {
+            tracing::warn!("Failed to set proxy: {}", e);
         }
         client
     }
@@ -94,10 +94,10 @@ impl NcmClient {
         proxy_url: Option<String>,
     ) -> Self {
         let mut client = Self::from_cookie_jar(cookie_jar, csrf_token);
-        if let Some(url) = proxy_url {
-            if let Err(e) = client.set_proxy(url) {
-                tracing::warn!("Failed to set proxy: {}", e);
-            }
+        if let Some(url) = proxy_url
+            && let Err(e) = client.set_proxy(url)
+        {
+            tracing::warn!("Failed to set proxy: {}", e);
         }
         client
     }
@@ -199,23 +199,22 @@ impl NcmClient {
                     let url: reqwest::Url = base_url.parse().unwrap();
                     if let Some(header_value) =
                         self.client.cookie_jar().and_then(|jar| jar.cookies(&url))
+                        && let Ok(cookie_str) = header_value.to_str()
                     {
-                        if let Ok(cookie_str) = header_value.to_str() {
-                            for pair in cookie_str.split("; ") {
-                                if pair.is_empty() {
-                                    continue;
-                                }
-                                let name = pair.split('=').next().unwrap_or_default();
-                                if name.eq_ignore_ascii_case("os")
-                                    || name.eq_ignore_ascii_case("appver")
-                                {
-                                    continue;
-                                }
-                                let persisted_cookie =
-                                    format!("{}; Domain=music.163.com; Path=/", pair);
-                                if !cookies.contains(&persisted_cookie) {
-                                    cookies.push(persisted_cookie);
-                                }
+                        for pair in cookie_str.split("; ") {
+                            if pair.is_empty() {
+                                continue;
+                            }
+                            let name = pair.split('=').next().unwrap_or_default();
+                            if name.eq_ignore_ascii_case("os")
+                                || name.eq_ignore_ascii_case("appver")
+                            {
+                                continue;
+                            }
+                            let persisted_cookie =
+                                format!("{}; Domain=music.163.com; Path=/", pair);
+                            if !cookies.contains(&persisted_cookie) {
+                                cookies.push(persisted_cookie);
                             }
                         }
                     }

@@ -1009,23 +1009,22 @@ fn get_pulseaudio_devices() -> Vec<AudioDevice> {
     if let Ok(output) = std::process::Command::new("pactl")
         .args(["list", "sinks"])
         .output()
+        && output.status.success()
     {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let mut current_name = String::new();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut current_name = String::new();
 
-            for line in stdout.lines() {
-                let line = line.trim();
-                if line.starts_with("Name:") {
-                    current_name = line.trim_start_matches("Name:").trim().to_string();
-                } else if line.starts_with("Description:") && !current_name.is_empty() {
-                    let description = line.trim_start_matches("Description:").trim().to_string();
-                    devices.push(AudioDevice {
-                        name: current_name.clone(),
-                        description,
-                    });
-                    current_name.clear();
-                }
+        for line in stdout.lines() {
+            let line = line.trim();
+            if line.starts_with("Name:") {
+                current_name = line.trim_start_matches("Name:").trim().to_string();
+            } else if line.starts_with("Description:") && !current_name.is_empty() {
+                let description = line.trim_start_matches("Description:").trim().to_string();
+                devices.push(AudioDevice {
+                    name: current_name.clone(),
+                    description,
+                });
+                current_name.clear();
             }
         }
     }
@@ -1036,37 +1035,37 @@ fn get_pulseaudio_devices() -> Vec<AudioDevice> {
 fn get_alsa_devices() -> Vec<AudioDevice> {
     let mut devices = Vec::new();
 
-    if let Ok(output) = std::process::Command::new("aplay").args(["-l"]).output() {
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
+    if let Ok(output) = std::process::Command::new("aplay").args(["-l"]).output()
+        && output.status.success()
+    {
+        let stdout = String::from_utf8_lossy(&output.stdout);
 
-            for line in stdout.lines() {
-                if line.starts_with("card ") {
-                    if let Some((card_info, device_info)) = line.split_once(", device ") {
-                        let card_num = card_info
-                            .trim_start_matches("card ")
-                            .split(':')
-                            .next()
-                            .unwrap_or("0")
-                            .trim();
+        for line in stdout.lines() {
+            if line.starts_with("card ")
+                && let Some((card_info, device_info)) = line.split_once(", device ")
+            {
+                let card_num = card_info
+                    .trim_start_matches("card ")
+                    .split(':')
+                    .next()
+                    .unwrap_or("0")
+                    .trim();
 
-                        let device_num = device_info.split(':').next().unwrap_or("0").trim();
+                let device_num = device_info.split(':').next().unwrap_or("0").trim();
 
-                        let description = if let Some(start) = line.find('[') {
-                            if let Some(end) = line.rfind(']') {
-                                line[start + 1..end].to_string()
-                            } else {
-                                line.to_string()
-                            }
-                        } else {
-                            line.to_string()
-                        };
-
-                        let name = format!("hw:{},{}", card_num, device_num);
-
-                        devices.push(AudioDevice { name, description });
+                let description = if let Some(start) = line.find('[') {
+                    if let Some(end) = line.rfind(']') {
+                        line[start + 1..end].to_string()
+                    } else {
+                        line.to_string()
                     }
-                }
+                } else {
+                    line.to_string()
+                };
+
+                let name = format!("hw:{},{}", card_num, device_num);
+
+                devices.push(AudioDevice { name, description });
             }
         }
     }

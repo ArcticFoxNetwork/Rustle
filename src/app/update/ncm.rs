@@ -186,7 +186,7 @@ impl App {
         self.ui.playlist_page.load_state =
             crate::app::update::page_loader::PlaylistLoadState::Loading;
 
-        let api_task = if let Some(client) = &self.core.ncm_client {
+        if let Some(client) = &self.core.ncm_client {
             let client = client.clone();
             if is_daily_recommend {
                 let locale = &self.core.locale;
@@ -252,9 +252,7 @@ impl App {
             }
         } else {
             Task::none()
-        };
-
-        api_task
+        }
     }
 
     pub(super) fn open_album_route(&mut self, album_id: u64) -> Task<Message> {
@@ -550,15 +548,14 @@ impl App {
                             {
                                 let client = client.clone();
                                 async move {
-                                    if let Some(client) = client {
-                                        if let Ok(song_ids) =
+                                    if let Some(client) = client
+                                        && let Ok(song_ids) =
                                             client.client.user_song_id_list(uid).await
-                                        {
-                                            let mut user_info =
-                                                UserInfo::new(uid, String::new(), String::new());
-                                            user_info.like_songs = song_ids.into_iter().collect();
-                                            return user_info;
-                                        }
+                                    {
+                                        let mut user_info =
+                                            UserInfo::new(uid, String::new(), String::new());
+                                        user_info.like_songs = song_ids.into_iter().collect();
+                                        return user_info;
                                     }
                                     UserInfo::new(uid, String::new(), String::new())
                                 }
@@ -898,7 +895,7 @@ impl App {
                 if let Some(client) = &self.core.ncm_client {
                     let client = client.clone();
                     let is_liked = if let Some(ref user_info) = self.core.user_info {
-                        user_info.like_songs.contains(&song_id)
+                        user_info.like_songs.contains(song_id)
                     } else {
                         false
                     };
@@ -937,18 +934,19 @@ impl App {
                 }
 
                 // Update tray state if this is the current song
-                if let Some(current) = &self.playback.current_song {
-                    if current.id < 0 && (-current.id) as u64 == *song_id {
-                        let is_playing = self.playback_is_playing();
-                        crate::app::helpers::update_tray_state_with_favorite(
-                            is_playing,
-                            Some(current.title.clone()),
-                            Some(current.artist.clone()),
-                            self.core.settings.play_mode,
-                            Some(*song_id),
-                            *liked,
-                        );
-                    }
+                if let Some(current) = &self.playback.current_song
+                    && current.id < 0
+                    && (-current.id) as u64 == *song_id
+                {
+                    let is_playing = self.playback_is_playing();
+                    crate::app::helpers::update_tray_state_with_favorite(
+                        is_playing,
+                        Some(current.title.clone()),
+                        Some(current.artist.clone()),
+                        self.core.settings.play_mode,
+                        Some(*song_id),
+                        *liked,
+                    );
                 }
 
                 Some(Task::none())
@@ -978,10 +976,8 @@ impl App {
                 );
                 self.ui.home.current_ncm_playlist_songs = songs.clone();
 
-                let db_songs: Vec<crate::database::DbSong> = songs
-                    .iter()
-                    .map(|song| Self::ncm_song_to_db_song(song))
-                    .collect();
+                let db_songs: Vec<crate::database::DbSong> =
+                    songs.iter().map(Self::ncm_song_to_db_song).collect();
 
                 if self.is_fm_mode() && !*play_now {
                     debug!("FM mode: appending {} songs to queue", db_songs.len());
@@ -1090,24 +1086,24 @@ impl App {
                 };
 
                 // Update existing PlaylistView with full details (keep cover_path if already loaded)
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    if playlist.id == playlist_id {
-                        playlist.name = detail.name.clone();
-                        playlist.description = if detail.description.is_empty() {
-                            None
-                        } else {
-                            Some(detail.description.clone())
-                        };
-                        playlist.owner = if detail.creator_nickname.is_empty() {
-                            "网易云音乐".to_string()
-                        } else {
-                            detail.creator_nickname.clone()
-                        };
-                        playlist.creator_id = detail.creator_id;
-                        playlist.song_count = detail.songs.len() as u32;
-                        playlist.total_duration = total_duration;
-                        playlist.is_subscribed = detail.subscribed;
-                    }
+                if let Some(playlist) = &mut self.ui.playlist_page.current
+                    && playlist.id == playlist_id
+                {
+                    playlist.name = detail.name.clone();
+                    playlist.description = if detail.description.is_empty() {
+                        None
+                    } else {
+                        Some(detail.description.clone())
+                    };
+                    playlist.owner = if detail.creator_nickname.is_empty() {
+                        "网易云音乐".to_string()
+                    } else {
+                        detail.creator_nickname.clone()
+                    };
+                    playlist.creator_id = detail.creator_id;
+                    playlist.song_count = detail.songs.len() as u32;
+                    playlist.total_duration = total_duration;
+                    playlist.is_subscribed = detail.subscribed;
                 }
 
                 // Store NCM songs for playback
@@ -1157,7 +1153,7 @@ impl App {
                     },
                 );
 
-                return Some(Task::batch([songs_task, creator_detail_task]));
+                Some(Task::batch([songs_task, creator_detail_task]))
             }
 
             Message::NcmPlaylistSongsReady(playlist_id, song_views) => {
@@ -1166,19 +1162,19 @@ impl App {
                 debug!("NCM playlist songs ready: {} songs", song_views.len());
 
                 // Update existing playlist view with songs
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    if playlist.id == *playlist_id {
-                        // Recompute sources with real download dir (async callers used None)
-                        for song in &mut song_views {
-                            song.source = crate::utils::compute_source(
-                                "",
-                                song.id,
-                                Some(&song.artist),
-                                Some(&song.title),
-                            );
-                        }
-                        playlist.songs = song_views.clone();
+                if let Some(playlist) = &mut self.ui.playlist_page.current
+                    && playlist.id == *playlist_id
+                {
+                    // Recompute sources with real download dir (async callers used None)
+                    for song in &mut song_views {
+                        song.source = crate::utils::compute_source(
+                            "",
+                            song.id,
+                            Some(&song.artist),
+                            Some(&song.title),
+                        );
                     }
+                    playlist.songs = song_views.clone();
                 }
 
                 // Update load state
@@ -1211,23 +1207,22 @@ impl App {
                     format!("{} 分钟", total_mins)
                 };
 
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    if playlist.id == page_id {
-                        playlist.kind = crate::ui::pages::playlist::DetailPageKind::Album;
-                        playlist.name = detail.name.clone();
-                        playlist.description = (!detail.description.trim().is_empty())
-                            .then_some(detail.description.clone());
-                        playlist.owner = if detail.artist_name.trim().is_empty() {
-                            "网易云音乐".to_string()
-                        } else {
-                            detail.artist_name.clone()
-                        };
-                        playlist.owner_artist_id =
-                            (detail.artist_id != 0).then_some(detail.artist_id);
-                        playlist.song_count = detail.track_count.max(detail.songs.len() as u32);
-                        playlist.total_duration = total_duration;
-                        playlist.like_count.clear();
-                    }
+                if let Some(playlist) = &mut self.ui.playlist_page.current
+                    && playlist.id == page_id
+                {
+                    playlist.kind = crate::ui::pages::playlist::DetailPageKind::Album;
+                    playlist.name = detail.name.clone();
+                    playlist.description = (!detail.description.trim().is_empty())
+                        .then_some(detail.description.clone());
+                    playlist.owner = if detail.artist_name.trim().is_empty() {
+                        "网易云音乐".to_string()
+                    } else {
+                        detail.artist_name.clone()
+                    };
+                    playlist.owner_artist_id = (detail.artist_id != 0).then_some(detail.artist_id);
+                    playlist.song_count = detail.track_count.max(detail.songs.len() as u32);
+                    playlist.total_duration = total_duration;
+                    playlist.like_count.clear();
                 }
 
                 self.ui.home.current_ncm_playlist_songs = detail.songs.clone();
@@ -1274,21 +1269,21 @@ impl App {
                     Some(detail.description.clone())
                 };
 
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    if playlist.id == page_id {
-                        playlist.kind = crate::ui::pages::playlist::DetailPageKind::Artist;
-                        playlist.name = detail.name.clone();
-                        playlist.description = description;
-                        playlist.profile_stats = Some(format!(
-                            "{} 首热门单曲 · {} 张专辑",
-                            detail.music_size, detail.album_size
-                        ));
-                        playlist.owner = "歌手热门作品".to_string();
-                        playlist.owner_artist_id = Some(detail.id);
-                        playlist.song_count = detail.hot_songs.len() as u32;
-                        playlist.total_duration = total_duration;
-                        playlist.like_count = format!("{} 张专辑", detail.album_size);
-                    }
+                if let Some(playlist) = &mut self.ui.playlist_page.current
+                    && playlist.id == page_id
+                {
+                    playlist.kind = crate::ui::pages::playlist::DetailPageKind::Artist;
+                    playlist.name = detail.name.clone();
+                    playlist.description = description;
+                    playlist.profile_stats = Some(format!(
+                        "{} 首热门单曲 · {} 张专辑",
+                        detail.music_size, detail.album_size
+                    ));
+                    playlist.owner = "歌手热门作品".to_string();
+                    playlist.owner_artist_id = Some(detail.id);
+                    playlist.song_count = detail.hot_songs.len() as u32;
+                    playlist.total_duration = total_duration;
+                    playlist.like_count = format!("{} 张专辑", detail.album_size);
                 }
 
                 self.ui.home.current_ncm_playlist_songs = detail.hot_songs.clone();
@@ -1347,10 +1342,10 @@ impl App {
             }
 
             Message::ArtistAlbumsLoaded(page_id, albums) => {
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    if playlist.id == *page_id {
-                        playlist.artist_albums = albums.clone();
-                    }
+                if let Some(playlist) = &mut self.ui.playlist_page.current
+                    && playlist.id == *page_id
+                {
+                    playlist.artist_albums = albums.clone();
                 }
                 Some(Task::none())
             }
@@ -1365,26 +1360,25 @@ impl App {
                     Some(format!("网易云用户 {}", detail.nickname))
                 };
 
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    if playlist.id == page_id {
-                        playlist.kind = crate::ui::pages::playlist::DetailPageKind::User;
-                        playlist.name = detail.nickname.clone();
-                        playlist.description = description;
-                        playlist.profile_stats = Some(format!(
-                            "关注 {} · 粉丝 {}",
-                            format_social_count(detail.follows),
-                            format_social_count(detail.followeds)
-                        ));
-                        playlist.owner = if detail.artist_name.trim().is_empty() {
-                            "网易云用户".to_string()
-                        } else {
-                            detail.artist_name.clone()
-                        };
-                        playlist.owner_artist_id =
-                            (detail.artist_id != 0).then_some(detail.artist_id);
-                        playlist.creator_id = detail.user_id;
-                        playlist.like_count.clear();
-                    }
+                if let Some(playlist) = &mut self.ui.playlist_page.current
+                    && playlist.id == page_id
+                {
+                    playlist.kind = crate::ui::pages::playlist::DetailPageKind::User;
+                    playlist.name = detail.nickname.clone();
+                    playlist.description = description;
+                    playlist.profile_stats = Some(format!(
+                        "关注 {} · 粉丝 {}",
+                        format_social_count(detail.follows),
+                        format_social_count(detail.followeds)
+                    ));
+                    playlist.owner = if detail.artist_name.trim().is_empty() {
+                        "网易云用户".to_string()
+                    } else {
+                        detail.artist_name.clone()
+                    };
+                    playlist.owner_artist_id = (detail.artist_id != 0).then_some(detail.artist_id);
+                    playlist.creator_id = detail.user_id;
+                    playlist.like_count.clear();
                 }
 
                 let artist_task = if detail.artist_id != 0 {
@@ -1438,10 +1432,10 @@ impl App {
             }
 
             Message::UserPagePlaylistsLoaded(page_id, playlists) => {
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    if playlist.id == *page_id {
-                        playlist.user_playlists = playlists.clone();
-                    }
+                if let Some(playlist) = &mut self.ui.playlist_page.current
+                    && playlist.id == *page_id
+                {
+                    playlist.user_playlists = playlists.clone();
                 }
 
                 Some(Task::none())
@@ -1459,38 +1453,38 @@ impl App {
                     format!("{} 分钟", total_mins)
                 };
 
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    if playlist.id == page_id {
-                        if playlist
-                            .description
-                            .as_deref()
-                            .unwrap_or("")
-                            .trim()
-                            .is_empty()
-                        {
-                            playlist.description = Some(format!(
-                                "{} 首热门单曲 · {} 张专辑",
-                                detail.music_size, detail.album_size
-                            ));
-                        }
-                        if playlist
-                            .profile_stats
-                            .as_deref()
-                            .unwrap_or("")
-                            .trim()
-                            .is_empty()
-                        {
-                            playlist.profile_stats = Some(format!(
-                                "{} 首热门单曲 · {} 张专辑",
-                                detail.music_size, detail.album_size
-                            ));
-                        }
-                        playlist.owner = "热门作品".to_string();
-                        playlist.owner_artist_id = Some(detail.id);
-                        playlist.song_count = detail.hot_songs.len() as u32;
-                        playlist.total_duration = total_duration;
-                        playlist.like_count = format!("{} 张专辑", detail.album_size);
+                if let Some(playlist) = &mut self.ui.playlist_page.current
+                    && playlist.id == page_id
+                {
+                    if playlist
+                        .description
+                        .as_deref()
+                        .unwrap_or("")
+                        .trim()
+                        .is_empty()
+                    {
+                        playlist.description = Some(format!(
+                            "{} 首热门单曲 · {} 张专辑",
+                            detail.music_size, detail.album_size
+                        ));
                     }
+                    if playlist
+                        .profile_stats
+                        .as_deref()
+                        .unwrap_or("")
+                        .trim()
+                        .is_empty()
+                    {
+                        playlist.profile_stats = Some(format!(
+                            "{} 首热门单曲 · {} 张专辑",
+                            detail.music_size, detail.album_size
+                        ));
+                    }
+                    playlist.owner = "热门作品".to_string();
+                    playlist.owner_artist_id = Some(detail.id);
+                    playlist.song_count = detail.hot_songs.len() as u32;
+                    playlist.total_duration = total_duration;
+                    playlist.like_count = format!("{} 张专辑", detail.album_size);
                 }
 
                 self.ui.home.current_ncm_playlist_songs = detail.hot_songs.clone();
@@ -1513,10 +1507,11 @@ impl App {
             }
 
             Message::PlaylistCreatorDetailLoaded(playlist_id, detail) => {
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    if playlist.id == *playlist_id && detail.artist_id != 0 {
-                        playlist.owner_artist_id = Some(detail.artist_id);
-                    }
+                if let Some(playlist) = &mut self.ui.playlist_page.current
+                    && playlist.id == *playlist_id
+                    && detail.artist_id != 0
+                {
+                    playlist.owner_artist_id = Some(detail.artist_id);
                 }
                 Some(Task::none())
             }
@@ -1565,10 +1560,10 @@ impl App {
 
             Message::PlaylistSubscribeChanged(playlist_id, subscribed) => {
                 // Update the subscription status in the current playlist view
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    if playlist.id == *playlist_id {
-                        playlist.is_subscribed = *subscribed;
-                    }
+                if let Some(playlist) = &mut self.ui.playlist_page.current
+                    && playlist.id == *playlist_id
+                {
+                    playlist.is_subscribed = *subscribed;
                 }
                 let msg = if *subscribed {
                     "已收藏歌单"
@@ -1613,7 +1608,7 @@ impl App {
                 Some(Task::none())
             }
 
-            Message::NcmPlaylistAddResult(song_id, playlist_id, result) => {
+            Message::NcmPlaylistAddResult(_song_id, _playlist_id, result) => {
                 self.ui.overlay_stack.pop();
                 match result {
                     Ok(()) => {

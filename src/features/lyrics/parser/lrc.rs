@@ -74,12 +74,11 @@ fn parse_time(src: &str) -> Option<(usize, u64)> {
     let time_str = &src[1..end_bracket];
 
     // Skip metadata tags like [ar:Artist], [ti:Title]
-    if time_str.contains(':') {
-        if let Some(first_char) = time_str.chars().next() {
-            if first_char.is_alphabetic() {
-                return None;
-            }
-        }
+    if time_str.contains(':')
+        && let Some(first_char) = time_str.chars().next()
+        && first_char.is_alphabetic()
+    {
+        return None;
     }
 
     let time_ms = parse_time_text(time_str)?;
@@ -291,15 +290,15 @@ fn merge_duplicate_timestamp_attrs(lines: Vec<LyricLineOwned>) -> Vec<LyricLineO
         if should_merge_duplicate_group(group) {
             let mut main = group[0].clone();
 
-            if let Some(translation) = group.get(1).map(line_text) {
-                if main.translated_lyric.is_empty() {
-                    main.translated_lyric = translation;
-                }
+            if let Some(translation) = group.get(1).map(line_text)
+                && main.translated_lyric.is_empty()
+            {
+                main.translated_lyric = translation;
             }
-            if let Some(romanization) = group.get(2).map(line_text) {
-                if main.roman_lyric.is_empty() {
-                    main.roman_lyric = romanization;
-                }
+            if let Some(romanization) = group.get(2).map(line_text)
+                && main.roman_lyric.is_empty()
+            {
+                main.roman_lyric = romanization;
             }
 
             merged.push(main);

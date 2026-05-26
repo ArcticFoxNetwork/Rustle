@@ -96,7 +96,7 @@ impl App {
                 // Refresh coordinator window (adjacent indices may have changed)
                 self.refresh_preload_window();
 
-                return Some(self.preload_adjacent_tracks_with_ncm());
+                Some(self.preload_adjacent_tracks_with_ncm())
             }
 
             // Streaming playback messages
@@ -207,19 +207,19 @@ impl App {
         self.ui.save_position_counter += 1;
         if self.ui.save_position_counter >= 50 {
             self.ui.save_position_counter = 0;
-            if let (Some(db), Some(song)) = (&self.core.db, &self.playback.current_song) {
-                if self.playback_is_playing() {
-                    let info = self.playback_info().clone();
-                    let position_secs = info.position.as_secs_f64();
-                    let db = db.clone();
-                    let song_id = song.id;
-                    let queue_pos = self.playback.current_index.unwrap_or(0) as i64;
-                    tokio::spawn(async move {
-                        let _ = db
-                            .update_playback_position(Some(song_id), queue_pos, position_secs)
-                            .await;
-                    });
-                }
+            if let (Some(db), Some(song)) = (&self.core.db, &self.playback.current_song)
+                && self.playback_is_playing()
+            {
+                let info = self.playback_info().clone();
+                let position_secs = info.position.as_secs_f64();
+                let db = db.clone();
+                let song_id = song.id;
+                let queue_pos = self.playback.current_index.unwrap_or(0) as i64;
+                tokio::spawn(async move {
+                    let _ = db
+                        .update_playback_position(Some(song_id), queue_pos, position_secs)
+                        .await;
+                });
             }
         }
 

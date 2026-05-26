@@ -238,7 +238,7 @@ pub fn view(
         });
 
     // opaque to block all mouse button events from propagating
-    opaque(backdrop_content).into()
+    opaque(backdrop_content)
 }
 
 /// Content-only body for unified modal layout (message + checkbox, no backdrop/title/buttons).

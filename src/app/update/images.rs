@@ -331,36 +331,34 @@ impl App {
             .preload_coordinator
             .ensure_background_slot(song_id, Some(path_string.clone()));
 
-        if let Some(current) = &mut self.playback.current_song {
-            if current.id == song_id {
-                current.cover_path = Some(path_string.clone());
-            }
+        if let Some(current) = &mut self.playback.current_song
+            && current.id == song_id
+        {
+            current.cover_path = Some(path_string.clone());
         }
 
-        if let Some(idx) = self.playback.current_index {
-            if let Some(queue_song) = self.playback.queue.get_mut(idx) {
-                if queue_song.id == song_id {
-                    queue_song.cover_path = Some(path_string.clone());
+        if let Some(idx) = self.playback.current_index
+            && let Some(queue_song) = self.playback.queue.get_mut(idx)
+            && queue_song.id == song_id
+        {
+            queue_song.cover_path = Some(path_string.clone());
 
-                    if let Some(db) = &self.core.db {
-                        let db = db.clone();
-                        let song_clone = queue_song.clone();
-                        tokio::spawn(async move {
-                            if let Err(e) = db.upsert_ncm_song(&song_clone).await {
-                                tracing::warn!("Failed to update cover path in database: {}", e);
-                            }
-                        });
+            if let Some(db) = &self.core.db {
+                let db = db.clone();
+                let song_clone = queue_song.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = db.upsert_ncm_song(&song_clone).await {
+                        tracing::warn!("Failed to update cover path in database: {}", e);
                     }
-                }
+                });
             }
         }
 
-        if self.ui.lyrics.is_open {
-            if let Some(song) = self.playback.current_song.clone() {
-                if song.id == song_id {
-                    return self.update_lyrics_background(&song);
-                }
-            }
+        if self.ui.lyrics.is_open
+            && let Some(song) = self.playback.current_song.clone()
+            && song.id == song_id
+        {
+            return self.update_lyrics_background(&song);
         }
 
         Task::none()

@@ -300,16 +300,16 @@ pub fn apply_smart_parsing(metadata: &mut AudioMetadata, filename: &str) {
     let (parsed_artist, parsed_title) = parse_filename(filename);
 
     // Only apply if metadata is missing
-    if metadata.artist == "Unknown Artist" {
-        if let Some(artist) = parsed_artist {
-            metadata.artist = artist;
-        }
+    if metadata.artist == "Unknown Artist"
+        && let Some(artist) = parsed_artist
+    {
+        metadata.artist = artist;
     }
 
-    if metadata.title == "Unknown Title" {
-        if let Some(title) = parsed_title {
-            metadata.title = title;
-        }
+    if metadata.title == "Unknown Title"
+        && let Some(title) = parsed_title
+    {
+        metadata.title = title;
     }
 }
 

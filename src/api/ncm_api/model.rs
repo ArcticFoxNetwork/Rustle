@@ -775,7 +775,7 @@ pub fn to_album_detail(json: String) -> Result<AlbumDetail> {
             .unwrap_or(0),
         artist_name: album_artist
             .and_then(|artist| get_val!(artist, "name").ok())
-            .unwrap_or_else(|| unk),
+            .unwrap_or(unk),
         artist_pic_url: album_artist
             .and_then(|artist| get_val!(artist, "picUrl").ok())
             .unwrap_or_default(),

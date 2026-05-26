@@ -327,26 +327,26 @@ impl App {
                 }
 
                 // For adjacent songs with lyrics page open, trigger background shaping
-                if self.ui.lyrics.is_open {
-                    if let (Some((cw, fs)), Some(font_system)) = (
+                if self.ui.lyrics.is_open
+                    && let (Some((cw, fs)), Some(font_system)) = (
                         self.current_lyrics_shape_metrics(),
                         self.ui.lyrics.shared_font_system.clone(),
-                    ) {
-                        let gen_val = self
-                            .playback
-                            .lyrics_render_manager
-                            .get(*song_id)
-                            .map(|e| e.shape_generation.wrapping_add(1))
-                            .unwrap_or(1);
-                        return Some(Self::request_lyrics_shaping_for_song(
-                            *song_id,
-                            engine_lines.clone(),
-                            font_system,
-                            cw,
-                            fs,
-                            gen_val,
-                        ));
-                    }
+                    )
+                {
+                    let gen_val = self
+                        .playback
+                        .lyrics_render_manager
+                        .get(*song_id)
+                        .map(|e| e.shape_generation.wrapping_add(1))
+                        .unwrap_or(1);
+                    return Some(Self::request_lyrics_shaping_for_song(
+                        *song_id,
+                        engine_lines.clone(),
+                        font_system,
+                        cw,
+                        fs,
+                        gen_val,
+                    ));
                 }
                 Some(Task::none())
             }
@@ -482,22 +482,20 @@ impl App {
                         .as_ref()
                         .and_then(|song| song.cover_path.as_ref())
                         == Some(cover_path)
-                {
-                    if let Some(img) =
+                    && let Some(img) =
                         image::RgbImage::from_raw(*width, *height, image_data.clone())
-                    {
-                        let dynamic_img = image::DynamicImage::ImageRgb8(img);
-                        self.ui.lyrics.textured_bg_shader.set_album_image(
-                            dynamic_img,
-                            Some(std::path::PathBuf::from(cover_path.as_str())),
-                        );
-                        tracing::debug!(
-                            "Applied cover image for song {} ({}x{})",
-                            song_id,
-                            width,
-                            height
-                        );
-                    }
+                {
+                    let dynamic_img = image::DynamicImage::ImageRgb8(img);
+                    self.ui.lyrics.textured_bg_shader.set_album_image(
+                        dynamic_img,
+                        Some(std::path::PathBuf::from(cover_path.as_str())),
+                    );
+                    tracing::debug!(
+                        "Applied cover image for song {} ({}x{})",
+                        song_id,
+                        width,
+                        height
+                    );
                 }
                 Some(Task::none())
             }
@@ -873,14 +871,13 @@ impl App {
             .into_iter()
             .flatten()
         {
-            if let Some((cw, fs)) = shape_metrics {
-                if self
+            if let Some((cw, fs)) = shape_metrics
+                && self
                     .playback
                     .lyrics_render_manager
                     .is_render_ready(song_id, cw, fs)
-                {
-                    continue;
-                }
+            {
+                continue;
             }
 
             if let Some(entry) = self.playback.lyrics_render_manager.get(song_id) {
@@ -1275,7 +1272,7 @@ impl App {
                 tokio::task::spawn_blocking(move || {
                     if song_id < 0 {
                         crate::features::lyrics::load_cached_lyrics(ncm_id)
-                            .map(|cached_lines| crate::features::lyrics::to_ui_lyrics(cached_lines))
+                            .map(crate::features::lyrics::to_ui_lyrics)
                     } else {
                         None
                     }
@@ -1501,31 +1498,28 @@ impl App {
             .lyrics
             .lines
             .iter()
-            .map(|line| {
-                let line_data = crate::features::lyrics::engine::LyricLineData {
-                    text: line.text.clone(),
-                    words: {
-                        let word_count = line.words.len();
-                        line.words
-                            .iter()
-                            .enumerate()
-                            .map(|(i, w)| crate::features::lyrics::engine::WordData {
-                                text: w.word.clone(),
-                                start_ms: w.start_ms,
-                                end_ms: w.end_ms,
-                                emphasize: false,
-                                is_last_word: i == word_count.saturating_sub(1),
-                            })
-                            .collect()
-                    },
-                    translated: line.translated.clone(),
-                    romanized: line.romanized.clone(),
-                    start_ms: line.start_ms,
-                    end_ms: line.end_ms,
-                    is_duet: line.is_duet,
-                    is_bg: line.is_background,
-                };
-                line_data
+            .map(|line| crate::features::lyrics::engine::LyricLineData {
+                text: line.text.clone(),
+                words: {
+                    let word_count = line.words.len();
+                    line.words
+                        .iter()
+                        .enumerate()
+                        .map(|(i, w)| crate::features::lyrics::engine::WordData {
+                            text: w.word.clone(),
+                            start_ms: w.start_ms,
+                            end_ms: w.end_ms,
+                            emphasize: false,
+                            is_last_word: i == word_count.saturating_sub(1),
+                        })
+                        .collect()
+                },
+                translated: line.translated.clone(),
+                romanized: line.romanized.clone(),
+                start_ms: line.start_ms,
+                end_ms: line.end_ms,
+                is_duet: line.is_duet,
+                is_bg: line.is_background,
             })
             .collect();
 

@@ -410,11 +410,11 @@ pub async fn download_img(
     height: u16,
 ) -> Option<PathBuf> {
     // Ensure parent directory exists
-    if let Some(parent) = base_path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            error!("Failed to create cache directory: {}", e);
-            return None;
-        }
+    if let Some(parent) = base_path.parent()
+        && let Err(e) = std::fs::create_dir_all(parent)
+    {
+        error!("Failed to create cache directory: {}", e);
+        return None;
     }
 
     // Get the stem (filename without extension)

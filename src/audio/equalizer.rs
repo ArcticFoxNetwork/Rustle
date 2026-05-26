@@ -157,11 +157,11 @@ impl EqualizerParams {
 
     /// Update sample rate (call when audio format changes)
     pub fn set_sample_rate(&self, sample_rate: u32) {
-        if let Ok(mut inner) = self.inner.write() {
-            if inner.sample_rate != sample_rate {
-                inner.sample_rate = sample_rate;
-                self.coeffs_dirty.store(true, Ordering::Release);
-            }
+        if let Ok(mut inner) = self.inner.write()
+            && inner.sample_rate != sample_rate
+        {
+            inner.sample_rate = sample_rate;
+            self.coeffs_dirty.store(true, Ordering::Release);
         }
     }
 

@@ -692,266 +692,262 @@ impl LyricsGpuPipeline {
             // 记录这行的起始索引
             let start_index = all_indices.len() as u32;
 
-            if visible {
-                if let Some(cached) = shaped_line {
-                    let mut glow_left = f32::INFINITY;
-                    let mut glow_top = f32::INFINITY;
-                    let mut glow_right = f32::NEG_INFINITY;
-                    let mut glow_bottom = f32::NEG_INFINITY;
-                    let main_font_size = cached.main_font_size * scale;
-                    let main_sdf_scale = main_font_size / sdf_base_size;
+            if visible && let Some(cached) = shaped_line {
+                let mut glow_left = f32::INFINITY;
+                let mut glow_top = f32::INFINITY;
+                let mut glow_right = f32::NEG_INFINITY;
+                let mut glow_bottom = f32::NEG_INFINITY;
+                let main_font_size = cached.main_font_size * scale;
+                let main_sdf_scale = main_font_size / sdf_base_size;
 
-                    // Calculate padding in physical pixels
-                    let (padding_left, padding_right) = if has_duet_line {
-                        if line.is_duet {
-                            (viewport_width * 0.15, base_padding)
-                        } else {
-                            (base_padding, viewport_width * 0.15)
-                        }
+                // Calculate padding in physical pixels
+                let (padding_left, padding_right) = if has_duet_line {
+                    if line.is_duet {
+                        (viewport_width * 0.15, base_padding)
                     } else {
-                        (base_padding, base_padding)
+                        (base_padding, viewport_width * 0.15)
+                    }
+                } else {
+                    (base_padding, base_padding)
+                };
+
+                // Line X position in physical pixels
+                // shaped.width is in logical pixels, multiply by scale
+                let line_x = if line.is_duet {
+                    viewport_width - cached.main.width * scale - padding_right
+                } else {
+                    padding_left
+                };
+
+                // Debug logging for first line only
+                let should_log_debug = self.font_config.debug_logging && line_idx == 0;
+
+                // Add glyphs for main text using pre-shaped data
+                for glyph in &cached.main.glyphs {
+                    let glyph_info = match self.sdf_cache.get_glyph(queue, glyph.cache_key) {
+                        Some(info) => info,
+                        None => continue,
                     };
 
-                    // Line X position in physical pixels
-                    // shaped.width is in logical pixels, multiply by scale
-                    let line_x = if line.is_duet {
-                        viewport_width - cached.main.width * scale - padding_right
+                    if glyph_info.width == 0 || glyph_info.height == 0 {
+                        continue;
+                    }
+
+                    // SDF metrics scaled to actual font size
+                    let scaled_width = glyph_info.width as f32 * main_sdf_scale;
+                    let scaled_height = glyph_info.height as f32 * main_sdf_scale;
+                    let scaled_bearing_x = glyph_info.offset_x as f32 * main_sdf_scale;
+                    let scaled_bearing_y = glyph_info.offset_y as f32 * main_sdf_scale;
+
+                    // Glyph position: logical pixels * scale = physical pixels
+                    let glyph_x = line_x + (glyph.x + glyph.x_offset_px) * scale + scaled_bearing_x;
+                    let glyph_y = (glyph.y - glyph.y_offset_px) * scale - scaled_bearing_y;
+
+                    if should_log_debug {
+                        tracing::debug!(
+                            "[build_from_shaped] glyph.x={:.2}, bearing_x={:.2}, glyph_x={:.2}",
+                            glyph.x,
+                            scaled_bearing_x,
+                            glyph_x
+                        );
+                    }
+
+                    let word = line.words.get(glyph.word_index);
+                    let (word_start, word_end) = word
+                        .map(|w| (w.start_ms as f32, w.end_ms as f32))
+                        .unwrap_or((0.0, 0.0));
+
+                    let (word_pixel_width, word_start_x) =
+                        if glyph.word_index < cached.main.word_bounds.len() {
+                            let (start, end) = cached.main.word_bounds[glyph.word_index];
+                            (end - start, start)
+                        } else {
+                            (glyph.advance, glyph.x)
+                        };
+
+                    let emphasize = !is_non_dynamic
+                        && word
+                            .map(|w| w.emphasize || w.should_emphasize())
+                            .unwrap_or(false);
+                    let is_last_word = word.map(|w| w.is_last_word).unwrap_or(false);
+                    let emphasis_amount = word.map(|w| w.emphasis_amount()).unwrap_or_default();
+
+                    let emphasis_progress = if emphasize && word_end > word_start {
+                        let progress = (current_time_ms - word_start) / (word_end - word_start);
+                        progress.clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+
+                    if emphasize && emphasis_progress > 0.0 {
+                        let glow_intensity = emphasis_easing(emphasis_progress)
+                            * word.map(|w| w.emphasis_blur()).unwrap_or_default();
+                        if glow_intensity > 0.01 {
+                            let glow_radius_em = word
+                                .map(|w| (w.emphasis_blur() * 0.3).min(0.3))
+                                .unwrap_or(0.0);
+                            let emphasis_scale = 1.0 + 0.1 * emphasis_amount;
+                            let glow_radius_px =
+                                glow_radius_em * font_size * style.scale * emphasis_scale;
+                            let glow_padding = glow_radius_px * 3.0 + 8.0;
+                            glow_left = glow_left.min(glyph_x - glow_padding);
+                            glow_top = glow_top.min(glyph_y - glow_padding);
+                            glow_right = glow_right.max(glyph_x + scaled_width + glow_padding);
+                            glow_bottom = glow_bottom.max(glyph_y + scaled_height + glow_padding);
+                        }
+                    }
+
+                    let base_vertex = all_vertices.len() as u32;
+
+                    let word_text = word.map(|w| &w.text).map(|t| t.as_str()).unwrap_or("");
+                    let char_count = word_text.chars().count().max(1) as f32;
+                    let char_index = (glyph.pos_in_word * char_count).floor();
+                    let word_duration = word_end - word_start;
+                    let word_delay = word_start;
+                    let effective_duration = word_duration.max(1000.0);
+                    let char_delay_offset = if char_count > 1.0 {
+                        (effective_duration / 2.5 / char_count) * char_index
+                    } else {
+                        0.0
+                    };
+                    let char_delay_ms = word_delay + char_delay_offset;
+
+                    let glyph_left_x = glyph.x;
+                    let glyph_start_in_word = if word_pixel_width > 0.0 {
+                        ((glyph_left_x - word_start_x) / word_pixel_width).clamp(0.0, 1.0)
+                    } else {
+                        0.0
+                    };
+                    let glyph_width_ratio = if word_pixel_width > 0.0 {
+                        (glyph.advance / word_pixel_width).clamp(0.0, 1.0)
+                    } else {
+                        1.0
+                    };
+
+                    let mut base = LyricGlyphVertex {
+                        pos_x: glyph_x,
+                        pos_y: glyph_y,
+                        width: scaled_width,
+                        height: scaled_height,
+                        uv_min: glyph_info.uv_min,
+                        uv_max: glyph_info.uv_max,
+                        word_start_ms: word_start,
+                        word_end_ms: word_end,
+                        glyph_start_in_word,
+                        glyph_width_ratio,
+                        line_index: line_idx as u32,
+                        flags: 0,
+                        color: 0xFFFFFFFF,
+                        emphasis_progress,
+                        corner_x: 0.0,
+                        corner_y: 0.0,
+                        char_index,
+                        char_count,
+                        char_delay_ms,
+                        word_duration_ms: word_duration,
+                        visual_line_info: (glyph.visual_line_index & 0xFFFF)
+                            | ((glyph.visual_line_count & 0xFFFF) << 16),
+                        pos_in_visual_line: glyph.pos_in_visual_line,
+                    };
+
+                    base.set_active(style.is_active);
+                    base.set_emphasize(emphasize);
+                    base.set_last_word(is_last_word);
+                    base.set_non_dynamic(is_non_dynamic);
+                    base.set_bg(line.is_bg);
+                    base.set_duet(line.is_duet);
+
+                    for (cx, cy) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)] {
+                        let mut v = base;
+                        v.corner_x = cx;
+                        v.corner_y = cy;
+                        all_vertices.push(v);
+                    }
+
+                    all_indices.extend_from_slice(&[
+                        base_vertex,
+                        base_vertex + 1,
+                        base_vertex + 2,
+                        base_vertex,
+                        base_vertex + 2,
+                        base_vertex + 3,
+                    ]);
+                }
+
+                // Add translation text using pre-shaped data
+                if let Some(ref trans_shaped) = cached.translation {
+                    let trans_y_offset = cached.main.height * scale;
+                    let trans_x = if line.is_duet {
+                        viewport_width - trans_shaped.width * scale - padding_right
                     } else {
                         padding_left
                     };
 
-                    // Debug logging for first line only
-                    let should_log_debug = self.font_config.debug_logging && line_idx == 0;
+                    let trans_font_size = cached.translation_font_size * scale;
+                    let trans_sdf_scale = trans_font_size / sdf_base_size;
 
-                    // Add glyphs for main text using pre-shaped data
-                    for glyph in &cached.main.glyphs {
-                        let glyph_info = match self.sdf_cache.get_glyph(queue, glyph.cache_key) {
-                            Some(info) => info,
-                            None => continue,
-                        };
+                    self.add_shaped_glyphs_to_line(
+                        queue,
+                        &mut all_vertices,
+                        &mut all_indices,
+                        trans_shaped,
+                        trans_x,
+                        trans_y_offset,
+                        line_idx,
+                        &style,
+                        true,
+                        false,
+                        is_non_dynamic,
+                        trans_sdf_scale,
+                        scale,
+                    );
+                }
 
-                        if glyph_info.width == 0 || glyph_info.height == 0 {
-                            continue;
-                        }
+                // Add romanized text using pre-shaped data
+                if let Some(ref roman_shaped) = cached.romanized {
+                    let trans_height = cached
+                        .translation
+                        .as_ref()
+                        .map(|t| t.height * scale)
+                        .unwrap_or(0.0);
+                    let roman_y_offset = cached.main.height * scale + trans_height;
+                    let roman_x = if line.is_duet {
+                        viewport_width - roman_shaped.width * scale - padding_right
+                    } else {
+                        padding_left
+                    };
 
-                        // SDF metrics scaled to actual font size
-                        let scaled_width = glyph_info.width as f32 * main_sdf_scale;
-                        let scaled_height = glyph_info.height as f32 * main_sdf_scale;
-                        let scaled_bearing_x = glyph_info.offset_x as f32 * main_sdf_scale;
-                        let scaled_bearing_y = glyph_info.offset_y as f32 * main_sdf_scale;
+                    let roman_font_size = cached.romanized_font_size * scale;
+                    let roman_sdf_scale = roman_font_size / sdf_base_size;
 
-                        // Glyph position: logical pixels * scale = physical pixels
-                        let glyph_x =
-                            line_x + (glyph.x + glyph.x_offset_px) * scale + scaled_bearing_x;
-                        let glyph_y = (glyph.y - glyph.y_offset_px) * scale - scaled_bearing_y;
+                    self.add_shaped_glyphs_to_line(
+                        queue,
+                        &mut all_vertices,
+                        &mut all_indices,
+                        roman_shaped,
+                        roman_x,
+                        roman_y_offset,
+                        line_idx,
+                        &style,
+                        false,
+                        true,
+                        is_non_dynamic,
+                        roman_sdf_scale,
+                        scale,
+                    );
+                }
 
-                        if should_log_debug {
-                            tracing::debug!(
-                                "[build_from_shaped] glyph.x={:.2}, bearing_x={:.2}, glyph_x={:.2}",
-                                glyph.x,
-                                scaled_bearing_x,
-                                glyph_x
-                            );
-                        }
-
-                        let word = line.words.get(glyph.word_index);
-                        let (word_start, word_end) = word
-                            .map(|w| (w.start_ms as f32, w.end_ms as f32))
-                            .unwrap_or((0.0, 0.0));
-
-                        let (word_pixel_width, word_start_x) =
-                            if glyph.word_index < cached.main.word_bounds.len() {
-                                let (start, end) = cached.main.word_bounds[glyph.word_index];
-                                (end - start, start)
-                            } else {
-                                (glyph.advance, glyph.x)
-                            };
-
-                        let emphasize = !is_non_dynamic
-                            && word
-                                .map(|w| w.emphasize || w.should_emphasize())
-                                .unwrap_or(false);
-                        let is_last_word = word.map(|w| w.is_last_word).unwrap_or(false);
-                        let emphasis_amount = word.map(|w| w.emphasis_amount()).unwrap_or_default();
-
-                        let emphasis_progress = if emphasize && word_end > word_start {
-                            let progress = (current_time_ms - word_start) / (word_end - word_start);
-                            progress.clamp(0.0, 1.0)
-                        } else {
-                            0.0
-                        };
-
-                        if emphasize && emphasis_progress > 0.0 {
-                            let glow_intensity = emphasis_easing(emphasis_progress)
-                                * word.map(|w| w.emphasis_blur()).unwrap_or_default();
-                            if glow_intensity > 0.01 {
-                                let glow_radius_em = word
-                                    .map(|w| (w.emphasis_blur() * 0.3).min(0.3))
-                                    .unwrap_or(0.0);
-                                let emphasis_scale = 1.0 + 0.1 * emphasis_amount;
-                                let glow_radius_px =
-                                    glow_radius_em * font_size * style.scale * emphasis_scale;
-                                let glow_padding = glow_radius_px * 3.0 + 8.0;
-                                glow_left = glow_left.min(glyph_x - glow_padding);
-                                glow_top = glow_top.min(glyph_y - glow_padding);
-                                glow_right = glow_right.max(glyph_x + scaled_width + glow_padding);
-                                glow_bottom =
-                                    glow_bottom.max(glyph_y + scaled_height + glow_padding);
-                            }
-                        }
-
-                        let base_vertex = all_vertices.len() as u32;
-
-                        let word_text = word.map(|w| &w.text).map(|t| t.as_str()).unwrap_or("");
-                        let char_count = word_text.chars().count().max(1) as f32;
-                        let char_index = (glyph.pos_in_word * char_count).floor();
-                        let word_duration = word_end - word_start;
-                        let word_delay = word_start;
-                        let effective_duration = word_duration.max(1000.0);
-                        let char_delay_offset = if char_count > 1.0 {
-                            (effective_duration / 2.5 / char_count) * char_index
-                        } else {
-                            0.0
-                        };
-                        let char_delay_ms = word_delay + char_delay_offset;
-
-                        let glyph_left_x = glyph.x;
-                        let glyph_start_in_word = if word_pixel_width > 0.0 {
-                            ((glyph_left_x - word_start_x) / word_pixel_width).clamp(0.0, 1.0)
-                        } else {
-                            0.0
-                        };
-                        let glyph_width_ratio = if word_pixel_width > 0.0 {
-                            (glyph.advance / word_pixel_width).clamp(0.0, 1.0)
-                        } else {
-                            1.0
-                        };
-
-                        let mut base = LyricGlyphVertex {
-                            pos_x: glyph_x,
-                            pos_y: glyph_y,
-                            width: scaled_width,
-                            height: scaled_height,
-                            uv_min: glyph_info.uv_min,
-                            uv_max: glyph_info.uv_max,
-                            word_start_ms: word_start,
-                            word_end_ms: word_end,
-                            glyph_start_in_word,
-                            glyph_width_ratio,
-                            line_index: line_idx as u32,
-                            flags: 0,
-                            color: 0xFFFFFFFF,
-                            emphasis_progress,
-                            corner_x: 0.0,
-                            corner_y: 0.0,
-                            char_index,
-                            char_count,
-                            char_delay_ms,
-                            word_duration_ms: word_duration,
-                            visual_line_info: (glyph.visual_line_index & 0xFFFF)
-                                | ((glyph.visual_line_count & 0xFFFF) << 16),
-                            pos_in_visual_line: glyph.pos_in_visual_line,
-                        };
-
-                        base.set_active(style.is_active);
-                        base.set_emphasize(emphasize);
-                        base.set_last_word(is_last_word);
-                        base.set_non_dynamic(is_non_dynamic);
-                        base.set_bg(line.is_bg);
-                        base.set_duet(line.is_duet);
-
-                        for (cx, cy) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)] {
-                            let mut v = base;
-                            v.corner_x = cx;
-                            v.corner_y = cy;
-                            all_vertices.push(v);
-                        }
-
-                        all_indices.extend_from_slice(&[
-                            base_vertex,
-                            base_vertex + 1,
-                            base_vertex + 2,
-                            base_vertex,
-                            base_vertex + 2,
-                            base_vertex + 3,
-                        ]);
-                    }
-
-                    // Add translation text using pre-shaped data
-                    if let Some(ref trans_shaped) = cached.translation {
-                        let trans_y_offset = cached.main.height * scale;
-                        let trans_x = if line.is_duet {
-                            viewport_width - trans_shaped.width * scale - padding_right
-                        } else {
-                            padding_left
-                        };
-
-                        let trans_font_size = cached.translation_font_size * scale;
-                        let trans_sdf_scale = trans_font_size / sdf_base_size;
-
-                        self.add_shaped_glyphs_to_line(
-                            queue,
-                            &mut all_vertices,
-                            &mut all_indices,
-                            trans_shaped,
-                            trans_x,
-                            trans_y_offset,
-                            line_idx,
-                            &style,
-                            true,
-                            false,
-                            is_non_dynamic,
-                            trans_sdf_scale,
-                            scale,
-                        );
-                    }
-
-                    // Add romanized text using pre-shaped data
-                    if let Some(ref roman_shaped) = cached.romanized {
-                        let trans_height = cached
-                            .translation
-                            .as_ref()
-                            .map(|t| t.height * scale)
-                            .unwrap_or(0.0);
-                        let roman_y_offset = cached.main.height * scale + trans_height;
-                        let roman_x = if line.is_duet {
-                            viewport_width - roman_shaped.width * scale - padding_right
-                        } else {
-                            padding_left
-                        };
-
-                        let roman_font_size = cached.romanized_font_size * scale;
-                        let roman_sdf_scale = roman_font_size / sdf_base_size;
-
-                        self.add_shaped_glyphs_to_line(
-                            queue,
-                            &mut all_vertices,
-                            &mut all_indices,
-                            roman_shaped,
-                            roman_x,
-                            roman_y_offset,
-                            line_idx,
-                            &style,
-                            false,
-                            true,
-                            is_non_dynamic,
-                            roman_sdf_scale,
-                            scale,
-                        );
-                    }
-
-                    if glow_left.is_finite()
-                        && glow_top.is_finite()
-                        && glow_right.is_finite()
-                        && glow_bottom.is_finite()
-                    {
-                        glow_bounds = Some(GlowBounds {
-                            left: glow_left,
-                            top: glow_top,
-                            width: (glow_right - glow_left).max(1.0),
-                            height: (glow_bottom - glow_top).max(1.0),
-                        });
-                    }
+                if glow_left.is_finite()
+                    && glow_top.is_finite()
+                    && glow_right.is_finite()
+                    && glow_bottom.is_finite()
+                {
+                    glow_bounds = Some(GlowBounds {
+                        left: glow_left,
+                        top: glow_top,
+                        width: (glow_right - glow_left).max(1.0),
+                        height: (glow_bottom - glow_top).max(1.0),
+                    });
                 }
             }
 

@@ -73,19 +73,19 @@ impl SongMetadata {
         // 1. Local file: extract embedded cover
         if let Some(p) = file_path {
             let path = std::path::Path::new(p);
-            if path.is_absolute() && path.exists() {
-                if let Ok(m) = crate::features::import::extract_metadata(path) {
-                    if let Some(data) = m.cover_data {
-                        let dir = std::env::temp_dir().join("rustle_covers");
-                        let _ = std::fs::create_dir_all(&dir);
-                        let out = dir.join(format!("{}.jpg", song_id));
-                        let _ = std::fs::write(&out, &data);
-                        return Some(out);
-                    }
-                }
-                // File exists but no embedded cover — still use the file path
-                // (cover might be external, e.g. cover.jpg in same folder)
+            if path.is_absolute()
+                && path.exists()
+                && let Ok(m) = crate::features::import::extract_metadata(path)
+                && let Some(data) = m.cover_data
+            {
+                let dir = std::env::temp_dir().join("rustle_covers");
+                let _ = std::fs::create_dir_all(&dir);
+                let out = dir.join(format!("{}.jpg", song_id));
+                let _ = std::fs::write(&out, &data);
+                return Some(out);
             }
+            // File exists but no embedded cover — still use the file path
+            // (cover might be external, e.g. cover.jpg in same folder)
         }
         // 2. NCM song: check cache, auto-download if missing
         if song_id < 0 {
@@ -95,10 +95,10 @@ impl SongMetadata {
             );
         }
         // 3. Local song without file: check explicit cover_path
-        if let Some(CoverSource::Path(p)) = &self.cover {
-            if p.exists() {
-                return Some(p.clone());
-            }
+        if let Some(CoverSource::Path(p)) = &self.cover
+            && p.exists()
+        {
+            return Some(p.clone());
         }
         None
     }
@@ -108,10 +108,11 @@ impl SongMetadata {
     /// Priority: local file tags (if file exists on disk) → database cache.
     pub fn resolve(song: &crate::database::DbSong) -> Self {
         let path = std::path::Path::new(&song.file_path);
-        if path.is_absolute() && path.exists() {
-            if let Ok(meta) = crate::features::import::extract_metadata(path) {
-                return SongMetadata::from(meta);
-            }
+        if path.is_absolute()
+            && path.exists()
+            && let Ok(meta) = crate::features::import::extract_metadata(path)
+        {
+            return SongMetadata::from(meta);
         }
         SongMetadata::from(song)
     }
@@ -126,10 +127,11 @@ impl SongMetadata {
         song_info: Option<&crate::api::SongInfo>,
     ) -> Self {
         let path = std::path::Path::new(&song.file_path);
-        if path.is_absolute() && path.exists() {
-            if let Ok(meta) = crate::features::import::extract_metadata(path) {
-                return SongMetadata::from(meta);
-            }
+        if path.is_absolute()
+            && path.exists()
+            && let Ok(meta) = crate::features::import::extract_metadata(path)
+        {
+            return SongMetadata::from(meta);
         }
         if let Some(info) = song_info {
             return SongMetadata::from(info);

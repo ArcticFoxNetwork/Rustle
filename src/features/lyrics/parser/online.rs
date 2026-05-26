@@ -29,39 +29,39 @@ pub fn is_lyrics_cached(ncm_id: u64) -> bool {
 pub fn load_cached_lyrics(ncm_id: u64) -> Option<Vec<LyricLineOwned>> {
     // Try YRC first (word-level)
     let yrc_path = get_cache_path(ncm_id, ".yrc");
-    if yrc_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&yrc_path) {
-            let mut lines = parse_lyrics_with_format(&content, LyricsFormat::Yrc);
-            if !lines.is_empty() {
-                // Try to load translation
-                let tlrc_path = get_cache_path(ncm_id, ".tlrc");
-                if tlrc_path.exists() {
-                    if let Ok(trans_content) = std::fs::read_to_string(&tlrc_path) {
-                        let trans_lines = super::parse_lrc_sidecar(&trans_content);
-                        merge_translation(&mut lines, &trans_lines);
-                    }
-                }
-                return Some(lines);
+    if yrc_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&yrc_path)
+    {
+        let mut lines = parse_lyrics_with_format(&content, LyricsFormat::Yrc);
+        if !lines.is_empty() {
+            // Try to load translation
+            let tlrc_path = get_cache_path(ncm_id, ".tlrc");
+            if tlrc_path.exists()
+                && let Ok(trans_content) = std::fs::read_to_string(&tlrc_path)
+            {
+                let trans_lines = super::parse_lrc_sidecar(&trans_content);
+                merge_translation(&mut lines, &trans_lines);
             }
+            return Some(lines);
         }
     }
 
     // Fall back to LRC
     let lrc_path = get_cache_path(ncm_id, ".lrc");
-    if lrc_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&lrc_path) {
-            let mut lines = parse_lyrics_with_format(&content, LyricsFormat::Lrc);
-            if !lines.is_empty() {
-                // Try to load translation
-                let tlrc_path = get_cache_path(ncm_id, ".tlrc");
-                if tlrc_path.exists() {
-                    if let Ok(trans_content) = std::fs::read_to_string(&tlrc_path) {
-                        let trans_lines = super::parse_lrc_sidecar(&trans_content);
-                        merge_translation(&mut lines, &trans_lines);
-                    }
-                }
-                return Some(lines);
+    if lrc_path.exists()
+        && let Ok(content) = std::fs::read_to_string(&lrc_path)
+    {
+        let mut lines = parse_lyrics_with_format(&content, LyricsFormat::Lrc);
+        if !lines.is_empty() {
+            // Try to load translation
+            let tlrc_path = get_cache_path(ncm_id, ".tlrc");
+            if tlrc_path.exists()
+                && let Ok(trans_content) = std::fs::read_to_string(&tlrc_path)
+            {
+                let trans_lines = super::parse_lrc_sidecar(&trans_content);
+                merge_translation(&mut lines, &trans_lines);
             }
+            return Some(lines);
         }
     }
 
@@ -109,11 +109,11 @@ pub fn save_lyrics_cache(
     let main_path = get_cache_path(ncm_id, suffix);
     std::fs::write(&main_path, main_lyric)?;
 
-    if let Some(trans) = trans_lyric {
-        if !trans.is_empty() {
-            let trans_path = get_cache_path(ncm_id, ".tlrc");
-            std::fs::write(&trans_path, trans)?;
-        }
+    if let Some(trans) = trans_lyric
+        && !trans.is_empty()
+    {
+        let trans_path = get_cache_path(ncm_id, ".tlrc");
+        std::fs::write(&trans_path, trans)?;
     }
 
     Ok(())
