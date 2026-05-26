@@ -231,22 +231,39 @@ impl PreloadCoordinator {
     /// Background is ready only if colors + texture are done AND slot exists with matching cover.
     pub fn is_background_ready(&self, song_id: i64, cover_path: Option<&str>) -> bool {
         self.background_slots.get(&song_id).is_some_and(|s| {
-            s.colors_ready && s.texture_ready && s.cover_path.as_deref() == cover_path
+            s.colors_ready
+                && s.texture_ready
+                && s.primary.is_some()
+                && s.secondary.is_some()
+                && s.tertiary.is_some()
+                && s.image_data.is_some()
+                && s.image_width > 0
+                && s.image_height > 0
+                && s.cover_path.as_deref() == cover_path
         })
     }
 
-    /// Take cached background data for installation into shader.
-    pub fn take_background_data(
-        &mut self,
+    /// Clone cached background data for installation into shader.
+    pub fn background_data(
+        &self,
         song_id: i64,
-    ) -> Option<([f32; 4], [f32; 4], [f32; 4], Vec<u8>, u32, u32)> {
-        let slot = self.background_slots.get_mut(&song_id)?;
+    ) -> Option<(
+        Option<String>,
+        [f32; 4],
+        [f32; 4],
+        [f32; 4],
+        Vec<u8>,
+        u32,
+        u32,
+    )> {
+        let slot = self.background_slots.get(&song_id)?;
+        let cover_path = slot.cover_path.clone();
         let primary = slot.primary?;
         let secondary = slot.secondary?;
         let tertiary = slot.tertiary?;
-        let image_data = slot.image_data.take()?;
+        let image_data = slot.image_data.clone()?;
         let (w, h) = (slot.image_width, slot.image_height);
-        Some((primary, secondary, tertiary, image_data, w, h))
+        Some((cover_path, primary, secondary, tertiary, image_data, w, h))
     }
 
     // ── Lyrics slot ──

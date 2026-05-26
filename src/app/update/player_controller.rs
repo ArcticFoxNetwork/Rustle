@@ -984,6 +984,7 @@ impl App {
                         current_song.id
                     );
                 }
+                tasks.push(self.update_lyrics_background(current_song));
             } else {
                 tasks.push(self.load_lyrics_for_current_song(current_song));
             }

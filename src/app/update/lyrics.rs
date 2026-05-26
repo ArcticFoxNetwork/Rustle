@@ -991,7 +991,7 @@ impl App {
     }
 
     /// Schedule background prep for adjacent songs in the preload window.
-    pub(super) fn schedule_background_prep(&self) -> Task<Message> {
+    pub(super) fn schedule_background_prep(&mut self) -> Task<Message> {
         let window = self.playback.preload_coordinator.window();
         let mut tasks = Vec::new();
 
@@ -1011,6 +1011,10 @@ impl App {
             let Some(cover_path) = cover_path else {
                 continue;
             };
+
+            self.playback
+                .preload_coordinator
+                .ensure_background_slot(song_id, Some(cover_path.clone()));
 
             // Skip if already cached
             if self
@@ -1124,10 +1128,8 @@ impl App {
 
     /// Install cached background colors + texture from coordinator into shader.
     fn install_background_from_coordinator(&mut self, song_id: i64) {
-        let Some((primary, secondary, tertiary, image_data, width, height)) = self
-            .playback
-            .preload_coordinator
-            .take_background_data(song_id)
+        let Some((cover_path, primary, secondary, tertiary, image_data, width, height)) =
+            self.playback.preload_coordinator.background_data(song_id)
         else {
             return;
         };
@@ -1153,7 +1155,7 @@ impl App {
             self.ui
                 .lyrics
                 .textured_bg_shader
-                .set_album_image(dynamic_img, None);
+                .set_album_image(dynamic_img, cover_path.map(std::path::PathBuf::from));
         }
 
         tracing::info!(
