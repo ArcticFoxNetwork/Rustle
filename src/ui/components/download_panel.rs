@@ -3,15 +3,18 @@
 use iced::widget::{Space, button, column, container, row, scrollable, svg, text};
 use iced::{Alignment, Background, Color, Element, Length, Padding};
 
-use crate::app::{DownloadTab, Message};
+use crate::app::{DownloadTab, ImageState, Message};
 use crate::download::{DownloadManager, DownloadStatus, DownloadTask};
 use crate::i18n::{Key, Locale};
+use crate::image::{CoverSize, ImageKind};
+use crate::ui::components::cover_image;
 use crate::ui::theme;
 
 pub fn download_panel(
     locale: Locale,
     manager: &DownloadManager,
     tab: DownloadTab,
+    image_state: &ImageState,
 ) -> Element<'static, Message> {
     let header = column![
         text(locale.get(Key::DownloadPanelTitle))
@@ -54,7 +57,7 @@ pub fn download_panel(
                     manager
                         .active
                         .iter()
-                        .map(|t| build_active_card(t))
+                        .map(|t| build_active_card(t, image_state))
                         .collect::<Vec<_>>(),
                 )
                 .spacing(16)
@@ -70,7 +73,7 @@ pub fn download_panel(
                         .completed
                         .iter()
                         .take(100)
-                        .map(|t| build_completed_card(t))
+                        .map(|t| build_completed_card(t, image_state))
                         .collect::<Vec<_>>(),
                 )
                 .spacing(8)
@@ -183,7 +186,7 @@ fn make_tab_button(label: String, active: bool, msg: Message) -> Element<'static
 
 // ── Active download card ──────────────────────────────────────────────────
 
-fn build_active_card(task: &DownloadTask) -> Element<'static, Message> {
+fn build_active_card(task: &DownloadTask, image_state: &ImageState) -> Element<'static, Message> {
     let (progress, _speed) = match &task.status {
         DownloadStatus::Active { progress, speed } => (*progress, speed.clone()),
         _ => (0.0, String::new()),
@@ -192,10 +195,13 @@ fn build_active_card(task: &DownloadTask) -> Element<'static, Message> {
     let artist = task.metadata.artist.clone();
     let song_id = task.song_id;
 
-    let s = crate::ui::components::cover_thumb::CoverSize::Medium;
-    let cover_handle = crate::ui::components::cover_thumb::resolve_song_cover(task.song_id);
-    let cover =
-        crate::ui::components::cover_thumb::thumb(cover_handle.as_ref(), s.px(), s.radius());
+    let (cover_kind, cover_id) =
+        crate::image::song_cover_key(task.song_id).unwrap_or((ImageKind::SongCover, 0));
+    let cover = cover_image::cover(
+        image_state.get(cover_kind, cover_id),
+        cover_kind,
+        CoverSize::Medium,
+    );
 
     let info = column![
         text(title)
@@ -283,19 +289,15 @@ fn build_active_card(task: &DownloadTask) -> Element<'static, Message> {
 
 // ── Completed download card ───────────────────────────────────────────────
 
-fn build_completed_card(task: &DownloadTask) -> Element<'static, Message> {
+fn build_completed_card(
+    task: &DownloadTask,
+    image_state: &ImageState,
+) -> Element<'static, Message> {
     let title = task.metadata.title.clone();
     let artist = task.metadata.artist.clone();
     let quality = task.quality;
     let size_str = format_size(task.file_size);
     let song_id = task.song_id;
-
-    // For completed downloads, the file exists on disk — pass the path
-    // so cover can be extracted from embedded tags if not cached.
-    let audio_path = match &task.status {
-        DownloadStatus::Completed(p) => Some(p.as_path()),
-        _ => None,
-    };
 
     let quality_badge: Option<Element<'static, Message>> = match quality {
         crate::features::settings::MusicQuality::Lossless => Some(quality_badge_el(
@@ -340,10 +342,13 @@ fn build_completed_card(task: &DownloadTask) -> Element<'static, Message> {
     ]
     .spacing(4);
 
-    let s = crate::ui::components::cover_thumb::CoverSize::Medium;
-    let cover_handle = crate::ui::components::cover_thumb::resolve_song_cover(task.song_id);
-    let cover =
-        crate::ui::components::cover_thumb::thumb(cover_handle.as_ref(), s.px(), s.radius());
+    let (cover_kind, cover_id) =
+        crate::image::song_cover_key(task.song_id).unwrap_or((ImageKind::SongCover, 0));
+    let cover = cover_image::cover(
+        image_state.get(cover_kind, cover_id),
+        cover_kind,
+        CoverSize::Medium,
+    );
 
     container(
         row![

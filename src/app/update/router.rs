@@ -127,13 +127,11 @@ impl App {
                 } else {
                     Task::none()
                 };
-                let restore_cover_task = self.restore_discover_cover_cache();
                 Task::batch([
                     iced::widget::operation::snap_to(
                         iced::widget::Id::new("discover_scroll"),
                         iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
                     ),
-                    restore_cover_task,
                     load_task,
                 ])
             }

@@ -215,8 +215,7 @@ impl LyricsGpuPipeline {
     /// Create a new GPU pipeline with custom font configuration
     pub fn with_config(device: &Device, format: TextureFormat, font_config: FontConfig) -> Self {
         // SdfCache uses the global shared FontSystem so cache keys stay aligned with shaping.
-        let sdf_cache =
-            SdfCache::with_debug(device, font_config.debug_logging);
+        let sdf_cache = SdfCache::with_debug(device, font_config.debug_logging);
 
         // Create bind group layout for lyrics rendering
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

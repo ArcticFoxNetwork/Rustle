@@ -63,7 +63,12 @@ fn edit_cover_block<'a>(
         .as_ref()
         .filter(|p| p.exists())
         .map(|p| iced::widget::image::Handle::from_path(p.clone()));
-    let img = crate::ui::components::cover_thumb::thumb(handle.as_ref(), COVER_SIZE, 12.0);
+    let img = crate::ui::components::cover_image::custom(
+        handle.as_ref(),
+        crate::image::ImageKind::SongCover,
+        COVER_SIZE,
+        12.0,
+    );
     let label = replace_label.to_string();
     column![
         container(img)

@@ -278,7 +278,10 @@ impl LyricsEngine {
     ///
     /// The font system should be created once at app startup and shared
     /// to avoid the expensive FontSystem::new() call.
-    pub fn new_with_font_system(config: LyricsEngineConfig, font_system: sdf_cache::SharedFontSystem) -> Self {
+    pub fn new_with_font_system(
+        config: LyricsEngineConfig,
+        font_system: sdf_cache::SharedFontSystem,
+    ) -> Self {
         let mut physics = ScrollPhysics::new(800.0, config.line_height);
         physics.set_friction(config.scroll_friction);
         physics.set_snap_threshold(config.snap_threshold);

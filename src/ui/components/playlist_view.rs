@@ -13,10 +13,10 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::LazyLock;
 
-use iced::widget::{Space, button, column, container, image, mouse_area, row, svg, text};
+use iced::widget::{Space, button, column, container, mouse_area, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
-use crate::app::Message;
+use crate::app::{ImageState, Message};
 use crate::i18n::{Key, Locale};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::widgets::{VirtualList, VirtualListState};
@@ -29,8 +29,6 @@ pub const SONG_ROW_HEIGHT: f32 = 62.0;
 /// Pre-cached SVG handles to avoid repeated parsing in render loop
 static PLAY_ICON_HANDLE: LazyLock<svg::Handle> =
     LazyLock::new(|| svg::Handle::from_memory(icons::PLAY.as_bytes()));
-static MUSIC_ICON_HANDLE: LazyLock<svg::Handle> =
-    LazyLock::new(|| svg::Handle::from_memory(icons::MUSIC.as_bytes()));
 static HEART_ICON_HANDLE: LazyLock<svg::Handle> =
     LazyLock::new(|| svg::Handle::from_memory(icons::HEART.as_bytes()));
 static HEART_OUTLINE_ICON_HANDLE: LazyLock<svg::Handle> =
@@ -63,18 +61,13 @@ pub struct SongItem {
     pub display_album: String,
     pub duration: String,
     pub added_date: String,
-    /// Original cover path (kept for header display)
-    pub cover_path: Option<String>,
-    /// Remote cover URL for lazy loading (NCM songs only)
-    pub pic_url: Option<String>,
-    /// Pre-loaded image handle (None = use placeholder)
-    pub cover_handle: Option<image::Handle>,
     /// Song source for display badge
     pub source: Source,
 }
 
 impl SongItem {
-    /// Create a new SongItem with pre-computed display values
+    /// Create a new SongItem with pre-computed display values.
+    /// Cover resolution is deferred to `image::resolve`.
     pub fn new(
         id: i64,
         index: usize,
@@ -83,41 +76,12 @@ impl SongItem {
         album: String,
         duration: String,
         added_date: String,
-        cover_path: Option<String>,
         source: Source,
     ) -> Self {
-        Self::with_pic_url(
-            id, index, title, artist, album, duration, added_date, cover_path, None, source,
-        )
-    }
-
-    /// Create a new SongItem with pic_url for lazy loading
-    pub fn with_pic_url(
-        id: i64,
-        index: usize,
-        title: String,
-        artist: String,
-        album: String,
-        duration: String,
-        added_date: String,
-        cover_path: Option<String>,
-        pic_url: Option<String>,
-        source: Source,
-    ) -> Self {
-        // Pre-compute display strings
         let display_title = truncate_string(&title, MAX_TITLE_LEN);
         let display_artist = truncate_string(&artist, MAX_ARTIST_LEN);
         let display_album = album.clone();
         let index_str = index.to_string();
-
-        // Pre-load image handle (no disk IO in render loop!)
-        let cover_handle = cover_path.as_ref().and_then(|path| {
-            if !path.starts_with("http") && std::path::Path::new(path).exists() {
-                Some(image::Handle::from_path(path))
-            } else {
-                None
-            }
-        });
 
         Self {
             id,
@@ -130,9 +94,6 @@ impl SongItem {
             display_album,
             duration,
             added_date,
-            cover_path,
-            pic_url,
-            cover_handle,
             source,
         }
     }
@@ -283,6 +244,7 @@ pub fn build_header(locale: Locale, columns: PlaylistColumns) -> Element<'static
 /// Build the virtual song list
 pub fn build_list<'a>(
     songs: Vec<SongItem>,
+    image_state: &'a ImageState,
     song_animations: &'a crate::ui::animation::HoverAnimations<i64>,
     liked_songs: HashSet<u64>,
     columns: PlaylistColumns,
@@ -323,6 +285,7 @@ pub fn build_list<'a>(
 
         container(build_song_row(
             song,
+            image_state,
             is_playing,
             is_hovered,
             animation_progress,
@@ -350,6 +313,7 @@ pub fn build_list<'a>(
 /// Optimized: No disk IO, no string allocations, uses pre-cached handles
 fn build_song_row(
     song: &SongItem,
+    image_state: &ImageState,
     is_playing: bool,
     is_hovered: bool,
     animation_progress: f32,
@@ -392,8 +356,15 @@ fn build_song_row(
             .into()
     };
 
-    // --- Song cover (use pre-loaded handle, no disk IO!) ---
-    let cover = build_song_cover(&song.cover_handle);
+    // --- Song cover (use pre-loaded handle, no disk IO) ---
+    let cover_handle =
+        crate::image::song_cover_key(song.id).and_then(|(kind, id)| image_state.get(kind, id));
+    let cover = crate::ui::components::cover_image::custom(
+        cover_handle,
+        crate::image::ImageKind::SongCover,
+        44.0,
+        4.0,
+    );
 
     // --- Title info (use pre-truncated strings) ---
     let title_info = column![
@@ -527,43 +498,6 @@ fn build_song_row(
     mouse_area(btn)
         .on_right_press(Message::RightClickSong(song_id))
         .into()
-}
-
-/// Build song cover image or placeholder
-/// Optimized: Uses pre-loaded image handle, no disk IO!
-fn build_song_cover(cover_handle: &Option<image::Handle>) -> Element<'static, Message> {
-    if let Some(handle) = cover_handle {
-        // Fast path: just clone the handle (reference count increment)
-        return image(handle.clone())
-            .width(44)
-            .height(44)
-            .content_fit(iced::ContentFit::Cover)
-            .border_radius(4.0)
-            .into();
-    }
-
-    // Placeholder - use cached SVG handle
-    container(
-        svg(MUSIC_ICON_HANDLE.clone())
-            .width(22)
-            .height(22)
-            .style(|theme, _status| svg::Style {
-                color: Some(theme::icon_muted(theme)),
-            }),
-    )
-    .width(44)
-    .height(44)
-    .center_x(44)
-    .center_y(44)
-    .style(|theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(theme::placeholder_bg(theme))),
-        border: iced::Border {
-            radius: 4.0.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    })
-    .into()
 }
 
 /// Filter songs by search query (title, artist, album)

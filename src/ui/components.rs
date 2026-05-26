@@ -17,7 +17,7 @@
 
 pub mod carousel_banner;
 pub mod context_menu;
-pub mod cover_thumb;
+pub mod cover_image;
 pub mod download_panel;
 pub mod edit_dialog;
 pub mod exit_dialog;

@@ -6,7 +6,7 @@
 use iced::widget::{Space, button, column, container, text};
 use iced::{Element, Fill, Padding};
 
-use crate::app::{ContentWidthTarget, DiscoverPageState, DiscoverViewMode, Message};
+use crate::app::{ContentWidthTarget, DiscoverPageState, DiscoverViewMode, ImageState, Message};
 use crate::i18n::{Key, Locale};
 use crate::ui::components::playlist_grid;
 use crate::ui::theme;
@@ -15,19 +15,21 @@ use crate::ui::widgets::{self, section_header};
 /// Build the discover page view
 pub fn view<'a>(
     state: &'a DiscoverPageState,
+    image_state: &'a ImageState,
     locale: Locale,
     is_logged_in: bool,
 ) -> Element<'a, Message> {
     match state.view_mode {
-        DiscoverViewMode::Overview => view_overview(state, locale, is_logged_in),
-        DiscoverViewMode::AllRecommended => view_all_recommended(state, locale),
-        DiscoverViewMode::AllHot => view_all_hot(state, locale),
+        DiscoverViewMode::Overview => view_overview(state, image_state, locale, is_logged_in),
+        DiscoverViewMode::AllRecommended => view_all_recommended(state, image_state, locale),
+        DiscoverViewMode::AllHot => view_all_hot(state, image_state, locale),
     }
 }
 
 /// Overview view showing both sections with limited items
 fn view_overview<'a>(
     state: &'a DiscoverPageState,
+    image_state: &'a ImageState,
     locale: Locale,
     is_logged_in: bool,
 ) -> Element<'a, Message> {
@@ -44,7 +46,7 @@ fn view_overview<'a>(
         content_items.push(Space::new().height(16).into());
         content_items.push(playlist_grid::view(
             &state.recommended_playlists,
-            &state.playlist_covers,
+            image_state,
             &state.card_animations,
             Some(10),
             content_width,
@@ -62,7 +64,7 @@ fn view_overview<'a>(
         content_items.push(Space::new().height(16).into());
         content_items.push(playlist_grid::view(
             &state.hot_playlists,
-            &state.playlist_covers,
+            image_state,
             &state.card_animations,
             Some(15),
             content_width,
@@ -90,7 +92,11 @@ fn view_overview<'a>(
 }
 
 /// Full view of all recommended playlists
-fn view_all_recommended<'a>(state: &'a DiscoverPageState, locale: Locale) -> Element<'a, Message> {
+fn view_all_recommended<'a>(
+    state: &'a DiscoverPageState,
+    image_state: &'a ImageState,
+    locale: Locale,
+) -> Element<'a, Message> {
     let content_width = state.content_width;
 
     // Section title only - use global navigation for back
@@ -101,7 +107,7 @@ fn view_all_recommended<'a>(state: &'a DiscoverPageState, locale: Locale) -> Ele
         Space::new().height(24),
         playlist_grid::view(
             &state.recommended_playlists,
-            &state.playlist_covers,
+            image_state,
             &state.card_animations,
             None, // Show all
             content_width,
@@ -122,7 +128,11 @@ fn view_all_recommended<'a>(state: &'a DiscoverPageState, locale: Locale) -> Ele
 }
 
 /// Full view of all hot playlists with infinite scroll
-fn view_all_hot<'a>(state: &'a DiscoverPageState, locale: Locale) -> Element<'a, Message> {
+fn view_all_hot<'a>(
+    state: &'a DiscoverPageState,
+    image_state: &'a ImageState,
+    locale: Locale,
+) -> Element<'a, Message> {
     let content_width = state.content_width;
 
     // Section title only - use global navigation for back
@@ -133,7 +143,7 @@ fn view_all_hot<'a>(state: &'a DiscoverPageState, locale: Locale) -> Element<'a,
         Space::new().height(24).into(),
         playlist_grid::view(
             &state.hot_playlists,
-            &state.playlist_covers,
+            image_state,
             &state.card_animations,
             None, // Show all
             content_width,

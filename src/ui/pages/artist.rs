@@ -4,19 +4,23 @@ use std::cell::RefCell;
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use iced::widget::{Space, button, column, container, image, row, scrollable, text};
+use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
-use crate::app::{ContentWidthTarget, Message};
+use crate::app::{ContentWidthTarget, ImageState, Message};
 use crate::i18n::{Key, Locale};
-use crate::ui::components::playlist_view::{self, PlaylistColumns};
+use crate::image::ImageKind;
+use crate::ui::components::{
+    cover_image,
+    playlist_view::{self, PlaylistColumns},
+};
 use crate::ui::pages::playlist::{self, ArtistPageTab, PlaylistView};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{theme, widgets};
 
 pub fn view<'a>(
     artist: &PlaylistView,
-    artist_album_covers: &'a std::collections::HashMap<u64, iced::widget::image::Handle>,
+    image_state: &'a ImageState,
     song_animations: &'a crate::ui::animation::HoverAnimations<i64>,
     icon_animations: &crate::ui::animation::HoverAnimations<crate::app::IconId>,
     search_animation: &crate::ui::animation::SingleHoverAnimation,
@@ -30,7 +34,7 @@ pub fn view<'a>(
     content_width: f32,
     description_expanded: bool,
 ) -> Element<'a, Message> {
-    let header = build_header(artist, description_expanded, locale);
+    let header = build_header(artist, image_state, description_expanded, locale);
     let controls = playlist::build_controls(
         artist,
         icon_animations,
@@ -82,6 +86,7 @@ pub fn view<'a>(
             let song_list_header = playlist_view::build_header(locale, columns);
             let song_list = playlist_view::build_list(
                 filtered_songs,
+                image_state,
                 song_animations,
                 liked_songs,
                 columns,
@@ -94,7 +99,7 @@ pub fn view<'a>(
                 .width(Fill)
                 .into()
         }
-        ArtistPageTab::Albums => build_albums_view(artist, artist_album_covers, content_width),
+        ArtistPageTab::Albums => build_albums_view(artist, image_state, content_width),
     };
 
     column![gradient_section, body]
@@ -105,12 +110,16 @@ pub fn view<'a>(
 
 fn build_header(
     artist: &PlaylistView,
+    image_state: &ImageState,
     description_expanded: bool,
     locale: Locale,
 ) -> Element<'static, Message> {
     let avatar_size = 216.0;
+    let avatar_handle = artist
+        .owner_artist_id
+        .and_then(|id| image_state.get(ImageKind::ArtistCover, id));
     let avatar = circular_avatar(
-        artist.cover_path.as_deref(),
+        avatar_handle,
         &artist.name,
         avatar_size,
         theme::TEXT_PRIMARY,
@@ -282,7 +291,7 @@ fn build_tabs(active_tab: ArtistPageTab) -> Element<'static, Message> {
 
 fn build_albums_view<'a>(
     artist: &PlaylistView,
-    artist_album_covers: &'a std::collections::HashMap<u64, iced::widget::image::Handle>,
+    image_state: &'a ImageState,
     content_width: f32,
 ) -> Element<'a, Message> {
     if artist.artist_albums.is_empty() {
@@ -309,11 +318,8 @@ fn build_albums_view<'a>(
     for chunk in artist.artist_albums.chunks(columns_per_row) {
         let mut row_items: Vec<Element<'a, Message>> = Vec::new();
         for album in chunk {
-            row_items.push(build_album_card(
-                album,
-                artist_album_covers.get(&album.id),
-                card_width,
-            ));
+            let cover_handle = image_state.get(ImageKind::AlbumCover, album.id);
+            row_items.push(build_album_card(album, cover_handle, card_width));
             row_items.push(Space::new().width(card_spacing).into());
         }
         if !row_items.is_empty() {
@@ -334,60 +340,8 @@ fn build_album_card<'a>(
     cover_handle: Option<&'a iced::widget::image::Handle>,
     card_width: f32,
 ) -> Element<'a, Message> {
-    let local_cover = resolve_album_cover_path(album);
-
-    let cover: Element<'a, Message> = if let Some(handle) = cover_handle {
-        container(
-            image(handle.clone())
-                .width(card_width)
-                .height(card_width)
-                .content_fit(iced::ContentFit::Cover)
-                .border_radius(16.0),
-        )
-        .width(card_width)
-        .height(card_width)
-        .style(|theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(theme::surface_container(theme))),
-            border: iced::Border {
-                radius: 16.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
-        .into()
-    } else if let Some(path) = local_cover {
-        container(
-            image(image::Handle::from_path(path))
-                .width(card_width)
-                .height(card_width)
-                .content_fit(iced::ContentFit::Cover)
-                .border_radius(16.0),
-        )
-        .width(card_width)
-        .height(card_width)
-        .style(|theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(theme::surface_container(theme))),
-            border: iced::Border {
-                radius: 16.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
-        .into()
-    } else {
-        container(Space::new().width(card_width).height(card_width))
-            .width(card_width)
-            .height(card_width)
-            .style(|theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(theme::surface_container(theme))),
-                border: iced::Border {
-                    radius: 16.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            })
-            .into()
-    };
+    let cover: Element<'a, Message> =
+        cover_image::custom(cover_handle, ImageKind::AlbumCover, card_width, 16.0);
 
     button(
         column![
@@ -415,50 +369,14 @@ fn build_album_card<'a>(
     .into()
 }
 
-fn resolve_album_cover_path(album: &crate::api::SongList) -> Option<String> {
-    if !album.cover_img_url.is_empty()
-        && !album.cover_img_url.starts_with("http")
-        && std::path::Path::new(&album.cover_img_url).exists()
-    {
-        return Some(album.cover_img_url.clone());
-    }
-
-    let covers_dir = crate::utils::covers_cache_dir();
-    let stem = format!("search_album_{}", album.id);
-    crate::utils::find_cached_image(&covers_dir, &stem).map(|p| p.to_string_lossy().to_string())
-}
-
 fn circular_avatar(
-    path: Option<&str>,
+    handle: Option<&iced::widget::image::Handle>,
     fallback_name: &str,
     size: f32,
     fallback_text_color: Color,
 ) -> Element<'static, Message> {
-    if let Some(path) = path.filter(|p| !p.starts_with("http") && std::path::Path::new(p).exists())
-    {
-        return container(
-            image(image::Handle::from_path(path))
-                .width(size)
-                .height(size)
-                .content_fit(iced::ContentFit::Cover)
-                .border_radius(size / 2.0),
-        )
-        .width(size)
-        .height(size)
-        .style(move |theme| iced::widget::container::Style {
-            border: iced::Border {
-                radius: (size / 2.0).into(),
-                width: 1.0,
-                color: theme::border_color(theme),
-            },
-            shadow: iced::Shadow {
-                color: theme::shadow_color(theme),
-                offset: iced::Vector::new(0.0, 10.0),
-                blur_radius: 28.0,
-            },
-            ..Default::default()
-        })
-        .into();
+    if handle.is_some() {
+        return cover_image::circle(handle, ImageKind::ArtistCover, size);
     }
 
     let initial = fallback_name.chars().next().unwrap_or('?').to_string();

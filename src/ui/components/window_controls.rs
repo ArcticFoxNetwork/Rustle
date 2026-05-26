@@ -5,8 +5,9 @@ use iced::border::Radius;
 use iced::widget::{Space, button, container, image, row, svg, text, tooltip};
 use iced::{Alignment, ContentFit, Element, Fill, Padding};
 
-use crate::app::{Message, UserInfo};
+use crate::app::{ImageState, Message, UserInfo};
 use crate::i18n::{Key, Locale};
+use crate::image::ImageKind;
 use crate::ui::components::search_bar::{self, SearchBarStyle};
 use crate::ui::theme;
 
@@ -18,6 +19,7 @@ pub fn view<'a>(
     search_query: &'a str,
     is_logged_in: bool,
     user_info: Option<&UserInfo>,
+    image_state: &ImageState,
 ) -> Element<'a, Message> {
     let button_size = 36;
     let icon_size = 16;
@@ -100,7 +102,7 @@ pub fn view<'a>(
 
     let avatar_elem: Element<'_, Message> = if is_logged_in {
         if let Some(info) = user_info {
-            if let Some(handle) = &info.avatar_handle {
+            if let Some(handle) = image_state.get(ImageKind::UserAvatar, info.user_id) {
                 container(
                     image(handle.clone())
                         .width(Fill)

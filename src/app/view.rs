@@ -9,7 +9,8 @@ use iced::{Alignment, Color, Element, Fill, Length};
 
 use super::message::Message;
 use super::{App, Route};
-use crate::ui::components::cover_thumb::{self, CoverSize};
+use crate::image::{CoverSize, ImageKind};
+use crate::ui::components::cover_image;
 use crate::ui::overlay::{self, ModalKind, OverlayKind};
 use crate::ui::theme;
 use crate::ui::{components, pages, widgets};
@@ -63,6 +64,7 @@ impl App {
 
                     pages::lyrics::view(
                         song,
+                        &self.ui.image_state,
                         self.current_song_artist_id(),
                         is_playing,
                         display_position,
@@ -105,6 +107,7 @@ impl App {
             self.ui.importing_playlist.as_ref(),
             &self.library.playlists,
             &self.ui.home.user_playlists,
+            &self.ui.image_state,
             &self.ui.sidebar_animations,
             self.ui.sidebar_width,
         );
@@ -134,6 +137,7 @@ impl App {
                 if let Some(playlist) = &self.ui.playlist_page.current {
                     pages::playlist::view(
                         playlist,
+                        &self.ui.image_state,
                         &self.ui.playlist_page.song_animations,
                         &self.ui.playlist_page.icon_animations,
                         &self.ui.playlist_page.search_animation,
@@ -154,6 +158,7 @@ impl App {
                 if let Some(playlist) = &self.ui.playlist_page.current {
                     pages::user::view(
                         playlist,
+                        &self.ui.image_state,
                         &self.ui.playlist_page.song_animations,
                         &self.ui.playlist_page.icon_animations,
                         &self.ui.playlist_page.search_animation,
@@ -175,7 +180,7 @@ impl App {
                 if let Some(playlist) = &self.ui.playlist_page.current {
                     pages::artist::view(
                         playlist,
-                        &self.ui.playlist_page.artist_album_covers,
+                        &self.ui.image_state,
                         &self.ui.playlist_page.song_animations,
                         &self.ui.playlist_page.icon_animations,
                         &self.ui.playlist_page.search_animation,
@@ -193,20 +198,29 @@ impl App {
                     Space::new().width(Fill).height(Fill).into()
                 }
             }
-            Route::Search { .. } => pages::search::view(&self.ui.search, self.core.locale),
+            Route::Search { .. } => {
+                pages::search::view(&self.ui.search, &self.ui.image_state, self.core.locale)
+            }
             Route::Home => pages::home::view(
                 &self.ui.search_query,
                 &self.ui.home,
+                &self.ui.image_state,
                 self.core.locale,
                 self.core.is_logged_in,
             ),
             Route::Discover(mode) => {
                 let _ = mode;
-                pages::discover::view(&self.ui.discover, self.core.locale, self.core.is_logged_in)
+                pages::discover::view(
+                    &self.ui.discover,
+                    &self.ui.image_state,
+                    self.core.locale,
+                    self.core.is_logged_in,
+                )
             }
             Route::Radio => pages::home::view(
                 &self.ui.search_query,
                 &self.ui.home,
+                &self.ui.image_state,
                 self.core.locale,
                 self.core.is_logged_in,
             ),
@@ -214,6 +228,7 @@ impl App {
                 self.core.locale,
                 &self.core.download_manager,
                 self.ui.download_tab,
+                &self.ui.image_state,
             ),
             Route::Settings(section) => {
                 let _ = section;
@@ -225,6 +240,7 @@ impl App {
                     self.ui.editing_keybinding,
                     self.core.is_logged_in,
                     self.core.user_info.as_ref(),
+                    &self.ui.image_state,
                     self.ui.cache_stats.as_ref(),
                 )
             }
@@ -266,6 +282,7 @@ impl App {
             &self.ui.search_query,
             self.core.is_logged_in,
             self.core.user_info.as_ref(),
+            &self.ui.image_state,
         );
         let controls_overlay = container(top_bar).width(Fill).padding(0);
 
@@ -326,11 +343,10 @@ impl App {
             .map(|idx| idx == 0)
             .unwrap_or(true);
 
-        let current_song_cover = self
-            .playback
-            .current_song
-            .as_ref()
-            .and_then(|s| cover_thumb::resolve_song_cover(s.id));
+        let current_song_cover = self.playback.current_song.as_ref().and_then(|song| {
+            let (kind, id) = crate::image::song_cover_key(song.id)?;
+            self.ui.image_state.get(kind, id)
+        });
 
         let player_bar = components::player_bar::view(
             self.playback.current_song.as_ref(),
@@ -344,7 +360,7 @@ impl App {
             self.playback_buffer_progress(),
             is_fm_mode,
             is_first_song,
-            current_song_cover.as_ref(),
+            current_song_cover,
         );
 
         // Queue overlay - full width, positioned above player bar
@@ -576,16 +592,17 @@ impl App {
                                             let pl_name = pl.name.clone();
                                             let pl_id = pl.id;
                                             let s = CoverSize::Picker;
-                                            let cover_handle =
-                                                cover_thumb::resolve_playlist_cover(pl_id);
+                                            let cover_el = cover_image::cover(
+                                                self.ui
+                                                    .image_state
+                                                    .get(ImageKind::PlaylistCover, pl_id),
+                                                ImageKind::PlaylistCover,
+                                                s,
+                                            );
                                             col = col.push(
                                                 button(
                                                     row![
-                                                        cover_thumb::thumb(
-                                                            cover_handle.as_ref(),
-                                                            s.px(),
-                                                            s.radius()
-                                                        ),
+                                                        cover_el,
                                                         Space::new().width(12),
                                                         text(pl_name).size(13),
                                                         Space::new().width(Fill),
@@ -639,17 +656,15 @@ impl App {
                                                 let pl_id = pl.id;
                                                 let pl_name = pl.name.clone();
                                                 let s = CoverSize::Picker;
-                                                let cover_handle = pl
-                                                    .cover_path
-                                                    .as_ref()
-                                                    .filter(|p| std::path::Path::new(p).exists())
-                                                    .map(|p| {
-                                                        iced::widget::image::Handle::from_path(
-                                                            std::path::PathBuf::from(p),
-                                                        )
+                                                let cover_handle =
+                                                    u64::try_from(pl_id).ok().and_then(|id| {
+                                                        self.ui
+                                                            .image_state
+                                                            .get(ImageKind::LocalPlaylistCover, id)
                                                     });
-                                                let thumb = cover_thumb::thumb(
-                                                    cover_handle.as_ref(),
+                                                let thumb = cover_image::custom(
+                                                    cover_handle,
+                                                    ImageKind::LocalPlaylistCover,
                                                     s.px(),
                                                     s.radius(),
                                                 );

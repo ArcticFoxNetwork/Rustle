@@ -3,11 +3,13 @@
 //! Displays search results for songs, artists, albums, and playlists
 //! with tabbed navigation and pagination.
 
-use iced::widget::{Space, button, column, container, image, row, text};
+use iced::widget::{Space, button, column, container, row, text};
 use iced::{Alignment, Element, Fill, Length, Padding};
 
-use crate::app::{ContentWidthTarget, Message, SearchPageState, SearchTab};
+use crate::app::{ContentWidthTarget, ImageState, Message, SearchPageState, SearchTab};
 use crate::i18n::Locale;
+use crate::image::ImageKind;
+use crate::ui::components::cover_image;
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{theme, widgets};
 
@@ -18,7 +20,11 @@ const PAGE_SIZE: u32 = 50;
 const SONG_ROW_HEIGHT: f32 = 64.0;
 
 /// Build the search results page view
-pub fn view<'a>(state: &'a SearchPageState, locale: Locale) -> Element<'a, Message> {
+pub fn view<'a>(
+    state: &'a SearchPageState,
+    image_state: &'a ImageState,
+    locale: Locale,
+) -> Element<'a, Message> {
     if state.keyword.is_empty() {
         return empty_search_state(locale);
     }
@@ -171,7 +177,7 @@ pub fn view<'a>(state: &'a SearchPageState, locale: Locale) -> Element<'a, Messa
                 let content = if state.albums.is_empty() {
                     empty_results_state(&state.keyword)
                 } else {
-                    let grid = grid_results(state, state.active_tab);
+                    let grid = grid_results(state, image_state, state.active_tab);
                     let mut col = column![grid];
 
                     if state.total_count > PAGE_SIZE {
@@ -190,7 +196,7 @@ pub fn view<'a>(state: &'a SearchPageState, locale: Locale) -> Element<'a, Messa
                 let content = if state.playlists.is_empty() {
                     empty_results_state(&state.keyword)
                 } else {
-                    let grid = grid_results(state, SearchTab::Playlists);
+                    let grid = grid_results(state, image_state, SearchTab::Playlists);
                     let mut col = column![grid];
 
                     if state.total_count > PAGE_SIZE {
@@ -358,12 +364,17 @@ fn song_row_style(
 }
 
 /// Grid view for albums and playlists
-fn grid_results<'a>(state: &'a SearchPageState, tab: SearchTab) -> Element<'a, Message> {
+fn grid_results<'a>(
+    state: &'a SearchPageState,
+    image_state: &'a ImageState,
+    tab: SearchTab,
+) -> Element<'a, Message> {
     let items = match tab {
         SearchTab::Albums | SearchTab::Artists => &state.albums,
         SearchTab::Playlists => &state.playlists,
         _ => return Space::new().into(),
     };
+    let kind = search_image_kind(tab);
 
     const CARD_WIDTH: f32 = 160.0;
     const CARD_SPACING: f32 = 24.0;
@@ -381,8 +392,8 @@ fn grid_results<'a>(state: &'a SearchPageState, tab: SearchTab) -> Element<'a, M
             let item_id = item.id;
             let item_tab = tab;
 
-            let cover_handle = state.result_covers.get(&(item_tab, item_id));
-            let card = grid_card(item, cover_handle, hover_progress, item_id, item_tab);
+            let cover_handle = image_state.get(kind, item_id);
+            let card = grid_card(item, cover_handle, kind, hover_progress, item_id, item_tab);
             row_items.push(card);
 
             if row_items.len() < columns * 2 - 1 {
@@ -410,31 +421,26 @@ fn grid_results<'a>(state: &'a SearchPageState, tab: SearchTab) -> Element<'a, M
 fn grid_card<'a>(
     item: &'a crate::api::SongList,
     cover_handle: Option<&'a iced::widget::image::Handle>,
+    kind: ImageKind,
     hover_progress: f32,
     item_id: u64,
     tab: SearchTab,
 ) -> Element<'a, Message> {
     const CARD_WIDTH: f32 = 160.0;
+    let has_cover = cover_handle.is_some();
 
-    let cover: Element<'a, Message> = if let Some(handle) = cover_handle {
-        container(
-            image(handle.clone())
-                .width(Fill)
-                .height(Fill)
-                .content_fit(iced::ContentFit::Cover)
-                .border_radius(8.0),
-        )
-        .width(CARD_WIDTH)
-        .height(CARD_WIDTH)
-        .style(move |theme| cover_card_style(theme, hover_progress))
-        .into()
-    } else {
-        container(Space::new())
+    let cover: Element<'a, Message> =
+        container(cover_image::custom(cover_handle, kind, CARD_WIDTH, 8.0))
             .width(CARD_WIDTH)
             .height(CARD_WIDTH)
-            .style(move |theme| cover_placeholder_style(theme, hover_progress))
-            .into()
-    };
+            .style(move |theme| {
+                if has_cover {
+                    cover_card_style(theme, hover_progress)
+                } else {
+                    cover_placeholder_style(theme, hover_progress)
+                }
+            })
+            .into();
 
     let card_content = column![
         cover,
@@ -466,6 +472,15 @@ fn grid_card<'a>(
         .on_enter(Message::HoverSearchCard(Some(item_id)))
         .on_exit(Message::HoverSearchCard(None))
         .into()
+}
+
+fn search_image_kind(tab: SearchTab) -> ImageKind {
+    match tab {
+        SearchTab::Artists => ImageKind::ArtistCover,
+        SearchTab::Albums => ImageKind::AlbumCover,
+        SearchTab::Playlists => ImageKind::PlaylistCover,
+        SearchTab::Songs => ImageKind::SongCover,
+    }
 }
 
 /// Cover placeholder style

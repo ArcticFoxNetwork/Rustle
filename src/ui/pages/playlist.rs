@@ -10,11 +10,11 @@ use std::collections::HashSet;
 use std::rc::Rc;
 
 use iced::widget::{
-    Space, button, column, container, image, mouse_area, row, scrollable, svg, text, text_input,
+    Space, button, column, container, mouse_area, row, scrollable, svg, text, text_input,
 };
 use iced::{Alignment, Color, Element, Fill, Padding};
 
-use crate::app::Message;
+use crate::app::{ImageState, Message};
 use crate::i18n::{Key, Locale};
 use crate::ui::components::playlist_view::{self, PlaylistColumns, SongItem};
 use crate::ui::theme::BOLD_WEIGHT;
@@ -76,6 +76,7 @@ pub type PlaylistSongView = SongItem;
 /// Build the playlist detail page
 pub fn view<'a>(
     playlist: &PlaylistView,
+    image_state: &'a ImageState,
     song_animations: &'a crate::ui::animation::HoverAnimations<i64>,
     icon_animations: &crate::ui::animation::HoverAnimations<crate::app::IconId>,
     search_animation: &crate::ui::animation::SingleHoverAnimation,
@@ -89,7 +90,7 @@ pub fn view<'a>(
     description_expanded: bool,
 ) -> Element<'a, Message> {
     let palette = playlist.palette.clone();
-    let header = build_header(playlist, locale, description_expanded);
+    let header = build_header(playlist, image_state, locale, description_expanded);
     let controls = build_controls(
         playlist,
         icon_animations,
@@ -166,6 +167,7 @@ pub fn view<'a>(
     // Use virtual list for song rows
     let song_list = playlist_view::build_list(
         filtered_songs,
+        image_state,
         song_animations,
         liked_songs,
         columns,
@@ -183,39 +185,17 @@ pub fn view<'a>(
 /// Build the playlist header
 fn build_header(
     playlist: &PlaylistView,
+    image_state: &ImageState,
     locale: Locale,
     description_expanded: bool,
 ) -> Element<'static, Message> {
-    // Cover: playlist own cover → first song cover → NCM cache → placeholder
-    let cover_path_opt = {
-        let meta = crate::metadata::SongMetadata {
-            cover: playlist
-                .cover_path
-                .as_ref()
-                .map(|p| crate::metadata::CoverSource::Path(std::path::PathBuf::from(p))),
-            ..Default::default()
-        };
-        meta.resolve_cover(None, playlist.id).or_else(|| {
-            playlist.songs.first().and_then(|s| {
-                // Use resolve_cover with the song's cover_path
-                crate::metadata::SongMetadata {
-                    cover: s
-                        .cover_path
-                        .as_ref()
-                        .map(|p| crate::metadata::CoverSource::Path(std::path::PathBuf::from(p))),
-                    ..Default::default()
-                }
-                .resolve_cover(None, s.id)
-            })
-        })
-    };
-
-    let s = crate::ui::components::cover_thumb::CoverSize::Large;
-    let cover_handle = cover_path_opt
-        .filter(|p| p.exists())
-        .map(iced::widget::image::Handle::from_path);
-    let cover: Element<'static, Message> =
-        crate::ui::components::cover_thumb::thumb(cover_handle.as_ref(), s.px(), s.radius());
+    let s = crate::image::CoverSize::Large;
+    let cover_handle = playlist_header_cover_handle(playlist, image_state);
+    let cover: Element<'static, Message> = crate::ui::components::cover_image::cover(
+        cover_handle,
+        crate::image::ImageKind::PlaylistCover,
+        s,
+    );
 
     // Playlist type label - larger font
     let type_label_text = match playlist.kind {
@@ -320,24 +300,13 @@ fn build_header(
     // Owner avatar - use real avatar if available, otherwise show first letter
     let owner_name = playlist.owner.clone();
     let owner_avatar: Element<'static, Message> =
-        if let Some(avatar_path) = &playlist.owner_avatar_path {
-            if !avatar_path.starts_with("http") && std::path::Path::new(avatar_path).exists() {
-                // For circular avatar in iced:
-                // - Use opaque(true) to enable proper clipping with border-radius
-                // - Image fills the container with Cover content_fit
-                let avatar_size: f32 = 24.0;
-                image(image::Handle::from_path(avatar_path))
-                    .width(avatar_size)
-                    .height(avatar_size)
-                    .content_fit(iced::ContentFit::Cover)
-                    .border_radius(avatar_size / 2.0)
-                    .into()
-            } else {
-                // Fallback to first letter
-                build_owner_avatar_placeholder(&owner_name)
-            }
+        if let Some(handle) = playlist_owner_avatar_handle(playlist, image_state) {
+            crate::ui::components::cover_image::circle(
+                Some(handle),
+                crate::image::ImageKind::UserAvatar,
+                24.0,
+            )
         } else {
-            // Fallback to first letter
             build_owner_avatar_placeholder(&owner_name)
         };
 
@@ -471,6 +440,63 @@ fn build_header(
         .align_y(Alignment::End)
         .padding(Padding::new(36.0).top(60.0).bottom(12.0))
         .into()
+}
+
+fn playlist_header_cover_handle<'a>(
+    playlist: &PlaylistView,
+    image_state: &'a ImageState,
+) -> Option<&'a iced::widget::image::Handle> {
+    if playlist.is_local {
+        let page_cover = u64::try_from(playlist.id)
+            .ok()
+            .and_then(|id| image_state.get(crate::image::ImageKind::LocalPlaylistCover, id));
+        return page_cover.or_else(|| {
+            playlist.songs.first().and_then(|song| {
+                let (kind, id) = crate::image::song_cover_key(song.id)?;
+                image_state.get(kind, id)
+            })
+        });
+    }
+
+    let page_cover = match playlist.kind {
+        DetailPageKind::Playlist => playlist
+            .id
+            .checked_neg()
+            .and_then(|id| u64::try_from(id).ok())
+            .and_then(|id| image_state.get(crate::image::ImageKind::PlaylistCover, id)),
+        DetailPageKind::Album => playlist
+            .id
+            .checked_sub(i64::MIN / 4)
+            .and_then(|id| u64::try_from(id).ok())
+            .and_then(|id| image_state.get(crate::image::ImageKind::AlbumCover, id)),
+        DetailPageKind::Artist => playlist
+            .id
+            .checked_sub(i64::MIN)
+            .and_then(|id| u64::try_from(id).ok())
+            .and_then(|id| image_state.get(crate::image::ImageKind::ArtistCover, id)),
+        DetailPageKind::User => playlist
+            .owner_artist_id
+            .and_then(|id| image_state.get(crate::image::ImageKind::ArtistCover, id)),
+    };
+
+    page_cover.or_else(|| {
+        playlist.songs.first().and_then(|song| {
+            let (kind, id) = crate::image::song_cover_key(song.id)?;
+            image_state.get(kind, id)
+        })
+    })
+}
+
+fn playlist_owner_avatar_handle<'a>(
+    playlist: &PlaylistView,
+    image_state: &'a ImageState,
+) -> Option<&'a iced::widget::image::Handle> {
+    if playlist.kind == DetailPageKind::Playlist && playlist.creator_id != 0 {
+        return image_state.get(crate::image::ImageKind::UserAvatar, playlist.creator_id);
+    }
+    playlist
+        .owner_artist_id
+        .and_then(|id| image_state.get(crate::image::ImageKind::ArtistCover, id))
 }
 
 /// Build the control buttons (play, like, download, etc.)

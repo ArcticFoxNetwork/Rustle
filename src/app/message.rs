@@ -65,6 +65,13 @@ pub struct SearchResultsPayload {
     pub total_count: u32,
 }
 
+/// Local playlist view plus image paths discovered while loading it.
+#[derive(Debug, Clone)]
+pub struct PlaylistViewPayload {
+    pub view: pages::PlaylistView,
+    pub images: Vec<(crate::image::ImageKind, u64, PathBuf)>,
+}
+
 /// Application messages
 #[derive(Clone)]
 pub enum Message {
@@ -237,16 +244,9 @@ pub enum Message {
     /// Playlist deleted confirmation
     PlaylistDeleted(i64),
     /// Playlist view loaded from database
-    PlaylistViewLoaded(pages::PlaylistView),
-    /// NCM playlist songs converted (async cover check complete)
-    /// (playlist_id, song_views, cover_path, palette, avatar_path)
-    NcmPlaylistSongsReady(
-        i64,
-        Vec<crate::ui::pages::PlaylistSongView>,
-        Option<String>,
-        crate::utils::ColorPalette,
-        Option<String>,
-    ),
+    PlaylistViewLoaded(PlaylistViewPayload),
+    /// NCM playlist songs converted for display.
+    NcmPlaylistSongsReady(i64, Vec<crate::ui::pages::PlaylistSongView>),
     /// Play a specific song
     PlaySong(i64),
     /// Hover over a song in playlist
@@ -488,8 +488,6 @@ pub enum Message {
     Logout,
     /// User info loaded
     UserInfoLoaded(UserInfo),
-    /// User avatar loaded
-    UserAvatarLoaded(std::path::PathBuf),
     /// Toggle login popup visibility
     ToggleLoginPopup,
     /// No operation (placeholder)
@@ -498,8 +496,6 @@ pub enum Message {
     // ============ NCM Homepage Data ============
     /// Banners loaded
     BannersLoaded(Vec<BannersInfo>),
-    /// Banner image loaded with dimensions (index, path, width, height)
-    BannerImageLoaded(usize, PathBuf, u32, u32),
     /// Banner play button clicked
     BannerPlay(usize),
     /// Carousel navigate
@@ -512,8 +508,6 @@ pub enum Message {
     TrendingSongsLoaded(Vec<SongInfo>),
     /// Navigate to trending songs page
     OpenTrendingSongs,
-    /// Song cover loaded
-    SongCoverLoaded(u64, PathBuf),
     /// Toggle favorite status for a song
     ToggleFavorite(u64),
     /// Favorite status changed
@@ -546,8 +540,6 @@ pub enum Message {
     AlbumDetailLoaded(AlbumDetail),
     /// Artist albums loaded for artist page
     ArtistAlbumsLoaded(i64, Vec<SongList>),
-    /// Artist album cover loaded
-    ArtistAlbumCoverLoaded(i64, u64, String),
     /// User page detail loaded
     UserPageDetailLoaded(i64, UserDetail),
     /// User playlists loaded for user page
@@ -556,22 +548,15 @@ pub enum Message {
     UserArtistDetailLoaded(i64, ArtistDetail),
     /// Playlist creator user detail loaded
     PlaylistCreatorDetailLoaded(i64, UserDetail),
-    /// Current playing song cover downloaded (song_id, local_path)
-    CurrentSongCoverReady(i64, String),
-    /// NCM playlist song covers batch loaded (vec of (song_id, local_path))
-    NcmPlaylistSongCoversBatchLoaded(Vec<(i64, String)>),
-    /// Request lazy loading of song covers for visible items (song_id, pic_url)
-    RequestSongCoversLazy(Vec<(i64, String)>),
-    /// NCM playlist cover loaded (playlist_id, local_path)
-    NcmPlaylistCoverLoaded(i64, String),
-    /// NCM playlist creator avatar loaded (playlist_id, local_path)
-    NcmPlaylistCreatorAvatarLoaded(i64, String),
-    /// User playlist cover loaded (page_id, playlist_id, local_path)
-    UserPlaylistCoverLoaded(i64, u64, String),
-    /// Artist cover loaded (artist page id, local_path)
-    ArtistCoverLoaded(i64, String),
-    /// Album cover loaded (album page id, local_path)
-    AlbumCoverLoaded(i64, String),
+
+    // ============ Unified Image Pipeline ============
+    /// Request async image download (kind, id, url)
+    ImageDownloadNeeded(crate::image::ImageKind, u64, String),
+    /// Image download completed and cached locally (kind, id, local_path)
+    ImageDownloadReady(crate::image::ImageKind, u64, PathBuf),
+    /// Image download failed and should be eligible for retry (kind, id)
+    ImageDownloadFailed(crate::image::ImageKind, u64),
+
     /// Toggle playlist subscription (subscribe/unsubscribe)
     TogglePlaylistSubscribe(i64),
     /// Playlist subscription status changed
@@ -585,8 +570,6 @@ pub enum Message {
     RecommendedPlaylistsLoaded(Vec<SongList>),
     /// Hot playlists loaded (playlists, has_more)
     HotPlaylistsLoaded(Vec<SongList>, bool),
-    /// Discover playlist cover loaded (playlist_id, local_path)
-    DiscoverPlaylistCoverLoaded(u64, PathBuf),
     /// Hover over a discover playlist card
     HoverDiscoverPlaylist(Option<u64>),
     /// Play a playlist from discover page
@@ -613,8 +596,6 @@ pub enum Message {
     HoverSearchSong(Option<u64>),
     /// Hover over search result card (album/playlist)
     HoverSearchCard(Option<u64>),
-    /// Search result cover loaded from disk/network
-    SearchCoverLoaded(crate::app::state::SearchTab, u64, PathBuf),
     /// Measured content area resized
     ContentWidthResized(ContentWidthTarget, iced::Size),
     /// Play search result song
@@ -793,10 +774,6 @@ impl std::fmt::Debug for Message {
             Self::TopPicksLoaded(v) => simple!("TopPicksLoaded", "{} picks", v.len()),
             Self::TrendingSongsLoaded(v) => simple!("TrendingSongsLoaded", "{} songs", v.len()),
             Self::UserPlaylistsLoaded(v) => simple!("UserPlaylistsLoaded", "{} playlists", v.len()),
-            Self::NcmPlaylistSongCoversBatchLoaded(v) => {
-                simple!("NcmPlaylistSongCoversBatchLoaded", "{} covers", v.len())
-            }
-            Self::RequestSongCoversLazy(v) => simple!("RequestSongCoversLazy", "{} songs", v.len()),
             Self::AddNcmPlaylist(v, play) => {
                 simple!("AddNcmPlaylist", "{} songs, play={}", v.len(), play)
             }
@@ -816,14 +793,6 @@ impl std::fmt::Debug for Message {
                     "page_id={}, albums={}",
                     id,
                     albums.len()
-                )
-            }
-            Self::ArtistAlbumCoverLoaded(page_id, album_id, _) => {
-                simple!(
-                    "ArtistAlbumCoverLoaded",
-                    "page_id={}, album_id={}",
-                    page_id,
-                    album_id
                 )
             }
             Self::UserPageDetailLoaded(id, d) => {
@@ -858,8 +827,10 @@ impl std::fmt::Debug for Message {
                     d.user_id
                 )
             }
-            Self::PlaylistViewLoaded(v) => simple!("PlaylistViewLoaded", "id={}", v.id),
-            Self::NcmPlaylistSongsReady(id, songs, _, _, _) => {
+            Self::PlaylistViewLoaded(payload) => {
+                simple!("PlaylistViewLoaded", "id={}", payload.view.id)
+            }
+            Self::NcmPlaylistSongsReady(id, songs) => {
                 simple!("NcmPlaylistSongsReady", "id={}, {} songs", id, songs.len())
             }
             Self::PlaybackStateLoaded(_) => simple!("PlaybackStateLoaded"),
@@ -1100,15 +1071,12 @@ impl std::fmt::Debug for Message {
             Self::CheckQrStatus(_) => simple!("CheckQrStatus"),
             Self::QrLoginResult(s) => simple!("QrLoginResult", "{:?}", s),
             Self::Logout => simple!("Logout"),
-            Self::UserAvatarLoaded(_) => simple!("UserAvatarLoaded"),
             Self::ToggleLoginPopup => simple!("ToggleLoginPopup"),
 
             // NCM Homepage
-            Self::BannerImageLoaded(i, _, _, _) => simple!("BannerImageLoaded", "idx={}", i),
             Self::BannerPlay(i) => simple!("BannerPlay", "{}", i),
             Self::CarouselNavigate(d) => simple!("CarouselNavigate", "{}", d),
             Self::OpenTrendingSongs => simple!("OpenTrendingSongs"),
-            Self::SongCoverLoaded(id, _) => simple!("SongCoverLoaded", "{}", id),
             Self::ToggleFavorite(id) => simple!("ToggleFavorite", "{}", id),
             Self::FavoriteStatusChanged(id, s) => simple!("FavoriteStatusChanged", "{}, {}", id, s),
             Self::OpenNcmPlaylist(id) => simple!("OpenNcmPlaylist", "{}", id),
@@ -1119,21 +1087,15 @@ impl std::fmt::Debug for Message {
             Self::ToggleBannerFavorite(i) => simple!("ToggleBannerFavorite", "{}", i),
 
             // Cloud Playlist
-            Self::CurrentSongCoverReady(id, _) => simple!("CurrentSongCoverReady", "{}", id),
-            Self::NcmPlaylistCoverLoaded(id, _) => simple!("NcmPlaylistCoverLoaded", "{}", id),
-            Self::NcmPlaylistCreatorAvatarLoaded(id, _) => {
-                simple!("NcmPlaylistCreatorAvatarLoaded", "{}", id)
+            Self::ImageDownloadNeeded(kind, id, _url) => {
+                simple!("ImageDownloadNeeded", "{:?}, {}", kind, id)
             }
-            Self::UserPlaylistCoverLoaded(page_id, playlist_id, _) => {
-                simple!(
-                    "UserPlaylistCoverLoaded",
-                    "page_id={}, playlist_id={}",
-                    page_id,
-                    playlist_id
-                )
+            Self::ImageDownloadReady(kind, id, _path) => {
+                simple!("ImageDownloadReady", "{:?}, {}", kind, id)
             }
-            Self::ArtistCoverLoaded(id, _) => simple!("ArtistCoverLoaded", "{}", id),
-            Self::AlbumCoverLoaded(id, _) => simple!("AlbumCoverLoaded", "{}", id),
+            Self::ImageDownloadFailed(kind, id) => {
+                simple!("ImageDownloadFailed", "{:?}, {}", kind, id)
+            }
             Self::TogglePlaylistSubscribe(id) => simple!("TogglePlaylistSubscribe", "{}", id),
             Self::PlaylistSubscribeChanged(id, s) => {
                 simple!("PlaylistSubscribeChanged", "{}, {}", id, s)
@@ -1146,9 +1108,6 @@ impl std::fmt::Debug for Message {
             }
             Self::HotPlaylistsLoaded(v, more) => {
                 simple!("HotPlaylistsLoaded", "{} playlists, more={}", v.len(), more)
-            }
-            Self::DiscoverPlaylistCoverLoaded(id, _) => {
-                simple!("DiscoverPlaylistCoverLoaded", "{}", id)
             }
             Self::HoverDiscoverPlaylist(id) => simple!("HoverDiscoverPlaylist", "{:?}", id),
             Self::PlayDiscoverPlaylist(id) => simple!("PlayDiscoverPlaylist", "{}", id),
@@ -1173,9 +1132,6 @@ impl std::fmt::Debug for Message {
             Self::SearchPageChanged(page) => simple!("SearchPageChanged", "{}", page),
             Self::HoverSearchSong(id) => simple!("HoverSearchSong", "{:?}", id),
             Self::HoverSearchCard(id) => simple!("HoverSearchCard", "{:?}", id),
-            Self::SearchCoverLoaded(tab, id, _) => {
-                simple!("SearchCoverLoaded", "tab={:?}, id={}", tab, id)
-            }
             Self::ContentWidthResized(target, size) => {
                 simple!(
                     "ContentWidthResized",

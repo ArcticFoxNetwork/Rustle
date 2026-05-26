@@ -3,7 +3,6 @@
 use iced::Task;
 use rand::SeedableRng;
 use rand::seq::SliceRandom;
-use std::collections::HashSet;
 use tracing::{debug, error};
 
 use crate::api::SongList;
@@ -30,39 +29,7 @@ fn shuffle_daily(playlists: &mut [SongList]) {
 
 impl App {
     pub(super) fn clear_discover_cover_cache(&mut self) {
-        self.ui.discover.playlist_covers.clear();
-    }
-
-    pub(super) fn restore_discover_cover_cache(&mut self) -> Task<Message> {
-        let mut seen = HashSet::new();
-        let playlists: Vec<SongList> = self
-            .ui
-            .discover
-            .recommended_playlists
-            .iter()
-            .chain(self.ui.discover.hot_playlists.iter())
-            .filter(|playlist| seen.insert(playlist.id))
-            .cloned()
-            .collect();
-
-        if playlists.is_empty() {
-            Task::none()
-        } else {
-            let preload_task = self.preload_covers(&playlists);
-            let download_task = self.download_covers(&playlists);
-            Task::batch([preload_task, download_task])
-        }
-    }
-
-    fn has_active_discover_playlist(&self, playlist_id: u64) -> bool {
-        matches!(self.ui.current_route, Route::Discover(_))
-            && self
-                .ui
-                .discover
-                .recommended_playlists
-                .iter()
-                .chain(self.ui.discover.hot_playlists.iter())
-                .any(|playlist| playlist.id == playlist_id)
+        // Discover images are stored in the unified ImageState cache.
     }
 
     /// Handle discover page related messages
@@ -85,13 +52,7 @@ impl App {
                 self.ui.discover.recommended_playlists = all_playlists;
                 self.ui.discover.recommended_loading = false;
 
-                // Pre-populate covers from local cache (sync check) and request GPU allocations
-                let preload_task = self.preload_covers(playlists);
-
-                // Download missing covers asynchronously
-                let download_task = self.download_covers(playlists);
-
-                Some(Task::batch([preload_task, download_task]))
+                Some(Task::none())
             }
 
             Message::HotPlaylistsLoaded(playlists, has_more) => {
@@ -122,24 +83,6 @@ impl App {
                     self.ui.discover.hot_offset += playlists.len() as u16;
                 }
 
-                // Pre-populate covers from local cache (sync check) and request GPU allocations
-                let preload_task = self.preload_covers(playlists);
-
-                // Download missing covers asynchronously
-                let download_task = self.download_covers(playlists);
-
-                Some(Task::batch([preload_task, download_task]))
-            }
-
-            Message::DiscoverPlaylistCoverLoaded(playlist_id, path) => {
-                if !self.has_active_discover_playlist(*playlist_id) {
-                    return Some(Task::none());
-                }
-                let handle = iced::widget::image::Handle::from_path(path);
-                self.ui
-                    .discover
-                    .playlist_covers
-                    .insert(*playlist_id, handle);
                 Some(Task::none())
             }
 
@@ -275,72 +218,5 @@ impl App {
 
             _ => None,
         }
-    }
-
-    /// Download covers for discover playlists
-    fn download_covers(&self, playlists: &[SongList]) -> Task<Message> {
-        if let Some(client) = &self.core.ncm_client {
-            let mut tasks = Vec::new();
-            let covers_dir = crate::utils::covers_cache_dir();
-
-            for playlist in playlists.iter() {
-                // Skip if already in memory cache
-                if self.ui.discover.playlist_covers.contains_key(&playlist.id) {
-                    continue;
-                }
-
-                // Skip if already cached on disk (will be loaded by preload_covers)
-                let cover_stem = format!("playlist_{}", playlist.id);
-                if crate::utils::find_cached_image(&covers_dir, &cover_stem).is_some() {
-                    continue;
-                }
-
-                let client = client.clone();
-                let playlist_id = playlist.id;
-                let cover_url = playlist.cover_img_url.clone();
-
-                tasks.push(Task::perform(
-                    async move {
-                        crate::utils::download_playlist_cover(&client, playlist_id, &cover_url)
-                            .await
-                            .map(|path| (playlist_id, path))
-                    },
-                    |result| {
-                        if let Some((id, path)) = result {
-                            Message::DiscoverPlaylistCoverLoaded(id, path)
-                        } else {
-                            Message::NoOp
-                        }
-                    },
-                ));
-            }
-
-            if tasks.is_empty() {
-                Task::none()
-            } else {
-                Task::batch(tasks)
-            }
-        } else {
-            Task::none()
-        }
-    }
-
-    /// Pre-populate covers from local disk cache (synchronous)
-    fn preload_covers(&mut self, playlists: &[SongList]) -> Task<Message> {
-        let covers_dir = crate::utils::covers_cache_dir();
-
-        for playlist in playlists.iter() {
-            if self.ui.discover.playlist_covers.contains_key(&playlist.id) {
-                continue;
-            }
-
-            let cover_stem = format!("playlist_{}", playlist.id);
-            if let Some(cover_path) = crate::utils::find_cached_image(&covers_dir, &cover_stem) {
-                let handle = iced::widget::image::Handle::from_path(&cover_path);
-                self.ui.discover.playlist_covers.insert(playlist.id, handle);
-            }
-        }
-
-        Task::none()
     }
 }

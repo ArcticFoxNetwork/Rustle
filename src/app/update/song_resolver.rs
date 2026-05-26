@@ -4,7 +4,6 @@
 //! Handles caching, URL fetching, and cover downloading.
 //! Uses SharedBuffer for streaming playback (no file-based streaming).
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::api::NcmClient;
@@ -61,7 +60,7 @@ pub fn get_ncm_id(song: &DbSong) -> u64 {
 /// This function:
 /// 1. Checks if the song is already cached locally (with any audio extension)
 /// 2. If not, downloads using SharedBuffer for streaming playback
-/// 3. Downloads cover if not already cached
+/// 3. Reuses a cover already cached by the unified image pipeline
 pub async fn resolve_song(
     client: Arc<NcmClient>,
     song: &DbSong,
@@ -70,23 +69,14 @@ pub async fn resolve_song(
     let ncm_id = get_ncm_id(song);
 
     let song_cache_dir = crate::utils::songs_cache_dir();
-    let cover_cache_dir = crate::utils::covers_cache_dir();
 
     std::fs::create_dir_all(&song_cache_dir).ok()?;
-    std::fs::create_dir_all(&cover_cache_dir).ok()?;
 
     // Use stem for cache lookup - actual extension determined by format detection
     let song_stem = ncm_id.to_string();
-    let cover_file_path = cover_cache_dir.join(format!("cover_{}.jpg", ncm_id));
 
-    // Resolve cover in background
-    let cover_path = resolve_cover(
-        &client,
-        ncm_id,
-        song.cover_path.as_deref(),
-        &cover_file_path,
-    )
-    .await;
+    // Cover downloads are handled by app::update::images; song resolution only reuses cache.
+    let cover_path = resolve_cover(ncm_id).await;
 
     // Check if song is already fully cached (with any audio extension)
     if let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &song_stem) {
@@ -163,29 +153,7 @@ pub async fn resolve_song(
     })
 }
 
-/// Resolve cover image - download if not cached or return existing local path
-async fn resolve_cover(
-    client: &NcmClient,
-    ncm_id: u64,
-    pic_url: Option<&str>,
-    _cover_file_path: &PathBuf,
-) -> Option<String> {
-    // First, check if cover already exists in local cache
-    let cover_cache_dir = crate::utils::covers_cache_dir();
-    let stem = format!("cover_{}", ncm_id);
-    if let Some(existing_path) = crate::utils::find_cached_image(&cover_cache_dir, &stem) {
-        return Some(existing_path.to_string_lossy().to_string());
-    }
-
-    // If not cached, try to download from URL
-    if let Some(url) = pic_url {
-        if !url.is_empty() && url.starts_with("http") {
-            tracing::debug!("Downloading cover for song {}", ncm_id);
-            if let Some(path) = crate::utils::download_cover(client, ncm_id, url).await {
-                return Some(path.to_string_lossy().to_string());
-            }
-        }
-    }
-
-    None
+async fn resolve_cover(ncm_id: u64) -> Option<String> {
+    crate::image::resolve_cached(crate::image::ImageKind::SongCover, ncm_id)
+        .map(|p| p.to_string_lossy().to_string())
 }

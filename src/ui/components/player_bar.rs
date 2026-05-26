@@ -46,9 +46,12 @@ pub fn view(
         let song_clone = song.clone();
 
         // Cover - clickable to open lyrics page
-        let s = crate::ui::components::cover_thumb::CoverSize::Medium;
-        let cover_content: Element<'static, Message> =
-            crate::ui::components::cover_thumb::thumb(current_song_cover, s.px(), s.radius());
+        let s = crate::image::CoverSize::Medium;
+        let cover_content: Element<'static, Message> = crate::ui::components::cover_image::cover(
+            current_song_cover,
+            crate::image::ImageKind::SongCover,
+            s,
+        );
 
         let cover_btn = button(cover_content)
             .padding(0)

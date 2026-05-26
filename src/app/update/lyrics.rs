@@ -424,12 +424,9 @@ impl App {
             // Background color extraction result
             Message::LyricsBackgroundReady(song_id, cover_path, primary, secondary, tertiary) => {
                 // Always store in coordinator for any song in the window
-                self.playback.preload_coordinator.store_background_colors(
-                    *song_id,
-                    *primary,
-                    *secondary,
-                    *tertiary,
-                );
+                self.playback
+                    .preload_coordinator
+                    .store_background_colors(*song_id, *primary, *secondary, *tertiary);
 
                 // Install into shader only if this is the current song
                 if self.playback.current_song.as_ref().map(|s| s.id) == Some(*song_id)
@@ -440,7 +437,10 @@ impl App {
                         .and_then(|song| song.cover_path.as_ref())
                         == Some(cover_path)
                 {
-                    self.ui.lyrics.bg_shader.set_colors(*primary, *secondary, *tertiary);
+                    self.ui
+                        .lyrics
+                        .bg_shader
+                        .set_colors(*primary, *secondary, *tertiary);
                     self.ui.lyrics.bg_colors = crate::utils::DominantColors {
                         primary: iced::Color::from_rgba(
                             primary[0], primary[1], primary[2], primary[3],
@@ -998,7 +998,10 @@ impl App {
         let window = self.playback.preload_coordinator.window();
         let mut tasks = Vec::new();
 
-        for song_id in [window.next_song_id, window.prev_song_id].into_iter().flatten() {
+        for song_id in [window.next_song_id, window.prev_song_id]
+            .into_iter()
+            .flatten()
+        {
             // Find cover path from queue
             let cover_path = self
                 .playback
@@ -1124,13 +1127,18 @@ impl App {
 
     /// Install cached background colors + texture from coordinator into shader.
     fn install_background_from_coordinator(&mut self, song_id: i64) {
-        let Some((primary, secondary, tertiary, image_data, width, height)) =
-            self.playback.preload_coordinator.take_background_data(song_id)
+        let Some((primary, secondary, tertiary, image_data, width, height)) = self
+            .playback
+            .preload_coordinator
+            .take_background_data(song_id)
         else {
             return;
         };
 
-        self.ui.lyrics.bg_shader.set_colors(primary, secondary, tertiary);
+        self.ui
+            .lyrics
+            .bg_shader
+            .set_colors(primary, secondary, tertiary);
         self.ui.lyrics.bg_colors = crate::utils::DominantColors {
             primary: iced::Color::from_rgba(primary[0], primary[1], primary[2], primary[3]),
             secondary: iced::Color::from_rgba(
@@ -1145,12 +1153,16 @@ impl App {
 
         if let Some(img) = image::RgbImage::from_raw(width, height, image_data) {
             let dynamic_img = image::DynamicImage::ImageRgb8(img);
-            self.ui.lyrics
+            self.ui
+                .lyrics
                 .textured_bg_shader
                 .set_album_image(dynamic_img, None);
         }
 
-        tracing::info!("Installed cached background for song {} from coordinator", song_id);
+        tracing::info!(
+            "Installed cached background for song {} from coordinator",
+            song_id
+        );
     }
 
     fn engine_lines_to_ui_lines(

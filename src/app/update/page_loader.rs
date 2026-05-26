@@ -37,26 +37,16 @@ impl App {
     }
 }
 
-/// Convert NCM songs to PlaylistSongView with pre-checked cover paths
+/// Convert NCM songs to PlaylistSongView.
+/// Cover resolution is deferred to `image::resolve` at render time.
 pub fn convert_ncm_songs_to_views(
     songs: &[crate::api::SongInfo],
-    cover_paths: &[(u64, Option<String>)],
 ) -> Vec<crate::ui::pages::PlaylistSongView> {
-    let cover_map: std::collections::HashMap<u64, Option<String>> =
-        cover_paths.iter().cloned().collect();
-
     songs
         .iter()
         .enumerate()
         .map(|(i, song)| {
             let meta = crate::metadata::SongMetadata::from(song);
-            let cover_path = cover_map.get(&song.id).cloned().flatten();
-            let pic_url = if cover_path.is_none() && !song.pic_url.is_empty() {
-                Some(song.pic_url.clone())
-            } else {
-                None
-            };
-
             let source = crate::utils::compute_source(
                 "",
                 -(song.id as i64),
@@ -64,7 +54,7 @@ pub fn convert_ncm_songs_to_views(
                 Some(&song.name),
             );
 
-            crate::ui::components::playlist_view::SongItem::with_pic_url(
+            crate::ui::components::playlist_view::SongItem::new(
                 -(song.id as i64),
                 i + 1,
                 meta.title.clone(),
@@ -72,8 +62,6 @@ pub fn convert_ncm_songs_to_views(
                 meta.album.clone(),
                 meta.duration_display(),
                 String::new(),
-                cover_path,
-                pic_url,
                 source,
             )
         })

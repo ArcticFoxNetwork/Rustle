@@ -11,6 +11,7 @@ mod database;
 mod download;
 mod features;
 mod i18n;
+mod image;
 mod metadata;
 mod platform;
 mod protocol;

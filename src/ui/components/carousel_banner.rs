@@ -10,8 +10,9 @@ use iced::{
 use std::path::PathBuf;
 
 use crate::api::BannersInfo;
-use crate::app::Message;
+use crate::app::{ImageState, Message};
 use crate::i18n::{Key, Locale};
+use crate::image::ImageKind;
 use crate::ui::theme::{self, BOLD_WEIGHT};
 
 const BANNER_HEIGHT: f32 = 280.0;
@@ -19,8 +20,8 @@ const INDICATOR_SIZE: f32 = 8.0;
 const INDICATOR_SPACING: f32 = 8.0;
 
 struct BannerDrawer<'a> {
-    current_image: Option<&'a (PathBuf, u32, u32)>,
-    last_image: Option<&'a (PathBuf, u32, u32)>,
+    current_image: Option<(&'a PathBuf, u32, u32)>,
+    last_image: Option<(&'a PathBuf, u32, u32)>,
     progress: f32,
     direction: i32,
 }
@@ -40,13 +41,13 @@ impl<'a, Message> canvas::Program<Message> for BannerDrawer<'a> {
 
         // Helper to draw image or fallback
         let draw_banner =
-            |frame: &mut canvas::Frame, image_data: Option<&(PathBuf, u32, u32)>, offset_x: f32| {
+            |frame: &mut canvas::Frame, image_data: Option<(&PathBuf, u32, u32)>, offset_x: f32| {
                 if let Some((path, width, height)) = image_data {
                     let image = canvas::Image::new(path);
 
                     // Calculate ContentFit::Cover
-                    let img_w = *width as f32;
-                    let img_h = *height as f32;
+                    let img_w = width as f32;
+                    let img_h = height as f32;
 
                     if img_w > 0.0 && img_h > 0.0 {
                         let target_w = bounds.width;
@@ -119,7 +120,7 @@ impl<'a, Message> canvas::Program<Message> for BannerDrawer<'a> {
 /// Build the carousel banner component
 pub fn view<'a>(
     banners: &'a [BannersInfo],
-    banner_images: &'a std::collections::HashMap<usize, (PathBuf, u32, u32)>,
+    image_state: &'a ImageState,
     current_index: usize,
     last_index: usize,
     animation: &'a iced::animation::Animation<bool>,
@@ -135,8 +136,8 @@ pub fn view<'a>(
     let now = iced::time::Instant::now();
     let progress = animation.interpolate(0.0_f32, 1.0_f32, now);
 
-    let current_image = banner_images.get(&current_index);
-    let last_image = banner_images.get(&last_index);
+    let current_image = image_state.image_data(ImageKind::Banner, current_index as u64);
+    let last_image = image_state.image_data(ImageKind::Banner, last_index as u64);
 
     // Banner content using Canvas for animation
     let banner_content: Element<'_, Message> = canvas(BannerDrawer {

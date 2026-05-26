@@ -24,6 +24,83 @@ use crate::ui::pages;
 use crate::ui::widgets::Toast;
 use crate::utils::Source;
 
+// ---------------------------------------------------------------------------
+// Unified image-handle cache
+// ---------------------------------------------------------------------------
+
+use std::collections::HashMap as StateMap;
+
+/// Pre-loaded image data keyed by `(ImageKind, id)`.
+///
+/// Populated by the unified image pipeline (`handle_image`) so that views
+/// never touch disk — they only borrow an `Option<&image::Handle>`.
+#[derive(Debug, Default)]
+pub struct ImageState {
+    pub entries: StateMap<(crate::image::ImageKind, u64), ImageEntry>,
+    pub inflight: std::collections::HashSet<(crate::image::ImageKind, u64)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImageEntry {
+    pub path: PathBuf,
+    pub handle: iced::widget::image::Handle,
+    pub dimensions: Option<(u32, u32)>,
+}
+
+impl ImageState {
+    pub fn get(
+        &self,
+        kind: crate::image::ImageKind,
+        id: u64,
+    ) -> Option<&iced::widget::image::Handle> {
+        self.entries.get(&(kind, id)).map(|entry| &entry.handle)
+    }
+
+    pub fn image_data(
+        &self,
+        kind: crate::image::ImageKind,
+        id: u64,
+    ) -> Option<(&PathBuf, u32, u32)> {
+        self.entries.get(&(kind, id)).map(|entry| {
+            let (width, height) = entry.dimensions.unwrap_or((0, 0));
+            (&entry.path, width, height)
+        })
+    }
+
+    pub fn insert_path(&mut self, kind: crate::image::ImageKind, id: u64, path: PathBuf) {
+        let dimensions = image_dimensions(&path);
+        let handle = iced::widget::image::Handle::from_path(path.clone());
+        self.entries.insert(
+            (kind, id),
+            ImageEntry {
+                path,
+                handle,
+                dimensions,
+            },
+        );
+        self.inflight.remove(&(kind, id));
+    }
+
+    pub fn mark_inflight(&mut self, kind: crate::image::ImageKind, id: u64) {
+        self.inflight.insert((kind, id));
+    }
+
+    pub fn clear_inflight(&mut self, kind: crate::image::ImageKind, id: u64) {
+        self.inflight.remove(&(kind, id));
+    }
+
+    pub fn is_inflight(&self, kind: crate::image::ImageKind, id: u64) -> bool {
+        self.inflight.contains(&(kind, id))
+    }
+}
+
+fn image_dimensions(path: &std::path::Path) -> Option<(u32, u32)> {
+    image::ImageReader::open(path)
+        .and_then(|reader| reader.with_guessed_format())
+        .ok()
+        .and_then(|reader| reader.into_dimensions().ok())
+}
+
 /// Main application state
 pub struct App {
     /// Core infrastructure (Settings, DB, Audio, System integrations)
@@ -448,9 +525,6 @@ pub struct UserInfo {
     pub user_id: u64,
     pub nickname: String,
     pub avatar_url: String,
-    pub avatar_path: Option<PathBuf>,
-    /// Pre-loaded avatar image handle for instant rendering
-    pub avatar_handle: Option<iced::widget::image::Handle>,
     pub vip_type: i32,
     pub like_songs: HashSet<u64>,
 }
@@ -461,8 +535,6 @@ impl UserInfo {
             user_id: uid,
             nickname,
             avatar_url,
-            avatar_path: None,
-            avatar_handle: None,
             vip_type: 0,
             like_songs: HashSet::new(),
         }
@@ -760,6 +832,9 @@ pub struct UiState {
 
     // Download panel tab
     pub download_tab: DownloadTab,
+
+    // Unified image-handle cache (pre-loaded handles, no disk I/O in views)
+    pub image_state: ImageState,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -832,6 +907,7 @@ impl UiState {
             context_menu: None,
             song_edit_dialog: None,
             download_tab: Default::default(),
+            image_state: ImageState::default(),
 
             playlist_page: PlaylistPageState {
                 current: None,
@@ -844,10 +920,8 @@ impl UiState {
                 scroll_state: std::rc::Rc::new(std::cell::RefCell::new(
                     crate::ui::widgets::VirtualListState::default(),
                 )),
-                pending_cover_downloads: HashSet::new(),
                 load_state: Default::default(),
                 content_width: 904.0,
-                artist_album_covers: std::collections::HashMap::new(),
                 description_expanded: false,
             },
 
@@ -886,11 +960,9 @@ impl UiState {
 
             home: HomePageState {
                 banners: Vec::new(),
-                banner_images: std::collections::HashMap::new(),
                 current_banner: 0,
                 top_picks: Vec::new(),
                 trending_songs: Vec::new(),
-                song_covers: std::collections::HashMap::new(),
                 login_popup_open: false,
                 qr_code_path: None,
                 qr_unikey: None,
@@ -972,16 +1044,32 @@ pub struct PlaylistPageState {
     pub search_animation: SingleHoverAnimation,
     /// Virtual list scroll state for efficient rendering
     pub scroll_state: std::rc::Rc<std::cell::RefCell<crate::ui::widgets::VirtualListState>>,
-    /// Song IDs currently being downloaded (to avoid duplicate requests)
-    pub pending_cover_downloads: HashSet<i64>,
     /// Loading state for async playlist loading
     pub load_state: crate::app::update::page_loader::PlaylistLoadState,
     /// Main content width for responsive grid layouts
     pub content_width: f32,
-    /// Cached cover handles for artist page album cards
-    pub artist_album_covers: std::collections::HashMap<u64, iced::widget::image::Handle>,
     /// Whether the playlist description is expanded (vs clamped to 2 lines)
     pub description_expanded: bool,
+}
+
+impl Default for PlaylistPageState {
+    fn default() -> Self {
+        Self {
+            current: None,
+            viewing_recently_played: false,
+            song_animations: Default::default(),
+            icon_animations: Default::default(),
+            search_expanded: false,
+            search_query: String::new(),
+            search_animation: Default::default(),
+            scroll_state: std::rc::Rc::new(std::cell::RefCell::new(
+                crate::ui::widgets::VirtualListState::default(),
+            )),
+            load_state: Default::default(),
+            content_width: 904.0,
+            description_expanded: false,
+        }
+    }
 }
 
 pub struct LyricsState {
@@ -1098,8 +1186,6 @@ pub struct SearchPageState {
     pub song_animations: HoverAnimations<u64>,
     /// Hover animations for grid cards
     pub card_animations: HoverAnimations<u64>,
-    /// Search result cover image handles keyed by (tab, item_id)
-    pub result_covers: std::collections::HashMap<(SearchTab, u64), iced::widget::image::Handle>,
     /// Content area width for responsive grid layouts
     pub content_width: f32,
 }
@@ -1120,7 +1206,6 @@ impl Default for SearchPageState {
             )),
             song_animations: Default::default(),
             card_animations: Default::default(),
-            result_covers: std::collections::HashMap::new(),
             content_width: 936.0,
         }
     }
@@ -1134,9 +1219,6 @@ pub struct DiscoverPageState {
     pub recommended_playlists: Vec<SongList>,
     /// Hot playlists (for all users)
     pub hot_playlists: Vec<SongList>,
-    /// Cover image handle cache: playlist_id -> image::Handle
-    /// Using Handle instead of PathBuf for instant rendering (no disk IO in render loop)
-    pub playlist_covers: std::collections::HashMap<u64, iced::widget::image::Handle>,
     /// Hover animations for playlist cards
     pub card_animations: HoverAnimations<u64>,
     /// Loading state for recommended playlists
@@ -1159,7 +1241,6 @@ impl Default for DiscoverPageState {
             view_mode: DiscoverViewMode::default(),
             recommended_playlists: Vec::new(),
             hot_playlists: Vec::new(),
-            playlist_covers: std::collections::HashMap::new(),
             card_animations: Default::default(),
             recommended_loading: false,
             hot_loading: false,
@@ -1177,17 +1258,11 @@ impl Default for DiscoverPageState {
 pub struct HomePageState {
     // Carousel banners
     pub banners: Vec<BannersInfo>,
-    /// Banner images for Canvas rendering: index -> (PathBuf, width, height)
-    /// Canvas requires PathBuf, iced handles its own caching internally
-    pub banner_images: std::collections::HashMap<usize, (PathBuf, u32, u32)>,
     pub current_banner: usize,
 
     // Content sections
     pub top_picks: Vec<SongList>,
     pub trending_songs: Vec<SongInfo>,
-    /// Song cover handles cache: song_id -> Handle
-    /// Using Handle instead of PathBuf for instant rendering (no disk IO in render loop)
-    pub song_covers: std::collections::HashMap<u64, iced::widget::image::Handle>,
 
     // Login popup
     pub login_popup_open: bool,

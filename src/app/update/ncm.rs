@@ -44,17 +44,6 @@ fn album_page_id(album_id: u64) -> i64 {
     (i64::MIN / 4) + album_id as i64
 }
 
-fn find_cached_album_cover(album_id: u64) -> Option<String> {
-    let covers_dir = crate::utils::covers_cache_dir();
-    [
-        format!("search_album_{}", album_id),
-        format!("album_{}", album_id),
-    ]
-    .into_iter()
-    .find_map(|stem| crate::utils::find_cached_image(&covers_dir, &stem))
-    .map(|path| path.to_string_lossy().to_string())
-}
-
 fn format_social_count(value: u64) -> String {
     if value >= 10_000 {
         format!("{:.1}万", value as f64 / 10_000.0)
@@ -142,7 +131,7 @@ impl App {
         debug!("Opening NCM playlist: {}", playlist_id);
         self.reset_playlist_page_state();
 
-        let (name, owner, cover_url) = if is_daily_recommend {
+        let (name, owner) = if is_daily_recommend {
             let locale = &self.core.locale;
             (
                 locale
@@ -151,7 +140,6 @@ impl App {
                 locale
                     .get(crate::i18n::Key::DiscoverDailyRecommendCreator)
                     .to_string(),
-                String::new(),
             )
         } else {
             self.ui
@@ -159,8 +147,8 @@ impl App {
                 .user_playlists
                 .iter()
                 .find(|p| p.id == playlist_id)
-                .map(|p| (p.name.clone(), p.author.clone(), p.cover_img_url.clone()))
-                .unwrap_or_else(|| ("加载中...".to_string(), String::new(), String::new()))
+                .map(|p| (p.name.clone(), p.author.clone()))
+                .unwrap_or_else(|| ("加载中...".to_string(), String::new()))
         };
 
         let internal_id = if is_daily_recommend {
@@ -197,30 +185,6 @@ impl App {
         self.ui.playlist_page.current = Some(skeleton_view);
         self.ui.playlist_page.load_state =
             crate::app::update::page_loader::PlaylistLoadState::Loading;
-
-        let cover_task = if !cover_url.is_empty() {
-            if let Some(client) = &self.core.ncm_client {
-                let client = client.clone();
-                Task::perform(
-                    async move {
-                        crate::utils::download_playlist_cover(&client, playlist_id, &cover_url)
-                            .await
-                            .map(|p| (internal_id, p.to_string_lossy().to_string()))
-                    },
-                    |result| {
-                        if let Some((id, path)) = result {
-                            Message::NcmPlaylistCoverLoaded(id, path)
-                        } else {
-                            Message::NoOp
-                        }
-                    },
-                )
-            } else {
-                Task::none()
-            }
-        } else {
-            Task::none()
-        };
 
         let api_task = if let Some(client) = &self.core.ncm_client {
             let client = client.clone();
@@ -290,7 +254,7 @@ impl App {
             Task::none()
         };
 
-        Task::batch([cover_task, api_task])
+        api_task
     }
 
     pub(super) fn open_album_route(&mut self, album_id: u64) -> Task<Message> {
@@ -331,7 +295,6 @@ impl App {
                         (
                             album.name.clone(),
                             album.author.clone(),
-                            album.cover_img_url.clone(),
                             page.owner_artist_id,
                         )
                     })
@@ -342,27 +305,14 @@ impl App {
                     .albums
                     .iter()
                     .find(|album| album.id == album_id)
-                    .map(|album| {
-                        (
-                            album.name.clone(),
-                            album.author.clone(),
-                            album.cover_img_url.clone(),
-                            None,
-                        )
-                    })
+                    .map(|album| (album.name.clone(), album.author.clone(), None))
             });
 
-        let (name, owner, cover_url, owner_artist_id) = preview
-            .unwrap_or_else(|| ("加载中...".to_string(), String::new(), String::new(), None));
+        let (name, owner, owner_artist_id) =
+            preview.unwrap_or_else(|| ("加载中...".to_string(), String::new(), None));
 
         debug!("Opening album page: {}", album_id);
         self.reset_playlist_page_state();
-
-        let cover_path = find_cached_album_cover(album_id);
-        let palette = cover_path
-            .as_deref()
-            .map(|path| crate::utils::ColorPalette::from_image_path(std::path::Path::new(path)))
-            .unwrap_or_default();
 
         let skeleton_view = crate::ui::pages::PlaylistView {
             kind: crate::ui::pages::playlist::DetailPageKind::Album,
@@ -373,7 +323,7 @@ impl App {
             artist_tab: crate::ui::pages::playlist::ArtistPageTab::TopSongs,
             artist_albums: Vec::new(),
             user_playlists: Vec::new(),
-            cover_path,
+            cover_path: None,
             owner,
             owner_artist_id,
             owner_avatar_path: None,
@@ -382,7 +332,7 @@ impl App {
             total_duration: String::new(),
             like_count: String::new(),
             songs: Vec::new(),
-            palette,
+            palette: crate::utils::ColorPalette::default(),
             is_local: false,
             is_subscribed: false,
             watched_folder_path: None,
@@ -393,43 +343,9 @@ impl App {
         self.ui.playlist_page.load_state =
             crate::app::update::page_loader::PlaylistLoadState::Loading;
 
-        let cover_task = if self
-            .ui
-            .playlist_page
-            .current
-            .as_ref()
-            .and_then(|page| page.cover_path.as_ref())
-            .is_none()
-            && !cover_url.is_empty()
-        {
-            if let Some(client) = &self.core.ncm_client {
-                let client = client.clone();
-                let cover_path =
-                    crate::utils::covers_cache_dir().join(format!("search_album_{}.jpg", album_id));
-                Task::perform(
-                    async move {
-                        crate::utils::download_img(&client, &cover_url, cover_path, 300, 300)
-                            .await
-                            .map(|path| (page_id, path.to_string_lossy().to_string()))
-                    },
-                    |result| {
-                        if let Some((page_id, path)) = result {
-                            Message::AlbumCoverLoaded(page_id, path)
-                        } else {
-                            Message::NoOp
-                        }
-                    },
-                )
-            } else {
-                Task::none()
-            }
-        } else {
-            Task::none()
-        };
-
         if let Some(client) = &self.core.ncm_client {
             let client = client.clone();
-            let api_task = Task::perform(
+            return Task::perform(
                 async move { client.client.album_detail(album_id).await.ok() },
                 |result| {
                     if let Some(detail) = result {
@@ -439,7 +355,6 @@ impl App {
                     }
                 },
             );
-            return Task::batch([cover_task, api_task]);
         }
 
         Self::toast_warning(self.core.locale.get(Key::NotLoggedIn).to_string())
@@ -628,7 +543,6 @@ impl App {
 
                     let client = self.core.ncm_client.clone();
                     let uid = login_info.uid;
-                    let avatar_url = login_info.avatar_url.clone();
 
                     Some(Task::batch([
                         self.load_homepage_data(),
@@ -650,26 +564,6 @@ impl App {
                                 }
                             },
                             Message::UserInfoLoaded,
-                        ),
-                        Task::perform(
-                            {
-                                let client = client.clone();
-                                async move {
-                                    if let Some(client) = client {
-                                        crate::utils::download_avatar(&client, uid, &avatar_url)
-                                            .await
-                                    } else {
-                                        None
-                                    }
-                                }
-                            },
-                            |path_opt| {
-                                if let Some(path) = path_opt {
-                                    Message::UserAvatarLoaded(path)
-                                } else {
-                                    Message::NoOp
-                                }
-                            },
                         ),
                         self.load_user_playlists(),
                     ]))
@@ -843,40 +737,11 @@ impl App {
                 user_info.vip_type = login_info.vip_type;
                 self.core.user_info = Some(user_info);
 
-                let client = self.core.ncm_client.clone();
-                let uid = login_info.uid;
-                let avatar_url = login_info.avatar_url.clone();
-
                 Some(Task::batch([
                     Self::toast_success("登录成功！".to_string()),
                     self.load_homepage_data(),
-                    Task::perform(
-                        async move {
-                            if let Some(client) = client {
-                                crate::utils::download_avatar(&client, uid, &avatar_url).await
-                            } else {
-                                None
-                            }
-                        },
-                        |path_opt| {
-                            if let Some(path) = path_opt {
-                                Message::UserAvatarLoaded(path)
-                            } else {
-                                Message::NoOp
-                            }
-                        },
-                    ),
                     self.load_user_playlists(),
                 ]))
-            }
-
-            Message::UserAvatarLoaded(path) => {
-                if let Some(user_info) = &mut self.core.user_info {
-                    user_info.avatar_path = Some(path.clone());
-                    // Create image handle for instant rendering
-                    user_info.avatar_handle = Some(iced::widget::image::Handle::from_path(path));
-                }
-                Some(Task::none())
             }
 
             Message::Logout => {
@@ -917,60 +782,6 @@ impl App {
             Message::BannersLoaded(banners) => {
                 self.ui.home.banners = banners.clone();
                 self.ui.home.current_banner = 0;
-
-                if let Some(client) = &self.core.ncm_client {
-                    let mut tasks = Vec::new();
-                    for (index, banner) in banners.iter().enumerate() {
-                        let client = client.clone();
-                        let pic_url = banner.pic.clone();
-                        let target_id = banner.target_id;
-
-                        tasks.push(Task::perform(
-                            async move {
-                                if let Some(path) =
-                                    crate::utils::download_banner(&client, target_id, &pic_url)
-                                        .await
-                                {
-                                    match image::ImageReader::open(&path)
-                                        .and_then(|r| r.with_guessed_format())
-                                    {
-                                        Ok(reader) => match reader.into_dimensions() {
-                                            Ok((w, h)) => Some((index, path, w, h)),
-                                            Err(e) => {
-                                                error!("Failed to get banner dimensions: {}", e);
-                                                Some((index, path, 0, 0))
-                                            }
-                                        },
-                                        Err(e) => {
-                                            error!("Failed to open banner for dimensions: {}", e);
-                                            Some((index, path, 0, 0))
-                                        }
-                                    }
-                                } else {
-                                    None
-                                }
-                            },
-                            |result| {
-                                if let Some((idx, path, w, h)) = result {
-                                    Message::BannerImageLoaded(idx, path, w, h)
-                                } else {
-                                    Message::NoOp
-                                }
-                            },
-                        ));
-                    }
-                    Some(Task::batch(tasks))
-                } else {
-                    Some(Task::none())
-                }
-            }
-
-            Message::BannerImageLoaded(index, path, width, height) => {
-                // Canvas uses PathBuf directly, iced handles caching internally
-                self.ui
-                    .home
-                    .banner_images
-                    .insert(*index, (path.clone(), *width, *height));
                 Some(Task::none())
             }
 
@@ -1073,50 +884,13 @@ impl App {
 
             Message::TrendingSongsLoaded(songs) => {
                 self.ui.home.trending_songs = songs.clone();
-
-                if let Some(client) = &self.core.ncm_client {
-                    let mut tasks = Vec::new();
-                    for song in songs.iter().take(10) {
-                        let client = client.clone();
-                        let pic_url = song.pic_url.clone();
-                        let song_id = song.id;
-
-                        tasks.push(Task::perform(
-                            async move {
-                                if let Some(path) =
-                                    crate::utils::download_cover(&client, song_id, &pic_url).await
-                                {
-                                    Some((song_id, path))
-                                } else {
-                                    None
-                                }
-                            },
-                            |result| {
-                                if let Some((id, path)) = result {
-                                    Message::SongCoverLoaded(id, path)
-                                } else {
-                                    Message::NoOp
-                                }
-                            },
-                        ));
-                    }
-                    Some(Task::batch(tasks))
-                } else {
-                    Some(Task::none())
-                }
+                Some(Task::none())
             }
 
             Message::OpenTrendingSongs => Some(self.navigate_to_route(
                 Route::Discover(crate::app::state::DiscoverViewMode::AllHot),
                 true,
             )),
-
-            Message::SongCoverLoaded(song_id, path) => {
-                // Create image handle for instant rendering (no disk IO in render loop)
-                let handle = iced::widget::image::Handle::from_path(path);
-                self.ui.home.song_covers.insert(*song_id, handle);
-                Some(Task::none())
-            }
 
             Message::ToggleFavorite(song_id) => {
                 require_logged_in!(self);
@@ -1232,29 +1006,6 @@ impl App {
 
             Message::UserPlaylistsLoaded(playlists) => {
                 self.ui.home.user_playlists = playlists.clone();
-                // Trigger cover downloads for all playlists
-                if let Some(ref client) = self.core.ncm_client {
-                    let tasks: Vec<_> = playlists
-                        .iter()
-                        .filter_map(|pl| {
-                            if pl.cover_img_url.is_empty() {
-                                return None;
-                            }
-                            let c = client.clone();
-                            let id = pl.id;
-                            let url = pl.cover_img_url.clone();
-                            Some(Task::perform(
-                                async move {
-                                    crate::utils::download_playlist_cover(&c, id, &url).await;
-                                },
-                                |_| Message::Noop,
-                            ))
-                        })
-                        .collect();
-                    if !tasks.is_empty() {
-                        return Some(Task::batch(tasks));
-                    }
-                }
                 Some(Task::none())
             }
 
@@ -1362,54 +1113,6 @@ impl App {
                 // Store NCM songs for playback
                 self.ui.home.current_ncm_playlist_songs = detail.songs.clone();
 
-                // Check if creator avatar already exists in cache
-                let avatars_cache_dir = crate::utils::avatars_cache_dir();
-                let avatar_stem = format!("playlist_creator_{}", detail.id);
-                let existing_avatar =
-                    crate::utils::find_cached_image(&avatars_cache_dir, &avatar_stem);
-
-                // Start creator avatar download task only if not cached
-                let avatar_task = if existing_avatar.is_some() {
-                    // Avatar already cached, send message directly
-                    if let Some(path) = existing_avatar {
-                        Task::done(Message::NcmPlaylistCreatorAvatarLoaded(
-                            playlist_id,
-                            path.to_string_lossy().to_string(),
-                        ))
-                    } else {
-                        Task::none()
-                    }
-                } else if !detail.creator_avatar_url.is_empty() {
-                    if let Some(client) = &self.core.ncm_client {
-                        let client = client.clone();
-                        let avatar_url = detail.creator_avatar_url.clone();
-                        let ncm_id = detail.id;
-                        let internal_id = playlist_id;
-                        Task::perform(
-                            async move {
-                                crate::utils::download_playlist_creator_avatar(
-                                    &client,
-                                    ncm_id,
-                                    &avatar_url,
-                                )
-                                .await
-                                .map(|p| (internal_id, p.to_string_lossy().to_string()))
-                            },
-                            |result| {
-                                if let Some((id, path)) = result {
-                                    Message::NcmPlaylistCreatorAvatarLoaded(id, path)
-                                } else {
-                                    Message::NoOp
-                                }
-                            },
-                        )
-                    } else {
-                        Task::none()
-                    }
-                } else {
-                    Task::none()
-                };
-
                 let creator_detail_task = if detail.creator_id != 0 {
                     if let Some(client) = &self.core.ncm_client {
                         let client = client.clone();
@@ -1432,98 +1135,35 @@ impl App {
                     Task::none()
                 };
 
-                // Spawn async task to convert songs (cover download already started in OpenNcmPlaylist)
+                // Spawn async task to convert songs (covers are handled by ImageState).
                 let songs = detail.songs.clone();
-                let cover_cache_dir = crate::utils::covers_cache_dir();
-                let avatars_cache_dir = crate::utils::avatars_cache_dir();
-                let ncm_playlist_id = detail.id;
 
                 // Start songs conversion task
                 let songs_task = Task::perform(
                     async move {
                         // Run all blocking operations in spawn_blocking
                         tokio::task::spawn_blocking(move || {
-                            // Check all song covers (file system operations)
-                            let cover_paths: Vec<(u64, Option<String>)> = songs
-                                .iter()
-                                .map(|song| {
-                                    let stem = format!("cover_{}", song.id);
-                                    let cover_path =
-                                        crate::utils::find_cached_image(&cover_cache_dir, &stem)
-                                            .map(|p| p.to_string_lossy().to_string());
-                                    (song.id, cover_path)
-                                })
-                                .collect();
-
                             // Convert songs to views
                             let song_views =
-                                crate::app::update::page_loader::convert_ncm_songs_to_views(
-                                    &songs,
-                                    &cover_paths,
-                                );
+                                crate::app::update::page_loader::convert_ncm_songs_to_views(&songs);
 
-                            // Check creator avatar
-                            let avatar_stem = format!("playlist_creator_{}", ncm_playlist_id);
-                            let avatar_path =
-                                crate::utils::find_cached_image(&avatars_cache_dir, &avatar_stem)
-                                    .map(|p| p.to_string_lossy().to_string());
-
-                            (playlist_id, song_views, avatar_path)
+                            (playlist_id, song_views)
                         })
                         .await
-                        .unwrap_or_else(|_| (playlist_id, Vec::new(), None))
+                        .unwrap_or_else(|_| (playlist_id, Vec::new()))
                     },
-                    |(playlist_id, song_views, avatar_path)| {
-                        Message::NcmPlaylistSongsReady(
-                            playlist_id,
-                            song_views,
-                            None,
-                            crate::utils::ColorPalette::default(),
-                            avatar_path,
-                        )
+                    |(playlist_id, song_views)| {
+                        Message::NcmPlaylistSongsReady(playlist_id, song_views)
                     },
                 );
 
-                return Some(Task::batch([songs_task, avatar_task, creator_detail_task]));
+                return Some(Task::batch([songs_task, creator_detail_task]));
             }
 
-            Message::NcmPlaylistSongsReady(
-                playlist_id,
-                song_views,
-                _cover_path,
-                _palette,
-                avatar_path,
-            ) => {
+            Message::NcmPlaylistSongsReady(playlist_id, song_views) => {
                 let mut song_views = song_views.clone();
 
-                if let Some(playlist) = &self.ui.playlist_page.current {
-                    if playlist.id == *playlist_id
-                        && playlist.kind == crate::ui::pages::playlist::DetailPageKind::Album
-                    {
-                        if let Some(shared_cover_path) = playlist.cover_path.clone() {
-                            for song in &mut song_views {
-                                song.cover_path = Some(shared_cover_path.clone());
-                            }
-                        }
-                    }
-                }
-
                 debug!("NCM playlist songs ready: {} songs", song_views.len());
-
-                let initial_cover_requests: Vec<(i64, String)> = song_views
-                    .iter()
-                    .filter_map(|song| {
-                        if song.cover_path.is_some() {
-                            return None;
-                        }
-
-                        song.pic_url
-                            .as_ref()
-                            .filter(|url| !url.is_empty())
-                            .map(|url| (song.id, url.clone()))
-                    })
-                    .take(12)
-                    .collect();
 
                 // Update existing playlist view with songs
                 if let Some(playlist) = &mut self.ui.playlist_page.current {
@@ -1538,9 +1178,6 @@ impl App {
                             );
                         }
                         playlist.songs = song_views.clone();
-                        if let Some(avatar) = avatar_path {
-                            playlist.owner_avatar_path = Some(avatar.clone());
-                        }
                     }
                 }
 
@@ -1549,15 +1186,10 @@ impl App {
                     crate::app::update::page_loader::PlaylistLoadState::Ready;
 
                 // Scroll to top
-                let mut tasks = vec![iced::widget::operation::snap_to(
+                let tasks = vec![iced::widget::operation::snap_to(
                     iced::widget::Id::new("playlist_scroll"),
                     iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
                 )];
-                if !initial_cover_requests.is_empty() {
-                    tasks.push(Task::done(Message::RequestSongCoversLazy(
-                        initial_cover_requests,
-                    )));
-                }
                 Some(Task::batch(tasks))
             }
 
@@ -1600,121 +1232,19 @@ impl App {
 
                 self.ui.home.current_ncm_playlist_songs = detail.songs.clone();
 
-                let artist_avatar_task = if detail.artist_id != 0 {
-                    let cover_cache_dir = crate::utils::covers_cache_dir();
-                    let artist_cover_stem = format!("artist_{}", detail.artist_id);
-                    let existing_artist_cover =
-                        crate::utils::find_cached_image(&cover_cache_dir, &artist_cover_stem)
-                            .map(|path| path.to_string_lossy().to_string());
-
-                    if let Some(path) = existing_artist_cover {
-                        Task::done(Message::NcmPlaylistCreatorAvatarLoaded(page_id, path))
-                    } else if !detail.artist_pic_url.is_empty() {
-                        if let Some(client) = &self.core.ncm_client {
-                            let client = client.clone();
-                            let artist_id = detail.artist_id;
-                            let artist_pic_url = detail.artist_pic_url.clone();
-                            Task::perform(
-                                async move {
-                                    crate::utils::download_artist_cover(
-                                        &client,
-                                        artist_id,
-                                        &artist_pic_url,
-                                    )
-                                    .await
-                                    .map(|path| (page_id, path.to_string_lossy().to_string()))
-                                },
-                                |result| {
-                                    if let Some((page_id, path)) = result {
-                                        Message::NcmPlaylistCreatorAvatarLoaded(page_id, path)
-                                    } else {
-                                        Message::NoOp
-                                    }
-                                },
-                            )
-                        } else {
-                            Task::none()
-                        }
-                    } else {
-                        Task::none()
-                    }
-                } else {
-                    Task::none()
-                };
-
-                let cached_cover = find_cached_album_cover(detail.id);
-                let cover_task = if let Some(path) = cached_cover.clone() {
-                    Task::done(Message::AlbumCoverLoaded(page_id, path))
-                } else if !detail.cover_img_url.is_empty() {
-                    if let Some(client) = &self.core.ncm_client {
-                        let client = client.clone();
-                        let album_id = detail.id;
-                        let cover_url = detail.cover_img_url.clone();
-                        let cover_path = crate::utils::covers_cache_dir()
-                            .join(format!("search_album_{}.jpg", album_id));
-                        Task::perform(
-                            async move {
-                                crate::utils::download_img(
-                                    &client, &cover_url, cover_path, 300, 300,
-                                )
-                                .await
-                                .map(|path| {
-                                    (album_page_id(album_id), path.to_string_lossy().to_string())
-                                })
-                            },
-                            |result| {
-                                if let Some((page_id, path)) = result {
-                                    Message::AlbumCoverLoaded(page_id, path)
-                                } else {
-                                    Message::NoOp
-                                }
-                            },
-                        )
-                    } else {
-                        Task::none()
-                    }
-                } else {
-                    Task::none()
-                };
-
                 let songs = detail.songs.clone();
-                let shared_cover_path = cached_cover;
-                let cover_cache_dir = crate::utils::covers_cache_dir();
                 let songs_task = Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            let cover_paths: Vec<(u64, Option<String>)> = songs
-                                .iter()
-                                .map(|song| {
-                                    let stem = format!("cover_{}", song.id);
-                                    let cover_path =
-                                        crate::utils::find_cached_image(&cover_cache_dir, &stem)
-                                            .map(|path| path.to_string_lossy().to_string())
-                                            .or_else(|| shared_cover_path.clone());
-                                    (song.id, cover_path)
-                                })
-                                .collect();
-
-                            crate::app::update::page_loader::convert_ncm_songs_to_views(
-                                &songs,
-                                &cover_paths,
-                            )
+                            crate::app::update::page_loader::convert_ncm_songs_to_views(&songs)
                         })
                         .await
                         .unwrap_or_default()
                     },
-                    move |song_views| {
-                        Message::NcmPlaylistSongsReady(
-                            page_id,
-                            song_views,
-                            None,
-                            crate::utils::ColorPalette::default(),
-                            None,
-                        )
-                    },
+                    move |song_views| Message::NcmPlaylistSongsReady(page_id, song_views),
                 );
 
-                Some(Task::batch([artist_avatar_task, cover_task, songs_task]))
+                Some(songs_task)
             }
 
             Message::ArtistDetailLoaded(detail) => {
@@ -1763,73 +1293,16 @@ impl App {
 
                 self.ui.home.current_ncm_playlist_songs = detail.hot_songs.clone();
 
-                let cover_cache_dir = crate::utils::covers_cache_dir();
-                let cover_stem = format!("artist_{}", detail.id);
-                let existing_cover = crate::utils::find_cached_image(&cover_cache_dir, &cover_stem)
-                    .map(|p| p.to_string_lossy().to_string());
-
-                let cover_task = if let Some(path) = existing_cover {
-                    Task::done(Message::ArtistCoverLoaded(page_id, path))
-                } else if !detail.pic_url.is_empty() {
-                    if let Some(client) = &self.core.ncm_client {
-                        let client = client.clone();
-                        let artist_id = detail.id;
-                        let cover_url = detail.pic_url.clone();
-                        Task::perform(
-                            async move {
-                                crate::utils::download_artist_cover(&client, artist_id, &cover_url)
-                                    .await
-                                    .map(|p| {
-                                        (artist_page_id(artist_id), p.to_string_lossy().to_string())
-                                    })
-                            },
-                            |result| {
-                                if let Some((id, path)) = result {
-                                    Message::ArtistCoverLoaded(id, path)
-                                } else {
-                                    Message::NoOp
-                                }
-                            },
-                        )
-                    } else {
-                        Task::none()
-                    }
-                } else {
-                    Task::none()
-                };
-
                 let songs = detail.hot_songs.clone();
                 let songs_task = Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            let cover_paths: Vec<(u64, Option<String>)> = songs
-                                .iter()
-                                .map(|song| {
-                                    let stem = format!("cover_{}", song.id);
-                                    let cover_path =
-                                        crate::utils::find_cached_image(&cover_cache_dir, &stem)
-                                            .map(|p| p.to_string_lossy().to_string());
-                                    (song.id, cover_path)
-                                })
-                                .collect();
-
-                            crate::app::update::page_loader::convert_ncm_songs_to_views(
-                                &songs,
-                                &cover_paths,
-                            )
+                            crate::app::update::page_loader::convert_ncm_songs_to_views(&songs)
                         })
                         .await
                         .unwrap_or_default()
                     },
-                    move |song_views| {
-                        Message::NcmPlaylistSongsReady(
-                            page_id,
-                            song_views,
-                            None,
-                            crate::utils::ColorPalette::default(),
-                            None,
-                        )
-                    },
+                    move |song_views| Message::NcmPlaylistSongsReady(page_id, song_views),
                 );
 
                 let albums_task = if let Some(client) = &self.core.ncm_client {
@@ -1870,7 +1343,7 @@ impl App {
                     Task::none()
                 };
 
-                Some(Task::batch([cover_task, songs_task, albums_task]))
+                Some(Task::batch([songs_task, albums_task]))
             }
 
             Message::ArtistAlbumsLoaded(page_id, albums) => {
@@ -1878,76 +1351,6 @@ impl App {
                     if playlist.id == *page_id {
                         playlist.artist_albums = albums.clone();
                     }
-                }
-                let Some(client) = &self.core.ncm_client else {
-                    return Some(Task::none());
-                };
-
-                let covers_dir = crate::utils::covers_cache_dir();
-                let mut tasks = Vec::new();
-                for album in albums {
-                    if album.cover_img_url.is_empty() {
-                        continue;
-                    }
-
-                    let cover_stem = format!("search_album_{}", album.id);
-                    if let Some(path) = crate::utils::find_cached_image(&covers_dir, &cover_stem) {
-                        tasks.push(Task::done(Message::ArtistAlbumCoverLoaded(
-                            *page_id,
-                            album.id,
-                            path.to_string_lossy().to_string(),
-                        )));
-                        continue;
-                    }
-
-                    let client = client.clone();
-                    let page_id = *page_id;
-                    let album_id = album.id;
-                    let cover_url = album.cover_img_url.clone();
-                    let cover_path = covers_dir.join(format!("{}.jpg", cover_stem));
-                    tasks.push(Task::perform(
-                        async move {
-                            crate::utils::download_img(&client, &cover_url, cover_path, 300, 300)
-                                .await
-                                .map(|path| (page_id, album_id, path.to_string_lossy().to_string()))
-                        },
-                        |result| {
-                            if let Some((page_id, album_id, path)) = result {
-                                Message::ArtistAlbumCoverLoaded(page_id, album_id, path)
-                            } else {
-                                Message::NoOp
-                            }
-                        },
-                    ));
-                }
-
-                Some(if tasks.is_empty() {
-                    Task::none()
-                } else {
-                    Task::batch(tasks)
-                })
-            }
-
-            Message::ArtistAlbumCoverLoaded(page_id, album_id, path) => {
-                let mut should_cache_handle = false;
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    if playlist.id == *page_id {
-                        if let Some(album) = playlist
-                            .artist_albums
-                            .iter_mut()
-                            .find(|album| album.id == *album_id)
-                        {
-                            album.cover_img_url = path.clone();
-                            should_cache_handle = true;
-                        }
-                    }
-                }
-
-                if should_cache_handle && std::path::Path::new(path).exists() {
-                    self.ui.playlist_page.artist_album_covers.insert(
-                        *album_id,
-                        iced::widget::image::Handle::from_path(path.clone()),
-                    );
                 }
                 Some(Task::none())
             }
@@ -1983,46 +1386,6 @@ impl App {
                         playlist.like_count.clear();
                     }
                 }
-
-                let avatar_cache_dir = crate::utils::avatars_cache_dir();
-                let avatar_stem = format!("avatar_{}", detail.user_id);
-                let existing_avatar =
-                    crate::utils::find_cached_image(&avatar_cache_dir, &avatar_stem)
-                        .map(|p| p.to_string_lossy().to_string());
-
-                let avatar_task = if let Some(path) = existing_avatar {
-                    Task::batch([
-                        Task::done(Message::NcmPlaylistCreatorAvatarLoaded(
-                            page_id,
-                            path.clone(),
-                        )),
-                        Task::done(Message::ArtistCoverLoaded(page_id, path)),
-                    ])
-                } else if !detail.avatar_url.is_empty() {
-                    if let Some(client) = &self.core.ncm_client {
-                        let client = client.clone();
-                        let user_id = detail.user_id;
-                        let avatar_url = detail.avatar_url.clone();
-                        Task::perform(
-                            async move {
-                                crate::utils::download_avatar(&client, user_id, &avatar_url)
-                                    .await
-                                    .map(|p| (page_id, p.to_string_lossy().to_string()))
-                            },
-                            |result| {
-                                if let Some((page_id, path)) = result {
-                                    Message::NcmPlaylistCreatorAvatarLoaded(page_id, path)
-                                } else {
-                                    Message::NoOp
-                                }
-                            },
-                        )
-                    } else {
-                        Task::none()
-                    }
-                } else {
-                    Task::none()
-                };
 
                 let artist_task = if detail.artist_id != 0 {
                     if let Some(client) = &self.core.ncm_client {
@@ -2071,7 +1434,7 @@ impl App {
                     Task::none()
                 };
 
-                Some(Task::batch([avatar_task, artist_task, playlist_task]))
+                Some(Task::batch([artist_task, playlist_task]))
             }
 
             Message::UserPagePlaylistsLoaded(page_id, playlists) => {
@@ -2081,68 +1444,6 @@ impl App {
                     }
                 }
 
-                let Some(client) = &self.core.ncm_client else {
-                    return Some(Task::none());
-                };
-
-                let covers_dir = crate::utils::covers_cache_dir();
-                let mut tasks = Vec::new();
-                for playlist in playlists {
-                    if playlist.cover_img_url.is_empty() {
-                        continue;
-                    }
-
-                    let cover_stem = format!("playlist_{}", playlist.id);
-                    if let Some(path) = crate::utils::find_cached_image(&covers_dir, &cover_stem) {
-                        tasks.push(Task::done(Message::UserPlaylistCoverLoaded(
-                            *page_id,
-                            playlist.id,
-                            path.to_string_lossy().to_string(),
-                        )));
-                        continue;
-                    }
-
-                    let client = client.clone();
-                    let page_id = *page_id;
-                    let playlist_id = playlist.id;
-                    let cover_url = playlist.cover_img_url.clone();
-                    tasks.push(Task::perform(
-                        async move {
-                            crate::utils::download_playlist_cover(&client, playlist_id, &cover_url)
-                                .await
-                                .map(|path| {
-                                    (page_id, playlist_id, path.to_string_lossy().to_string())
-                                })
-                        },
-                        |result| {
-                            if let Some((page_id, playlist_id, path)) = result {
-                                Message::UserPlaylistCoverLoaded(page_id, playlist_id, path)
-                            } else {
-                                Message::NoOp
-                            }
-                        },
-                    ));
-                }
-
-                Some(if tasks.is_empty() {
-                    Task::none()
-                } else {
-                    Task::batch(tasks)
-                })
-            }
-
-            Message::UserPlaylistCoverLoaded(page_id, playlist_id, path) => {
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    if playlist.id == *page_id {
-                        if let Some(item) = playlist
-                            .user_playlists
-                            .iter_mut()
-                            .find(|item| item.id == *playlist_id)
-                        {
-                            item.cover_img_url = path.clone();
-                        }
-                    }
-                }
                 Some(Task::none())
             }
 
@@ -2196,353 +1497,19 @@ impl App {
                 self.ui.playlist_page.load_state =
                     crate::app::update::page_loader::PlaylistLoadState::Ready;
 
-                let cover_cache_dir = crate::utils::covers_cache_dir();
-                let cover_stem = format!("artist_{}", detail.id);
-                let existing_cover = crate::utils::find_cached_image(&cover_cache_dir, &cover_stem)
-                    .map(|p| p.to_string_lossy().to_string());
-
-                let cover_task = if let Some(path) = existing_cover {
-                    Task::done(Message::ArtistCoverLoaded(page_id, path))
-                } else if !detail.pic_url.is_empty() {
-                    if let Some(client) = &self.core.ncm_client {
-                        let client = client.clone();
-                        let artist_id = detail.id;
-                        let cover_url = detail.pic_url.clone();
-                        Task::perform(
-                            async move {
-                                crate::utils::download_artist_cover(&client, artist_id, &cover_url)
-                                    .await
-                                    .map(|p| (page_id, p.to_string_lossy().to_string()))
-                            },
-                            |result| {
-                                if let Some((id, path)) = result {
-                                    Message::ArtistCoverLoaded(id, path)
-                                } else {
-                                    Message::NoOp
-                                }
-                            },
-                        )
-                    } else {
-                        Task::none()
-                    }
-                } else {
-                    Task::none()
-                };
-
                 let songs = detail.hot_songs.clone();
                 let songs_task = Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            let cover_paths: Vec<(u64, Option<String>)> = songs
-                                .iter()
-                                .map(|song| {
-                                    let stem = format!("cover_{}", song.id);
-                                    let cover_path =
-                                        crate::utils::find_cached_image(&cover_cache_dir, &stem)
-                                            .map(|p| p.to_string_lossy().to_string());
-                                    (song.id, cover_path)
-                                })
-                                .collect();
-
-                            crate::app::update::page_loader::convert_ncm_songs_to_views(
-                                &songs,
-                                &cover_paths,
-                            )
+                            crate::app::update::page_loader::convert_ncm_songs_to_views(&songs)
                         })
                         .await
                         .unwrap_or_default()
                     },
-                    move |song_views| {
-                        Message::NcmPlaylistSongsReady(
-                            page_id,
-                            song_views,
-                            None,
-                            crate::utils::ColorPalette::default(),
-                            None,
-                        )
-                    },
+                    move |song_views| Message::NcmPlaylistSongsReady(page_id, song_views),
                 );
 
-                Some(Task::batch([cover_task, songs_task]))
-            }
-
-            Message::CurrentSongCoverReady(song_id, path) => {
-                tracing::info!(
-                    "Current song cover downloaded: song_id={}, path={}",
-                    song_id,
-                    path
-                );
-
-                // Update coordinator background slot
-                self.playback
-                    .preload_coordinator
-                    .ensure_background_slot(*song_id, Some(path.clone()));
-
-                // Update current_song's cover_path
-                if let Some(current) = &mut self.playback.current_song {
-                    if current.id == *song_id {
-                        current.cover_path = Some(path.clone());
-                    }
-                }
-
-                // Update in queue and database
-                if let Some(idx) = self.playback.current_index {
-                    if let Some(queue_song) = self.playback.queue.get_mut(idx) {
-                        if queue_song.id == *song_id {
-                            queue_song.cover_path = Some(path.clone());
-
-                            // Also update database with local cover path
-                            if let Some(db) = &self.core.db {
-                                let db = db.clone();
-                                let song_clone = queue_song.clone();
-                                tokio::spawn(async move {
-                                    if let Err(e) = db.upsert_ncm_song(&song_clone).await {
-                                        tracing::warn!(
-                                            "Failed to update cover path in database: {}",
-                                            e
-                                        );
-                                    }
-                                });
-                            }
-                        }
-                    }
-                }
-
-                // If lyrics page is open, update the background with new cover
-                if self.ui.lyrics.is_open {
-                    if let Some(song) = self.playback.current_song.clone() {
-                        if song.id == *song_id {
-                            return Some(self.update_lyrics_background(&song));
-                        }
-                    }
-                }
-
-                Some(Task::none())
-            }
-
-            Message::NcmPlaylistSongCoversBatchLoaded(covers) => {
-                // Batch update cover paths in the current playlist view
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    for (song_id, path) in covers.iter() {
-                        // Remove from pending downloads
-                        self.ui
-                            .playlist_page
-                            .pending_cover_downloads
-                            .remove(song_id);
-
-                        if let Some(song) = playlist.songs.iter_mut().find(|s| s.id == *song_id) {
-                            song.cover_path = Some(path.clone());
-                            // 封面已下载，清除远程 URL
-                            song.pic_url = None;
-                            // Update the cover_handle for immediate display
-                            if std::path::Path::new(path).exists() {
-                                song.cover_handle =
-                                    Some(iced::widget::image::Handle::from_path(path));
-                            }
-                        }
-                    }
-                }
-
-                let mut next_requests: Vec<(i64, String)> = Vec::new();
-                if let Some(playlist) = self.ui.playlist_page.current.as_ref() {
-                    if playlist.id < 0 {
-                        let scroll_state = self.ui.playlist_page.scroll_state.borrow();
-                        let (start, end) = scroll_state.visible_range();
-                        drop(scroll_state);
-
-                        for idx in start..end.min(playlist.songs.len()) {
-                            let song = &playlist.songs[idx];
-                            if song.cover_handle.is_some() {
-                                continue;
-                            }
-                            let Some(pic_url) = song.pic_url.as_ref() else {
-                                continue;
-                            };
-                            if pic_url.is_empty() {
-                                continue;
-                            }
-                            if self
-                                .ui
-                                .playlist_page
-                                .pending_cover_downloads
-                                .contains(&song.id)
-                            {
-                                continue;
-                            }
-                            next_requests.push((song.id, pic_url.clone()));
-                            if next_requests.len() >= 5 {
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if next_requests.is_empty() {
-                    Some(Task::none())
-                } else {
-                    Some(Task::done(Message::RequestSongCoversLazy(next_requests)))
-                }
-            }
-
-            Message::RequestSongCoversLazy(requests) => {
-                let cover_cache_dir = crate::utils::covers_cache_dir();
-                let mut cached_results = Vec::new();
-                let mut songs_to_download = Vec::new();
-
-                for (song_id, pic_url) in requests.iter().cloned() {
-                    if self
-                        .ui
-                        .playlist_page
-                        .pending_cover_downloads
-                        .contains(&song_id)
-                    {
-                        continue;
-                    }
-
-                    if pic_url.is_empty() {
-                        continue;
-                    }
-
-                    let ncm_id = if song_id < 0 {
-                        (-song_id) as u64
-                    } else {
-                        song_id as u64
-                    };
-                    let stem = format!("cover_{}", ncm_id);
-
-                    if let Some(path) = crate::utils::find_cached_image(&cover_cache_dir, &stem) {
-                        cached_results.push((song_id, path.to_string_lossy().to_string()));
-                    } else {
-                        songs_to_download.push((song_id, pic_url));
-                    }
-                }
-
-                let cached_task = if cached_results.is_empty() {
-                    None
-                } else {
-                    Some(Task::done(Message::NcmPlaylistSongCoversBatchLoaded(
-                        cached_results,
-                    )))
-                };
-
-                if songs_to_download.is_empty() {
-                    return Some(cached_task.unwrap_or_else(Task::none));
-                }
-
-                // Mark as pending
-                for (song_id, _) in &songs_to_download {
-                    self.ui
-                        .playlist_page
-                        .pending_cover_downloads
-                        .insert(*song_id);
-                }
-
-                // Start download task
-                if let Some(client) = &self.core.ncm_client {
-                    let client = client.clone();
-                    let download_task = Task::perform(
-                        async move {
-                            let mut results = Vec::new();
-                            for (song_id, pic_url) in songs_to_download {
-                                let ncm_id = if song_id < 0 {
-                                    (-song_id) as u64
-                                } else {
-                                    song_id as u64
-                                };
-                                if let Some(path) =
-                                    crate::utils::download_cover(&client, ncm_id, &pic_url).await
-                                {
-                                    results.push((song_id, path.to_string_lossy().to_string()));
-                                }
-                            }
-                            results
-                        },
-                        Message::NcmPlaylistSongCoversBatchLoaded,
-                    );
-
-                    return Some(if let Some(cached_task) = cached_task {
-                        Task::batch([cached_task, download_task])
-                    } else {
-                        download_task
-                    });
-                }
-
-                Some(cached_task.unwrap_or_else(Task::none))
-            }
-
-            Message::NcmPlaylistCoverLoaded(playlist_id, path) => {
-                tracing::info!("Playlist cover loaded: id={}, path={}", playlist_id, path);
-                // Update the playlist cover path
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    tracing::info!("Current playlist id: {}", playlist.id);
-                    if playlist.id == *playlist_id {
-                        tracing::info!("Updating playlist cover to: {}", path);
-                        playlist.cover_path = Some(path.clone());
-
-                        // Also extract color palette from the downloaded cover
-                        let palette = crate::utils::ColorPalette::from_image_path(
-                            std::path::Path::new(&path),
-                        );
-                        tracing::info!(
-                            "Updated palette from cover: primary=({:.2}, {:.2}, {:.2})",
-                            palette.primary.r,
-                            palette.primary.g,
-                            palette.primary.b
-                        );
-                        playlist.palette = palette;
-                    }
-                }
-                Some(Task::none())
-            }
-
-            Message::NcmPlaylistCreatorAvatarLoaded(playlist_id, path) => {
-                tracing::info!(
-                    "Playlist creator avatar loaded: id={}, path={}",
-                    playlist_id,
-                    path
-                );
-                // Update the playlist owner avatar path
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    if playlist.id == *playlist_id {
-                        playlist.owner_avatar_path = Some(path.clone());
-                        if playlist.kind == crate::ui::pages::playlist::DetailPageKind::User
-                            && playlist.cover_path.is_none()
-                        {
-                            playlist.cover_path = Some(path.clone());
-                            playlist.palette = crate::utils::ColorPalette::from_image_path(
-                                std::path::Path::new(path),
-                            );
-                        }
-                    }
-                }
-                Some(Task::none())
-            }
-
-            Message::ArtistCoverLoaded(artist_id, path) => {
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    if playlist.id == *artist_id {
-                        playlist.cover_path = Some(path.clone());
-                        playlist.palette =
-                            crate::utils::ColorPalette::from_image_path(std::path::Path::new(path));
-                    }
-                }
-                Some(Task::none())
-            }
-
-            Message::AlbumCoverLoaded(page_id, path) => {
-                if let Some(playlist) = &mut self.ui.playlist_page.current {
-                    if playlist.id == *page_id {
-                        playlist.cover_path = Some(path.clone());
-                        playlist.palette =
-                            crate::utils::ColorPalette::from_image_path(std::path::Path::new(path));
-                        if playlist.kind == crate::ui::pages::playlist::DetailPageKind::Album {
-                            for song in &mut playlist.songs {
-                                song.cover_path = Some(path.clone());
-                            }
-                        }
-                    }
-                }
-                Some(Task::none())
+                Some(songs_task)
             }
 
             Message::PlaylistCreatorDetailLoaded(playlist_id, detail) => {
@@ -2630,7 +1597,6 @@ impl App {
                     let client = client.clone();
                     let sid = *song_id;
                     let pid = *playlist_id;
-                    let locale = self.core.locale;
                     return Some(Task::perform(
                         async move {
                             client

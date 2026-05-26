@@ -4,8 +4,9 @@
 use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, svg, text};
 use iced::{Alignment, Color, Element, Fill, Padding};
 
-use crate::app::{Message, Route, SidebarId};
+use crate::app::{ImageState, Message, Route, SidebarId};
 use crate::i18n::{Key, Locale};
+use crate::image::ImageKind;
 use crate::ui::animation::HoverAnimations;
 use crate::ui::components::importing_card::{self, ImportingPlaylist};
 use crate::ui::theme::{self, BOLD_WEIGHT};
@@ -73,6 +74,7 @@ pub fn view(
     importing_playlist: Option<&ImportingPlaylist>,
     playlists: &[crate::database::DbPlaylist],
     user_playlists: &[crate::api::SongList],
+    image_state: &ImageState,
     sidebar_animations: &HoverAnimations<SidebarId>,
     sidebar_width: f32,
 ) -> Element<'static, Message> {
@@ -165,16 +167,14 @@ pub fn view(
         let id = playlist.id;
         let is_active = matches!(current_route, Route::Playlist(current_id) if *current_id == id);
         let hover_progress = sidebar_animations.get_progress(&SidebarId::Playlist(id));
-        let s = crate::ui::components::cover_thumb::CoverSize::Tiny;
-        let cover_handle = playlist
-            .cover_path
-            .as_deref()
-            .filter(|p| !p.is_empty() && std::path::Path::new(p).exists())
-            .map(|p| iced::widget::image::Handle::from_path(std::path::PathBuf::from(p)));
-        let cover_el = Some(crate::ui::components::cover_thumb::thumb(
-            cover_handle.as_ref(),
-            s.px(),
-            s.radius(),
+        let s = crate::image::CoverSize::Tiny;
+        let cover_handle = u64::try_from(id)
+            .ok()
+            .and_then(|id| image_state.get(ImageKind::LocalPlaylistCover, id));
+        let cover_el = Some(crate::ui::components::cover_image::cover(
+            cover_handle,
+            ImageKind::LocalPlaylistCover,
+            s,
         ));
         library_items.push(sidebar_button_animated_opt_cover(
             crate::ui::icons::MUSIC,
@@ -214,13 +214,11 @@ pub fn view(
                 matches!(current_route, Route::NcmPlaylist(current_id) if *current_id == id);
             let hover_progress = sidebar_animations.get_progress(&SidebarId::UserPlaylist(id));
 
-            let s = crate::ui::components::cover_thumb::CoverSize::Tiny;
-            let cover_handle =
-                crate::utils::find_playlist_cover(id).map(iced::widget::image::Handle::from_path);
-            let cover_el = crate::ui::components::cover_thumb::thumb(
-                cover_handle.as_ref(),
-                s.px(),
-                s.radius(),
+            let s = crate::image::CoverSize::Tiny;
+            let cover_el = crate::ui::components::cover_image::cover(
+                image_state.get(ImageKind::PlaylistCover, id),
+                ImageKind::PlaylistCover,
+                s,
             );
             sidebar_button_animated_opt_cover(
                 crate::ui::icons::MUSIC,

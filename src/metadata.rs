@@ -89,7 +89,10 @@ impl SongMetadata {
         }
         // 2. NCM song: check cache, auto-download if missing
         if song_id < 0 {
-            return crate::utils::find_song_cover((-song_id) as u64);
+            return crate::image::resolve_cached(
+                crate::image::ImageKind::SongCover,
+                (-song_id) as u64,
+            );
         }
         // 3. Local song without file: check explicit cover_path
         if let Some(CoverSource::Path(p)) = &self.cover {

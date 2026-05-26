@@ -25,10 +25,11 @@ use iced::advanced::widget::{self, Tree, Widget};
 use iced::mouse::{self, Cursor};
 use iced::{Color, Element, Event, Length, Point, Rectangle, Size};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::rc::Rc;
 
 /// Buffer items to render above and below the visible area
-const BUFFER_ITEMS: usize = 3;
+const BUFFER_ITEMS: usize = 8;
 
 /// Scrollbar configuration
 const SCROLLBAR_WIDTH: f32 = 6.0;
@@ -206,18 +207,18 @@ where
 
 /// Internal state for widget tree
 struct VirtualListInternalState {
-    /// Cached trees for visible items
-    visible_trees: Vec<Tree>,
+    /// Trees keyed by item index (persistent across scrolls)
+    item_trees: HashMap<usize, Tree>,
     /// Cached visible range from layout phase
     cached_visible_range: (usize, usize),
-    /// Cached item indices for each tree slot
-    cached_item_indices: Vec<usize>,
     /// Whether the scrollbar is being dragged
     scrollbar_dragging: bool,
     /// The Y position where drag started (relative to scrollbar top)
     drag_start_offset: f32,
     /// Whether mouse is hovering over scrollbar
     scrollbar_hovered: bool,
+    /// Last hovered item index for deduplication
+    last_hovered_item: Option<usize>,
     /// Frame counter to track when elements need rebuilding
     frame_id: u64,
     /// Last frame's visible range for smart diffing
@@ -227,12 +228,12 @@ struct VirtualListInternalState {
 impl Default for VirtualListInternalState {
     fn default() -> Self {
         Self {
-            visible_trees: Vec::new(),
+            item_trees: HashMap::new(),
             cached_visible_range: (0, 0),
-            cached_item_indices: Vec::new(),
             scrollbar_dragging: false,
             drag_start_offset: 0.0,
             scrollbar_hovered: false,
+            last_hovered_item: None,
             frame_id: 0,
             last_visible_range: (0, 0),
         }
@@ -253,20 +254,26 @@ where
             state.visible_range()
         };
 
-        let visible_count = end.saturating_sub(start);
         let internal_state = tree.state.downcast_mut::<VirtualListInternalState>();
 
-        internal_state
-            .visible_trees
-            .resize_with(visible_count, Tree::empty);
-        internal_state.cached_item_indices.resize(visible_count, 0);
         internal_state.cached_visible_range = (start, end);
         internal_state.last_visible_range = (start, end);
 
-        for (slot_idx, item_idx) in (start..end).enumerate() {
+        // Prune trees for items far outside the visible range (keep a generous buffer)
+        let prune_start = start.saturating_sub(BUFFER_ITEMS * 2);
+        let prune_end = (end + BUFFER_ITEMS * 2).min(self.item_count);
+        internal_state
+            .item_trees
+            .retain(|&idx, _| idx >= prune_start && idx < prune_end);
+
+        // Ensure trees exist for all visible items and diff them
+        for item_idx in start..end {
             let element = (self.item_builder)(item_idx);
-            internal_state.visible_trees[slot_idx].diff(&element);
-            internal_state.cached_item_indices[slot_idx] = item_idx;
+            let tree = internal_state
+                .item_trees
+                .entry(item_idx)
+                .or_insert_with(Tree::empty);
+            tree.diff(&element);
         }
     }
 
@@ -312,34 +319,29 @@ where
         // Track visible range for potential future optimizations
         internal_state.last_visible_range = (start, end);
 
-        // Resize vectors to match visible count
-        internal_state
-            .visible_trees
-            .resize_with(visible_count, Tree::empty);
-        internal_state.cached_item_indices.resize(visible_count, 0);
-
         // Cache the visible range
         internal_state.cached_visible_range = (start, end);
 
-        // Build layout for visible items - call item_builder only ONCE per item
+        // Build layout for visible items
         let mut children = Vec::with_capacity(visible_count);
         let item_limits = layout::Limits::new(Size::ZERO, Size::new(size.width, self.item_height));
 
-        for (slot_idx, item_idx) in (start..end).enumerate() {
-            // Build element once
+        for item_idx in start..end {
             let mut element = (self.item_builder)(item_idx);
 
-            // Diff tree with element (preserves widget state)
-            internal_state.visible_trees[slot_idx].diff(&element);
-            internal_state.cached_item_indices[slot_idx] = item_idx;
+            // Get tree — normally diffed in diff(), but range may have changed
+            // if viewport_height was updated between diff() and layout().
+            let tree = internal_state
+                .item_trees
+                .entry(item_idx)
+                .or_insert_with(|| {
+                    let mut t = Tree::empty();
+                    t.diff(&element);
+                    t
+                });
 
-            // Layout the element
-            let item_tree = &mut internal_state.visible_trees[slot_idx];
-            let node = element
-                .as_widget_mut()
-                .layout(item_tree, renderer, &item_limits);
+            let node = element.as_widget_mut().layout(tree, renderer, &item_limits);
 
-            // Position the node based on its index in the full list
             let y_position = item_idx as f32 * self.item_height - scroll_offset;
             let positioned = node.move_to(Point::new(0.0, y_position));
             children.push(positioned);
@@ -360,57 +362,49 @@ where
     ) {
         let bounds = layout.bounds();
         let internal_state = tree.state.downcast_ref::<VirtualListInternalState>();
+        let (start, end) = internal_state.cached_visible_range;
 
         // Early return if no items to draw
-        if internal_state.cached_item_indices.is_empty() {
+        if start >= end {
             return;
         }
 
-        // Pre-calculate the visible slot range to minimize item_builder calls
-        let (visible_start_slot, visible_end_slot) = {
-            let state = self.state.borrow();
-            let scroll_offset = state.scroll_offset;
-
-            let mut start_slot: Option<usize> = None;
-            let mut end_slot = 0usize;
-
-            for (slot_idx, &item_idx) in internal_state.cached_item_indices.iter().enumerate() {
-                let y = item_idx as f32 * self.item_height - scroll_offset;
-                let y_end = y + self.item_height;
-
-                if y_end > 0.0 && y < bounds.height {
-                    if start_slot.is_none() {
-                        start_slot = Some(slot_idx);
-                    }
-                    end_slot = slot_idx + 1;
+        // Find the subset of items actually on screen (within viewport bounds)
+        let scroll_offset = self.state.borrow().scroll_offset;
+        let mut on_screen_start = end;
+        let mut on_screen_end = start;
+        for item_idx in start..end {
+            let y = item_idx as f32 * self.item_height - scroll_offset;
+            let y_end = y + self.item_height;
+            if y_end > 0.0 && y < bounds.height {
+                if item_idx < on_screen_start {
+                    on_screen_start = item_idx;
                 }
+                on_screen_end = item_idx + 1;
             }
+        }
 
-            match start_slot {
-                Some(start) => (start, end_slot),
-                None if !internal_state.cached_item_indices.is_empty() => {
-                    (0, internal_state.cached_item_indices.len())
-                }
-                None => (0, 0),
-            }
-        };
+        if on_screen_start >= on_screen_end {
+            return;
+        }
 
         // Draw list items (clipped to bounds)
         renderer.with_layer(bounds, |renderer| {
-            let children: Vec<_> = layout.children().collect();
+            let mut children = layout.children();
+            // Skip to the first on-screen item
+            let skip = on_screen_start.saturating_sub(start);
+            if skip > 0 && children.nth(skip - 1).is_none() {
+                return;
+            }
 
-            for slot_idx in visible_start_slot..visible_end_slot {
-                if slot_idx >= internal_state.cached_item_indices.len() {
-                    break;
-                }
+            for item_idx in on_screen_start..on_screen_end {
+                let child_layout = match children.next() {
+                    Some(l) => l,
+                    None => break,
+                };
 
-                let item_idx = internal_state.cached_item_indices[slot_idx];
-                let child_layout = children[slot_idx];
-
-                if slot_idx < internal_state.visible_trees.len() {
+                if let Some(child_tree) = internal_state.item_trees.get(&item_idx) {
                     let element = (self.item_builder)(item_idx);
-                    let child_tree = &internal_state.visible_trees[slot_idx];
-
                     element.as_widget().draw(
                         child_tree,
                         renderer,
@@ -527,17 +521,19 @@ where
                         let target_item_idx = (relative_y / self.item_height).floor() as usize;
 
                         if target_item_idx < item_count {
-                            // Mouse is over an item - send hover message
-                            shell.publish((on_hover)(target_item_idx));
-                        } else {
-                            // Mouse is in empty area below items
+                            if internal_state.last_hovered_item != Some(target_item_idx) {
+                                internal_state.last_hovered_item = Some(target_item_idx);
+                                shell.publish((on_hover)(target_item_idx));
+                            }
+                        } else if internal_state.last_hovered_item.is_some() {
+                            internal_state.last_hovered_item = None;
                             if let Some(msg) = &self.on_empty_area {
                                 shell.publish(msg.clone());
                             }
                         }
                     }
-                } else {
-                    // Mouse left the list bounds
+                } else if internal_state.last_hovered_item.is_some() {
+                    internal_state.last_hovered_item = None;
                     if let Some(msg) = &self.on_empty_area {
                         shell.publish(msg.clone());
                     }
@@ -591,44 +587,34 @@ where
 
                     // Check if mouse is over empty area (beyond the last item)
                     if target_item_idx >= item_count {
-                        // Mouse is in empty area below all items
-                        if let Some(msg) = &self.on_empty_area {
-                            shell.publish(msg.clone());
+                        if internal_state.last_hovered_item.is_some() {
+                            internal_state.last_hovered_item = None;
+                            if let Some(msg) = &self.on_empty_area {
+                                shell.publish(msg.clone());
+                            }
                         }
                         return;
                     }
 
-                    let children: Vec<_> = layout.children().collect();
-                    let mut found_item = false;
-                    for (slot_idx, &item_idx) in
-                        internal_state.cached_item_indices.iter().enumerate()
-                    {
-                        if item_idx == target_item_idx
-                            && slot_idx < internal_state.visible_trees.len()
-                            && slot_idx < children.len()
+                    let (cached_start, _) = internal_state.cached_visible_range;
+                    if target_item_idx >= cached_start {
+                        let slot_idx = target_item_idx - cached_start;
+                        if let Some(child_tree) =
+                            internal_state.item_trees.get_mut(&target_item_idx)
                         {
-                            found_item = true;
-                            let mut element = (self.item_builder)(item_idx);
-                            let child_tree = &mut internal_state.visible_trees[slot_idx];
-                            let child_layout = children[slot_idx];
-
-                            element.as_widget_mut().update(
-                                child_tree,
-                                event,
-                                child_layout,
-                                cursor,
-                                renderer,
-                                shell,
-                                viewport,
-                            );
-                            break;
-                        }
-                    }
-
-                    // If no item was found (shouldn't happen normally, but handle edge cases)
-                    if !found_item {
-                        if let Some(msg) = &self.on_empty_area {
-                            shell.publish(msg.clone());
+                            let mut children = layout.children();
+                            if let Some(child_layout) = children.nth(slot_idx) {
+                                let mut element = (self.item_builder)(target_item_idx);
+                                element.as_widget_mut().update(
+                                    child_tree,
+                                    event,
+                                    child_layout,
+                                    cursor,
+                                    renderer,
+                                    shell,
+                                    viewport,
+                                );
+                            }
                         }
                     }
                 }
@@ -647,18 +633,37 @@ where
                     let relative_y = pos.y - bounds.y + scroll_offset;
                     let target_item_idx = (relative_y / self.item_height).floor() as usize;
 
-                    let children: Vec<_> = layout.children().collect();
-                    for (slot_idx, &item_idx) in
-                        internal_state.cached_item_indices.iter().enumerate()
-                    {
-                        if item_idx == target_item_idx
-                            && slot_idx < internal_state.visible_trees.len()
-                            && slot_idx < children.len()
+                    let (cached_start, _) = internal_state.cached_visible_range;
+                    if target_item_idx >= cached_start {
+                        let slot_idx = target_item_idx - cached_start;
+                        if let Some(child_tree) =
+                            internal_state.item_trees.get_mut(&target_item_idx)
                         {
-                            let mut element = (self.item_builder)(item_idx);
-                            let child_tree = &mut internal_state.visible_trees[slot_idx];
-                            let child_layout = children[slot_idx];
+                            let mut children = layout.children();
+                            if let Some(child_layout) = children.nth(slot_idx) {
+                                let mut element = (self.item_builder)(target_item_idx);
+                                element.as_widget_mut().update(
+                                    child_tree,
+                                    event,
+                                    child_layout,
+                                    cursor,
+                                    renderer,
+                                    shell,
+                                    viewport,
+                                );
+                            }
+                        }
+                    }
+                }
+            }
 
+            Event::Keyboard(_) => {
+                let (start, end) = internal_state.cached_visible_range;
+                let mut children = layout.children();
+                for item_idx in start..end {
+                    if let Some(child_layout) = children.next() {
+                        if let Some(child_tree) = internal_state.item_trees.get_mut(&item_idx) {
+                            let mut element = (self.item_builder)(item_idx);
                             element.as_widget_mut().update(
                                 child_tree,
                                 event,
@@ -668,29 +673,7 @@ where
                                 shell,
                                 viewport,
                             );
-                            break;
                         }
-                    }
-                }
-            }
-
-            Event::Keyboard(_) => {
-                let children: Vec<_> = layout.children().collect();
-                for (slot_idx, &item_idx) in internal_state.cached_item_indices.iter().enumerate() {
-                    if slot_idx < internal_state.visible_trees.len() && slot_idx < children.len() {
-                        let mut element = (self.item_builder)(item_idx);
-                        let child_tree = &mut internal_state.visible_trees[slot_idx];
-                        let child_layout = children[slot_idx];
-
-                        element.as_widget_mut().update(
-                            child_tree,
-                            event,
-                            child_layout,
-                            cursor,
-                            renderer,
-                            shell,
-                            viewport,
-                        );
                     }
                 }
             }
@@ -735,25 +718,21 @@ where
         let relative_y = cursor_pos.y - bounds.y + scroll_offset;
         let target_item_idx = (relative_y / self.item_height).floor() as usize;
 
-        let children: Vec<_> = layout.children().collect();
-        for (slot_idx, &item_idx) in internal_state.cached_item_indices.iter().enumerate() {
-            if item_idx == target_item_idx
-                && slot_idx < internal_state.visible_trees.len()
-                && slot_idx < children.len()
-            {
-                let element = (self.item_builder)(item_idx);
-                let child_tree = &internal_state.visible_trees[slot_idx];
-                let child_layout = children[slot_idx];
-
-                let interaction = element.as_widget().mouse_interaction(
-                    child_tree,
-                    child_layout,
-                    cursor,
-                    viewport,
-                    renderer,
-                );
-
-                return interaction;
+        let (cached_start, _) = internal_state.cached_visible_range;
+        if target_item_idx >= cached_start {
+            let slot_idx = target_item_idx - cached_start;
+            if let Some(child_tree) = internal_state.item_trees.get(&target_item_idx) {
+                let mut children = layout.children();
+                if let Some(child_layout) = children.nth(slot_idx) {
+                    let element = (self.item_builder)(target_item_idx);
+                    return element.as_widget().mouse_interaction(
+                        child_tree,
+                        child_layout,
+                        cursor,
+                        viewport,
+                        renderer,
+                    );
+                }
             }
         }
 

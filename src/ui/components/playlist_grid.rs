@@ -2,13 +2,12 @@
 //!
 //! Displays playlists in a responsive grid layout.
 
-use std::collections::HashMap;
-
-use iced::widget::{Space, column, container, image, row, text};
+use iced::widget::{Space, column, container, row, text};
 use iced::{Color, Element, Fill};
 
 use crate::api::SongList;
-use crate::app::Message;
+use crate::app::{ImageState, Message};
+use crate::image::ImageKind;
 use crate::ui::animation::HoverAnimations;
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::widgets::playlist_card;
@@ -62,7 +61,7 @@ fn daily_recommend_cover_style(hover_progress: f32) -> iced::widget::container::
 /// Create a playlist grid element
 pub fn view<'a>(
     playlists: &'a [SongList],
-    covers: &'a HashMap<u64, image::Handle>,
+    image_state: &'a ImageState,
     animations: &'a HoverAnimations<u64>,
     max_items: Option<usize>,
     container_width: f32,
@@ -103,7 +102,7 @@ pub fn view<'a>(
                     Message::HoverDiscoverPlaylist(None),
                 )
             } else {
-                let cover_handle = covers.get(&playlist.id);
+                let cover_handle = image_state.get(ImageKind::PlaylistCover, playlist.id);
                 playlist_card::view(
                     &playlist.name,
                     &playlist.author,

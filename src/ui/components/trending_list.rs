@@ -2,13 +2,15 @@
 //!
 //! Displays the NCM trending chart (飙升榜) with hover effects.
 
-use iced::widget::{Space, button, column, container, image, row, svg, text};
+use iced::widget::{Space, button, column, container, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Padding};
 
 use crate::api::SongInfo;
-use crate::app::Message;
+use crate::app::{ImageState, Message};
 use crate::i18n::{Key, Locale};
+use crate::image::ImageKind;
 use crate::ui::animation::HoverAnimations;
+use crate::ui::components::cover_image;
 use crate::ui::theme::{self, BOLD_WEIGHT, MEDIUM_WEIGHT};
 
 const ITEM_HEIGHT: f32 = 64.0;
@@ -17,7 +19,7 @@ const COVER_SIZE: f32 = 48.0;
 /// Build the trending songs list view
 pub fn view<'a>(
     songs: &'a [SongInfo],
-    song_covers: &'a std::collections::HashMap<u64, iced::widget::image::Handle>,
+    image_state: &'a ImageState,
     hover_animations: &'a HoverAnimations<u64>,
     locale: Locale,
     is_logged_in: bool,
@@ -68,7 +70,7 @@ pub fn view<'a>(
         .into_iter()
         .map(|(index, song)| {
             let hover_progress = hover_animations.get_progress(&song.id);
-            let cover_handle = song_covers.get(&song.id);
+            let cover_handle = image_state.get(ImageKind::SongCover, song.id);
             let is_hovered = hover_progress > 0.01; // Lower threshold to fix timing issue
             view_song_item(
                 song,
@@ -137,37 +139,7 @@ fn view_song_item<'a>(
         };
 
     // Song cover image - use pre-loaded handle for instant rendering
-    let song_cover: Element<'_, Message> = if let Some(handle) = cover_handle {
-        image(handle.clone())
-            .width(COVER_SIZE)
-            .height(COVER_SIZE)
-            .content_fit(iced::ContentFit::Cover)
-            .border_radius(4.0)
-            .into()
-    } else {
-        // Fallback colored square with music note
-        container(
-            svg(svg::Handle::from_memory(crate::ui::icons::MUSIC.as_bytes()))
-                .width(20)
-                .height(20)
-                .style(move |_theme, _status| svg::Style {
-                    color: Some(theme::text_muted(_theme)),
-                }),
-        )
-        .width(COVER_SIZE)
-        .height(COVER_SIZE)
-        .style(move |_theme| container::Style {
-            background: Some(iced::Background::Color(theme::BACKGROUND_DARK)),
-            border: iced::Border {
-                radius: 4.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
-        .center_x(COVER_SIZE)
-        .center_y(COVER_SIZE)
-        .into()
-    };
+    let song_cover = cover_image::custom(cover_handle, ImageKind::SongCover, COVER_SIZE, 4.0);
 
     // Create rank display directly to avoid move issues
     let rank_display = if is_hovered {

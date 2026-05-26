@@ -4,8 +4,8 @@
 use iced::widget::{Space, column, container, scrollable};
 use iced::{Element, Fill, Padding};
 
-use crate::app::HomePageState;
 use crate::app::Message;
+use crate::app::{HomePageState, ImageState};
 use crate::i18n::Locale;
 use crate::ui::components;
 use crate::ui::theme;
@@ -14,6 +14,7 @@ use crate::ui::theme;
 pub fn view<'a>(
     _search_query: &'a str,
     home_state: &'a HomePageState,
+    image_state: &'a ImageState,
     locale: Locale,
     is_logged_in: bool,
 ) -> Element<'a, Message> {
@@ -22,7 +23,7 @@ pub fn view<'a>(
         // Carousel banner from NCM API
         components::carousel_banner::view(
             &home_state.banners,
-            &home_state.banner_images,
+            image_state,
             home_state.current_banner,
             home_state.last_banner,
             &home_state.carousel_animation,
@@ -34,7 +35,7 @@ pub fn view<'a>(
         // Trending songs section (飙升榜)
         components::trending_list::view(
             &home_state.trending_songs,
-            &home_state.song_covers,
+            image_state,
             &home_state.song_hover_animations,
             locale,
             is_logged_in,

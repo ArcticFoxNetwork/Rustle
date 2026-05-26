@@ -279,37 +279,30 @@ impl App {
 
         // Convert to unified metadata once — no manual field extraction
         let meta = SongMetadata::from(&info);
-        let pic_url = info.pic_url.clone();
 
         info!(
             "Fetching download URL for: {} - {} (ncm_id={})",
             meta.artist, meta.title, ncm_id
         );
 
-        Some(Task::perform(
+        let url_task = Task::perform(
             async move {
-                let (url, _cover) = tokio::join!(
-                    async {
-                        match client.songs_url(&[ncm_id]).await {
-                            Ok(urls) => urls
-                                .first()
-                                .and_then(|u| {
-                                    if u.url.is_empty() {
-                                        None
-                                    } else {
-                                        Some(u.url.clone())
-                                    }
-                                })
-                                .unwrap_or_default(),
-                            Err(e) => {
-                                tracing::error!("Failed to get song URL for {}: {}", ncm_id, e);
-                                String::new()
+                match client.songs_url(&[ncm_id]).await {
+                    Ok(urls) => urls
+                        .first()
+                        .and_then(|u| {
+                            if u.url.is_empty() {
+                                None
+                            } else {
+                                Some(u.url.clone())
                             }
-                        }
-                    },
-                    crate::utils::download_cover(&client, ncm_id, &pic_url),
-                );
-                url
+                        })
+                        .unwrap_or_default(),
+                    Err(e) => {
+                        tracing::error!("Failed to get song URL for {}: {}", ncm_id, e);
+                        String::new()
+                    }
+                }
             },
             move |url| {
                 if url.is_empty() {
@@ -318,7 +311,9 @@ impl App {
                     crate::app::Message::DownloadUrlResolved(song_id, ncm_id, url, meta)
                 }
             },
-        ))
+        );
+
+        Some(url_task)
     }
 
     fn download_enqueue(

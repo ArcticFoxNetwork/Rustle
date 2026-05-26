@@ -24,7 +24,7 @@ impl App {
         if let Some(db) = &self.core.db {
             let db = db.clone();
             Task::perform(load_playlist_view(db, playlist_id), |result| match result {
-                Some(view) => Message::PlaylistViewLoaded(view),
+                Some(payload) => Message::PlaylistViewLoaded(payload),
                 None => Message::DatabaseError("Playlist not found".into()),
             })
         } else {
@@ -36,8 +36,6 @@ impl App {
         self.ui.playlist_page.search_expanded = false;
         self.ui.playlist_page.search_query.clear();
         self.ui.playlist_page.viewing_recently_played = false;
-        self.ui.playlist_page.pending_cover_downloads.clear();
-        self.ui.playlist_page.artist_album_covers.clear();
         self.ui.clear_playlist_animations();
 
         if self.ui.lyrics.is_open {
@@ -158,8 +156,10 @@ impl App {
                 Some(Self::toast_success("歌单已删除".to_string()))
             }
 
-            Message::PlaylistViewLoaded(view) => {
+            Message::PlaylistViewLoaded(payload) => {
+                let view = &payload.view;
                 tracing::info!("Playlist view loaded: {}", view.name);
+                self.store_image_paths(payload.images.iter().cloned());
                 self.ui.playlist_page.current = Some(view.clone());
                 self.ui.playlist_page.load_state =
                     crate::app::update::page_loader::PlaylistLoadState::Ready;
@@ -209,11 +209,6 @@ impl App {
                 self.ui.cleanup_animations(now);
 
                 let lyrics_viewport_task = self.flush_pending_lyrics_viewport_after_animation();
-
-                // Lazy load covers for visible songs in playlist
-                if let Some(task) = self.check_visible_song_covers() {
-                    return Some(Task::batch([lyrics_viewport_task, task]));
-                }
 
                 Some(lyrics_viewport_task)
             }
@@ -374,7 +369,7 @@ impl App {
                     let id = *playlist_id;
                     return Some(Task::batch([
                         Task::perform(load_playlist_view(db1, id), |result| match result {
-                            Some(view) => Message::PlaylistViewLoaded(view),
+                            Some(payload) => Message::PlaylistViewLoaded(payload),
                             None => Message::DatabaseError("Playlist not found".into()),
                         }),
                         Task::perform(
@@ -455,59 +450,5 @@ impl App {
 
             _ => None,
         }
-    }
-
-    /// Check visible songs and request cover downloads for those missing covers
-    /// Returns a Task if there are covers to download, None otherwise
-    fn check_visible_song_covers(&mut self) -> Option<Task<Message>> {
-        // Only check if we have a playlist and it's an NCM playlist (negative ID)
-        let playlist = self.ui.playlist_page.current.as_ref()?;
-        if playlist.id >= 0 {
-            return None; // Local playlist, no lazy loading needed
-        }
-
-        // Get visible range from scroll state
-        let scroll_state = self.ui.playlist_page.scroll_state.borrow();
-        let (start, end) = scroll_state.visible_range();
-        drop(scroll_state);
-
-        // Collect songs that need cover download
-        let mut songs_to_download: Vec<(i64, String)> = Vec::new();
-
-        for idx in start..end.min(playlist.songs.len()) {
-            let song = &playlist.songs[idx];
-
-            // Skip if already has cover_handle (cover loaded)
-            if song.cover_handle.is_some() {
-                continue;
-            }
-
-            // Skip if no pic_url available
-            let pic_url = match &song.pic_url {
-                Some(url) if !url.is_empty() => url.clone(),
-                _ => continue,
-            };
-
-            // Skip if already pending download
-            if self
-                .ui
-                .playlist_page
-                .pending_cover_downloads
-                .contains(&song.id)
-            {
-                continue;
-            }
-
-            songs_to_download.push((song.id, pic_url));
-        }
-
-        if songs_to_download.is_empty() {
-            return None;
-        }
-
-        // Limit batch size to avoid too many concurrent downloads
-        let batch: Vec<_> = songs_to_download.into_iter().take(5).collect();
-
-        Some(Task::done(Message::RequestSongCoversLazy(batch)))
     }
 }

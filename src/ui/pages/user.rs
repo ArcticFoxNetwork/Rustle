@@ -3,17 +3,20 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use iced::widget::{Space, button, column, container, image, row, scrollable, text};
+use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
-use crate::app::{ContentWidthTarget, Message};
+use crate::app::{ContentWidthTarget, ImageState, Message};
 use crate::i18n::{Key, Locale};
+use crate::image::ImageKind;
+use crate::ui::components::cover_image;
 use crate::ui::pages::playlist::PlaylistView;
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{theme, widgets};
 
 pub fn view<'a>(
     user: &PlaylistView,
+    image_state: &'a ImageState,
     _song_animations: &'a crate::ui::animation::HoverAnimations<i64>,
     _icon_animations: &crate::ui::animation::HoverAnimations<crate::app::IconId>,
     _search_animation: &crate::ui::animation::SingleHoverAnimation,
@@ -27,8 +30,8 @@ pub fn view<'a>(
     content_width: f32,
     description_expanded: bool,
 ) -> Element<'a, Message> {
-    let header = build_header(user, description_expanded, locale);
-    let body = build_playlist_grid(user, content_width);
+    let header = build_header(user, image_state, description_expanded, locale);
+    let body = build_playlist_grid(user, image_state, content_width);
 
     let palette = user.palette.clone();
     let primary = palette.primary;
@@ -67,11 +70,16 @@ pub fn view<'a>(
 
 fn build_header(
     user: &PlaylistView,
+    image_state: &ImageState,
     description_expanded: bool,
     locale: Locale,
 ) -> Element<'static, Message> {
     let avatar_size = 216.0;
-    let avatar = circular_avatar(user.cover_path.as_deref(), &user.name, avatar_size);
+    let avatar = circular_avatar(
+        image_state.get(ImageKind::UserAvatar, user.creator_id),
+        &user.name,
+        avatar_size,
+    );
 
     let title = text(user.name.clone())
         .size(theme::TEXT_SIZE_DISPLAY_LARGE.min(84.0))
@@ -187,7 +195,11 @@ fn build_header(
         .into()
 }
 
-fn build_playlist_grid<'a>(user: &PlaylistView, content_width: f32) -> Element<'a, Message> {
+fn build_playlist_grid<'a>(
+    user: &PlaylistView,
+    image_state: &'a ImageState,
+    content_width: f32,
+) -> Element<'a, Message> {
     if user.user_playlists.is_empty() {
         return container(
             text("暂无歌单")
@@ -220,7 +232,8 @@ fn build_playlist_grid<'a>(user: &PlaylistView, content_width: f32) -> Element<'
     for chunk in user.user_playlists.chunks(columns_per_row) {
         let mut row_items: Vec<Element<'a, Message>> = Vec::new();
         for playlist in chunk {
-            row_items.push(build_playlist_card(playlist, card_width));
+            let cover_handle = image_state.get(ImageKind::PlaylistCover, playlist.id);
+            row_items.push(build_playlist_card(playlist, cover_handle, card_width));
             row_items.push(Space::new().width(card_spacing).into());
         }
         if !row_items.is_empty() {
@@ -238,43 +251,11 @@ fn build_playlist_grid<'a>(user: &PlaylistView, content_width: f32) -> Element<'
 
 fn build_playlist_card<'a>(
     playlist: &crate::api::SongList,
+    cover_handle: Option<&'a iced::widget::image::Handle>,
     card_width: f32,
 ) -> Element<'a, Message> {
-    let local_cover = resolve_playlist_cover_path(playlist);
-
-    let cover: Element<'a, Message> = if let Some(path) = local_cover {
-        container(
-            image(image::Handle::from_path(path))
-                .width(card_width)
-                .height(card_width)
-                .content_fit(iced::ContentFit::Cover)
-                .border_radius(16.0),
-        )
-        .width(card_width)
-        .height(card_width)
-        .style(|theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(theme::surface_container(theme))),
-            border: iced::Border {
-                radius: 16.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        })
-        .into()
-    } else {
-        container(Space::new().width(card_width).height(card_width))
-            .width(card_width)
-            .height(card_width)
-            .style(|theme| iced::widget::container::Style {
-                background: Some(iced::Background::Color(theme::surface_container(theme))),
-                border: iced::Border {
-                    radius: 16.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            })
-            .into()
-    };
+    let cover: Element<'a, Message> =
+        cover_image::custom(cover_handle, ImageKind::PlaylistCover, card_width, 16.0);
 
     button(
         column![
@@ -302,49 +283,13 @@ fn build_playlist_card<'a>(
     .into()
 }
 
-fn resolve_playlist_cover_path(playlist: &crate::api::SongList) -> Option<String> {
-    if !playlist.cover_img_url.is_empty()
-        && !playlist.cover_img_url.starts_with("http")
-        && std::path::Path::new(&playlist.cover_img_url).exists()
-    {
-        return Some(playlist.cover_img_url.clone());
-    }
-
-    let covers_dir = crate::utils::covers_cache_dir();
-    let stem = format!("playlist_{}", playlist.id);
-    crate::utils::find_cached_image(&covers_dir, &stem).map(|p| p.to_string_lossy().to_string())
-}
-
 fn circular_avatar(
-    path: Option<&str>,
+    handle: Option<&iced::widget::image::Handle>,
     fallback_name: &str,
     size: f32,
 ) -> Element<'static, Message> {
-    if let Some(path) = path.filter(|p| !p.starts_with("http") && std::path::Path::new(p).exists())
-    {
-        return container(
-            image(image::Handle::from_path(path))
-                .width(size)
-                .height(size)
-                .content_fit(iced::ContentFit::Cover)
-                .border_radius(size / 2.0),
-        )
-        .width(size)
-        .height(size)
-        .style(move |theme| iced::widget::container::Style {
-            border: iced::Border {
-                radius: (size / 2.0).into(),
-                width: 1.0,
-                color: theme::border_color(theme),
-            },
-            shadow: iced::Shadow {
-                color: theme::shadow_color(theme),
-                offset: iced::Vector::new(0.0, 10.0),
-                blur_radius: 28.0,
-            },
-            ..Default::default()
-        })
-        .into();
+    if handle.is_some() {
+        return cover_image::circle(handle, ImageKind::UserAvatar, size);
     }
 
     let initial = fallback_name.chars().next().unwrap_or('?').to_string();

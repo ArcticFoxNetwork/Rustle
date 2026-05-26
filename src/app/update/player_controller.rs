@@ -261,7 +261,9 @@ impl App {
                 let song_id = song.id;
                 let file_path = song.file_path.clone();
                 tokio::spawn(async move {
-                    let _ = db.update_song_normalization(song_id, &file_path, gain).await;
+                    let _ = db
+                        .update_song_normalization(song_id, &file_path, gain)
+                        .await;
                 });
             }
             return tagged_gain;
@@ -578,25 +580,25 @@ impl App {
         queue_index: Option<usize>,
         song: DbSong,
         is_playing: bool,
-    ) {
+    ) -> Task<Message> {
         if let Some(idx) = queue_index {
             self.playback.current_index = Some(idx);
         }
 
         self.playback.current_artist_id = self.resolve_artist_id_for_song(&song);
-        self.playback.current_song = Some(song);
+        self.playback.current_song = Some(song.clone());
         self.playback.consecutive_failures = 0;
         self.update_tray_and_mpris_current(is_playing);
+        Task::none()
     }
 
     fn on_song_loaded_paused(&mut self, idx: usize, song: DbSong) -> Task<Message> {
         tracing::info!("Loaded paused song: {} - {}", song.title, song.artist);
 
-        let (song, needs_cover_download) = self.ensure_local_cover_path_with_download(idx, song);
-        self.commit_current_song_playback_state(Some(idx), song.clone(), false);
+        let cover_task = self.commit_current_song_playback_state(Some(idx), song.clone(), false);
         self.cache_shuffle_indices();
         self.refresh_preload_window();
-        self.schedule_post_switch_side_effects(&song, needs_cover_download)
+        Task::batch([cover_task, self.schedule_post_switch_side_effects(&song)])
     }
 
     pub fn handle_audio_started_event(
@@ -623,13 +625,11 @@ impl App {
                 if let Some(idx) = pending.queue_index {
                     self.on_song_started(idx, pending.song)
                 } else {
-                    self.commit_current_song_playback_state(None, pending.song, true);
-                    Task::none()
+                    self.commit_current_song_playback_state(None, pending.song, true)
                 }
             }
             PendingPlaybackKind::RestartCurrentTrack => {
-                self.commit_current_song_playback_state(pending.queue_index, pending.song, true);
-                Task::none()
+                self.commit_current_song_playback_state(pending.queue_index, pending.song, true)
             }
             PendingPlaybackKind::LoadPausedTrack => {
                 tracing::debug!("Ignoring Started for paused-load request_id={}", request_id);
@@ -663,18 +663,11 @@ impl App {
                     if let Some(idx) = pending.queue_index {
                         self.on_song_loaded_paused(idx, pending.song)
                     } else {
-                        self.commit_current_song_playback_state(None, pending.song, false);
-                        Task::none()
+                        self.commit_current_song_playback_state(None, pending.song, false)
                     }
                 }
-                PendingPlaybackKind::RestartCurrentTrack => {
-                    self.commit_current_song_playback_state(
-                        pending.queue_index,
-                        pending.song,
-                        false,
-                    );
-                    Task::none()
-                }
+                PendingPlaybackKind::RestartCurrentTrack => self
+                    .commit_current_song_playback_state(pending.queue_index, pending.song, false),
                 PendingPlaybackKind::StartPlayingTrack => {
                     tracing::debug!(
                         "Ignoring Paused for playing-track request_id={}",
@@ -932,9 +925,7 @@ impl App {
     fn on_song_started(&mut self, idx: usize, song: DbSong) -> Task<Message> {
         tracing::info!("Playing: {} - {}", song.title, song.artist);
 
-        // Ensure cover path is local (not remote URL)
-        let (song, needs_cover_download) = self.ensure_local_cover_path_with_download(idx, song);
-        self.commit_current_song_playback_state(Some(idx), song.clone(), true);
+        let cover_task = self.commit_current_song_playback_state(Some(idx), song.clone(), true);
 
         if let Some(db) = &self.core.db {
             let db = db.clone();
@@ -958,7 +949,7 @@ impl App {
         // Refresh preload coordinator window
         self.cache_shuffle_indices();
         self.refresh_preload_window();
-        self.schedule_post_switch_side_effects(&song, needs_cover_download)
+        Task::batch([cover_task, self.schedule_post_switch_side_effects(&song)])
     }
 
     /// 为当前歌曲加载歌词和背景（歌词页面打开时调用）
@@ -968,21 +959,12 @@ impl App {
     }
 
     /// Playback-side prefetch coordinator after a track switch completes.
-    fn schedule_post_switch_side_effects(
-        &mut self,
-        song: &DbSong,
-        needs_cover_download: Option<(u64, String)>,
-    ) -> Task<Message> {
+    fn schedule_post_switch_side_effects(&mut self, song: &DbSong) -> Task<Message> {
         let audio_task = self.preload_adjacent_tracks_with_ncm();
-        let cover_task = if let Some((ncm_id, cover_url)) = needs_cover_download {
-            self.download_current_song_cover(song.id, ncm_id, cover_url)
-        } else {
-            Task::none()
-        };
         let lyrics_task = self.schedule_lyrics_prefetches(song);
         let bg_task = self.schedule_background_prep();
 
-        Task::batch([audio_task, cover_task, lyrics_task, bg_task])
+        Task::batch([audio_task, lyrics_task, bg_task])
     }
 
     /// Schedule current-song lyrics display loading plus background cache warmup.
@@ -1036,138 +1018,6 @@ impl App {
     }
 
     /// Ensure song has local cover path instead of remote URL
-    /// If cover is cached locally, update the song's cover_path
-    /// Returns (song, Option<(ncm_id, cover_url)>, needs_refetch) - the second value indicates if download is needed
-    /// If needs_refetch is true, we need to fetch cover URL from API
-    fn ensure_local_cover_path_with_download(
-        &mut self,
-        idx: usize,
-        mut song: DbSong,
-    ) -> (DbSong, Option<(u64, String)>) {
-        // Only process NCM songs (negative ID)
-        if song.id >= 0 {
-            return (song, None);
-        }
-
-        let ncm_id = (-song.id) as u64;
-        let cover_cache_dir = crate::utils::covers_cache_dir();
-        let stem = format!("cover_{}", ncm_id);
-
-        tracing::debug!(
-            "ensure_local_cover_path_with_download: song_id={}, ncm_id={}, current_cover={:?}",
-            song.id,
-            ncm_id,
-            song.cover_path
-        );
-
-        // Check if cover already exists locally
-        if let Some(local_path) = crate::utils::find_cached_image(&cover_cache_dir, &stem) {
-            let local_path_str = local_path.to_string_lossy().to_string();
-            tracing::info!("Found local cover at: {}", local_path_str);
-
-            // Update song's cover_path if it's different (was URL or different path)
-            if song.cover_path.as_ref() != Some(&local_path_str) {
-                song.cover_path = Some(local_path_str.clone());
-
-                // Also update in queue
-                if let Some(queue_song) = self.playback.queue.get_mut(idx) {
-                    queue_song.cover_path = Some(local_path_str);
-                }
-            }
-            return (song, None);
-        }
-
-        // Cover not found locally - check if we have a URL to download
-        if let Some(url) = song
-            .cover_path
-            .clone()
-            .filter(|url| url.starts_with("http"))
-        {
-            tracing::info!("Cover needs download for song_id={}", song.id);
-            return (song, Some((ncm_id, url)));
-        }
-
-        // No http URL available - need to refetch from API
-        // This happens when cache was cleared but cover_path in DB is local path
-        tracing::info!(
-            "Cover cache cleared, need to refetch URL from API for song_id={}, ncm_id={}",
-            song.id,
-            ncm_id
-        );
-
-        // Mark that we need to refetch - use a special marker
-        // The download_current_song_cover will handle the API call
-        (song, Some((ncm_id, String::new())))
-    }
-
-    /// Download cover for current playing song
-    /// If cover_url is empty, fetch from API first
-    fn download_current_song_cover(
-        &self,
-        song_id: i64,
-        ncm_id: u64,
-        cover_url: String,
-    ) -> Task<Message> {
-        if let Some(client) = &self.core.ncm_client {
-            let client = client.clone();
-            Task::perform(
-                async move {
-                    // If cover_url is empty, we need to fetch it from API first
-                    let actual_url = if cover_url.is_empty() {
-                        tracing::info!("Fetching cover URL from API for ncm_id={}", ncm_id);
-                        // Try to get song detail to get cover URL
-                        match client.song_detail(&[ncm_id]).await {
-                            Ok(songs) if !songs.is_empty() => {
-                                let url = songs[0].pic_url.clone();
-                                if url.is_empty() {
-                                    tracing::warn!(
-                                        "API returned empty cover URL for ncm_id={}",
-                                        ncm_id
-                                    );
-                                    return None;
-                                }
-                                tracing::info!("Got cover URL from API: {}", url);
-                                url
-                            }
-                            Ok(_) => {
-                                tracing::warn!("No song detail found for ncm_id={}", ncm_id);
-                                return None;
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    "Failed to fetch song detail for ncm_id={}: {}",
-                                    ncm_id,
-                                    e
-                                );
-                                return None;
-                            }
-                        }
-                    } else {
-                        cover_url
-                    };
-
-                    if let Some(path) =
-                        crate::utils::download_cover(&client, ncm_id, &actual_url).await
-                    {
-                        Some((song_id, path.to_string_lossy().to_string()))
-                    } else {
-                        None
-                    }
-                },
-                |result| {
-                    if let Some((song_id, path)) = result {
-                        Message::CurrentSongCoverReady(song_id, path)
-                    } else {
-                        Message::NoOp
-                    }
-                },
-            )
-        } else {
-            Task::none()
-        }
-    }
-
-    /// 预计算并缓存 shuffle 模式的 next/prev 索引
     /// 确保预加载和实际播放使用相同的索引
     pub fn cache_shuffle_indices(&mut self) {
         let queue_len = self.playback.queue.len();
@@ -1345,8 +1195,7 @@ impl App {
                 tracing::info!("FM mode: no next song, fetching more songs");
                 return self.fetch_more_fm_songs_and_play();
             }
-            self.handle_queue_finished();
-            return Task::none();
+            return self.handle_queue_finished();
         }
 
         let next_idx = next_idx.unwrap();
@@ -1441,14 +1290,15 @@ impl App {
         self.play_next_song()
     }
 
-    fn handle_queue_finished(&mut self) {
+    fn handle_queue_finished(&mut self) -> Task<Message> {
         tracing::info!("Queue finished");
         if self.playback.queue.is_empty() {
-            return;
+            return Task::none();
         }
 
         let first_song = self.playback.queue[0].clone();
-        self.commit_current_song_playback_state(Some(0), first_song.clone(), false);
+        let cover_task =
+            self.commit_current_song_playback_state(Some(0), first_song.clone(), false);
 
         self.stop_audio_output();
 
@@ -1463,6 +1313,8 @@ impl App {
         if let Some(state) = &mut self.playback.saved_state {
             state.position_secs = 0.0;
         }
+
+        cover_task
     }
 
     /// Warm remote lyrics cache for an NCM song without touching display state.

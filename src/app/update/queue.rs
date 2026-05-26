@@ -75,6 +75,7 @@ impl App {
 
             Message::QueueLoaded(songs) => {
                 self.exit_fm_mode();
+                self.store_db_song_cover_paths(songs);
                 if !songs.is_empty() {
                     self.playback.queue = songs.clone();
                     self.persist_queue_snapshot();

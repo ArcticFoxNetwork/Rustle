@@ -20,7 +20,7 @@ pub const IMAGE_EXTENSIONS: &[&str] = &["jpg", "png", "gif", "webp", "bmp"];
 ///
 /// # Returns
 /// The path to the existing file if found, None otherwise
-pub fn find_cached_image(dir: &Path, stem: &str) -> Option<PathBuf> {
+pub(crate) fn find_cached_image(dir: &Path, stem: &str) -> Option<PathBuf> {
     IMAGE_EXTENSIONS
         .iter()
         .map(|ext| dir.join(format!("{}.{}", stem, ext)))
@@ -398,72 +398,10 @@ pub(crate) fn detect_image_format(bytes: &[u8]) -> &'static str {
     "jpg" // Default fallback
 }
 
-/// Download an image from URL to local path
-/// Returns the local path if successful
+/// Download an image from URL to local path.
 ///
 /// The function detects the actual image format from magic bytes and saves
 /// with the correct extension, regardless of what extension was requested.
-///
-/// # Arguments
-/// * `client` - The NCM client for downloading
-/// * `url` - The image URL
-/// * `base_path` - The base local path (extension will be replaced based on actual format)
-// ============================================================================
-// Unified Cover Image Resolution
-// ============================================================================
-
-/// Pending cover downloads (id, is_playlist).
-static PENDING: std::sync::Mutex<Vec<(u64, bool)>> = std::sync::Mutex::new(Vec::new());
-
-pub fn drain_pending_covers() -> Vec<(u64, bool)> {
-    let mut q = PENDING.lock().unwrap();
-    std::mem::take(&mut *q)
-}
-
-/// Find cached song cover. If missing, queues background download via API.
-pub fn find_song_cover(ncm_id: u64) -> Option<std::path::PathBuf> {
-    let stem = format!("cover_{}", ncm_id);
-    if let Some(p) = find_cached_image(&covers_cache_dir(), &stem).filter(|p| p.exists()) {
-        return Some(p);
-    }
-    if let Ok(mut q) = PENDING.lock() {
-        q.push((ncm_id, false));
-    }
-    None
-}
-
-/// Find cached playlist cover. If missing, queues background download via API.
-pub fn find_playlist_cover(playlist_id: u64) -> Option<std::path::PathBuf> {
-    let stem = format!("playlist_{}", playlist_id);
-    if let Some(p) = find_cached_image(&covers_cache_dir(), &stem) {
-        return Some(p);
-    }
-    if let Ok(mut q) = PENDING.lock() {
-        q.push((playlist_id, true));
-    }
-    None
-}
-
-/// * `width` - Resize width (for NCM image API)
-/// * `height` - Resize height (for NCM image API)
-/// Download raw bytes and MIME type from a URL
-pub async fn download_bytes(url: &str) -> Option<(Vec<u8>, String)> {
-    let client = reqwest::Client::new();
-    let resp = client.get(url).send().await.ok()?;
-    let mime = resp
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("image/jpeg")
-        .to_string();
-    let data = resp.bytes().await.ok()?;
-    if data.is_empty() {
-        None
-    } else {
-        Some((data.to_vec(), mime))
-    }
-}
-
 pub async fn download_img(
     client: &crate::api::NcmClient,
     url: &str,
@@ -526,84 +464,6 @@ pub async fn download_img(
             None
         }
     }
-}
-
-/// Download a cover image for a song
-pub async fn download_cover(
-    client: &crate::api::NcmClient,
-    song_id: u64,
-    pic_url: &str,
-) -> Option<PathBuf> {
-    if pic_url.is_empty() {
-        return None;
-    }
-    let path = covers_cache_dir().join(format!("cover_{}.jpg", song_id));
-    download_img(client, pic_url, path, 200, 200).await
-}
-
-/// Download a banner image
-pub async fn download_banner(
-    client: &crate::api::NcmClient,
-    target_id: u64,
-    pic_url: &str,
-) -> Option<PathBuf> {
-    if pic_url.is_empty() {
-        return None;
-    }
-    let path = banners_cache_dir().join(format!("banner_{}.jpg", target_id));
-    download_img(client, pic_url, path, 800, 280).await
-}
-
-/// Download user avatar
-pub async fn download_avatar(
-    client: &crate::api::NcmClient,
-    user_id: u64,
-    avatar_url: &str,
-) -> Option<PathBuf> {
-    if avatar_url.is_empty() {
-        return None;
-    }
-    let path = avatars_cache_dir().join(format!("avatar_{}.jpg", user_id));
-    download_img(client, avatar_url, path, 200, 200).await
-}
-
-/// Download playlist cover image
-pub async fn download_playlist_cover(
-    client: &crate::api::NcmClient,
-    playlist_id: u64,
-    cover_url: &str,
-) -> Option<PathBuf> {
-    if cover_url.is_empty() {
-        return None;
-    }
-    let path = covers_cache_dir().join(format!("playlist_{}.jpg", playlist_id));
-    download_img(client, cover_url, path, 300, 300).await
-}
-
-/// Download artist cover image
-pub async fn download_artist_cover(
-    client: &crate::api::NcmClient,
-    artist_id: u64,
-    cover_url: &str,
-) -> Option<PathBuf> {
-    if cover_url.is_empty() {
-        return None;
-    }
-    let path = covers_cache_dir().join(format!("artist_{}.jpg", artist_id));
-    download_img(client, cover_url, path, 300, 300).await
-}
-
-/// Download playlist creator avatar
-pub async fn download_playlist_creator_avatar(
-    client: &crate::api::NcmClient,
-    playlist_id: u64,
-    avatar_url: &str,
-) -> Option<PathBuf> {
-    if avatar_url.is_empty() {
-        return None;
-    }
-    let path = avatars_cache_dir().join(format!("playlist_creator_{}.jpg", playlist_id));
-    download_img(client, avatar_url, path, 100, 100).await
 }
 
 // ============================================================================

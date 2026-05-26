@@ -3,7 +3,6 @@
 
 use iced::Task;
 
-use crate::api::SongList;
 use crate::api::ncm_api::SearchType;
 use crate::app::message::{Message, SearchResultsPayload};
 use crate::app::state::{App, Route, SearchTab};
@@ -13,18 +12,7 @@ const PAGE_SIZE: u32 = 50;
 
 impl App {
     pub(super) fn clear_search_cover_cache(&mut self) {
-        self.ui.search.result_covers.clear();
-    }
-
-    fn is_active_search_cover(&self, tab: SearchTab, id: u64) -> bool {
-        matches!(self.ui.current_route, Route::Search { .. })
-            && match tab {
-                SearchTab::Albums | SearchTab::Artists => {
-                    self.ui.search.albums.iter().any(|item| item.id == id)
-                }
-                SearchTab::Playlists => self.ui.search.playlists.iter().any(|item| item.id == id),
-                SearchTab::Songs => false,
-            }
+        // Search result images are stored in the unified ImageState cache.
     }
 
     /// Handle search-related messages
@@ -55,25 +43,22 @@ impl App {
                 self.ui.search.loading = false;
                 self.clear_search_cover_cache();
 
-                let cover_task = match payload.tab {
+                match payload.tab {
                     SearchTab::Songs => {
                         self.ui.search.songs = payload.songs.clone();
                         self.ui.search.total_count = payload.total_count;
-                        Task::none()
                     }
                     SearchTab::Artists | SearchTab::Albums => {
                         self.ui.search.albums = payload.albums.clone();
                         self.ui.search.total_count = payload.total_count;
-                        self.load_result_covers(payload.tab, &payload.albums)
                     }
                     SearchTab::Playlists => {
                         self.ui.search.playlists = payload.playlists.clone();
                         self.ui.search.total_count = payload.total_count;
-                        self.load_result_covers(payload.tab, &payload.playlists)
                     }
                 };
 
-                Some(cover_task)
+                Some(Task::none())
             }
 
             Message::SearchFailed(error) => {
@@ -102,16 +87,6 @@ impl App {
 
             Message::HoverSearchCard(id) => {
                 self.ui.search.card_animations.set_hovered_exclusive(*id);
-                Some(Task::none())
-            }
-
-            Message::SearchCoverLoaded(tab, id, path) => {
-                let key = (*tab, *id);
-                if !self.is_active_search_cover(*tab, *id) {
-                    return Some(Task::none());
-                }
-                let handle = iced::widget::image::Handle::from_path(path);
-                self.ui.search.result_covers.insert(key, handle);
                 Some(Task::none())
             }
 
@@ -196,100 +171,5 @@ impl App {
             },
             |msg| msg,
         )
-    }
-
-    fn load_result_covers(&mut self, tab: SearchTab, items: &[SongList]) -> Task<Message> {
-        let preload_task = self.preload_cached_result_covers(tab, items);
-        let download_task = self.download_result_covers(tab, items);
-        Task::batch([preload_task, download_task])
-    }
-
-    fn preload_cached_result_covers(
-        &mut self,
-        tab: SearchTab,
-        items: &[SongList],
-    ) -> Task<Message> {
-        let covers_dir = crate::utils::covers_cache_dir();
-
-        for item in items {
-            let key = (tab, item.id);
-            if self.ui.search.result_covers.contains_key(&key) {
-                continue;
-            }
-
-            let Some(cover_stem) = search_cover_stem(tab, item.id) else {
-                continue;
-            };
-
-            if let Some(cover_path) = crate::utils::find_cached_image(&covers_dir, &cover_stem) {
-                let handle = iced::widget::image::Handle::from_path(&cover_path);
-                self.ui.search.result_covers.insert(key, handle);
-            }
-        }
-
-        Task::none()
-    }
-
-    fn download_result_covers(&self, tab: SearchTab, items: &[SongList]) -> Task<Message> {
-        let Some(client) = &self.core.ncm_client else {
-            return Task::none();
-        };
-
-        let covers_dir = crate::utils::covers_cache_dir();
-        let mut tasks = Vec::new();
-
-        for item in items {
-            if item.cover_img_url.is_empty() {
-                continue;
-            }
-
-            let key = (tab, item.id);
-            if self.ui.search.result_covers.contains_key(&key) {
-                continue;
-            }
-
-            let Some(cover_stem) = search_cover_stem(tab, item.id) else {
-                continue;
-            };
-
-            if crate::utils::find_cached_image(&covers_dir, &cover_stem).is_some() {
-                continue;
-            }
-
-            let client = client.clone();
-            let item_id = item.id;
-            let cover_url = item.cover_img_url.clone();
-            let cover_path = covers_dir.join(format!("{}.jpg", cover_stem));
-
-            tasks.push(Task::perform(
-                async move {
-                    crate::utils::download_img(&client, &cover_url, cover_path, 300, 300)
-                        .await
-                        .map(|path| (item_id, path))
-                },
-                move |result| {
-                    if let Some((id, path)) = result {
-                        Message::SearchCoverLoaded(tab, id, path)
-                    } else {
-                        Message::NoOp
-                    }
-                },
-            ));
-        }
-
-        if tasks.is_empty() {
-            Task::none()
-        } else {
-            Task::batch(tasks)
-        }
-    }
-}
-
-fn search_cover_stem(tab: SearchTab, item_id: u64) -> Option<String> {
-    match tab {
-        SearchTab::Albums => Some(format!("search_album_{}", item_id)),
-        SearchTab::Artists => Some(format!("search_artist_{}", item_id)),
-        SearchTab::Playlists => Some(format!("playlist_{}", item_id)),
-        SearchTab::Songs => None,
     }
 }

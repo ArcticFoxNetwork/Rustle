@@ -9,9 +9,10 @@ use iced::widget::{
 };
 use iced::{Alignment, Background, Border, Color, Element, Fill, Padding};
 
-use crate::app::{Message, SettingsSection};
+use crate::app::{ImageState, Message, SettingsSection};
 use crate::features::{Action, KeyBindings, Settings};
 use crate::i18n::{Key, Locale};
+use crate::image::ImageKind;
 use crate::ui::theme;
 
 /// Settings page view with fixed header and all sections on one scrollable page
@@ -23,6 +24,7 @@ pub fn view(
     editing_keybinding: Option<Action>,
     is_logged_in: bool,
     user_info: Option<&crate::app::UserInfo>,
+    image_state: &ImageState,
     cache_stats: Option<&crate::cache::CacheStats>,
 ) -> Element<'static, Message> {
     // Fixed header: title + tabs
@@ -59,6 +61,7 @@ pub fn view(
         editing_keybinding,
         is_logged_in,
         user_info,
+        image_state,
         cache_stats,
     );
 
@@ -191,6 +194,7 @@ fn all_sections_content(
     editing_keybinding: Option<Action>,
     is_logged_in: bool,
     user_info: Option<&crate::app::UserInfo>,
+    image_state: &ImageState,
     cache_stats: Option<&crate::cache::CacheStats>,
 ) -> Element<'static, Message> {
     use crate::app::SettingsSection;
@@ -199,7 +203,7 @@ fn all_sections_content(
         container(column![
             section_header(locale.get(Key::SettingsAccountTitle)),
             Space::new().height(16),
-            account_section(is_logged_in, user_info, locale),
+            account_section(is_logged_in, user_info, image_state, locale),
         ])
         .id(SettingsSection::Account.widget_id()),
         Space::new().height(40),
@@ -267,15 +271,18 @@ fn all_sections_content(
 fn account_section(
     is_logged_in: bool,
     user_info: Option<&crate::app::UserInfo>,
+    image_state: &ImageState,
     locale: Locale,
 ) -> Element<'static, Message> {
     // Account section
     if is_logged_in {
         if let Some(info) = user_info {
-            // Use pre-loaded avatar handle for instant rendering
-            let avatar = if let Some(handle) = &info.avatar_handle {
+            let avatar_handle = image_state
+                .get(ImageKind::UserAvatar, info.user_id)
+                .cloned();
+            let avatar = if let Some(handle) = avatar_handle {
                 container(
-                    iced::widget::image(handle.clone())
+                    iced::widget::image(handle)
                         .width(Fill)
                         .height(Fill)
                         .content_fit(iced::ContentFit::Cover)

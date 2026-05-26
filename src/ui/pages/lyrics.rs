@@ -11,7 +11,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
-use crate::app::Message;
+use crate::app::{ImageState, Message};
 use crate::database::DbSong;
 use crate::features::PlayMode;
 use crate::features::lyrics::engine::{LyricLineData, LyricsEngine};
@@ -30,6 +30,7 @@ use crate::ui::widgets::{self, ControlSize, PlayModeButtonSize, SliderSize};
 /// `is_fm_mode`: Whether in Personal FM mode
 pub fn view<'a>(
     song: &'a DbSong,
+    image_state: &'a ImageState,
     artist_id: Option<u64>,
     is_playing: bool,
     position: f32, // 0.0 to 1.0
@@ -49,6 +50,7 @@ pub fn view<'a>(
 ) -> Element<'a, Message> {
     let left_panel = build_left_panel(
         song,
+        image_state,
         artist_id,
         is_playing,
         position,
@@ -268,6 +270,7 @@ pub fn view<'a>(
 /// Build the left panel with cover, song info, and controls
 fn build_left_panel<'a>(
     song: &'a DbSong,
+    image_state: &'a ImageState,
     artist_id: Option<u64>,
     is_playing: bool,
     position: f32,
@@ -287,10 +290,14 @@ fn build_left_panel<'a>(
     let current_time = format_time(position * duration_secs);
     let total_time = format_time(duration_secs);
 
-    let s = crate::ui::components::cover_thumb::CoverSize::ExtraLarge;
-    let cover_handle = crate::ui::components::cover_thumb::resolve_song_cover(song.id);
-    let cover =
-        crate::ui::components::cover_thumb::thumb(cover_handle.as_ref(), s.px(), s.radius());
+    let s = crate::image::CoverSize::ExtraLarge;
+    let (cover_kind, cover_id) =
+        crate::image::song_cover_key(song.id).unwrap_or((crate::image::ImageKind::SongCover, 0));
+    let cover = crate::ui::components::cover_image::cover(
+        image_state.get(cover_kind, cover_id),
+        cover_kind,
+        s,
+    );
 
     // Song title
     let title = text(&song.title)

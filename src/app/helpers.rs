@@ -355,7 +355,7 @@ pub async fn sync_playlist_from_import(
 pub async fn load_playlist_view(
     db: Arc<Database>,
     playlist_id: i64,
-) -> Option<pages::PlaylistView> {
+) -> Option<crate::app::PlaylistViewPayload> {
     // Get playlist info
     let playlist = db.get_playlist(playlist_id).await.ok()??;
     let watched_folder = db
@@ -370,6 +370,25 @@ pub async fn load_playlist_view(
         .await
         .unwrap_or_default();
 
+    let mut images = Vec::new();
+    if let (Ok(id), Some(path)) = (u64::try_from(playlist.id), playlist.cover_path.as_deref()) {
+        if crate::image::is_valid_local_path(path) {
+            images.push((
+                crate::image::ImageKind::LocalPlaylistCover,
+                id,
+                PathBuf::from(path),
+            ));
+        }
+    }
+    images.extend(songs.iter().filter_map(|song| {
+        let path = song.song.cover_path.as_deref()?;
+        if !crate::image::is_valid_local_path(path) {
+            return None;
+        }
+        let (kind, id) = crate::image::song_cover_key(song.song.id)?;
+        Some((kind, id, PathBuf::from(path)))
+    }));
+
     // Convert to view models
     let song_views: Vec<pages::PlaylistSongView> = songs
         .iter()
@@ -377,8 +396,6 @@ pub async fn load_playlist_view(
         .map(|(i, song)| {
             let meta = crate::metadata::SongMetadata::from(&song.song);
             let added_date = format_relative_time(song.added_at);
-            let cover = meta.resolve_cover(Some(&song.song.file_path), song.song.id);
-
             pages::PlaylistSongView::new(
                 song.song.id,
                 i + 1,
@@ -387,7 +404,6 @@ pub async fn load_playlist_view(
                 meta.album.clone(),
                 meta.duration_display(),
                 added_date,
-                cover.map(|p| p.to_string_lossy().to_string()),
                 crate::utils::compute_source(&song.song.file_path, song.song.id, None, None),
             )
         })
@@ -411,7 +427,7 @@ pub async fn load_playlist_view(
         .map(|p| crate::utils::ColorPalette::from_image_path(std::path::Path::new(p)))
         .unwrap_or_default();
 
-    Some(pages::PlaylistView {
+    let view = pages::PlaylistView {
         kind: pages::playlist::DetailPageKind::Playlist,
         id: playlist.id,
         name: playlist.name,
@@ -437,7 +453,9 @@ pub async fn load_playlist_view(
             .as_ref()
             .map(|folder| folder.enabled)
             .unwrap_or(false),
-    })
+    };
+
+    Some(crate::app::PlaylistViewPayload { view, images })
 }
 
 // ============ Personal FM Mode Helpers ============

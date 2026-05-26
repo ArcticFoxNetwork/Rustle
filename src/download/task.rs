@@ -9,9 +9,7 @@ use std::path::{Path, PathBuf};
 
 use tracing::{info, warn};
 
-use crate::utils::{
-    detect_audio_format, download_bytes, find_cached_audio, sanitize_filename, songs_cache_dir,
-};
+use crate::utils::{detect_audio_format, find_cached_audio, sanitize_filename, songs_cache_dir};
 
 /// Verify downloaded audio file integrity using lofty
 pub fn verify_integrity(path: &Path) -> Result<(), String> {
@@ -111,7 +109,7 @@ pub async fn download_song(
         }
     }
 
-    // 4. Download audio stream + cover art in parallel
+    // 4. Download audio stream
     let client = reqwest::Client::new();
     let response = client
         .get(song_url)
@@ -162,12 +160,24 @@ pub async fn download_song(
         return Err(format!("Downloaded file is corrupt: {}", e));
     }
 
-    // 7. Download cover art (if URL) and write metadata tags
+    // 7. Write metadata tags, reusing the unified image cache when available
     let mut edits = meta.to_metadata_edits();
-    if let Some(crate::metadata::CoverSource::Url(url)) = &meta.cover {
-        if let Some((data, mime)) = download_bytes(url).await {
-            edits.cover_data = Some(data);
-            edits.cover_mime = Some(mime);
+    if edits.cover_data.is_none() {
+        if let Some(path) = crate::image::resolve_cached(crate::image::ImageKind::SongCover, ncm_id)
+        {
+            if let Ok(data) = fs::read(&path) {
+                edits.cover_mime = Some(
+                    match crate::utils::detect_image_format(&data) {
+                        "png" => "image/png",
+                        "gif" => "image/gif",
+                        "webp" => "image/webp",
+                        "bmp" => "image/bmp",
+                        _ => "image/jpeg",
+                    }
+                    .to_string(),
+                );
+                edits.cover_data = Some(data);
+            }
         }
     }
     if let Err(e) = crate::features::import::save_metadata(&dest, &edits) {

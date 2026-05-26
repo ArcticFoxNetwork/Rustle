@@ -206,7 +206,7 @@ impl App {
                             tasks.push(Task::perform(
                                 load_playlist_view(db_for_playlist, playlist_id),
                                 |result| match result {
-                                    Some(view) => Message::PlaylistViewLoaded(view),
+                                    Some(payload) => Message::PlaylistViewLoaded(payload),
                                     None => Message::DatabaseError("Playlist not found".into()),
                                 },
                             ));
