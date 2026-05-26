@@ -151,11 +151,6 @@ fn extract_embedded_lyrics(audio_path: &Path) -> Option<String> {
     None
 }
 
-/// Get lyrics file path for a song (if exists)
-pub fn get_lyrics_path(audio_path: &Path) -> Option<PathBuf> {
-    find_lyrics_file(audio_path)
-}
-
 /// Convert LyricLineOwned to the UI LyricLine format
 pub fn to_ui_lyric_lines(lines: Vec<LyricLineOwned>) -> Vec<crate::ui::pages::LyricLine> {
     lyrics::to_ui_lyrics(lines)
