@@ -21,17 +21,17 @@ pub use metadata::{
     AudioMetadata, MetadataEdits, extract_metadata, extract_track_gain, resolve_track_gain,
     save_metadata,
 };
-pub use progress::{ScanHandle, ScanProgress, ScanState, progress_channel};
+pub use progress::{ScanHandle, ScanProgress, ScanState, SkipReason, progress_channel};
 pub use scanner::{ScanConfig, ScanResult, scan_and_import, scan_audio_file};
 pub use watcher::{FolderWatcher, WatchEvent, spawn_debounced_processor, watch_channel};
 
-use std::path::PathBuf;
+use std::path::Path;
 
 /// Supported audio file extensions (re-exported from utils)
 pub use crate::utils::AUDIO_EXTENSIONS;
 
 /// Check if a file extension is a supported audio format
-pub fn is_audio_file(path: &PathBuf) -> bool {
+pub fn is_audio_file(path: &Path) -> bool {
     path.extension()
         .and_then(|ext| ext.to_str())
         .map(|ext| AUDIO_EXTENSIONS.contains(&ext.to_lowercase().as_str()))

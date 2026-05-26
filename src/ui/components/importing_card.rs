@@ -35,6 +35,12 @@ pub struct ImportingPlaylist {
     pub root_path: PathBuf,
     /// Optional in-progress status message
     pub status_text: Option<String>,
+    /// Number of skipped files during this import
+    pub skipped: u64,
+    /// Number of database or unexpected errors during this import
+    pub errors: u64,
+    /// Recent skipped files with human-readable reasons
+    pub recent_skips: Vec<String>,
 }
 
 impl ImportingPlaylist {
@@ -50,6 +56,9 @@ impl ImportingPlaylist {
             playlist_id: None,
             root_path,
             status_text: None,
+            skipped: 0,
+            errors: 0,
+            recent_skips: Vec::new(),
         }
     }
 
@@ -69,11 +78,19 @@ impl ImportingPlaylist {
         }
     }
 
-    pub fn complete(&mut self) {
+    pub fn complete(&mut self, imported: u64, skipped: u64, errors: u64) {
         self.completed = true;
         self.progress = 1.0;
         self.cancelling = false;
-        self.status_text = Some("导入完成".to_string());
+        self.skipped = skipped;
+        self.errors = errors;
+        self.status_text = Some(if errors > 0 {
+            format!("完成：{} 首成功，{} 个错误", imported, errors)
+        } else if skipped > 0 {
+            format!("完成：{} 首成功，{} 个跳过", imported, skipped)
+        } else {
+            format!("完成：{} 首歌曲", imported)
+        });
     }
 
     pub fn begin_cancelling(&mut self) {
@@ -83,6 +100,21 @@ impl ImportingPlaylist {
 
     pub fn set_status(&mut self, status: impl Into<String>) {
         self.status_text = Some(status.into());
+    }
+
+    pub fn record_skip(&mut self, file_name: &str, reason: &str) {
+        self.skipped += 1;
+        let mut file_name = file_name.to_string();
+        if file_name.chars().count() > 24 {
+            file_name = format!("{}...", file_name.chars().take(24).collect::<String>());
+        }
+        self.recent_skips
+            .insert(0, format!("跳过 {}：{}", file_name, reason));
+        self.recent_skips.truncate(3);
+    }
+
+    pub fn record_error(&mut self) {
+        self.errors += 1;
     }
 }
 
@@ -136,20 +168,21 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
     };
 
     // Playlist info
-    let status_text = if playlist.completed {
-        "导入完成".to_string()
-    } else if playlist.cancelling {
+    let status_text = if playlist.cancelling {
         "正在取消...".to_string()
     } else if let Some(status) = &playlist.status_text {
         status.clone()
+    } else if playlist.completed {
+        "导入完成".to_string()
     } else if playlist.total > 0 {
         format!("{}/{}", playlist.current, playlist.total)
     } else {
         "扫描中...".to_string()
     };
 
+    let skip_detail = playlist.recent_skips.first().cloned();
     let completed = playlist.completed;
-    let info = column![
+    let mut info = column![
         text(name)
             .size(theme::TEXT_SIZE_LABEL)
             .style(move |theme| text::Style {
@@ -164,8 +197,17 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
             .style(|theme| text::Style {
                 color: Some(theme::text_muted(theme))
             })
-    ]
-    .spacing(2);
+    ];
+    if let Some(detail) = skip_detail {
+        info = info.push(
+            text(detail)
+                .size(theme::TEXT_SIZE_MICRO)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_muted(theme)),
+                }),
+        );
+    }
+    let info = info.spacing(2);
 
     let trailing: Element<'static, Message> = if !playlist.completed {
         if playlist.cancelling {

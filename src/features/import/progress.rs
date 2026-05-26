@@ -1,5 +1,6 @@
 //! Scan progress tracking and reporting
 
+use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use tokio::sync::mpsc;
@@ -54,7 +55,23 @@ pub enum SkipReason {
     EmptyFile,
     /// Failed to read metadata
     MetadataError(String),
+    /// Failed to write the imported song to the local database
+    DatabaseError(String),
 }
+
+impl fmt::Display for SkipReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SkipReason::Corrupted => write!(f, "文件无法读取或已损坏"),
+            SkipReason::NotAudioFile => write!(f, "不是支持的音频文件"),
+            SkipReason::EmptyFile => write!(f, "空文件"),
+            SkipReason::MetadataError(message) => write!(f, "读取元数据失败：{}", message),
+            SkipReason::DatabaseError(message) => write!(f, "写入数据库失败：{}", message),
+        }
+    }
+}
+
+impl std::error::Error for SkipReason {}
 
 /// Shared state for tracking scan progress
 #[derive(Debug)]
@@ -100,6 +117,10 @@ impl ScanState {
         self.imported.fetch_add(1, Ordering::SeqCst);
     }
 
+    pub fn increment_skipped(&self) {
+        self.skipped.fetch_add(1, Ordering::SeqCst);
+    }
+
     pub fn increment_errors(&self) {
         self.errors.fetch_add(1, Ordering::SeqCst);
     }
@@ -126,6 +147,13 @@ impl ScanState {
     pub fn set_scanned_paths(&self, paths: Vec<std::path::PathBuf>) {
         if let Ok(mut guard) = self.scanned_paths.lock() {
             *guard = Some(paths);
+        }
+    }
+
+    /// Add a successfully imported file path for playlist creation.
+    pub fn push_scanned_path(&self, path: std::path::PathBuf) {
+        if let Ok(mut guard) = self.scanned_paths.lock() {
+            guard.get_or_insert_with(Vec::new).push(path);
         }
     }
 

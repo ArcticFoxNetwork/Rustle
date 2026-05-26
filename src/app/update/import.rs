@@ -526,9 +526,16 @@ impl App {
             } => {
                 if let Some(playlist) = &mut self.ui.importing_playlist {
                     playlist.update_progress(*current, *total);
-                    playlist.set_status(format!("跳过 {}", file_name));
+                    playlist.record_skip(file_name, &reason.to_string());
+                    if matches!(
+                        reason,
+                        crate::features::import::SkipReason::DatabaseError(_)
+                    ) {
+                        playlist.record_error();
+                    }
+                    playlist.set_status(format!("跳过 {}：{}", file_name, reason));
                 }
-                tracing::debug!("Skipped file {}: {:?}", file_name, reason);
+                tracing::debug!("Skipped file {}: {}", file_name, reason);
             }
             ScanProgress::Error(err) => {
                 tracing::error!("Scan error: {}", err);
@@ -563,7 +570,7 @@ impl App {
                 self.library.scan_state = None;
                 self.library.scan_handle = None;
 
-                let is_success = *imported > 0 || *skipped > 0;
+                let is_success = *imported > 0;
                 let total_processed = *imported + *skipped + *errors;
                 let (toast_task, clear_delay_secs) = if total_processed == 0 {
                     self.ui.importing_playlist = None;
@@ -571,20 +578,34 @@ impl App {
                         Self::toast_error("导入失败：未找到任何音频文件".to_string()),
                         None,
                     )
-                } else if *errors == 0 {
+                } else if *errors == 0 && *skipped == 0 {
                     (
                         Self::toast_success(format!("导入完成！成功导入 {} 首歌曲", imported)),
                         Some(4),
                     )
+                } else if *errors == 0 {
+                    (
+                        Self::toast_warning(format!(
+                            "导入完成：{} 首成功，{} 个跳过",
+                            imported, skipped
+                        )),
+                        Some(6),
+                    )
                 } else {
                     (
                         Self::toast_warning(format!(
-                            "导入完成：{} 首成功，{} 首失败",
-                            imported, errors
+                            "导入完成：{} 首成功，{} 个跳过，{} 个错误",
+                            imported, skipped, errors
                         )),
-                        Some(5),
+                        Some(6),
                     )
                 };
+
+                if let Some(playlist) = &mut self.ui.importing_playlist
+                    && total_processed > 0
+                {
+                    playlist.complete(*imported, *skipped, *errors);
+                }
 
                 if is_success {
                     if let (Some(db), Some(playlist)) = (&self.core.db, &self.ui.importing_playlist)
@@ -594,10 +615,6 @@ impl App {
                         let name = playlist.name.clone();
                         let cover_path = playlist.cover_path.clone();
                         let root_path = playlist.root_path.clone();
-
-                        if let Some(playlist) = &mut self.ui.importing_playlist {
-                            playlist.complete();
-                        }
 
                         let mut tasks = vec![
                             toast_task,
@@ -659,8 +676,18 @@ impl App {
 
                         return Task::batch(tasks);
                     }
-                } else {
-                    return toast_task;
+                }
+
+                if let Some(secs) = clear_delay_secs {
+                    return Task::batch(vec![
+                        toast_task,
+                        Task::perform(
+                            async move {
+                                tokio::time::sleep(std::time::Duration::from_secs(secs)).await;
+                            },
+                            |_| Message::ClearImportingPlaylist,
+                        ),
+                    ]);
                 }
 
                 return toast_task;

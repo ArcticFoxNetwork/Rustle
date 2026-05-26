@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use rayon::prelude::*;
 use walkdir::WalkDir;
 use xxhash_rust::xxh3::xxh3_64;
@@ -48,12 +48,10 @@ impl Default for ScanConfig {
 /// Result of scanning a single file
 #[derive(Debug)]
 pub struct ScanResult {
-    pub path: PathBuf,
     pub metadata: AudioMetadata,
     pub file_size: u64,
     pub file_hash: Option<String>,
     pub normalization_gain: Option<f64>,
-    pub cover_hash: Option<String>,
     pub cover_path: Option<PathBuf>,
 }
 
@@ -123,20 +121,45 @@ pub fn compute_partial_hash(path: &Path) -> Result<String> {
 }
 
 /// Check for external cover art files (same-name image or common cover files)
-fn check_external_cover(audio_path: &Path) -> (Option<String>, Option<PathBuf>) {
+fn check_external_cover(audio_path: &Path) -> Option<PathBuf> {
     use crate::features::media::cover;
 
     // Try to find external cover file
     if let Some(cover_source) = cover::find_cover_art(audio_path)
         && let Some(path) = cover_source.path()
     {
-        // External file found - use its path directly
-        // Generate a hash from the path for deduplication
-        let hash = format!("{:016x}", xxh3_64(path.to_string_lossy().as_bytes()));
-        return (Some(hash), Some(path.to_path_buf()));
+        return Some(path.to_path_buf());
     }
 
-    (None, None)
+    None
+}
+
+fn classify_metadata_error(path: &Path, error: anyhow::Error) -> SkipReason {
+    if has_known_audio_header(path).unwrap_or(false) {
+        SkipReason::Corrupted
+    } else if is_audio_file(path) {
+        SkipReason::NotAudioFile
+    } else {
+        SkipReason::MetadataError(error.to_string())
+    }
+}
+
+fn has_known_audio_header(path: &Path) -> std::io::Result<bool> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut header = [0_u8; 64];
+    let len = file.read(&mut header)?;
+    let bytes = &header[..len];
+    Ok(bytes.starts_with(b"fLaC")
+        || bytes.starts_with(b"ID3")
+        || matches!(
+            bytes.get(0..2),
+            Some([0xFF, 0xFB] | [0xFF, 0xFA] | [0xFF, 0xF3] | [0xFF, 0xF2])
+        )
+        || bytes.starts_with(b"OggS")
+        || (bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WAVE")
+        || (bytes.len() >= 8 && &bytes[4..8] == b"ftyp"))
 }
 
 /// Process a single audio file.
@@ -145,16 +168,24 @@ pub fn scan_audio_file(
     config: &ScanConfig,
     cover_cache: Option<&CoverCache>,
 ) -> Result<ScanResult> {
+    if !is_audio_file(path) {
+        return Err(SkipReason::NotAudioFile.into());
+    }
+
     // Get file metadata
-    let file_meta = std::fs::metadata(path).context("Failed to read file metadata")?;
+    let file_meta =
+        std::fs::metadata(path).map_err(|_| anyhow::Error::from(SkipReason::Corrupted))?;
 
     // Skip empty files
     if file_meta.len() == 0 {
-        anyhow::bail!("Empty file");
+        return Err(SkipReason::EmptyFile.into());
     }
 
     // Extract audio metadata
-    let mut metadata = extract_metadata(path)?;
+    let mut metadata = match extract_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) => return Err(classify_metadata_error(path, error).into()),
+    };
 
     // Apply smart filename parsing if enabled
     if config.smart_parsing
@@ -174,11 +205,11 @@ pub fn scan_audio_file(
 
     // Process cover art if enabled
     // Priority: embedded > same-name image > common cover files
-    let (cover_hash, cover_path) = if config.extract_covers {
+    let cover_path = if config.extract_covers {
         // First try embedded cover art
         if let (Some(cover_data), Some(cache)) = (&metadata.cover_data, cover_cache) {
             match cache.save_cover_with_mime(cover_data, metadata.cover_mime.as_deref()) {
-                Ok((hash, path)) => (Some(hash), Some(path)),
+                Ok((_hash, path)) => Some(path),
                 Err(e) => {
                     tracing::warn!("Failed to cache cover for {:?}: {}", path, e);
                     // Fall through to external file check
@@ -190,16 +221,14 @@ pub fn scan_audio_file(
             check_external_cover(path)
         }
     } else {
-        (None, None)
+        None
     };
 
     Ok(ScanResult {
-        path: path.to_path_buf(),
         metadata,
         file_size: file_meta.len(),
         file_hash,
         normalization_gain,
-        cover_hash,
         cover_path,
     })
 }
@@ -218,7 +247,7 @@ pub async fn scan_and_import(
 ) -> Result<()> {
     let start_time = Instant::now();
 
-    // Discover all audio files
+    // Discover all files that match the current scan filter.
     let files = tokio::task::spawn_blocking({
         let root = root.clone();
         let config = config.clone();
@@ -228,8 +257,7 @@ pub async fn scan_and_import(
 
     let total_files = files.len() as u64;
     state.set_total(total_files);
-    // Store all scanned file paths for playlist creation
-    state.set_scanned_paths(files.clone());
+    state.set_scanned_paths(Vec::new());
 
     let _ = progress_tx.send(ScanProgress::Started { total_files });
 
@@ -314,6 +342,7 @@ pub async fn scan_and_import(
                     match db.upsert_local_song(new_song).await {
                         Ok(_) => {
                             state.increment_imported();
+                            state.push_scanned_path(path.clone());
                             let _ = progress_tx.send(ScanProgress::Imported {
                                 current,
                                 total: total_files,
@@ -328,18 +357,16 @@ pub async fn scan_and_import(
                                 current,
                                 total: total_files,
                                 file_name,
-                                reason: SkipReason::MetadataError(e.to_string()),
+                                reason: SkipReason::DatabaseError(e.to_string()),
                             });
                         }
                     }
                 }
                 Err(e) => {
-                    state.increment_errors();
-                    let reason = if e.to_string().contains("Empty file") {
-                        SkipReason::EmptyFile
-                    } else {
-                        SkipReason::MetadataError(e.to_string())
-                    };
+                    state.increment_skipped();
+                    let reason = e
+                        .downcast::<SkipReason>()
+                        .unwrap_or_else(|e| SkipReason::MetadataError(e.to_string()));
                     let _ = progress_tx.send(ScanProgress::Skipped {
                         current,
                         total: total_files,
