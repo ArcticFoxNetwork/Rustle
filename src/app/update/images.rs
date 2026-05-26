@@ -126,7 +126,7 @@ impl App {
             ) => {
                 refs.extend(remote_song_covers(songs));
             }
-            Message::PlayNcmSong(song) | Message::PlaySearchSong(song) => {
+            Message::PlayNcmSong(song) => {
                 refs.push(RemoteImage::new(
                     ImageKind::SongCover,
                     song.id,

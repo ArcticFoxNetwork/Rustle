@@ -41,7 +41,7 @@ struct AudioAnalysisSnapshot {
     /// Right channel RMS level (0.0 to 1.0)
     right_rms: f32,
     /// Spectrum magnitude in dB for each bar (smoothed with decay)
-    spectrum_db: Vec<f32>,
+    spectrum_db: [f32; SPECTRUM_BARS],
 }
 
 impl Default for AudioAnalysisSnapshot {
@@ -49,7 +49,7 @@ impl Default for AudioAnalysisSnapshot {
         Self {
             left_rms: 0.0,
             right_rms: 0.0,
-            spectrum_db: vec![-60.0; SPECTRUM_BARS],
+            spectrum_db: [-60.0; SPECTRUM_BARS],
         }
     }
 }
@@ -59,7 +59,7 @@ struct AudioAnalysisProcessor {
     left_rms: f32,
     right_rms: f32,
     /// Spectrum magnitude in dB for each bar (smoothed with decay)
-    spectrum_db: Vec<f32>,
+    spectrum_db: [f32; SPECTRUM_BARS],
     /// Sample buffer for FFT (mono mixed)
     sample_buffer: Vec<f32>,
     /// Left channel samples for RMS
@@ -79,7 +79,7 @@ impl Default for AudioAnalysisProcessor {
         Self {
             left_rms: 0.0,
             right_rms: 0.0,
-            spectrum_db: vec![-60.0; SPECTRUM_BARS],
+            spectrum_db: [-60.0; SPECTRUM_BARS],
             sample_buffer: Vec::with_capacity(FFT_SIZE),
             left_samples: Vec::with_capacity(FFT_SIZE / 2),
             right_samples: Vec::with_capacity(FFT_SIZE / 2),
@@ -113,11 +113,11 @@ impl AudioAnalysisData {
     }
 
     /// Get spectrum data in dB (SPECTRUM_BARS values, -60 to +12 dB range)
-    pub fn spectrum_db(&self) -> Vec<f32> {
+    pub fn spectrum_db(&self) -> [f32; SPECTRUM_BARS] {
         self.snapshot
             .read()
-            .map(|i| i.spectrum_db.clone())
-            .unwrap_or_else(|_| vec![-60.0; SPECTRUM_BARS])
+            .map(|i| i.spectrum_db)
+            .unwrap_or([-60.0; SPECTRUM_BARS])
     }
 
     /// Get sample rate
@@ -161,13 +161,18 @@ impl AudioAnalysisData {
         self.reset_generation.load(Ordering::Acquire)
     }
 
-    fn publish(&self, sample_rate: u32, left_rms: f32, right_rms: f32, spectrum_db: &[f32]) {
+    fn publish(
+        &self,
+        sample_rate: u32,
+        left_rms: f32,
+        right_rms: f32,
+        spectrum_db: &[f32; SPECTRUM_BARS],
+    ) {
         self.sample_rate.store(sample_rate, Ordering::Release);
         if let Ok(mut snapshot) = self.snapshot.write() {
             snapshot.left_rms = left_rms;
             snapshot.right_rms = right_rms;
-            snapshot.spectrum_db.clear();
-            snapshot.spectrum_db.extend_from_slice(spectrum_db);
+            snapshot.spectrum_db = *spectrum_db;
         }
     }
 }
@@ -213,13 +218,13 @@ impl AudioAnalysisProcessor {
         self.current_channel = (channel + 1) % channels;
 
         if self.sample_buffer.len() >= FFT_SIZE {
-            let (left_rms, right_rms, spectrum_db) = self.perform_fft(analysis.decay());
-            analysis.publish(self.sample_rate, left_rms, right_rms, &spectrum_db);
+            let (left_rms, right_rms) = self.perform_fft(analysis.decay());
+            analysis.publish(self.sample_rate, left_rms, right_rms, &self.spectrum_db);
         }
     }
 
     /// Perform FFT analysis and update spectrum
-    fn perform_fft(&mut self, decay: f32) -> (f32, f32, Vec<f32>) {
+    fn perform_fft(&mut self, decay: f32) -> (f32, f32) {
         let mut left_rms = 0.0;
         let mut right_rms = 0.0;
 
@@ -236,9 +241,7 @@ impl AudioAnalysisProcessor {
         }
 
         // Apply Hann window to samples
-        let samples: Vec<f32> = self.sample_buffer[..FFT_SIZE].to_vec();
-        let windowed = hann_window(&samples);
-        let mut spectrum_db = self.spectrum_db.clone();
+        let windowed = hann_window(&self.sample_buffer[..FFT_SIZE]);
 
         // Perform FFT
         if let Ok(spectrum) = samples_fft_to_spectrum(
@@ -249,6 +252,7 @@ impl AudioAnalysisProcessor {
         ) {
             // Map FFT bins to logarithmic frequency bars
             let freq_data = spectrum.data();
+            let mut freq_idx = 0;
 
             for bar_idx in 0..SPECTRUM_BARS {
                 // Calculate frequency range for this bar (logarithmic scale)
@@ -259,12 +263,23 @@ impl AudioAnalysisProcessor {
 
                 // Find max magnitude in this frequency range
                 let mut max_mag: f32 = 0.0;
-                for (freq, mag) in freq_data.iter() {
+                while freq_idx < freq_data.len() && freq_data[freq_idx].0.val() < freq_low {
+                    freq_idx += 1;
+                }
+
+                let mut scan_idx = freq_idx;
+                while scan_idx < freq_data.len() {
+                    let (freq, mag) = &freq_data[scan_idx];
                     let f = freq.val();
+                    if f >= freq_high {
+                        break;
+                    }
                     if f >= freq_low && f < freq_high {
                         max_mag = max_mag.max(mag.val());
                     }
+                    scan_idx += 1;
                 }
+                freq_idx = scan_idx;
 
                 // Convert to dB (with floor at -60dB)
                 let db = if max_mag > 0.0 {
@@ -274,8 +289,8 @@ impl AudioAnalysisProcessor {
                 };
 
                 // Apply decay smoothing
-                let current = spectrum_db[bar_idx];
-                spectrum_db[bar_idx] = if db > current {
+                let current = self.spectrum_db[bar_idx];
+                self.spectrum_db[bar_idx] = if db > current {
                     // Attack: fast rise
                     current * 0.3 + db * 0.7
                 } else {
@@ -292,9 +307,8 @@ impl AudioAnalysisProcessor {
         self.right_samples.clear();
         self.left_rms = left_rms;
         self.right_rms = right_rms;
-        self.spectrum_db.clone_from(&spectrum_db);
 
-        (left_rms, right_rms, spectrum_db)
+        (left_rms, right_rms)
     }
 }
 

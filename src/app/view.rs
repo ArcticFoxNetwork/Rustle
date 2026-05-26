@@ -116,14 +116,7 @@ impl App {
         let resize_handle = components::sidebar_resize_handle::view(self.ui.sidebar_dragging);
 
         // Determine main content: playlist page or nav page
-        // Get liked songs for playlist view (empty set if not logged in)
-        let liked_songs = self
-            .core
-            .user_info
-            .as_ref()
-            .map(|u| &u.like_songs)
-            .cloned()
-            .unwrap_or_default();
+        let liked_songs = self.core.user_info.as_ref().map(|u| &u.like_songs);
 
         let current_user_id = self.core.user_info.as_ref().map(|u| u.user_id);
 

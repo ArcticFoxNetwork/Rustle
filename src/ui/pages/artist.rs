@@ -19,14 +19,14 @@ use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{theme, widgets};
 
 pub fn view<'a>(
-    artist: &PlaylistView,
+    artist: &'a PlaylistView,
     image_state: &'a ImageState,
     song_animations: &'a crate::ui::animation::HoverAnimations<i64>,
     icon_animations: &crate::ui::animation::HoverAnimations<crate::app::IconId>,
     search_animation: &crate::ui::animation::SingleHoverAnimation,
     search_expanded: bool,
     search_query: &str,
-    liked_songs: HashSet<u64>,
+    liked_songs: Option<&'a HashSet<u64>>,
     locale: Locale,
     scroll_state: Rc<RefCell<widgets::VirtualListState>>,
     current_user_id: Option<u64>,
@@ -81,11 +81,12 @@ pub fn view<'a>(
 
     let body: Element<'a, Message> = match artist.artist_tab {
         ArtistPageTab::TopSongs => {
-            let filtered_songs = playlist_view::filter_songs(&artist.songs, search_query);
+            let filtered_indices = playlist_view::filter_song_indices(&artist.songs, search_query);
             let columns = PlaylistColumns::online();
             let song_list_header = playlist_view::build_header(locale, columns);
             let song_list = playlist_view::build_list(
-                filtered_songs,
+                &artist.songs,
+                filtered_indices,
                 image_state,
                 song_animations,
                 liked_songs,

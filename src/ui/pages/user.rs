@@ -22,7 +22,7 @@ pub fn view<'a>(
     _search_animation: &crate::ui::animation::SingleHoverAnimation,
     _search_expanded: bool,
     _search_query: &str,
-    _liked_songs: std::collections::HashSet<u64>,
+    _liked_songs: Option<&std::collections::HashSet<u64>>,
     locale: Locale,
     _scroll_state: Rc<RefCell<widgets::VirtualListState>>,
     _current_user_id: Option<u64>,

@@ -55,6 +55,14 @@ pub struct ScanResult {
     pub cover_path: Option<PathBuf>,
 }
 
+struct PendingImport {
+    path: PathBuf,
+    file_name: String,
+    title: String,
+    artist: String,
+    cover_path: Option<String>,
+}
+
 /// Scan a directory for audio files
 ///
 /// Returns a list of audio file paths found
@@ -295,7 +303,10 @@ pub async fn scan_and_import(
         })
         .await?;
 
-        // Import results to database
+        let mut pending_imports = Vec::new();
+        let mut pending_songs = Vec::new();
+
+        // Prepare database rows while preserving per-file progress updates.
         for (path, result) in results {
             if state.is_cancelled() {
                 let _ = progress_tx.send(ScanProgress::Cancelled);
@@ -339,28 +350,14 @@ pub async fn scan_and_import(
                         normalization_gain: scan_result.normalization_gain,
                     };
 
-                    match db.upsert_local_song(new_song).await {
-                        Ok(_) => {
-                            state.increment_imported();
-                            state.push_scanned_path(path.clone());
-                            let _ = progress_tx.send(ScanProgress::Imported {
-                                current,
-                                total: total_files,
-                                title: scan_result.metadata.title,
-                                artist: scan_result.metadata.artist,
-                                cover_path: cover_path_str,
-                            });
-                        }
-                        Err(e) => {
-                            state.increment_errors();
-                            let _ = progress_tx.send(ScanProgress::Skipped {
-                                current,
-                                total: total_files,
-                                file_name,
-                                reason: SkipReason::DatabaseError(e.to_string()),
-                            });
-                        }
-                    }
+                    pending_imports.push(PendingImport {
+                        path,
+                        file_name,
+                        title: scan_result.metadata.title,
+                        artist: scan_result.metadata.artist,
+                        cover_path: cover_path_str,
+                    });
+                    pending_songs.push(new_song);
                 }
                 Err(e) => {
                     state.increment_skipped();
@@ -372,6 +369,67 @@ pub async fn scan_and_import(
                         total: total_files,
                         file_name,
                         reason,
+                    });
+                }
+            }
+        }
+
+        if pending_songs.is_empty() {
+            continue;
+        }
+
+        if state.is_cancelled() {
+            let _ = progress_tx.send(ScanProgress::Cancelled);
+            return Ok(());
+        }
+
+        match db.upsert_local_songs(pending_songs).await {
+            Ok(ids) if ids.len() == pending_imports.len() => {
+                for pending in pending_imports {
+                    if state.is_cancelled() {
+                        let _ = progress_tx.send(ScanProgress::Cancelled);
+                        return Ok(());
+                    }
+
+                    state.increment_imported();
+                    state.push_scanned_path(pending.path);
+                    let (_, current, _, _, _) = state.get_stats();
+                    let _ = progress_tx.send(ScanProgress::Imported {
+                        current,
+                        total: total_files,
+                        title: pending.title,
+                        artist: pending.artist,
+                        cover_path: pending.cover_path,
+                    });
+                }
+            }
+            Ok(ids) => {
+                let message = format!(
+                    "batch upsert returned {} ids for {} songs",
+                    ids.len(),
+                    pending_imports.len()
+                );
+                for pending in pending_imports {
+                    state.increment_errors();
+                    let (_, current, _, _, _) = state.get_stats();
+                    let _ = progress_tx.send(ScanProgress::Skipped {
+                        current,
+                        total: total_files,
+                        file_name: pending.file_name,
+                        reason: SkipReason::DatabaseError(message.clone()),
+                    });
+                }
+            }
+            Err(e) => {
+                let message = e.to_string();
+                for pending in pending_imports {
+                    state.increment_errors();
+                    let (_, current, _, _, _) = state.get_stats();
+                    let _ = progress_tx.send(ScanProgress::Skipped {
+                        current,
+                        total: total_files,
+                        file_name: pending.file_name,
+                        reason: SkipReason::DatabaseError(message.clone()),
                     });
                 }
             }

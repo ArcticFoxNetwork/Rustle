@@ -64,24 +64,20 @@ pub fn view<'a>(
                 } else {
                     // Use VirtualList for high performance song list
                     let song_count = state.songs.len();
-                    let songs = std::rc::Rc::new(state.songs.clone());
-                    let songs_for_builder = songs.clone();
-                    let songs_for_hover = songs.clone();
-
-                    let song_animations = state.song_animations.clone();
+                    let songs = &state.songs;
+                    let song_animations = &state.song_animations;
                     let current_page = state.current_page;
 
                     let table_header = search_table_header();
 
                     let virtual_list =
                         VirtualList::new(song_count, SONG_ROW_HEIGHT, move |index| {
-                            if index >= songs_for_builder.len() {
+                            if index >= songs.len() {
                                 return Space::new().into();
                             }
 
-                            let song = &songs_for_builder[index];
+                            let song = &songs[index];
                             let hover_progress = song_animations.get_progress(&song.id);
-                            let song_clone = song.clone();
                             let index_num = current_page * PAGE_SIZE + index as u32 + 1;
                             let duration_secs = song.duration / 1000;
                             let duration_str =
@@ -96,7 +92,7 @@ pub fn view<'a>(
                                         })
                                         .width(40),
                                     column![
-                                        text(song.name.clone()).size(theme::TEXT_SIZE_BODY).style(
+                                        text(song.name.as_str()).size(theme::TEXT_SIZE_BODY).style(
                                             move |theme| {
                                                 iced::widget::text::Style {
                                                     color: Some(theme::animated_text(
@@ -108,13 +104,13 @@ pub fn view<'a>(
                                         ),
                                     ]
                                     .width(Fill),
-                                    text(song.singer.clone())
+                                    text(song.singer.as_str())
                                         .size(theme::TEXT_SIZE_LABEL)
                                         .style(|theme| iced::widget::text::Style {
                                             color: Some(theme::text_secondary(theme)),
                                         })
                                         .width(Length::FillPortion(2)),
-                                    text(song.album.clone())
+                                    text(song.album.as_str())
                                         .size(theme::TEXT_SIZE_LABEL)
                                         .style(|theme| iced::widget::text::Style {
                                             color: Some(theme::text_muted(theme)),
@@ -134,15 +130,15 @@ pub fn view<'a>(
                             .style(move |theme, status| {
                                 song_row_style(theme, status, hover_progress)
                             })
-                            .on_press(Message::PlaySearchSong(song_clone))
+                            .on_press(Message::PlaySearchSong(song.id))
                             .width(Fill);
 
                             Element::from(song_row)
                         })
                         .state(state.scroll_state.clone())
                         .on_item_hover(move |index| {
-                            if index < songs_for_hover.len() {
-                                Message::HoverSearchSong(Some(songs_for_hover[index].id))
+                            if index < songs.len() {
+                                Message::HoverSearchSong(Some(songs[index].id))
                             } else {
                                 Message::HoverSearchSong(None)
                             }

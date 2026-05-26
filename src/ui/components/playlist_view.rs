@@ -53,6 +53,8 @@ pub struct SongItem {
     pub artist: String,
     /// Original album for search/filter
     pub album: String,
+    /// Pre-normalized searchable text to avoid lowercasing on every view rebuild.
+    search_text: String,
     /// Pre-truncated display title
     pub display_title: String,
     /// Pre-truncated display artist
@@ -82,6 +84,12 @@ impl SongItem {
         let display_artist = truncate_string(&artist, MAX_ARTIST_LEN);
         let display_album = album.clone();
         let index_str = index.to_string();
+        let search_text = format!(
+            "{}\n{}\n{}",
+            title.to_lowercase(),
+            artist.to_lowercase(),
+            album.to_lowercase()
+        );
 
         Self {
             id,
@@ -89,6 +97,7 @@ impl SongItem {
             title,
             artist,
             album,
+            search_text,
             display_title,
             display_artist,
             display_album,
@@ -243,15 +252,19 @@ pub fn build_header(locale: Locale, columns: PlaylistColumns) -> Element<'static
 
 /// Build the virtual song list
 pub fn build_list<'a>(
-    songs: Vec<SongItem>,
+    songs: &'a [SongItem],
+    filtered_indices: Option<Vec<usize>>,
     image_state: &'a ImageState,
     song_animations: &'a crate::ui::animation::HoverAnimations<i64>,
-    liked_songs: HashSet<u64>,
+    liked_songs: Option<&'a HashSet<u64>>,
     columns: PlaylistColumns,
     scroll_state: Rc<RefCell<VirtualListState>>,
     current_playing_id: Option<i64>,
 ) -> Element<'a, Message> {
-    let song_count = songs.len();
+    let filtered_indices = filtered_indices.map(Rc::new);
+    let song_count = filtered_indices
+        .as_ref()
+        .map_or(songs.len(), |idx| idx.len());
 
     if song_count == 0 {
         return container(text("暂无歌曲").size(theme::TEXT_SIZE_BODY).style(|theme| {
@@ -265,20 +278,18 @@ pub fn build_list<'a>(
         .into();
     }
 
-    let songs = Rc::new(songs);
-    let liked_songs = Rc::new(liked_songs);
-
-    // Clone for on_item_hover callback
-    let songs_for_hover = songs.clone();
-
-    let songs_clone = songs.clone();
-    let liked_songs_clone = liked_songs.clone();
+    let indices_for_builder = filtered_indices.clone();
+    let indices_for_hover = filtered_indices.clone();
     let item_builder = move |index: usize| -> Element<'a, Message> {
-        if index >= songs_clone.len() {
-            return Space::new().height(SONG_ROW_HEIGHT).into();
-        }
+        let song_index = indices_for_builder
+            .as_ref()
+            .and_then(|indices| indices.get(index).copied())
+            .unwrap_or(index);
 
-        let song = &songs_clone[index];
+        let Some(song) = songs.get(song_index) else {
+            return Space::new().height(SONG_ROW_HEIGHT).into();
+        };
+
         let is_playing = current_playing_id == Some(song.id);
         let animation_progress = song_animations.get_progress(&song.id);
         let is_hovered = animation_progress > 0.5;
@@ -289,7 +300,7 @@ pub fn build_list<'a>(
             is_playing,
             is_hovered,
             animation_progress,
-            &liked_songs_clone,
+            liked_songs,
             columns,
         ))
         .padding(Padding::new(1.0).left(12.0).right(12.0))
@@ -303,7 +314,11 @@ pub fn build_list<'a>(
         .spacing(0.0)
         .on_empty_area(Message::HoverSong(None))
         .on_item_hover(move |index| {
-            let song_id = songs_for_hover.get(index).map(|s| s.id);
+            let song_index = indices_for_hover
+                .as_ref()
+                .and_then(|indices| indices.get(index).copied())
+                .unwrap_or(index);
+            let song_id = songs.get(song_index).map(|s| s.id);
             Message::HoverSong(song_id)
         })
         .into()
@@ -317,7 +332,7 @@ fn build_song_row(
     is_playing: bool,
     is_hovered: bool,
     animation_progress: f32,
-    liked_songs: &HashSet<u64>,
+    liked_songs: Option<&HashSet<u64>>,
     columns: PlaylistColumns,
 ) -> Element<'static, Message> {
     let song_id = song.id;
@@ -397,7 +412,7 @@ fn build_song_row(
     } else {
         song_id as u64
     };
-    let is_liked = liked_songs.contains(&ncm_song_id);
+    let is_liked = liked_songs.is_some_and(|songs| songs.contains(&ncm_song_id));
 
     // Duration or like button (use cached SVG handles)
     let duration_or_like: Element<'static, Message> = if columns.show_like && is_hovered {
@@ -501,19 +516,17 @@ fn build_song_row(
 }
 
 /// Filter songs by search query (title, artist, album)
-pub fn filter_songs(songs: &[SongItem], query: &str) -> Vec<SongItem> {
+pub fn filter_song_indices(songs: &[SongItem], query: &str) -> Option<Vec<usize>> {
     if query.is_empty() {
-        return songs.to_vec();
+        return None;
     }
 
     let query_lower = query.to_lowercase();
-    songs
-        .iter()
-        .filter(|song| {
-            song.title.to_lowercase().contains(&query_lower)
-                || song.artist.to_lowercase().contains(&query_lower)
-                || song.album.to_lowercase().contains(&query_lower)
-        })
-        .cloned()
-        .collect()
+    Some(
+        songs
+            .iter()
+            .enumerate()
+            .filter_map(|(index, song)| song.search_text.contains(&query_lower).then_some(index))
+            .collect(),
+    )
 }

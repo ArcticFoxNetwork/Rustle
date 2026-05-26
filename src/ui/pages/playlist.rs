@@ -75,14 +75,14 @@ pub type PlaylistSongView = SongItem;
 
 /// Build the playlist detail page
 pub fn view<'a>(
-    playlist: &PlaylistView,
+    playlist: &'a PlaylistView,
     image_state: &'a ImageState,
     song_animations: &'a crate::ui::animation::HoverAnimations<i64>,
     icon_animations: &crate::ui::animation::HoverAnimations<crate::app::IconId>,
     search_animation: &crate::ui::animation::SingleHoverAnimation,
     search_expanded: bool,
     search_query: &str,
-    liked_songs: HashSet<u64>,
+    liked_songs: Option<&'a HashSet<u64>>,
     locale: Locale,
     scroll_state: Rc<RefCell<VirtualListState>>,
     current_user_id: Option<u64>,
@@ -101,8 +101,8 @@ pub fn view<'a>(
         current_user_id,
     );
 
-    // Filter songs based on search query
-    let filtered_songs = playlist_view::filter_songs(&playlist.songs, search_query);
+    // Filter songs by index so the full playlist is not cloned on every view rebuild.
+    let filtered_indices = playlist_view::filter_song_indices(&playlist.songs, search_query);
 
     // Content with gradient that extends through controls
     let header_and_controls = column![header, controls,].spacing(0).width(Fill);
@@ -166,7 +166,8 @@ pub fn view<'a>(
 
     // Use virtual list for song rows
     let song_list = playlist_view::build_list(
-        filtered_songs,
+        &playlist.songs,
+        filtered_indices,
         image_state,
         song_animations,
         liked_songs,

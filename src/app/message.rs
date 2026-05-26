@@ -599,7 +599,7 @@ pub enum Message {
     /// Measured content area resized
     ContentWidthResized(ContentWidthTarget, iced::Size),
     /// Play search result song
-    PlaySearchSong(SongInfo),
+    PlaySearchSong(u64),
     /// Open search result album/playlist
     OpenSearchResult(u64, crate::app::state::SearchTab),
     /// Switch artist page tab
@@ -1141,7 +1141,7 @@ impl std::fmt::Debug for Message {
                     size.height
                 )
             }
-            Self::PlaySearchSong(s) => simple!("PlaySearchSong", "id={}", s.id),
+            Self::PlaySearchSong(id) => simple!("PlaySearchSong", "id={}", id),
             Self::OpenSearchResult(id, tab) => {
                 simple!("OpenSearchResult", "id={}, tab={:?}", id, tab)
             }

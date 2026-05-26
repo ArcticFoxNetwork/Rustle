@@ -55,6 +55,10 @@ impl Database {
         ops::upsert_local_song(&self.pool, song).await
     }
 
+    pub async fn upsert_local_songs(&self, songs: Vec<NewSong>) -> Result<Vec<i64>> {
+        ops::upsert_local_songs(&self.pool, songs).await
+    }
+
     pub async fn get_song_by_path(&self, path: &str) -> Result<Option<DbSong>> {
         ops::get_song_by_path(&self.pool, path).await
     }

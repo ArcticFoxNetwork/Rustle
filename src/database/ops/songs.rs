@@ -77,6 +77,72 @@ pub async fn upsert_local_song(pool: &Pool<Sqlite>, song: NewSong) -> Result<i64
     Ok(result.last_insert_rowid())
 }
 
+/// Upsert local songs by storage path in one transaction while preserving row ids.
+pub async fn upsert_local_songs(pool: &Pool<Sqlite>, songs: Vec<NewSong>) -> Result<Vec<i64>> {
+    if songs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let now = current_timestamp();
+    let mut tx = pool.begin().await?;
+    let mut ids = Vec::with_capacity(songs.len());
+
+    for song in songs {
+        sqlx::query(
+            r#"
+            INSERT INTO songs (
+                file_path, title, artist, album, duration_secs, track_number, year, genre,
+                cover_path, file_hash, file_size, format, normalization_gain,
+                last_modified, is_missing, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+            ON CONFLICT(file_path) DO UPDATE SET
+                title = excluded.title,
+                artist = excluded.artist,
+                album = excluded.album,
+                duration_secs = excluded.duration_secs,
+                track_number = excluded.track_number,
+                year = excluded.year,
+                genre = excluded.genre,
+                cover_path = excluded.cover_path,
+                file_hash = excluded.file_hash,
+                file_size = excluded.file_size,
+                format = excluded.format,
+                normalization_gain = excluded.normalization_gain,
+                last_modified = excluded.last_modified,
+                is_missing = 0
+            "#,
+        )
+        .bind(&song.file_path)
+        .bind(&song.title)
+        .bind(&song.artist)
+        .bind(&song.album)
+        .bind(song.duration_secs)
+        .bind(song.track_number)
+        .bind(song.year)
+        .bind(&song.genre)
+        .bind(&song.cover_path)
+        .bind(&song.file_hash)
+        .bind(song.file_size)
+        .bind(&song.format)
+        .bind(song.normalization_gain)
+        .bind(now)
+        .bind(now)
+        .execute(&mut *tx)
+        .await?;
+
+        let id = sqlx::query_scalar::<_, i64>("SELECT id FROM songs WHERE file_path = ?")
+            .bind(&song.file_path)
+            .fetch_one(&mut *tx)
+            .await?;
+
+        ids.push(id);
+    }
+
+    tx.commit().await?;
+    Ok(ids)
+}
+
 /// Get song by file path
 pub async fn get_song_by_path(pool: &Pool<Sqlite>, path: &str) -> Result<Option<DbSong>> {
     let song = sqlx::query_as::<_, DbSong>("SELECT * FROM songs WHERE file_path = ?")

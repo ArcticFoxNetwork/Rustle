@@ -12,7 +12,10 @@ use iced::widget::{Space, column, container, pick_list, row, scrollable, text, t
 use iced::{Alignment, Background, Color, Element, Fill, Length, Padding, Point, Theme};
 
 use crate::app::Message;
-use crate::audio::{AudioAnalysisData, analyzer::FFT_SIZE};
+use crate::audio::{
+    AudioAnalysisData,
+    analyzer::{FFT_SIZE, SPECTRUM_BARS},
+};
 use crate::features::{EqualizerPreset, Settings};
 use crate::i18n::{Key, Locale};
 use crate::ui::theme;
@@ -83,7 +86,7 @@ pub fn view(
                 data.sample_rate(),
             )
         } else {
-            (0.0, 0.0, vec![-60.0; 128], 48000)
+            (0.0, 0.0, [-60.0; SPECTRUM_BARS], 48000)
         };
 
     let decay = settings.playback.spectrum_decay;
@@ -195,7 +198,7 @@ fn equalizer_section(settings: &Settings, locale: Locale) -> Element<'static, Me
 fn audio_visualization_section(
     left_level: f32,
     right_level: f32,
-    spectrum_db: Vec<f32>,
+    spectrum_db: [f32; SPECTRUM_BARS],
     sample_rate: u32,
     decay: f32,
     bars_mode: bool,
@@ -582,7 +585,7 @@ impl canvas::Program<Message> for VolumeMeter {
 
 /// Professional spectrum analyzer canvas (FFT-based)
 struct SpectrumAnalyzer {
-    spectrum_db: Vec<f32>,
+    spectrum_db: [f32; SPECTRUM_BARS],
     sample_rate: u32,
     #[allow(dead_code)]
     decay: f32,

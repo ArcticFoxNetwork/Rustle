@@ -90,14 +90,24 @@ impl App {
                 Some(Task::none())
             }
 
-            Message::PlaySearchSong(song_info) => {
-                // Convert SongInfo to playable format and play
+            Message::PlaySearchSong(song_id) => {
+                let Some(song_info) = self
+                    .ui
+                    .search
+                    .songs
+                    .iter()
+                    .find(|song| song.id == *song_id)
+                    .cloned()
+                else {
+                    return Some(Task::none());
+                };
+
                 tracing::info!(
                     "Playing search result: {} - {}",
                     song_info.name,
                     song_info.singer
                 );
-                Some(Task::done(Message::PlayNcmSong(song_info.clone())))
+                Some(Task::done(Message::PlayNcmSong(song_info)))
             }
 
             Message::OpenSearchResult(id, tab) => {
