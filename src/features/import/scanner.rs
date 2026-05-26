@@ -132,14 +132,7 @@ pub fn compute_partial_hash(path: &Path) -> Result<String> {
 fn check_external_cover(audio_path: &Path) -> Option<PathBuf> {
     use crate::features::media::cover;
 
-    // Try to find external cover file
-    if let Some(cover_source) = cover::find_cover_art(audio_path)
-        && let Some(path) = cover_source.path()
-    {
-        return Some(path.to_path_buf());
-    }
-
-    None
+    cover::find_cover_art(audio_path)
 }
 
 fn classify_metadata_error(path: &Path, error: anyhow::Error) -> SkipReason {
