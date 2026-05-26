@@ -344,6 +344,7 @@ pub enum Key {
     DownloadPending,
     DownloadNoActive,
     DownloadNoCompleted,
+    DownloadNoFailed,
     DownloadSpeed,
     DownloadCancel,
     DownloadRetry,

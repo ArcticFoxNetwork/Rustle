@@ -30,12 +30,12 @@ pub fn download_panel(
     ]
     .spacing(6);
 
-    let active_count = manager.active.len();
+    let active_count = manager.active.len() + manager.pending.len();
     let completed_count = manager.completed.len();
-    let is_active = tab == DownloadTab::Active;
+    let failed_count = manager.failed.len();
     let tab_active = make_tab_button(
         format!("{} ({})", locale.get(Key::DownloadActive), active_count),
-        is_active,
+        tab == DownloadTab::Active,
         Message::SwitchDownloadTab(DownloadTab::Active),
     );
     let tab_done = make_tab_button(
@@ -44,24 +44,32 @@ pub fn download_panel(
             locale.get(Key::DownloadCompleted),
             completed_count
         ),
-        !is_active,
+        tab == DownloadTab::Completed,
         Message::SwitchDownloadTab(DownloadTab::Completed),
+    );
+    let tab_failed = make_tab_button(
+        format!("{} ({})", locale.get(Key::DownloadFailed), failed_count),
+        tab == DownloadTab::Failed,
+        Message::SwitchDownloadTab(DownloadTab::Failed),
     );
 
     let body: Element<'static, Message> = match tab {
         DownloadTab::Active => {
-            if manager.active.is_empty() {
+            if active_count == 0 {
                 empty_placeholder(locale.get(Key::DownloadNoActive).to_string())
             } else {
-                column(
-                    manager
-                        .active
-                        .iter()
-                        .map(|t| build_active_card(t, image_state))
-                        .collect::<Vec<_>>(),
-                )
-                .spacing(16)
-                .into()
+                let cards = manager
+                    .active
+                    .iter()
+                    .map(|task| build_active_card(task, image_state, locale))
+                    .chain(
+                        manager
+                            .pending
+                            .iter()
+                            .map(|task| build_pending_card(task, image_state, locale)),
+                    )
+                    .collect::<Vec<_>>();
+                column(cards).spacing(16).into()
             }
         }
         DownloadTab::Completed => {
@@ -80,6 +88,21 @@ pub fn download_panel(
                 .into()
             }
         }
+        DownloadTab::Failed => {
+            if manager.failed.is_empty() {
+                empty_placeholder(locale.get(Key::DownloadNoFailed).to_string())
+            } else {
+                column(
+                    manager
+                        .failed
+                        .iter()
+                        .map(|t| build_failed_card(t, image_state, locale))
+                        .collect::<Vec<_>>(),
+                )
+                .spacing(12)
+                .into()
+            }
+        }
     };
 
     // Fixed header — matches settings header_container
@@ -87,7 +110,7 @@ pub fn download_panel(
         column![
             header,
             Space::new().height(24),
-            row![tab_active, tab_done].spacing(0)
+            row![tab_active, tab_done, tab_failed].spacing(0)
         ]
         .width(Length::Fill),
     )
@@ -179,15 +202,19 @@ fn make_tab_button(label: String, active: bool, msg: Message) -> Element<'static
         }),
         underline,
     ]
-    .width(90)
+    .width(110)
     .align_x(Alignment::Center)
     .into()
 }
 
 // ── Active download card ──────────────────────────────────────────────────
 
-fn build_active_card(task: &DownloadTask, image_state: &ImageState) -> Element<'static, Message> {
-    let (progress, _speed) = match &task.status {
+fn build_active_card(
+    task: &DownloadTask,
+    image_state: &ImageState,
+    locale: Locale,
+) -> Element<'static, Message> {
+    let (progress, speed) = match &task.status {
         DownloadStatus::Active { progress, speed } => (*progress, speed.clone()),
         _ => (0.0, String::new()),
     };
@@ -252,6 +279,16 @@ fn build_active_card(task: &DownloadTask, image_state: &ImageState) -> Element<'
                     color: Some(theme::text_muted(theme))
                 }),
             Space::new().width(Length::Fill),
+            text(format!("{} {}", locale.get(Key::DownloadSpeed), speed))
+                .size(theme::TEXT_SIZE_CAPTION)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_muted(theme))
+                }),
+            text("·")
+                .size(theme::TEXT_SIZE_CAPTION)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_muted(theme))
+                }),
             text(format!("{}%", pct))
                 .size(theme::TEXT_SIZE_CAPTION)
                 .style(|theme| text::Style {
@@ -287,6 +324,75 @@ fn build_active_card(task: &DownloadTask, image_state: &ImageState) -> Element<'
     .into()
 }
 
+fn build_pending_card(
+    task: &DownloadTask,
+    image_state: &ImageState,
+    locale: Locale,
+) -> Element<'static, Message> {
+    let title = task.metadata.title.clone();
+    let artist = task.metadata.artist.clone();
+    let song_id = task.song_id;
+
+    let (cover_kind, cover_id) =
+        crate::image::song_cover_key(task.song_id).unwrap_or((ImageKind::SongCover, 0));
+    let cover = cover_image::cover(
+        image_state.get(cover_kind, cover_id),
+        cover_kind,
+        CoverSize::Medium,
+    );
+
+    let info = column![
+        text(title)
+            .size(theme::TEXT_SIZE_BODY_LARGE)
+            .style(|theme| text::Style {
+                color: Some(theme::text_primary(theme))
+            }),
+        row![
+            text(artist)
+                .size(theme::TEXT_SIZE_LABEL)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_secondary(theme))
+                }),
+            text("·")
+                .size(theme::TEXT_SIZE_CAPTION)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_muted(theme))
+                }),
+            text(locale.get(Key::DownloadPending))
+                .size(theme::TEXT_SIZE_CAPTION)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_muted(theme))
+                }),
+            text("·")
+                .size(theme::TEXT_SIZE_CAPTION)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_muted(theme))
+                }),
+            quality_badge_el(task.quality.display_name(), quality_color(task.quality)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+    ]
+    .spacing(4);
+
+    container(
+        row![cover, info.width(Length::Fill), icon_danger_btn(song_id),]
+            .align_y(Alignment::Center)
+            .spacing(16),
+    )
+    .padding(16)
+    .style(|theme| container::Style {
+        background: Some(Background::Color(theme::panel_bg(theme))),
+        border: iced::Border {
+            radius: 12.0.into(),
+            width: 1.0,
+            color: theme::panel_border(theme),
+        },
+        ..Default::default()
+    })
+    .into()
+}
+
 // ── Completed download card ───────────────────────────────────────────────
 
 fn build_completed_card(
@@ -298,38 +404,21 @@ fn build_completed_card(
     let quality = task.quality;
     let size_str = format_size(task.file_size);
     let song_id = task.song_id;
+    let downloaded_time = task
+        .downloaded_at
+        .map(crate::utils::format_relative_time)
+        .unwrap_or_default();
 
-    let quality_badge: Option<Element<'static, Message>> = match quality {
-        crate::features::settings::MusicQuality::Lossless => Some(quality_badge_el(
-            "FLAC",
-            Color::from_rgb(168.0 / 255.0, 85.0 / 255.0, 247.0 / 255.0),
-        )),
-        crate::features::settings::MusicQuality::HiRes => {
-            Some(quality_badge_el("Hi-Res", Color::from_rgb(1.0, 0.76, 0.03)))
-        }
-        _ => None,
-    };
-
-    let title_row = if let Some(badge) = quality_badge {
-        row![
-            text(title)
-                .size(theme::TEXT_SIZE_BODY)
-                .style(|theme| text::Style {
-                    color: Some(theme::text_primary(theme))
-                }),
-            badge,
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center)
-    } else {
-        row![
-            text(title)
-                .size(theme::TEXT_SIZE_BODY)
-                .style(|theme| text::Style {
-                    color: Some(theme::text_primary(theme))
-                })
-        ]
-    };
+    let title_row = row![
+        text(title)
+            .size(theme::TEXT_SIZE_BODY)
+            .style(|theme| text::Style {
+                color: Some(theme::text_primary(theme))
+            }),
+        quality_badge_el(quality.display_name(), quality_color(quality)),
+    ]
+    .spacing(8)
+    .align_y(Alignment::Center);
 
     // Action buttons using SVG icons
     let actions = row![
@@ -371,6 +460,16 @@ fn build_completed_card(
                         .style(|theme| text::Style {
                             color: Some(theme::text_muted(theme))
                         }),
+                    text("·")
+                        .size(theme::TEXT_SIZE_CAPTION)
+                        .style(|theme| text::Style {
+                            color: Some(theme::text_muted(theme))
+                        }),
+                    text(downloaded_time)
+                        .size(theme::TEXT_SIZE_CAPTION)
+                        .style(|theme| text::Style {
+                            color: Some(theme::text_muted(theme))
+                        }),
                 ]
                 .spacing(8)
                 .align_y(Alignment::Center),
@@ -393,6 +492,95 @@ fn build_completed_card(
         ..Default::default()
     })
     .into()
+}
+
+fn build_failed_card(
+    task: &DownloadTask,
+    image_state: &ImageState,
+    locale: Locale,
+) -> Element<'static, Message> {
+    let title = task.metadata.title.clone();
+    let artist = task.metadata.artist.clone();
+    let song_id = task.song_id;
+    let error = match &task.status {
+        DownloadStatus::Failed(error) => error.clone(),
+        _ => String::new(),
+    };
+
+    let (cover_kind, cover_id) =
+        crate::image::song_cover_key(task.song_id).unwrap_or((ImageKind::SongCover, 0));
+    let cover = cover_image::cover(
+        image_state.get(cover_kind, cover_id),
+        cover_kind,
+        CoverSize::Medium,
+    );
+
+    let info = column![
+        row![
+            text(title)
+                .size(theme::TEXT_SIZE_BODY_LARGE)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_primary(theme))
+                }),
+            quality_badge_el(task.quality.display_name(), quality_color(task.quality)),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+        row![
+            text(artist)
+                .size(theme::TEXT_SIZE_LABEL)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_secondary(theme))
+                }),
+            text("·")
+                .size(theme::TEXT_SIZE_CAPTION)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_muted(theme))
+                }),
+            text(locale.get(Key::DownloadFailed))
+                .size(theme::TEXT_SIZE_CAPTION)
+                .style(|_theme| text::Style {
+                    color: Some(Color::from_rgb(0.94, 0.34, 0.34))
+                }),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center),
+        text(error)
+            .size(theme::TEXT_SIZE_CAPTION)
+            .style(|theme| text::Style {
+                color: Some(theme::text_muted(theme))
+            }),
+    ]
+    .spacing(4);
+
+    container(
+        row![cover, info.width(Length::Fill), icon_danger_btn(song_id),]
+            .align_y(Alignment::Center)
+            .spacing(16),
+    )
+    .padding(16)
+    .style(|theme| container::Style {
+        background: Some(Background::Color(theme::panel_bg(theme))),
+        border: iced::Border {
+            radius: 12.0.into(),
+            width: 1.0,
+            color: theme::panel_border(theme),
+        },
+        ..Default::default()
+    })
+    .into()
+}
+
+fn quality_color(quality: crate::features::settings::MusicQuality) -> Color {
+    match quality {
+        crate::features::settings::MusicQuality::Standard => Color::from_rgb(0.55, 0.61, 0.67),
+        crate::features::settings::MusicQuality::Higher => Color::from_rgb(0.23, 0.64, 0.78),
+        crate::features::settings::MusicQuality::High => Color::from_rgb(0.22, 0.74, 0.46),
+        crate::features::settings::MusicQuality::Lossless => {
+            Color::from_rgb(168.0 / 255.0, 85.0 / 255.0, 247.0 / 255.0)
+        }
+        crate::features::settings::MusicQuality::HiRes => Color::from_rgb(1.0, 0.76, 0.03),
+    }
 }
 
 fn quality_badge_el(label: &'static str, color: Color) -> Element<'static, Message> {

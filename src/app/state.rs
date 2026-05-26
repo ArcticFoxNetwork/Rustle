@@ -805,6 +805,7 @@ pub enum DownloadTab {
     #[default]
     Active,
     Completed,
+    Failed,
 }
 
 /// Context menu state

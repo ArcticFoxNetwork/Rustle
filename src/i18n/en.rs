@@ -354,6 +354,7 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::DownloadPending, "Pending");
     m.insert(Key::DownloadNoActive, "No active downloads");
     m.insert(Key::DownloadNoCompleted, "No completed downloads");
+    m.insert(Key::DownloadNoFailed, "No failed downloads");
     m.insert(Key::DownloadSpeed, "Speed");
     m.insert(Key::DownloadCancel, "Cancel");
     m.insert(Key::DownloadRetry, "Retry");

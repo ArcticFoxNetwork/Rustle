@@ -219,8 +219,12 @@ impl App {
                 ));
             }
             Message::DownloadBatchEnqueue(items) => {
-                refs.extend(items.iter().map(|(_, ncm_id, _, _, _, pic_url)| {
-                    RemoteImage::new(ImageKind::SongCover, *ncm_id, pic_url)
+                refs.extend(items.iter().filter_map(|(_, ncm_id, _, metadata)| {
+                    if let Some(crate::metadata::CoverSource::Url(url)) = &metadata.cover {
+                        Some(RemoteImage::new(ImageKind::SongCover, *ncm_id, url))
+                    } else {
+                        None
+                    }
                 }));
             }
             Message::DownloadUrlResolved(song_id, ncm_id, _, metadata) => {

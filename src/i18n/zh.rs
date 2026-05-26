@@ -324,6 +324,7 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::DownloadPending, "等待中");
     m.insert(Key::DownloadNoActive, "没有正在下载的任务");
     m.insert(Key::DownloadNoCompleted, "暂无已下载的文件");
+    m.insert(Key::DownloadNoFailed, "暂无失败的任务");
     m.insert(Key::DownloadSpeed, "速度");
     m.insert(Key::DownloadCancel, "取消");
     m.insert(Key::DownloadRetry, "重试");

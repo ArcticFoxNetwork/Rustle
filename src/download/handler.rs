@@ -6,9 +6,8 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 use crate::app::App;
+use crate::download::DownloadStatus;
 use crate::download::task;
-use crate::download::{DownloadStatus, DownloadTask};
-use crate::features::settings::MusicQuality;
 use crate::metadata::SongMetadata;
 
 impl App {
@@ -26,28 +25,16 @@ impl App {
             Message::DownloadBatchEnqueue(items) => {
                 let quality = self.core.settings.storage.download_quality;
                 let download_dir = self.core.settings.storage.effective_download_dir();
-                let count = items.len();
-                for (song_id, ncm_id, url, name, singer, pic_url) in items {
-                    let meta = SongMetadata {
-                        title: name.clone(),
-                        artist: singer.clone(),
-                        album: String::new(),
-                        cover: if pic_url.is_empty() {
-                            None
-                        } else {
-                            Some(crate::metadata::CoverSource::Url(pic_url.clone()))
-                        },
-                        ..Default::default()
-                    };
-                    self.core.download_manager.enqueue_song(
-                        *song_id,
-                        *ncm_id,
-                        url.clone(),
-                        quality,
-                        download_dir.clone(),
-                        meta,
-                    );
-                }
+                let songs = items
+                    .iter()
+                    .map(|(song_id, ncm_id, url, meta)| {
+                        (*song_id, *ncm_id, url.clone(), meta.clone())
+                    })
+                    .collect();
+                let count =
+                    self.core
+                        .download_manager
+                        .enqueue_playlist(songs, quality, download_dir);
                 Some(Task::batch([
                     self.download_schedule_next().unwrap_or(Task::none()),
                     Self::toast_info(format!("已添加 {} 首到下载队列", count)),
@@ -183,7 +170,9 @@ impl App {
             }
             Message::DownloadError(song_id, error) => {
                 warn!("Download failed for song {}: {}", song_id, error);
-                self.core.download_manager.fail(*song_id, error.clone());
+                if *song_id != 0 {
+                    self.core.download_manager.fail(*song_id, error.clone());
+                }
                 Some(Task::batch([
                     self.download_schedule_next().unwrap_or(Task::none()),
                     Self::toast_error(error.clone()),
@@ -218,29 +207,7 @@ impl App {
                 ]))
             }
             Message::DownloadsLoaded(rows) => {
-                for row in rows {
-                    let path = std::path::PathBuf::from(&row.file_path);
-                    if path.exists() {
-                        let meta = SongMetadata {
-                            title: row.title.clone(),
-                            artist: row.artist.clone(),
-                            ..Default::default()
-                        };
-                        self.core.download_manager.completed.push(DownloadTask {
-                            song_id: row.song_id,
-                            ncm_id: row.ncm_id as u64,
-                            song_url: String::new(),
-                            quality: MusicQuality::High,
-                            download_dir: path
-                                .parent()
-                                .map(|p| p.to_path_buf())
-                                .unwrap_or_default(),
-                            file_size: row.file_size as u64,
-                            status: DownloadStatus::Completed(path),
-                            metadata: meta,
-                        });
-                    }
-                }
+                self.core.download_manager.restore_from_rows(rows.clone());
                 Some(Task::none())
             }
             Message::OpenDownloads => Some(Task::done(Message::Navigate(
@@ -392,17 +359,7 @@ impl App {
                 if items.is_empty() {
                     crate::app::Message::DownloadError(0, "无可用的下载链接".into())
                 } else {
-                    let batch: Vec<(i64, u64, String, String, String, String)> = items
-                        .into_iter()
-                        .map(|(sid, nid, url, meta)| {
-                            let pic = match &meta.cover {
-                                Some(crate::metadata::CoverSource::Url(u)) => u.clone(),
-                                _ => String::new(),
-                            };
-                            (sid, nid, url, meta.title, meta.artist, pic)
-                        })
-                        .collect();
-                    crate::app::Message::DownloadBatchEnqueue(batch)
+                    crate::app::Message::DownloadBatchEnqueue(items)
                 }
             },
         ))

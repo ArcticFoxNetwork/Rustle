@@ -399,8 +399,8 @@ pub enum Message {
     RequestDownloadPlaylist(i64, String, u32),
     /// Confirm batch download from confirmation dialog
     ConfirmDownloadPlaylist,
-    /// Playlist download URLs resolved (vec of (song_id, ncm_id, url, title, artist, pic_url))
-    DownloadBatchEnqueue(Vec<(i64, u64, String, String, String, String)>),
+    /// Playlist download URLs resolved (vec of (song_id, ncm_id, url, metadata))
+    DownloadBatchEnqueue(Vec<(i64, u64, String, crate::metadata::SongMetadata)>),
     /// Cancel a download
     DownloadCancel(i64),
     /// Download progress update (song_id, downloaded_bytes, total_bytes)

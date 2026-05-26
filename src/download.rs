@@ -5,6 +5,7 @@ pub mod task;
 
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::features::settings::MusicQuality;
 use crate::metadata::SongMetadata;
@@ -28,6 +29,7 @@ pub struct DownloadTask {
     pub download_dir: PathBuf,
     pub file_size: u64,
     pub status: DownloadStatus,
+    pub downloaded_at: Option<i64>,
     /// All descriptive metadata in one place — adding a field to SongMetadata
     /// automatically propagates through the entire download pipeline.
     pub metadata: SongMetadata,
@@ -39,7 +41,7 @@ pub struct DownloadManager {
     pub pending: VecDeque<DownloadTask>,
     pub active: Vec<DownloadTask>,
     pub completed: Vec<DownloadTask>,
-    pub failed: Vec<(DownloadTask, String)>,
+    pub failed: Vec<DownloadTask>,
     #[doc(hidden)]
     pub abort_handles: HashMap<i64, iced::task::Handle>,
 }
@@ -72,6 +74,7 @@ impl DownloadManager {
         if blocked {
             return false;
         }
+        self.failed.retain(|t| t.song_id != song_id);
         self.pending.push_back(DownloadTask {
             song_id,
             ncm_id,
@@ -80,6 +83,7 @@ impl DownloadManager {
             download_dir,
             file_size: 0,
             status: DownloadStatus::Pending,
+            downloaded_at: None,
             metadata,
         });
         true
@@ -120,6 +124,7 @@ impl DownloadManager {
         if let Some(pos) = self.active.iter().position(|t| t.song_id == song_id) {
             let mut task = self.active.remove(pos);
             task.status = DownloadStatus::Completed(path);
+            task.downloaded_at = Some(current_timestamp());
             self.completed.push(task);
         }
         self.abort_handles.remove(&song_id);
@@ -127,8 +132,9 @@ impl DownloadManager {
 
     pub fn fail(&mut self, song_id: i64, error: String) {
         if let Some(pos) = self.active.iter().position(|t| t.song_id == song_id) {
-            let task = self.active.remove(pos);
-            self.failed.push((task, error));
+            let mut task = self.active.remove(pos);
+            task.status = DownloadStatus::Failed(error);
+            self.failed.push(task);
         }
         self.abort_handles.remove(&song_id);
     }
@@ -139,29 +145,48 @@ impl DownloadManager {
         }
         self.pending.retain(|t| t.song_id != song_id);
         self.active.retain(|t| t.song_id != song_id);
+        self.failed.retain(|t| t.song_id != song_id);
     }
 
-    pub fn total_count(&self) -> usize {
-        self.pending.len() + self.active.len() + self.completed.len()
-    }
-
-    pub fn restore_from_db(&mut self, songs: Vec<crate::database::DbSong>) {
-        for song in songs {
-            let path = std::path::PathBuf::from(&song.file_path);
+    pub fn restore_from_rows(&mut self, rows: Vec<crate::database::DownloadRow>) {
+        self.completed.clear();
+        for row in rows {
+            let path = std::path::PathBuf::from(&row.file_path);
             if !path.exists() {
                 continue;
             }
-            let ncm_id = if song.id < 0 { (-song.id) as u64 } else { 0 };
             self.completed.push(DownloadTask {
-                song_id: song.id,
-                ncm_id,
+                song_id: row.song_id,
+                ncm_id: row.ncm_id.max(0) as u64,
                 song_url: String::new(),
-                quality: MusicQuality::High,
+                quality: parse_quality(&row.quality),
                 download_dir: path.parent().map(|p| p.to_path_buf()).unwrap_or_default(),
-                file_size: song.file_size as u64,
+                file_size: row.file_size.max(0) as u64,
                 status: DownloadStatus::Completed(path),
-                metadata: SongMetadata::from(&song),
+                downloaded_at: Some(row.downloaded_at),
+                metadata: SongMetadata {
+                    title: row.title,
+                    artist: row.artist,
+                    ..Default::default()
+                },
             });
         }
+    }
+}
+
+fn current_timestamp() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn parse_quality(value: &str) -> MusicQuality {
+    match value {
+        "Standard" | "128kbps" => MusicQuality::Standard,
+        "Higher" | "192kbps" => MusicQuality::Higher,
+        "Lossless" | "SQ (无损)" => MusicQuality::Lossless,
+        "HiRes" | "Hi-Res" => MusicQuality::HiRes,
+        _ => MusicQuality::High,
     }
 }
