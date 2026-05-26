@@ -152,14 +152,6 @@ pub async fn get_song_by_path(pool: &Pool<Sqlite>, path: &str) -> Result<Option<
     Ok(song)
 }
 
-pub async fn get_song_by_id(pool: &Pool<Sqlite>, id: i64) -> Result<Option<DbSong>> {
-    let song = sqlx::query_as::<_, DbSong>("SELECT * FROM songs WHERE id = ?")
-        .bind(id)
-        .fetch_optional(pool)
-        .await?;
-    Ok(song)
-}
-
 /// Get all songs
 pub async fn get_all_songs(pool: &Pool<Sqlite>) -> Result<Vec<DbSong>> {
     let songs = sqlx::query_as::<_, DbSong>(

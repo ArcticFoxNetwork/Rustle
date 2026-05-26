@@ -63,10 +63,6 @@ impl Database {
         ops::get_song_by_path(&self.pool, path).await
     }
 
-    pub async fn get_song_by_id(&self, id: i64) -> Result<Option<DbSong>> {
-        ops::get_song_by_id(&self.pool, id).await
-    }
-
     pub async fn get_all_songs(&self) -> Result<Vec<DbSong>> {
         ops::get_all_songs(&self.pool).await
     }
