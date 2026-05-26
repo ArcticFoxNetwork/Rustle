@@ -31,13 +31,6 @@ pub struct CacheStats {
     pub avatars_bytes: u64,
 }
 
-impl CacheStats {
-    /// Get total size in megabytes
-    pub fn total_mb(&self) -> u64 {
-        self.total_bytes / (1024 * 1024)
-    }
-}
-
 /// Get all cache directories
 fn cache_directories() -> Vec<PathBuf> {
     vec![
@@ -122,7 +115,7 @@ pub fn calculate_cache_stats() -> CacheStats {
 }
 
 /// Clear all cache
-pub fn clear_all_cache() -> Result<ClearResult, CacheError> {
+pub fn clear_all_cache() -> ClearResult {
     let mut result = ClearResult::default();
 
     for dir in cache_directories() {
@@ -152,13 +145,13 @@ pub fn clear_all_cache() -> Result<ClearResult, CacheError> {
         result.errors
     );
 
-    Ok(result)
+    result
 }
 
 /// Enforce cache size limit by deleting oldest files
 ///
 /// Returns the number of bytes freed
-pub fn enforce_cache_limit(max_cache_mb: u64) -> Result<ClearResult, CacheError> {
+pub fn enforce_cache_limit(max_cache_mb: u64) -> ClearResult {
     let max_bytes = max_cache_mb * 1024 * 1024;
     let mut result = ClearResult::default();
 
@@ -177,7 +170,7 @@ pub fn enforce_cache_limit(max_cache_mb: u64) -> Result<ClearResult, CacheError>
             current_size / (1024 * 1024),
             max_cache_mb
         );
-        return Ok(result);
+        return result;
     }
 
     // Sort by modification time (oldest first)
@@ -212,7 +205,7 @@ pub fn enforce_cache_limit(max_cache_mb: u64) -> Result<ClearResult, CacheError>
         target_free / (1024 * 1024)
     );
 
-    Ok(result)
+    result
 }
 
 /// Result of a cache clear operation
@@ -295,19 +288,3 @@ fn cleanup_temp_files_in_dir(dir: &std::path::PathBuf, result: &mut ClearResult)
         }
     }
 }
-
-/// Cache operation errors
-#[derive(Debug, Clone)]
-pub enum CacheError {
-    Io(String),
-}
-
-impl std::fmt::Display for CacheError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CacheError::Io(e) => write!(f, "Cache IO error: {}", e),
-        }
-    }
-}
-
-impl std::error::Error for CacheError {}

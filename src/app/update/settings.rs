@@ -313,15 +313,8 @@ impl App {
             )),
             Message::ClearCache => Some(Task::perform(
                 async {
-                    match cache::clear_all_cache() {
-                        Ok(result) => {
-                            Message::CacheCleared(result.files_deleted, result.bytes_freed)
-                        }
-                        Err(e) => {
-                            tracing::error!("Failed to clear cache: {}", e);
-                            Message::CacheCleared(0, 0)
-                        }
-                    }
+                    let result = cache::clear_all_cache();
+                    Message::CacheCleared(result.files_deleted, result.bytes_freed)
                 },
                 |m| m,
             )),
@@ -342,22 +335,15 @@ impl App {
                 let max_mb = self.core.settings.storage.max_cache_mb;
                 Some(Task::perform(
                     async move {
-                        match cache::enforce_cache_limit(max_mb) {
-                            Ok(result) => {
-                                if result.files_deleted > 0 {
-                                    tracing::info!(
-                                        "Cache limit enforced: {} files deleted, {} MB freed",
-                                        result.files_deleted,
-                                        result.mb_freed()
-                                    );
-                                }
-                                Message::RefreshCacheStats
-                            }
-                            Err(e) => {
-                                tracing::error!("Failed to enforce cache limit: {}", e);
-                                Message::RefreshCacheStats
-                            }
+                        let result = cache::enforce_cache_limit(max_mb);
+                        if result.files_deleted > 0 {
+                            tracing::info!(
+                                "Cache limit enforced: {} files deleted, {} MB freed",
+                                result.files_deleted,
+                                result.mb_freed()
+                            );
                         }
+                        Message::RefreshCacheStats
                     },
                     |m| m,
                 ))
