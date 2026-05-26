@@ -1,13 +1,15 @@
 //! Unified image pipeline handler.
 //!
-//! Processes `ImageDownloadNeeded` by checking the local cache and spawning
-//! async downloads when needed, then stores the resulting handle in `ImageState`
-//! on `ImageDownloadReady`.
+//! Queues remote image requests, runs a bounded number of downloads, then stores
+//! the resulting handle in `ImageState` on `ImageDownloadReady`.
 
 use iced::Task;
 
+use crate::app::state::ImageRequest;
 use crate::app::{App, Message};
 use crate::image::{ImageKind, ImageResult};
+
+const MAX_IMAGE_DOWNLOADS: usize = 6;
 
 impl App {
     // ── Main handler ──
@@ -15,58 +17,17 @@ impl App {
     /// Handle unified image-pipeline messages.
     pub fn handle_image(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
-            Message::ImageDownloadNeeded(kind, id, url) => {
-                let kind = *kind;
-                let id = *id;
-                let url = url.clone();
-
-                if url.is_empty() {
-                    return None;
-                }
-                if self.ui.image_state.is_inflight(kind, id) {
-                    return None;
-                }
-                if self.ui.image_state.get(kind, id).is_some() {
-                    return None;
-                }
-                if let Some(path) = crate::image::resolve_cached(kind, id) {
-                    self.store_image_handle(kind, id, path);
-                    return None;
-                }
-
-                let client = self.core.ncm_client.as_ref().cloned()?;
-                let (width, height): (u16, u16) = match kind {
-                    ImageKind::Banner => (800, 280),
-                    ImageKind::SongCover | ImageKind::LocalSongCover => (200, 200),
-                    ImageKind::UserAvatar => (200, 200),
-                    _ => (300, 300),
-                };
-
-                self.ui.image_state.mark_inflight(kind, id);
-
-                Some(Task::perform(
-                    async move {
-                        let base_path =
-                            kind.cache_dir().join(format!("{}.jpg", kind.file_stem(id)));
-                        crate::utils::download_img(&client, &url, base_path, width, height)
-                            .await
-                            .map(|path| ImageResult { kind, id, path })
-                    },
-                    move |result| match result {
-                        Some(r) => Message::ImageDownloadReady(r.kind, r.id, r.path),
-                        None => Message::ImageDownloadFailed(kind, id),
-                    },
-                ))
-            }
-
             Message::ImageDownloadReady(kind, id, path) => {
                 self.store_image_handle(*kind, *id, path.clone());
-                Some(self.after_image_ready(*kind, *id, path))
+                Some(Task::batch([
+                    self.after_image_ready(*kind, *id, path),
+                    self.pump_image_downloads(),
+                ]))
             }
 
             Message::ImageDownloadFailed(kind, id) => {
                 self.ui.image_state.clear_inflight(*kind, *id);
-                Some(Task::none())
+                Some(self.pump_image_downloads())
             }
 
             _ => None,
@@ -77,9 +38,7 @@ impl App {
     pub(super) fn collect_image_tasks_after_message(&mut self, message: &Message) -> Task<Message> {
         if matches!(
             message,
-            Message::ImageDownloadNeeded(..)
-                | Message::ImageDownloadReady(..)
-                | Message::ImageDownloadFailed(..)
+            Message::ImageDownloadReady(..) | Message::ImageDownloadFailed(..)
         ) {
             return Task::none();
         }
@@ -240,10 +199,11 @@ impl App {
             _ => {}
         }
 
-        let tasks = refs
+        let mut tasks = refs
             .into_iter()
-            .filter_map(|image| self.ensure_image_loaded(image.kind, image.id, &image.url))
+            .map(|image| self.enqueue_image_download(image.kind, image.id, &image.url))
             .collect::<Vec<_>>();
+        tasks.push(self.pump_image_downloads());
 
         Task::batch(tasks)
     }
@@ -263,9 +223,8 @@ impl App {
             }
 
             if is_remote_image_url(path_or_url) {
-                return self
-                    .ensure_image_loaded(kind, id, path_or_url)
-                    .unwrap_or_else(Task::none);
+                let enqueue_task = self.enqueue_image_download(kind, id, path_or_url);
+                return Task::batch([enqueue_task, self.pump_image_downloads()]);
             }
         }
 
@@ -276,30 +235,57 @@ impl App {
     // ── Internal ──
 
     /// If the given `(kind, id)` is already in memory or on disk, populate
-    /// `ImageState` immediately.  Otherwise dispatch an `ImageDownloadNeeded`.
-    fn ensure_image_loaded(
-        &mut self,
-        kind: ImageKind,
-        id: u64,
-        url: &str,
-    ) -> Option<Task<Message>> {
+    /// `ImageState` immediately. Otherwise queue it for the bounded downloader.
+    fn enqueue_image_download(&mut self, kind: ImageKind, id: u64, url: &str) -> Task<Message> {
         if url.is_empty() {
-            return None;
+            return Task::none();
         }
         if self.ui.image_state.get(kind, id).is_some() {
-            return None;
+            return Task::none();
         }
         if let Some(task) = self.register_cached_image(kind, id) {
-            return Some(task);
+            return task;
         }
-        if self.ui.image_state.is_inflight(kind, id) {
-            return None;
+        if self.ui.image_state.is_inflight(kind, id) || self.ui.image_state.is_queued(kind, id) {
+            return Task::none();
         }
-        Some(Task::done(Message::ImageDownloadNeeded(
-            kind,
-            id,
-            url.to_string(),
-        )))
+        if self.core.ncm_client.is_none() {
+            return Task::none();
+        }
+
+        self.ui.image_state.enqueue(kind, id, url.to_string());
+        Task::none()
+    }
+
+    fn pump_image_downloads(&mut self) -> Task<Message> {
+        let Some(client) = self.core.ncm_client.as_ref().cloned() else {
+            return Task::none();
+        };
+
+        let mut tasks = Vec::new();
+
+        while self.ui.image_state.inflight.len() < MAX_IMAGE_DOWNLOADS {
+            let Some(request) = self.ui.image_state.pop_pending() else {
+                break;
+            };
+
+            if self.ui.image_state.get(request.kind, request.id).is_some()
+                || self.ui.image_state.is_inflight(request.kind, request.id)
+            {
+                continue;
+            }
+
+            if let Some(path) = crate::image::resolve_cached(request.kind, request.id) {
+                self.store_image_handle(request.kind, request.id, path.clone());
+                tasks.push(self.after_image_ready(request.kind, request.id, &path));
+                continue;
+            }
+
+            self.ui.image_state.mark_inflight(request.kind, request.id);
+            tasks.push(start_image_download(client.clone(), request));
+        }
+
+        Task::batch(tasks)
     }
 
     fn register_cached_image(&mut self, kind: ImageKind, id: u64) -> Option<Task<Message>> {
@@ -472,6 +458,29 @@ impl App {
             _ => {}
         }
     }
+}
+
+fn start_image_download(client: crate::api::NcmClient, request: ImageRequest) -> Task<Message> {
+    let ImageRequest { kind, id, url } = request;
+    let (width, height): (u16, u16) = match kind {
+        ImageKind::Banner => (800, 280),
+        ImageKind::SongCover | ImageKind::LocalSongCover => (200, 200),
+        ImageKind::UserAvatar => (200, 200),
+        _ => (300, 300),
+    };
+
+    Task::perform(
+        async move {
+            let base_path = kind.cache_dir().join(format!("{}.jpg", kind.file_stem(id)));
+            crate::utils::download_img(&client, &url, base_path, width, height)
+                .await
+                .map(|path| ImageResult { kind, id, path })
+        },
+        move |result| match result {
+            Some(r) => Message::ImageDownloadReady(r.kind, r.id, r.path),
+            None => Message::ImageDownloadFailed(kind, id),
+        },
+    )
 }
 
 struct RemoteImage {

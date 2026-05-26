@@ -3,6 +3,7 @@
 
 use iced::time::Instant;
 use std::collections::HashSet;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,6 +39,8 @@ use std::collections::HashMap as StateMap;
 pub struct ImageState {
     pub entries: StateMap<(crate::image::ImageKind, u64), ImageEntry>,
     pub inflight: std::collections::HashSet<(crate::image::ImageKind, u64)>,
+    pub pending: VecDeque<ImageRequest>,
+    pub queued: std::collections::HashSet<(crate::image::ImageKind, u64)>,
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +48,13 @@ pub struct ImageEntry {
     pub path: PathBuf,
     pub handle: iced::widget::image::Handle,
     pub dimensions: Option<(u32, u32)>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ImageRequest {
+    pub kind: crate::image::ImageKind,
+    pub id: u64,
+    pub url: String,
 }
 
 impl ImageState {
@@ -79,9 +89,11 @@ impl ImageState {
             },
         );
         self.inflight.remove(&(kind, id));
+        self.queued.remove(&(kind, id));
     }
 
     pub fn mark_inflight(&mut self, kind: crate::image::ImageKind, id: u64) {
+        self.queued.remove(&(kind, id));
         self.inflight.insert((kind, id));
     }
 
@@ -91,6 +103,31 @@ impl ImageState {
 
     pub fn is_inflight(&self, kind: crate::image::ImageKind, id: u64) -> bool {
         self.inflight.contains(&(kind, id))
+    }
+
+    pub fn is_queued(&self, kind: crate::image::ImageKind, id: u64) -> bool {
+        self.queued.contains(&(kind, id))
+    }
+
+    pub fn enqueue(&mut self, kind: crate::image::ImageKind, id: u64, url: String) -> bool {
+        let key = (kind, id);
+        if self.entries.contains_key(&key)
+            || self.inflight.contains(&key)
+            || self.queued.contains(&key)
+            || url.is_empty()
+        {
+            return false;
+        }
+
+        self.pending.push_back(ImageRequest { kind, id, url });
+        self.queued.insert(key);
+        true
+    }
+
+    pub fn pop_pending(&mut self) -> Option<ImageRequest> {
+        let request = self.pending.pop_front()?;
+        self.queued.remove(&(request.kind, request.id));
+        Some(request)
     }
 }
 

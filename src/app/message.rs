@@ -550,8 +550,6 @@ pub enum Message {
     PlaylistCreatorDetailLoaded(i64, UserDetail),
 
     // ============ Unified Image Pipeline ============
-    /// Request async image download (kind, id, url)
-    ImageDownloadNeeded(crate::image::ImageKind, u64, String),
     /// Image download completed and cached locally (kind, id, local_path)
     ImageDownloadReady(crate::image::ImageKind, u64, PathBuf),
     /// Image download failed and should be eligible for retry (kind, id)
@@ -1087,9 +1085,6 @@ impl std::fmt::Debug for Message {
             Self::ToggleBannerFavorite(i) => simple!("ToggleBannerFavorite", "{}", i),
 
             // Cloud Playlist
-            Self::ImageDownloadNeeded(kind, id, _url) => {
-                simple!("ImageDownloadNeeded", "{:?}, {}", kind, id)
-            }
             Self::ImageDownloadReady(kind, id, _path) => {
                 simple!("ImageDownloadReady", "{:?}, {}", kind, id)
             }
