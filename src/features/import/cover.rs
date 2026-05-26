@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use image::ImageFormat;
 use image::imageops::FilterType;
 use std::io::Cursor;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use xxhash_rust::xxh3::xxh3_64;
 
 /// Default thumbnail size (width and height)
@@ -26,32 +26,22 @@ impl CoverCache {
         Ok(Self { cache_dir })
     }
 
-    /// Get the cache directory path
-    pub fn cache_dir(&self) -> &Path {
-        &self.cache_dir
-    }
-
     /// Generate a hash for cover art data
-    pub fn hash_cover(data: &[u8]) -> String {
+    fn hash_cover(data: &[u8]) -> String {
         format!("{:016x}", xxh3_64(data))
     }
 
     /// Get the path where a cover with the given hash would be stored
-    pub fn get_cover_path(&self, hash: &str) -> PathBuf {
+    fn cover_path(&self, hash: &str) -> PathBuf {
         self.cache_dir.join(format!("{}.jpg", hash))
-    }
-
-    /// Check if a cover with the given hash exists in cache
-    pub fn has_cover(&self, hash: &str) -> bool {
-        self.get_cover_path(hash).exists()
     }
 
     /// Save cover art to cache, returning the hash and path
     ///
     /// The cover is resized to a thumbnail and saved as JPEG for consistency
-    pub fn save_cover(&self, data: &[u8]) -> Result<(String, PathBuf)> {
+    fn save_cover(&self, data: &[u8]) -> Result<(String, PathBuf)> {
         let hash = Self::hash_cover(data);
-        let path = self.get_cover_path(&hash);
+        let path = self.cover_path(&hash);
 
         // Skip if already cached
         if path.exists() {
@@ -83,52 +73,6 @@ impl CoverCache {
     ) -> Result<(String, PathBuf)> {
         // image crate auto-detects format, so we ignore MIME hint
         self.save_cover(data)
-    }
-
-    /// Get the total size of the cache in bytes
-    pub fn cache_size(&self) -> Result<u64> {
-        let mut total = 0u64;
-        for entry in std::fs::read_dir(&self.cache_dir)? {
-            if let Ok(entry) = entry
-                && let Ok(metadata) = entry.metadata()
-            {
-                total += metadata.len();
-            }
-        }
-        Ok(total)
-    }
-
-    /// Get the number of cached covers
-    pub fn cache_count(&self) -> Result<usize> {
-        Ok(std::fs::read_dir(&self.cache_dir)?
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .map(|ext| ext == "jpg")
-                    .unwrap_or(false)
-            })
-            .count())
-    }
-
-    /// Clear the entire cache
-    pub fn clear(&self) -> Result<()> {
-        for entry in std::fs::read_dir(&self.cache_dir)?.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                std::fs::remove_file(path)?;
-            }
-        }
-        Ok(())
-    }
-
-    /// Remove a specific cover from cache
-    pub fn remove(&self, hash: &str) -> Result<()> {
-        let path = self.get_cover_path(hash);
-        if path.exists() {
-            std::fs::remove_file(path)?;
-        }
-        Ok(())
     }
 }
 
