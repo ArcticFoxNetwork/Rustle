@@ -75,22 +75,6 @@ fn is_likely_valid_text(s: &str) -> bool {
     suspicious_count <= threshold
 }
 
-/// Try to detect if a string contains CJK characters
-pub fn contains_cjk(s: &str) -> bool {
-    s.chars().any(|c| {
-        // CJK Unified Ideographs
-        ('\u{4E00}'..='\u{9FFF}').contains(&c) ||
-        // CJK Extension A
-        ('\u{3400}'..='\u{4DBF}').contains(&c) ||
-        // Hiragana
-        ('\u{3040}'..='\u{309F}').contains(&c) ||
-        // Katakana
-        ('\u{30A0}'..='\u{30FF}').contains(&c) ||
-        // Hangul
-        ('\u{AC00}'..='\u{D7AF}').contains(&c)
-    })
-}
-
 /// Normalize whitespace and trim a string
 pub fn normalize_string(s: &str) -> String {
     s.split_whitespace().collect::<Vec<_>>().join(" ")
@@ -112,13 +96,5 @@ mod tests {
         let gbk_bytes: &[u8] = &[0xD6, 0xDC, 0xBD, 0xDC, 0xC2, 0xD7];
         let decoded = decode_string(gbk_bytes);
         assert_eq!(decoded, "周杰伦");
-    }
-
-    #[test]
-    fn test_contains_cjk() {
-        assert!(contains_cjk("周杰伦"));
-        assert!(contains_cjk("こんにちは"));
-        assert!(contains_cjk("안녕하세요"));
-        assert!(!contains_cjk("Hello World"));
     }
 }
