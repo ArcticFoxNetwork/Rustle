@@ -19,12 +19,6 @@ fn get_cache_path(ncm_id: u64, suffix: &str) -> PathBuf {
     cache_dir.join(format!("{}{}", ncm_id, suffix))
 }
 
-/// Check if lyrics are cached
-pub fn is_lyrics_cached(ncm_id: u64) -> bool {
-    // Check for any cached format
-    get_cache_path(ncm_id, ".yrc").exists() || get_cache_path(ncm_id, ".lrc").exists()
-}
-
 /// Load cached lyrics
 pub fn load_cached_lyrics(ncm_id: u64) -> Option<Vec<LyricLineOwned>> {
     // Try YRC first (word-level)
