@@ -29,11 +29,7 @@ impl App {
         // 1. Load settings first to initialize locale correctly
         let settings = crate::features::Settings::load();
         let locale = {
-            let lang = if settings.display.language == "zh" {
-                Language::Chinese
-            } else {
-                Language::English
-            };
+            let lang = Language::from_code(&settings.display.language).unwrap_or_default();
             Locale::new(lang)
         };
 

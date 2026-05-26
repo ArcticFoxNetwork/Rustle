@@ -24,7 +24,7 @@ impl Language {
     pub fn display_name(&self) -> &'static str {
         match self {
             Language::English => "English",
-            Language::Chinese => "中文",
+            Language::Chinese => "简体中文",
         }
     }
 
@@ -34,6 +34,14 @@ impl Language {
             Language::English => "en",
             Language::Chinese => "zh",
         }
+    }
+
+    /// Get a language by code
+    pub fn from_code(code: &str) -> Option<Self> {
+        Self::all()
+            .iter()
+            .copied()
+            .find(|language| language.code() == code)
     }
 
     /// All available languages

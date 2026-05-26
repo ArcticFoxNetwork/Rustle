@@ -11,7 +11,7 @@ use iced::{Alignment, Background, Border, Color, Element, Fill, Padding};
 
 use crate::app::{ImageState, Message, SettingsSection};
 use crate::features::{Action, KeyBindings, Settings};
-use crate::i18n::{Key, Locale};
+use crate::i18n::{Key, Language, Locale};
 use crate::image::ImageKind;
 use crate::ui::theme;
 
@@ -575,6 +575,11 @@ fn display_section(settings: &Settings, locale: Locale) -> Element<'static, Mess
 
     let ask_label = locale.get(Key::SettingsCloseBehaviorAsk).to_string();
     let exit_label = locale.get(Key::SettingsCloseBehaviorExit).to_string();
+    let language_options: Vec<String> = Language::all()
+        .iter()
+        .map(|language| language.display_name().to_string())
+        .collect();
+    let current_language = Language::from_code(&settings.display.language).unwrap_or_default();
 
     column![
         setting_row(
@@ -590,15 +595,15 @@ fn display_section(settings: &Settings, locale: Locale) -> Element<'static, Mess
             locale.get(Key::SettingsLanguage),
             None,
             styled_pick_list(
-                vec!["简体中文".to_string(), "English".to_string()],
-                Some(if settings.display.language == "zh" {
-                    "简体中文".to_string()
-                } else {
-                    "English".to_string()
-                }),
+                language_options,
+                Some(current_language.display_name().to_string()),
                 |value| {
-                    let lang = if value == "简体中文" { "zh" } else { "en" };
-                    Message::UpdateAppLanguage(lang.to_string())
+                    let language = Language::all()
+                        .iter()
+                        .copied()
+                        .find(|language| language.display_name() == value)
+                        .unwrap_or_default();
+                    Message::UpdateAppLanguage(language.code().to_string())
                 },
             )
         ),

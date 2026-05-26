@@ -5,6 +5,7 @@ use crate::app::message::Message;
 use crate::app::state::{App, Route};
 use crate::cache;
 use crate::features::keybindings::{KeyBinding, KeyCode, ModifierSet};
+use crate::i18n::{Language, Locale};
 use iced::Rectangle;
 use iced::Task;
 use iced::advanced::widget::operation::{self as widget_op, Operation, Outcome, Scrollable};
@@ -269,15 +270,10 @@ impl App {
                 Some(Task::perform(async { Message::SaveSettings }, |m| m))
             }
             Message::UpdateAppLanguage(language) => {
-                self.core.settings.display.language = language.clone();
-                // Update locale for i18n
-                let lang = if language == "zh" {
-                    crate::i18n::Language::Chinese
-                } else {
-                    crate::i18n::Language::English
-                };
-                self.core.locale = crate::i18n::Locale::new(lang);
-                tracing::info!("Language changed to: {}", language);
+                let lang = Language::from_code(language).unwrap_or_default();
+                self.core.settings.display.language = lang.code().to_string();
+                self.core.locale = Locale::new(lang);
+                tracing::info!("Language changed to: {}", lang.code());
                 Some(Task::perform(async { Message::SaveSettings }, |m| m))
             }
             Message::UpdatePowerSavingMode(enabled) => {
