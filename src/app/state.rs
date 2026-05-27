@@ -953,6 +953,10 @@ impl UiState {
                 shaped_content_width: 0.0,
                 shaped_font_size: 0.0,
                 shape_generation: 0,
+                pending_shape_song_id: None,
+                pending_shape_generation: 0,
+                pending_shape_content_width: 0.0,
+                pending_shape_font_size: 0.0,
                 is_loading: false,
                 load_error: None,
             },
@@ -1117,6 +1121,11 @@ pub struct LyricsState {
     pub shaped_font_size: f32,
     /// Monotonic generation for async lyrics shaping requests.
     pub shape_generation: u64,
+    /// Current in-flight shaping request for the displayed song.
+    pub pending_shape_song_id: Option<i64>,
+    pub pending_shape_generation: u64,
+    pub pending_shape_content_width: f32,
+    pub pending_shape_font_size: f32,
 
     // Display loading state
     /// Whether lyrics for the current display target are currently being loaded.

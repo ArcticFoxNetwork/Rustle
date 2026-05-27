@@ -13,7 +13,7 @@ use cosmic_text::{CacheKey, FontSystem, SwashCache};
 use iced::wgpu;
 use iced::wgpu::{Device, Queue};
 use parking_lot::{Mutex, RwLock};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, LazyLock};
 
 /// 共享字体系统类型
@@ -52,11 +52,16 @@ pub fn import_to_global_cache(bitmaps: HashMap<CacheKey, SdfBitmap>) {
     }
 }
 
-/// 从全局缓存中获取预生成的位图
-pub fn take_from_global_cache(key: &CacheKey) -> Option<SdfBitmap> {
+/// 从全局缓存中获取预生成的位图。
+///
+/// The global cache is intentionally reusable: shaping can be requested more
+/// than once for the same viewport/song window, and SDF generation is much more
+/// expensive than cloning the already generated bitmap.
+pub fn get_from_global_cache(key: &CacheKey) -> Option<SdfBitmap> {
     GLOBAL_PRE_GENERATED
         .lock()
-        .remove(&base_sdf_cache_key(*key))
+        .get(&base_sdf_cache_key(*key))
+        .cloned()
 }
 
 fn base_sdf_cache_key(cache_key: CacheKey) -> CacheKey {
@@ -371,9 +376,8 @@ impl SdfCache {
         };
 
         // 如果本地缓存没有，检查全局预生成缓存
-        let pre_gen_bitmap = pre_gen_bitmap.or_else(|| {
-            take_from_global_cache(&atlas_key).map(|bitmap| PreGeneratedSdf { bitmap })
-        });
+        let pre_gen_bitmap = pre_gen_bitmap
+            .or_else(|| get_from_global_cache(&atlas_key).map(|bitmap| PreGeneratedSdf { bitmap }));
 
         let bitmap = if let Some(pre_gen) = pre_gen_bitmap {
             // 使用预生成的位图（快速路径）
@@ -426,30 +430,28 @@ impl SdfCache {
 pub fn pre_generate_sdf_batch(cache_keys: &[CacheKey]) -> HashMap<CacheKey, SdfBitmap> {
     let generator = SdfGenerator::new(SDF_BASE_SIZE, SDF_BUFFER_SIZE);
     let mut bitmaps = HashMap::new();
+    let mut seen_keys = HashSet::new();
+    let cached_keys: HashSet<CacheKey> = GLOBAL_PRE_GENERATED.lock().keys().copied().collect();
+    let font_system = global_font_system();
+    let mut swash_cache = SwashCache::new();
 
     for &cache_key in cache_keys {
-        let sdf_key = CacheKey {
-            font_size_bits: (SDF_BASE_SIZE as f32).to_bits(),
-            ..cache_key
-        };
+        let sdf_key = base_sdf_cache_key(cache_key);
 
-        if bitmaps.contains_key(&sdf_key) {
+        if !seen_keys.insert(sdf_key) || cached_keys.contains(&sdf_key) {
             continue;
         }
 
-        let font_system = global_font_system();
-        let mut font_system = font_system.lock();
-
-        // 验证字体存在
-        if font_system.db().face(cache_key.font_id).is_none() {
-            continue;
-        }
-
-        let mut swash_cache = SwashCache::new();
-        let Some(image) = swash_cache.get_image_uncached(&mut font_system, sdf_key) else {
+        let image = {
+            let mut font_system = font_system.lock();
+            if font_system.db().face(sdf_key.font_id).is_none() {
+                continue;
+            }
+            swash_cache.get_image_uncached(&mut font_system, sdf_key)
+        };
+        let Some(image) = image else {
             continue;
         };
-        drop(font_system);
 
         let Some(bitmap) = generator.generate_from_swash_image(&image) else {
             continue;

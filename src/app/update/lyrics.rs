@@ -393,6 +393,12 @@ impl App {
                     );
                 }
 
+                if self.ui.lyrics.pending_shape_song_id == Some(*song_id)
+                    && self.ui.lyrics.pending_shape_generation == *generation
+                {
+                    self.clear_pending_lyrics_shape();
+                }
+
                 // Update UI and engine only if this is the displayed song with matching generation
                 if self.ui.lyrics.displayed_song_id == Some(*song_id)
                     && self.ui.lyrics.shape_generation == *generation
@@ -568,8 +574,20 @@ impl App {
             return Task::none();
         }
 
+        let pending_matches_current = self.ui.lyrics.pending_shape_song_id == Some(song_id)
+            && (self.ui.lyrics.pending_shape_content_width - content_width).abs() <= 1.0
+            && (self.ui.lyrics.pending_shape_font_size - font_size).abs() <= 0.1;
+
+        if pending_matches_current {
+            return Task::none();
+        }
+
         self.ui.lyrics.shape_generation = self.ui.lyrics.shape_generation.wrapping_add(1);
         let generation = self.ui.lyrics.shape_generation;
+        self.ui.lyrics.pending_shape_song_id = Some(song_id);
+        self.ui.lyrics.pending_shape_generation = generation;
+        self.ui.lyrics.pending_shape_content_width = content_width;
+        self.ui.lyrics.pending_shape_font_size = font_size;
 
         Task::perform(
             async move {
@@ -1091,32 +1109,43 @@ impl App {
     /// Used when the render manager has shaped lines for the current song but
     /// UI cache hasn't been populated yet (e.g., background render prep completed first).
     fn install_lyrics_from_render_manager(&mut self, song_id: i64) -> bool {
-        let Some(entry) = self.playback.lyrics_render_manager.get(song_id) else {
-            return false;
-        };
-        let (Some(shaped_lines), Some(engine_lines)) = (&entry.shaped_lines, &entry.engine_lines)
+        let Some((shaped_lines, engine_lines, content_width, font_size, shape_generation)) = self
+            .playback
+            .lyrics_render_manager
+            .get(song_id)
+            .and_then(|entry| {
+                let (Some(shaped_lines), Some(engine_lines)) =
+                    (&entry.shaped_lines, &entry.engine_lines)
+                else {
+                    return None;
+                };
+                Some((
+                    shaped_lines.clone(),
+                    engine_lines.clone(),
+                    entry.content_width,
+                    entry.font_size,
+                    entry.shape_generation,
+                ))
+            })
         else {
             return false;
         };
 
         self.ui.lyrics.displayed_song_id = Some(song_id);
         self.ui.lyrics.pending_song_id = None;
-        self.ui.lyrics.lines = Self::engine_lines_to_ui_lines(engine_lines);
-        self.ui.lyrics.cached_engine_lines = Some(engine_lines.clone());
+        self.ui.lyrics.lines = Self::engine_lines_to_ui_lines(&engine_lines);
+        self.ui.lyrics.cached_engine_lines = Some(engine_lines);
         self.ui.lyrics.cached_shaped_lines = Some(shaped_lines.clone());
-        self.ui.lyrics.shaped_content_width = entry.content_width;
-        self.ui.lyrics.shaped_font_size = entry.font_size;
-        self.ui.lyrics.shape_generation = entry.shape_generation;
+        self.ui.lyrics.shaped_content_width = content_width;
+        self.ui.lyrics.shaped_font_size = font_size;
+        self.ui.lyrics.shape_generation = shape_generation;
+        self.clear_pending_lyrics_shape();
         self.ui.lyrics.is_loading = false;
         self.ui.lyrics.load_error = None;
 
         if let Some(engine_cell) = &self.ui.lyrics.engine {
             let mut engine = engine_cell.borrow_mut();
-            engine.set_cached_shaped_lines_arc_with_metrics(
-                shaped_lines.clone(),
-                entry.content_width,
-                entry.font_size,
-            );
+            engine.set_cached_shaped_lines_arc_with_metrics(shaped_lines, content_width, font_size);
         }
 
         tracing::info!(
@@ -1124,6 +1153,13 @@ impl App {
             song_id
         );
         true
+    }
+
+    fn clear_pending_lyrics_shape(&mut self) {
+        self.ui.lyrics.pending_shape_song_id = None;
+        self.ui.lyrics.pending_shape_generation = 0;
+        self.ui.lyrics.pending_shape_content_width = 0.0;
+        self.ui.lyrics.pending_shape_font_size = 0.0;
     }
 
     /// Install cached background colors + texture from coordinator into shader.
@@ -1200,6 +1236,7 @@ impl App {
         self.ui.lyrics.shaped_font_size = 0.0;
         self.ui.lyrics.pending_viewport_size = None;
         self.ui.lyrics.shape_generation = self.ui.lyrics.shape_generation.wrapping_add(1);
+        self.clear_pending_lyrics_shape();
         self.ui.lyrics.current_line_idx = None;
         self.ui.lyrics.is_loading = true;
         self.ui.lyrics.load_error = None;
@@ -1219,6 +1256,7 @@ impl App {
         self.ui.lyrics.cached_shaped_lines = None;
         self.ui.lyrics.shaped_content_width = 0.0;
         self.ui.lyrics.shaped_font_size = 0.0;
+        self.clear_pending_lyrics_shape();
         self.ui.lyrics.is_loading = false;
         self.ui.lyrics.load_error = None;
         self.ui.lyrics.current_line_idx = None;
@@ -1245,6 +1283,7 @@ impl App {
         self.ui.lyrics.shaped_content_width = 0.0;
         self.ui.lyrics.shaped_font_size = 0.0;
         self.ui.lyrics.shape_generation = self.ui.lyrics.shape_generation.wrapping_add(1);
+        self.clear_pending_lyrics_shape();
         self.ui.lyrics.is_loading = false;
         self.ui.lyrics.load_error = Some(error);
         self.ui.lyrics.current_line_idx = None;
