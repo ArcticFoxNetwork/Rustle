@@ -170,6 +170,33 @@ pub fn lyrics_are_non_dynamic(lines: &[LyricLineData]) -> bool {
     lines.iter().all(|line| line.words.len() <= 1)
 }
 
+/// Static traits derived from a lyrics line set.
+#[derive(Debug, Clone, Copy)]
+pub struct LyricsLineTraits {
+    /// Whether every line has at most one word.
+    pub is_non_dynamic: bool,
+    /// Whether any line is duet/right-aligned.
+    pub has_duet_line: bool,
+}
+
+impl Default for LyricsLineTraits {
+    fn default() -> Self {
+        Self {
+            is_non_dynamic: true,
+            has_duet_line: false,
+        }
+    }
+}
+
+impl LyricsLineTraits {
+    pub fn from_lines(lines: &[LyricLineData]) -> Self {
+        Self {
+            is_non_dynamic: lyrics_are_non_dynamic(lines),
+            has_duet_line: lines.iter().any(|line| line.is_duet),
+        }
+    }
+}
+
 /// Data for a single word within a lyric line
 #[derive(Debug, Clone, Default)]
 pub struct WordData {

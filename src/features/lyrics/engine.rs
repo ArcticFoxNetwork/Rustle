@@ -38,7 +38,7 @@ pub use line_animation::{AnimationBuffers, LineAnimationManager};
 pub use physics::{ScrollPhysics, ScrollState};
 pub use sdf_cache::{SharedFontSystem, pre_generate_sdf_batch};
 pub use text_shaper::TextShaper;
-pub use types::{FontSizeConfig, LyricLineData, WordData, lyrics_are_non_dynamic};
+pub use types::{FontSizeConfig, LyricLineData, LyricsLineTraits, WordData};
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -239,7 +239,13 @@ pub struct LyricsEngine {
     /// Contains all glyph positions, heights, and word bounds
     cached_shaped_lines: Arc<Vec<CachedShapedLine>>,
     /// Cached line heights (derived from cached_shaped_lines for convenience)
-    cached_line_heights: Vec<f32>,
+    cached_line_heights: Arc<Vec<f32>>,
+    /// Static traits derived from the current lyrics.
+    line_traits: LyricsLineTraits,
+    /// Pointer used to know when the current lyrics slice changed.
+    line_traits_source_ptr: usize,
+    /// Length paired with line_traits_source_ptr.
+    line_traits_source_len: usize,
     /// Last known content width for invalidation
     last_content_width: f32,
     /// Last known font size for invalidation
@@ -320,7 +326,10 @@ impl LyricsEngine {
             hot_lines: std::collections::HashSet::new(),
             last_update: Instant::now(),
             cached_shaped_lines: Arc::new(Vec::new()),
-            cached_line_heights: Vec::new(),
+            cached_line_heights: Arc::new(Vec::new()),
+            line_traits: LyricsLineTraits::default(),
+            line_traits_source_ptr: 0,
+            line_traits_source_len: 0,
             last_content_width: 0.0,
             last_font_size: 0.0,
             layout_dirty: true,
@@ -443,6 +452,9 @@ impl LyricsEngine {
         self.interlude_align_right = false;
         self.line_animations.reset();
         self.animation_buffers.clear();
+        self.line_traits = LyricsLineTraits::default();
+        self.line_traits_source_ptr = 0;
+        self.line_traits_source_len = 0;
         self.layout_dirty = true;
         self.last_disable_blur = false;
     }
@@ -458,6 +470,7 @@ impl LyricsEngine {
         // 检查歌词是否变化（切歌或首次加载）
         // 如果歌词数量变化，需要重新初始化动画并立即排版
         let lyrics_changed = self.line_animations.len() != lines.len();
+        self.sync_line_traits(lines);
 
         if is_seek || lyrics_changed {
             self.physics.reset_manual_scroll();
@@ -580,7 +593,7 @@ impl LyricsEngine {
             return;
         }
 
-        let is_non_dynamic = lyrics_are_non_dynamic(lines);
+        let is_non_dynamic = self.line_traits.is_non_dynamic;
 
         // Ensure we have animations for all lines
         let is_bg_flags: Vec<bool> = lines.iter().map(|l| l.is_bg).collect();
@@ -790,7 +803,7 @@ impl LyricsEngine {
             .collect();
 
         // Update cached line heights (for convenience)
-        self.cached_line_heights = shaped_lines.iter().map(|s| s.total_height).collect();
+        self.cached_line_heights = Arc::new(shaped_lines.iter().map(|s| s.total_height).collect());
         self.cached_shaped_lines = Arc::new(shaped_lines);
 
         self.last_content_width = content_width;
@@ -798,9 +811,9 @@ impl LyricsEngine {
         self.layout_dirty = true;
     }
 
-    /// Get cached line heights (for external use)
-    pub fn cached_line_heights(&self) -> &[f32] {
-        &self.cached_line_heights
+    /// Get cached line heights as an O(1) snapshot.
+    pub fn cached_line_heights_arc(&self) -> Arc<Vec<f32>> {
+        Arc::clone(&self.cached_line_heights)
     }
 
     /// Get cached shaped lines (Single Source of Truth for GPU rendering)
@@ -837,7 +850,7 @@ impl LyricsEngine {
         font_size: f32,
     ) {
         // Update cached line heights from shaped lines
-        self.cached_line_heights = shaped_lines.iter().map(|s| s.total_height).collect();
+        self.cached_line_heights = Arc::new(shaped_lines.iter().map(|s| s.total_height).collect());
 
         self.cached_shaped_lines = shaped_lines;
         self.layout_dirty = true;
@@ -1163,5 +1176,20 @@ impl LyricsEngine {
     /// Get scroll target index
     pub fn scroll_to_index(&self) -> usize {
         self.scroll_to_index
+    }
+
+    /// Keep cached static traits aligned with the current lyrics slice.
+    pub fn sync_line_traits(&mut self, lines: &[LyricLineData]) {
+        let source_ptr = lines.as_ptr() as usize;
+        if source_ptr != self.line_traits_source_ptr || lines.len() != self.line_traits_source_len {
+            self.line_traits = LyricsLineTraits::from_lines(lines);
+            self.line_traits_source_ptr = source_ptr;
+            self.line_traits_source_len = lines.len();
+        }
+    }
+
+    /// Static traits for the current lyrics.
+    pub fn line_traits(&self) -> LyricsLineTraits {
+        self.line_traits
     }
 }

@@ -22,7 +22,7 @@ use super::{LyricsEngine, LyricsEngineConfig};
 use crate::features::lyrics::engine::{
     CachedShapedLine,
     gpu_pipeline::LyricsGpuPipeline,
-    types::{ComputedLineStyle, LyricLineData, lyrics_are_non_dynamic},
+    types::{ComputedLineStyle, LyricLineData, LyricsLineTraits},
 };
 use iced::Rectangle;
 use iced::wgpu;
@@ -113,15 +113,17 @@ pub struct LyricsEnginePrimitive {
     /// Interlude dots state
     pub interlude_dots: Option<InterludeDotsState>,
     /// Cached line heights from engine (in logical pixels)
-    pub cached_line_heights: Vec<f32>,
+    pub cached_line_heights: Arc<Vec<f32>>,
+    /// Static traits derived from the current lyrics.
+    pub line_traits: LyricsLineTraits,
     /// Per-line animated Y positions (in logical pixels)
-    pub line_positions: Vec<f32>,
+    pub line_positions: Arc<Vec<f32>>,
     /// Per-line animated scales (0.0 - 1.0)
-    pub line_scales: Vec<f32>,
+    pub line_scales: Arc<Vec<f32>>,
     /// Per-line blur levels (distance-based blur)
-    pub line_blur_levels: Vec<f32>,
+    pub line_blur_levels: Arc<Vec<f32>>,
     /// Per-line opacities
-    pub line_opacities: Vec<f32>,
+    pub line_opacities: Arc<Vec<f32>>,
 }
 
 /// Serializable interlude dots state for primitive
@@ -155,39 +157,52 @@ impl LyricsEnginePrimitive {
         current_time_ms: f32,
     ) -> Self {
         let line_count = lines.len();
-        let is_non_dynamic = lyrics_are_non_dynamic(&lines);
+        engine.sync_line_traits(&lines);
+        let line_traits = engine.line_traits();
+        let config = engine.config();
 
         // Get pre-allocated animation buffers (updated in-place during engine.update())
-        // This avoids calling individual getters that create new Vecs each frame
+        // These snapshots are Arc clones so Program::draw() can clone primitives without
+        // copying per-line animation arrays.
         let buffers = engine.animation_buffers();
-
-        // Copy from pre-allocated buffers (much faster than creating new Vecs)
-        let mut line_positions = buffers.positions().to_vec();
-        let mut line_scales = buffers.scales().to_vec();
-        let mut line_blur_levels = buffers.blur_levels().to_vec();
-        let mut line_opacities = buffers.opacities().to_vec();
-
-        // 确保所有向量的长度与 lines 匹配
-        // 如果 animations 还没有被初始化（第一帧），用默认值填充
-        // 默认值：position = 屏幕外, scale = 0.97 (inactive), blur = 高, opacity = 1.0
-        let config = engine.config();
-        let default_y = config.align_position * 800.0 * 2.0; // 屏幕外
-        let default_scale = config.inactive_scale; // 0.97
-        let default_blur = 3.0; // 中等模糊
-        let default_opacity = if is_non_dynamic { 0.2 } else { 1.0 };
-
-        while line_positions.len() < line_count {
-            line_positions.push(default_y + (line_positions.len() as f32 * 100.0));
-        }
-        while line_scales.len() < line_count {
-            line_scales.push(default_scale);
-        }
-        while line_blur_levels.len() < line_count {
-            line_blur_levels.push(default_blur);
-        }
-        while line_opacities.len() < line_count {
-            line_opacities.push(default_opacity);
-        }
+        let line_positions = if buffers.positions().len() < line_count {
+            let mut values = buffers.positions().to_vec();
+            let default_y = config.align_position * 800.0 * 2.0;
+            while values.len() < line_count {
+                values.push(default_y + (values.len() as f32 * 100.0));
+            }
+            Arc::new(values)
+        } else {
+            buffers.positions_arc()
+        };
+        let line_scales = if buffers.scales().len() < line_count {
+            let mut values = buffers.scales().to_vec();
+            while values.len() < line_count {
+                values.push(config.inactive_scale);
+            }
+            Arc::new(values)
+        } else {
+            buffers.scales_arc()
+        };
+        let line_blur_levels = if buffers.blur_levels().len() < line_count {
+            let mut values = buffers.blur_levels().to_vec();
+            while values.len() < line_count {
+                values.push(3.0);
+            }
+            Arc::new(values)
+        } else {
+            buffers.blur_levels_arc()
+        };
+        let line_opacities = if buffers.opacities().len() < line_count {
+            let mut values = buffers.opacities().to_vec();
+            let default_opacity = if line_traits.is_non_dynamic { 0.2 } else { 1.0 };
+            while values.len() < line_count {
+                values.push(default_opacity);
+            }
+            Arc::new(values)
+        } else {
+            buffers.opacities_arc()
+        };
 
         // Get cached shaped lines (Single Source of Truth)
         let shaped_lines = engine.cached_shaped_lines();
@@ -216,7 +231,8 @@ impl LyricsEnginePrimitive {
             config: engine.config().clone(),
             is_playing: engine.is_playing(),
             interlude_dots,
-            cached_line_heights: engine.cached_line_heights().to_vec(),
+            cached_line_heights: engine.cached_line_heights_arc(),
+            line_traits,
             line_positions,
             line_scales,
             line_blur_levels,
@@ -240,9 +256,8 @@ impl LyricsEnginePrimitive {
         scale: f32,
     ) -> Vec<ComputedLineStyle> {
         let mut styles = Vec::with_capacity(self.lines.len());
-        let is_non_dynamic = lyrics_are_non_dynamic(&self.lines);
+        let is_non_dynamic = self.line_traits.is_non_dynamic;
 
-        // Convert to physical pixels
         let logical_width = viewport.width;
         let physical_height = viewport.height * scale;
 
@@ -398,11 +413,6 @@ impl Primitive for LyricsEnginePrimitive {
         // Compute line styles based on scroll position (using physical pixels)
         let line_styles = self.compute_line_styles_physical(bounds, scale);
 
-        // Convert cached_line_heights from logical to physical pixels
-        // LyricsEngine calculates heights in logical pixels, GPU needs physical pixels
-        let physical_line_heights: Vec<f32> =
-            self.cached_line_heights.iter().map(|h| h * scale).collect();
-
         // Prepare GPU pipeline with new data
         // Use cached shaped_lines from LyricsEngine (Single Source of Truth)
         // This avoids duplicate text shaping in GPU pipeline
@@ -418,7 +428,8 @@ impl Primitive for LyricsEnginePrimitive {
             &self.lines,        // Arc<Vec<T>> derefs to &[T]
             &self.shaped_lines, // Pre-shaped lines from LyricsEngine
             &line_styles,
-            &physical_line_heights, // Pre-calculated by LyricsEngine, converted to physical pixels
+            &self.cached_line_heights, // Logical pixels; GPU pipeline scales on demand.
+            self.line_traits,
             self.current_time_ms,
             self.scroll_position,
             font_size,

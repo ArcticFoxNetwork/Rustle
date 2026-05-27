@@ -189,7 +189,7 @@ impl App {
         let animation_sub = if !window_inactive
             && (has_animations || lyrics_needs_frames || audio_engine_needs_frames)
         {
-            iced::time::every(Duration::from_micros(6060)).map(|_| Message::AnimationTick)
+            iced::time::every(Duration::from_micros(8333)).map(|_| Message::AnimationTick)
         } else {
             iced::Subscription::none()
         };

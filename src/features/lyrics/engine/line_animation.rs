@@ -25,6 +25,7 @@
 //! avoiding per-frame Vec allocations in the render path.
 
 use super::spring::{Spring, SpringParams};
+use std::sync::Arc;
 
 /// Manual scroll bounds for the lyrics viewport.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -53,13 +54,13 @@ pub struct ScrollBounds {
 #[derive(Debug, Clone, Default)]
 pub struct AnimationBuffers {
     /// Y positions in logical pixels
-    positions: Vec<f32>,
+    positions: Arc<Vec<f32>>,
     /// Scale values (0.0 - 1.0)
-    scales: Vec<f32>,
+    scales: Arc<Vec<f32>>,
     /// Blur levels
-    blur_levels: Vec<f32>,
+    blur_levels: Arc<Vec<f32>>,
     /// Opacity values (0.0 - 1.0)
-    opacities: Vec<f32>,
+    opacities: Arc<Vec<f32>>,
 }
 
 impl AnimationBuffers {
@@ -73,12 +74,21 @@ impl AnimationBuffers {
     /// This resizes buffers only when necessary, avoiding allocations
     /// when the line count hasn't changed.
     pub fn ensure_capacity(&mut self, line_count: usize) {
-        // Only resize if needed
-        if self.positions.len() != line_count {
-            self.positions.resize(line_count, 0.0);
-            self.scales.resize(line_count, 1.0);
-            self.blur_levels.resize(line_count, 0.0);
-            self.opacities.resize(line_count, 1.0);
+        Self::ensure_buffer(&mut self.positions, line_count, 0.0);
+        Self::ensure_buffer(&mut self.scales, line_count, 1.0);
+        Self::ensure_buffer(&mut self.blur_levels, line_count, 0.0);
+        Self::ensure_buffer(&mut self.opacities, line_count, 1.0);
+    }
+
+    fn ensure_buffer(buffer: &mut Arc<Vec<f32>>, line_count: usize, fill: f32) {
+        if let Some(values) = Arc::get_mut(buffer) {
+            if values.len() != line_count {
+                values.resize(line_count, fill);
+            }
+        } else {
+            if buffer.len() != line_count {
+                *buffer = Arc::new(vec![fill; line_count]);
+            }
         }
     }
 
@@ -93,13 +103,61 @@ impl AnimationBuffers {
         // Ensure capacity
         self.ensure_capacity(len);
 
-        // Update in-place
+        // Update in-place when unique; otherwise write into a fresh buffer instead of
+        // cloning the previous frame only to overwrite every value below.
+        Self::ensure_unique(&mut self.positions, len, 0.0);
+        Self::ensure_unique(&mut self.scales, len, 1.0);
+        Self::ensure_unique(&mut self.blur_levels, len, 0.0);
+        Self::ensure_unique(&mut self.opacities, len, 1.0);
+
+        let positions = Arc::get_mut(&mut self.positions).expect("buffer is unique");
+        let scales = Arc::get_mut(&mut self.scales).expect("buffer is unique");
+        let blur_levels = Arc::get_mut(&mut self.blur_levels).expect("buffer is unique");
+        let opacities = Arc::get_mut(&mut self.opacities).expect("buffer is unique");
+
         for (i, anim) in animations.iter().enumerate() {
-            self.positions[i] = anim.current_y();
-            self.scales[i] = anim.current_scale();
-            self.blur_levels[i] = anim.blur;
-            self.opacities[i] = anim.opacity;
+            positions[i] = anim.current_y();
+            scales[i] = anim.current_scale();
+            blur_levels[i] = anim.blur;
+            opacities[i] = anim.opacity;
         }
+    }
+
+    fn ensure_unique(buffer: &mut Arc<Vec<f32>>, line_count: usize, fill: f32) {
+        match Arc::get_mut(buffer) {
+            Some(values) => {
+                if values.len() != line_count {
+                    values.resize(line_count, fill);
+                }
+            }
+            None => {
+                *buffer = Arc::new(vec![fill; line_count]);
+            }
+        }
+    }
+
+    /// Clone the current positions snapshot.
+    #[inline]
+    pub fn positions_arc(&self) -> Arc<Vec<f32>> {
+        Arc::clone(&self.positions)
+    }
+
+    /// Clone the current scales snapshot.
+    #[inline]
+    pub fn scales_arc(&self) -> Arc<Vec<f32>> {
+        Arc::clone(&self.scales)
+    }
+
+    /// Clone the current blur levels snapshot.
+    #[inline]
+    pub fn blur_levels_arc(&self) -> Arc<Vec<f32>> {
+        Arc::clone(&self.blur_levels)
+    }
+
+    /// Clone the current opacity snapshot.
+    #[inline]
+    pub fn opacities_arc(&self) -> Arc<Vec<f32>> {
+        Arc::clone(&self.opacities)
     }
 
     /// Get positions slice (no allocation)
@@ -128,10 +186,10 @@ impl AnimationBuffers {
 
     /// Clear all buffers
     pub fn clear(&mut self) {
-        self.positions.clear();
-        self.scales.clear();
-        self.blur_levels.clear();
-        self.opacities.clear();
+        self.positions = Arc::new(Vec::new());
+        self.scales = Arc::new(Vec::new());
+        self.blur_levels = Arc::new(Vec::new());
+        self.opacities = Arc::new(Vec::new());
     }
 }
 

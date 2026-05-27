@@ -35,7 +35,7 @@ use super::per_line_blur::{GLOW_TEXTURE_FORMAT, GlowBounds, LineRenderInfo, PerL
 use super::sdf_cache::SdfCache;
 use super::text_shaper::ShapedLine;
 use super::types::{
-    ComputedLineStyle, FontConfig, LyricLineData, emphasis_easing, lyrics_are_non_dynamic,
+    ComputedLineStyle, FontConfig, LyricLineData, LyricsLineTraits, emphasis_easing,
 };
 use super::vertex::{GlobalUniform, LineUniform, LyricGlyphVertex};
 
@@ -533,7 +533,8 @@ impl LyricsGpuPipeline {
         lines: &[LyricLineData],
         shaped_lines: &[CachedShapedLine],
         line_styles: &[ComputedLineStyle],
-        line_heights: &[f32], // Pre-calculated by LyricsEngine (in PHYSICAL pixels)
+        line_heights: &[f32], // Pre-calculated by LyricsEngine (in LOGICAL pixels)
+        line_traits: LyricsLineTraits,
         current_time_ms: f32,
         scroll_y: f32,
         font_size: f32, // Physical pixels
@@ -564,7 +565,10 @@ impl LyricsGpuPipeline {
             .enumerate()
             .take(MAX_LINES)
             .map(|(idx, style)| {
-                let actual_height = line_heights.get(idx).copied().unwrap_or(font_size * 1.4);
+                let actual_height = line_heights
+                    .get(idx)
+                    .map(|height| height * scale)
+                    .unwrap_or(font_size * 1.4);
                 LineUniform {
                     y_position: style.y_position,
                     scale: style.scale,
@@ -597,6 +601,7 @@ impl LyricsGpuPipeline {
             bounds_width,
             bounds_height,
             font_size,
+            line_traits,
             current_time_ms,
             overscan_px,
             scale,
@@ -641,6 +646,7 @@ impl LyricsGpuPipeline {
         viewport_width: f32,  // Physical pixels
         viewport_height: f32, // Physical pixels
         font_size: f32,       // Physical pixels
+        line_traits: LyricsLineTraits,
         current_time_ms: f32,
         overscan_px: f32,
         scale: f32, // Scale factor (physical / logical)
@@ -651,8 +657,8 @@ impl LyricsGpuPipeline {
         let mut all_indices = Vec::with_capacity(MAX_GLYPHS * 6);
         let mut line_render_info = Vec::with_capacity(lines.len());
 
-        let has_duet_line = lines.iter().any(|l| l.is_duet);
-        let is_non_dynamic = lyrics_are_non_dynamic(lines);
+        let has_duet_line = line_traits.has_duet_line;
+        let is_non_dynamic = line_traits.is_non_dynamic;
         let base_padding = viewport_width * 0.05;
         // SDF base size for scaling
         let sdf_base_size = 64.0_f32;
