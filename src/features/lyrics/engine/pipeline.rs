@@ -464,14 +464,17 @@ impl Primitive for LyricsEnginePrimitive {
             );
         }
 
-        // Prepare blur rendering resources
-        let enable_blur = self.config.enable_blur;
+        // Prepare blur rendering resources only when the current frame has
+        // visible line blur or emphasis glow work.
+        let enable_blur = self.config.enable_blur && gpu_pipeline.has_preparable_blur();
         if enable_blur {
             gpu_pipeline.prepare_blur(
                 device,
                 viewport.physical_width(),
                 viewport.physical_height(),
             );
+        } else {
+            gpu_pipeline.clear_prepared_blur();
         }
 
         // Cache render parameters

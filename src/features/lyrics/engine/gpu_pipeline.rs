@@ -1170,6 +1170,19 @@ impl LyricsGpuPipeline {
         self.dots_bind_group = None;
     }
 
+    pub fn has_preparable_blur(&self) -> bool {
+        self.cached_line_render_info.read().iter().any(|line| {
+            line.visible
+                && line.index_range.1 > 0
+                && (line.blur_level >= 0.5
+                    || (line.glow_blur_level >= 0.5 && line.glow_bounds.is_some()))
+        })
+    }
+
+    pub fn clear_prepared_blur(&mut self) {
+        self.per_line_blur.write().clear_prepared();
+    }
+
     /// Render interlude dots
     pub fn render_interlude_dots<'a>(&'a self, render_pass: &mut wgpu::RenderPass<'a>) {
         if !self.dots_enabled {
