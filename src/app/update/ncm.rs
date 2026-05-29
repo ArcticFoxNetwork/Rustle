@@ -62,6 +62,56 @@ impl App {
         db_song
     }
 
+    pub(super) fn set_ncm_scrobble_source(&mut self, source_id: Option<u64>) {
+        self.playback.ncm_scrobble_source_id = source_id;
+    }
+
+    pub(super) fn current_route_ncm_scrobble_source(&self) -> Option<u64> {
+        match self.ui.current_route {
+            Route::NcmPlaylist(playlist_id) => (playlist_id != 0).then_some(playlist_id),
+            Route::Album(album_id) => (album_id != 0).then_some(album_id),
+            _ => None,
+        }
+    }
+
+    fn handle_ncm_playlist_queue(
+        &mut self,
+        songs: &[crate::api::SongInfo],
+        play_now: bool,
+        source_id: Option<u64>,
+    ) -> Option<Task<Message>> {
+        debug!(
+            "Adding {} NCM songs to playlist, play_now: {}",
+            songs.len(),
+            play_now
+        );
+        self.ui.home.current_ncm_playlist_songs = songs.to_vec();
+
+        let source_id = if self.is_fm_mode() { None } else { source_id };
+        self.set_ncm_scrobble_source(source_id);
+
+        let db_songs: Vec<crate::database::DbSong> =
+            songs.iter().map(Self::ncm_song_to_db_song).collect();
+
+        if self.is_fm_mode() && !play_now {
+            debug!("FM mode: appending {} songs to queue", db_songs.len());
+            self.playback.queue.extend(db_songs);
+            self.persist_queue_snapshot();
+            return Some(Task::none());
+        }
+
+        if play_now {
+            self.playback.queue = db_songs;
+            self.playback.current_index = Some(0);
+            self.persist_queue_snapshot();
+            Some(self.update(Message::PlayQueueIndex(0)))
+        } else {
+            self.playback.queue.extend(db_songs);
+            self.persist_queue_snapshot();
+            Some(Task::none())
+        }
+    }
+
     /// Set the NCM client and sync quality settings
     fn set_ncm_client(&mut self, client: NcmClient) {
         client.set_quality(self.core.settings.playback.music_quality.to_api_rate());
@@ -959,6 +1009,7 @@ impl App {
 
                 self.exit_fm_mode();
                 self.ui.home.current_ncm_playlist_songs = vec![song_info.clone()];
+                self.set_ncm_scrobble_source(None);
                 self.playback.queue.clear();
                 self.playback
                     .queue
@@ -969,35 +1020,11 @@ impl App {
             }
 
             Message::AddNcmPlaylist(songs, play_now) => {
-                debug!(
-                    "Adding {} NCM songs to playlist, play_now: {}",
-                    songs.len(),
-                    play_now
-                );
-                self.ui.home.current_ncm_playlist_songs = songs.clone();
+                return self.handle_ncm_playlist_queue(songs, *play_now, None);
+            }
 
-                let db_songs: Vec<crate::database::DbSong> =
-                    songs.iter().map(Self::ncm_song_to_db_song).collect();
-
-                if self.is_fm_mode() && !*play_now {
-                    debug!("FM mode: appending {} songs to queue", db_songs.len());
-                    self.playback.queue.extend(db_songs.clone());
-                    self.persist_queue_snapshot();
-                    return Some(Task::none());
-                }
-
-                if *play_now {
-                    self.playback.queue = db_songs.clone();
-                    self.playback.current_index = Some(0);
-                    self.persist_queue_snapshot();
-
-                    return Some(self.update(Message::PlayQueueIndex(0)));
-                } else {
-                    self.playback.queue.extend(db_songs);
-                    self.persist_queue_snapshot();
-                }
-
-                Some(Task::none())
+            Message::AddNcmPlaylistWithSource(songs, play_now, source_id) => {
+                return self.handle_ncm_playlist_queue(songs, *play_now, *source_id);
             }
 
             Message::UserPlaylistsLoaded(playlists) => {

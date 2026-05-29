@@ -141,7 +141,7 @@ impl App {
                                     if detail.songs.is_empty() {
                                         return None;
                                     }
-                                    Some(detail.songs)
+                                    Some((detail.id, detail.songs))
                                 }
                                 Err(e) => {
                                     error!("Failed to get playlist detail: {}", e);
@@ -149,9 +149,9 @@ impl App {
                                 }
                             }
                         },
-                        move |songs_opt| {
-                            if let Some(songs) = songs_opt {
-                                Message::AddNcmPlaylist(songs, true)
+                        move |detail_opt| {
+                            if let Some((detail_id, songs)) = detail_opt {
+                                Message::AddNcmPlaylistWithSource(songs, true, Some(detail_id))
                             } else {
                                 Message::ShowErrorToast(error_msg)
                             }

@@ -37,8 +37,10 @@ impl App {
                         .current_ncm_playlist_songs
                         .iter()
                         .find(|s| s.id == ncm_id)
+                        .cloned()
                     {
-                        let db_song = Self::ncm_song_to_db_song(song_info);
+                        self.set_ncm_scrobble_source(self.current_route_ncm_scrobble_source());
+                        let db_song = Self::ncm_song_to_db_song(&song_info);
                         self.playback.queue.push(db_song);
                         self.persist_queue_snapshot();
                         let idx = self.playback.queue.len() - 1;

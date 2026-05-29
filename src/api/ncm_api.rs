@@ -518,6 +518,47 @@ impl MusicApi {
         to_lyric(result)
     }
 
+    /// 听歌打卡，更新网易云听歌排行数据
+    pub async fn scrobble(
+        &self,
+        song_id: u64,
+        source_id: Option<u64>,
+        time_secs: u64,
+    ) -> Result<()> {
+        let path = "/weapi/feedback/weblog";
+        let song_id = song_id.to_string();
+        let source_id = source_id.map(|id| id.to_string()).unwrap_or_default();
+        let time_secs = time_secs.to_string();
+        let logs = serde_json::json!([{
+            "action": "play",
+            "json": {
+                "download": 0,
+                "end": "playend",
+                "id": song_id,
+                "sourceId": source_id,
+                "time": time_secs.parse::<i64>().unwrap_or(0),
+                "type": "song",
+                "wifi": 0,
+                "source": "list",
+                "mainsite": 1,
+                "content": ""
+            }
+        }])
+        .to_string();
+
+        let mut params = HashMap::new();
+        params.insert("logs", logs.as_str());
+        let result = self
+            .request(Method::Post, path, params, CryptoApi::Weapi, "", true)
+            .await?;
+        let msg = to_msg(result)?;
+        if msg.code == 200 {
+            Ok(())
+        } else {
+            Err(anyhow!("Failed to scrobble song: {}", msg.msg))
+        }
+    }
+
     /// 红心/取消红心歌曲
     pub async fn like_song(&self, track_id: u64, like: bool) -> Result<()> {
         let csrf_token = self.csrf.read().clone();

@@ -1281,6 +1281,30 @@ impl App {
             });
         }
 
+        if let (Some(client), Some(song)) = (&self.core.ncm_client, &self.playback.current_song) {
+            let ncm_song_id = if song.id < 0 {
+                Some((-song.id) as u64)
+            } else if let Some(rest) = song.file_path.strip_prefix("ncm://") {
+                rest.parse::<u64>().ok()
+            } else {
+                None
+            };
+
+            if let Some(ncm_song_id) = ncm_song_id {
+                let client = client.clone();
+                let source_id = self.playback.ncm_scrobble_source_id;
+                let time_secs = song.duration_secs.max(0) as u64;
+                tokio::spawn(async move {
+                    if let Err(e) = client
+                        .scrobble_song(ncm_song_id, source_id, time_secs)
+                        .await
+                    {
+                        tracing::warn!("Failed to scrobble NCM song {}: {}", ncm_song_id, e);
+                    }
+                });
+            }
+        }
+
         // 清除播放完成状态，防止重复触发
         self.stop_audio_output();
 

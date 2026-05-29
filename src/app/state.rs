@@ -611,6 +611,8 @@ pub struct PlaybackSessionState {
     pub current_index: Option<usize>,
     /// Whether personal FM playback mode is active.
     pub personal_fm_mode: bool,
+    /// Source id used when reporting NCM scrobble events for the active queue.
+    pub ncm_scrobble_source_id: Option<u64>,
     /// Queue navigation cache used as the single source of truth for shuffle order.
     pub shuffle_cache: crate::app::update::queue_navigator::ShuffleCache,
     /// Audio preload state machine for adjacent tracks.

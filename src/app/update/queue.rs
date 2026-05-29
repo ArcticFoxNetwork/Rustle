@@ -49,13 +49,16 @@ impl App {
                 if id <= 0 {
                     let ncm_songs = &self.ui.home.current_ncm_playlist_songs;
                     if !ncm_songs.is_empty() {
-                        let db_songs: Vec<crate::database::DbSong> =
-                            ncm_songs.iter().map(Self::ncm_song_to_db_song).collect();
-
-                        self.playback.queue = db_songs.clone();
-                        self.persist_queue_snapshot();
-
-                        return Some(self.play_song_at_index(0));
+                        let source_id = if self.is_fm_mode() {
+                            None
+                        } else {
+                            self.current_route_ncm_scrobble_source()
+                        };
+                        return Some(Task::done(Message::AddNcmPlaylistWithSource(
+                            ncm_songs.clone(),
+                            true,
+                            source_id,
+                        )));
                     }
                     return Some(Task::none());
                 }

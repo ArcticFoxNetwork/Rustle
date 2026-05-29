@@ -471,12 +471,14 @@ impl App {
     /// Enter Personal FM mode
     pub fn enter_fm_mode(&mut self) {
         self.playback.personal_fm_mode = true;
+        self.playback.ncm_scrobble_source_id = None;
         self.clear_shuffle_cache();
     }
 
     /// Exit Personal FM mode
     pub fn exit_fm_mode(&mut self) {
         self.playback.personal_fm_mode = false;
+        self.playback.ncm_scrobble_source_id = None;
     }
 
     /// Check if more FM songs should be fetched

@@ -74,7 +74,9 @@ impl App {
             Message::HotPlaylistsLoaded(playlists, _) => {
                 refs.extend(remote_playlist_covers(playlists));
             }
-            Message::TrendingSongsLoaded(songs) | Message::AddNcmPlaylist(songs, _) => {
+            Message::TrendingSongsLoaded(songs)
+            | Message::AddNcmPlaylist(songs, _)
+            | Message::AddNcmPlaylistWithSource(songs, _, _) => {
                 refs.extend(remote_song_covers(songs));
             }
             Message::UserArtistDetailLoaded(

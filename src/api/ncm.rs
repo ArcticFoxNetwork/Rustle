@@ -285,6 +285,16 @@ impl NcmClient {
         self.client.song_detail(ids).await
     }
 
+    /// 上报网易云听歌记录（听歌打卡）
+    pub async fn scrobble_song(
+        &self,
+        song_id: u64,
+        source_id: Option<u64>,
+        time_secs: u64,
+    ) -> Result<()> {
+        self.client.scrobble(song_id, source_id, time_secs).await
+    }
+
     pub async fn get_lyrics(&self, si: &SongInfo) -> Result<Vec<(u64, String)>> {
         let cache_dir = crate::utils::cache_dir();
         fs::create_dir_all(&cache_dir)?;

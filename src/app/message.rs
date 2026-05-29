@@ -516,6 +516,7 @@ pub enum Message {
     PlayNcmSong(SongInfo),
     /// Add NCM songs to queue
     AddNcmPlaylist(Vec<SongInfo>, bool),
+    AddNcmPlaylistWithSource(Vec<SongInfo>, bool, Option<u64>),
     /// Open NCM playlist detail page
     OpenNcmPlaylist(u64),
     /// Open user detail page
@@ -774,6 +775,15 @@ impl std::fmt::Debug for Message {
             Self::UserPlaylistsLoaded(v) => simple!("UserPlaylistsLoaded", "{} playlists", v.len()),
             Self::AddNcmPlaylist(v, play) => {
                 simple!("AddNcmPlaylist", "{} songs, play={}", v.len(), play)
+            }
+            Self::AddNcmPlaylistWithSource(v, play, source) => {
+                simple!(
+                    "AddNcmPlaylistWithSource",
+                    "{} songs, play={}, source={:?}",
+                    v.len(),
+                    play,
+                    source
+                )
             }
 
             // Arc-wrapped types - just show variant name
