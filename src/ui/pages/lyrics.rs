@@ -39,7 +39,7 @@ pub fn view<'a>(
     _current_line_index: Option<usize>,
     play_mode: PlayMode,
     animation_progress: f32,
-    _bg_colors: &crate::utils::DominantColors,
+    bg_colors: &crate::utils::DominantColors,
     _bg_shader: &'a crate::ui::effects::background::LyricsBackgroundProgram,
     textured_bg_shader: &'a TexturedBackgroundProgram,
     lyrics_engine: Option<&'a std::cell::RefCell<LyricsEngine>>,
@@ -248,11 +248,22 @@ pub fn view<'a>(
 
     let slide_offset = (1.0 - animation_progress) * 30.0;
 
-    // Use WGPU textured shader for animated background
-    let shader_bg = shader(textured_bg_shader).width(Fill).height(Fill);
+    let background_layer: Element<'a, Message> = if power_saving_mode {
+        let background = bg_colors.primary;
+        container(Space::new())
+            .width(Fill)
+            .height(Fill)
+            .style(move |_theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(background)),
+                ..Default::default()
+            })
+            .into()
+    } else {
+        shader(textured_bg_shader).width(Fill).height(Fill).into()
+    };
 
     let content_with_shader = iced::widget::stack![
-        shader_bg,
+        background_layer,
         container(content_with_overlay)
             .width(Fill)
             .height(Fill)
@@ -617,17 +628,28 @@ fn build_simple_lyrics_panel(
         .iter()
         .position(|line| line.start_ms <= current_time && line.end_ms > current_time);
 
-    // Build scrollable lyrics with current line highlighted
-    let lines_data: Vec<(bool, String, Option<String>)> = engine_lines
+    let (visible_start, visible_end) = if engine_lines.len() <= 9 {
+        (0, engine_lines.len())
+    } else if let Some(idx) = current_idx {
+        let start = idx
+            .saturating_sub(4)
+            .min(engine_lines.len().saturating_sub(9));
+        (start, (start + 9).min(engine_lines.len()))
+    } else {
+        (0, 9)
+    };
+
+    let lines_data: Vec<(bool, String, Option<String>)> = engine_lines[visible_start..visible_end]
         .iter()
         .enumerate()
-        .map(|(idx, line)| {
+        .map(|(offset, line)| {
+            let idx = visible_start + offset;
             let is_active = Some(idx) == current_idx;
             (is_active, line.text.clone(), line.translated.clone())
         })
         .collect();
 
-    // Power saving mode: no scrollable, just a simple column with larger fonts
+    // Power saving mode: render only the current neighborhood.
     let lines_column: Element<'static, Message> = column(
         lines_data
             .into_iter()
@@ -665,14 +687,14 @@ fn build_simple_lyrics_panel(
             .collect::<Vec<_>>(),
     )
     .spacing(24)
-    .padding(iced::Padding::new(40.0).top(200.0).bottom(300.0))
+    .padding(40)
     .align_x(Alignment::Start)
     .into();
 
-    // No background, no scrollbar - just the lyrics
     container(lines_column)
         .width(Length::Fill)
         .height(Length::Fill)
+        .center_y(Length::Fill)
         .into()
 }
 

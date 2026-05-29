@@ -11,7 +11,6 @@ impl App {
     pub(super) fn sync_audio_analysis_state(&self) {
         let enabled = matches!(self.ui.current_route, Route::AudioEngine)
             && !self.core.is_window_hidden()
-            && self.core.window_focused
             && !self.core.settings.display.power_saving_mode;
         self.set_audio_analysis_enabled(enabled);
     }

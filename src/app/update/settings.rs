@@ -280,7 +280,20 @@ impl App {
                 self.core.settings.display.power_saving_mode = *enabled;
                 self.sync_audio_analysis_state();
                 tracing::info!("Power saving mode: {}", enabled);
-                Some(Task::perform(async { Message::SaveSettings }, |m| m))
+
+                let lyrics_viewport_task = if *enabled {
+                    if self.ui.lyrics.is_open {
+                        self.ui.lyrics.animation.settle_at(1.0);
+                    }
+                    self.flush_pending_lyrics_viewport_after_animation()
+                } else {
+                    Task::none()
+                };
+
+                Some(Task::batch([
+                    Task::perform(async { Message::SaveSettings }, |m| m),
+                    lyrics_viewport_task,
+                ]))
             }
             Message::UpdateMaxCacheMb(size_mb) => {
                 self.core.settings.storage.max_cache_mb = *size_mb;

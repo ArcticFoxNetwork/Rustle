@@ -129,13 +129,18 @@ pub fn resolve_cached(kind: ImageKind, id: u64) -> Option<PathBuf> {
     crate::utils::find_cached_image(&kind.cache_dir(), &kind.file_stem(id))
 }
 
+/// True when a string points at a remote HTTP(S) image source.
+pub fn is_remote_url(s: &str) -> bool {
+    s.starts_with("http://") || s.starts_with("https://")
+}
+
 /// True when a string field (`cover_path` / `cover_img_url`) holds a valid
 /// local path rather than an http(s) URL.
 pub fn is_valid_local_path(s: &str) -> bool {
     if s.is_empty() {
         return false;
     }
-    if s.starts_with("http://") || s.starts_with("https://") {
+    if is_remote_url(s) {
         return false;
     }
     std::path::Path::new(s).exists()

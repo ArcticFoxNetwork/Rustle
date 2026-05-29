@@ -22,6 +22,14 @@ pub struct PreloadWindow {
     pub prev_song_id: Option<i64>,
 }
 
+impl PreloadWindow {
+    pub(super) fn contains_song(&self, song_id: i64) -> bool {
+        self.current_song_id == Some(song_id)
+            || self.next_song_id == Some(song_id)
+            || self.prev_song_id == Some(song_id)
+    }
+}
+
 /// What changed when the window was refreshed
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowChange {
@@ -172,40 +180,23 @@ impl PreloadCoordinator {
         }
     }
 
-    pub fn mark_background_colors_ready(&mut self, song_id: i64) {
-        if let Some(slot) = self.background_slots.get_mut(&song_id) {
-            slot.colors_ready = true;
-        }
-    }
-
-    pub fn mark_background_texture_ready(&mut self, song_id: i64) {
-        if let Some(slot) = self.background_slots.get_mut(&song_id) {
-            slot.texture_ready = true;
-        }
-    }
-
     /// Store cached dominant colors for a song.
     pub fn store_background_colors(
         &mut self,
         song_id: i64,
+        cover_path: String,
         primary: [f32; 4],
         secondary: [f32; 4],
         tertiary: [f32; 4],
     ) {
-        let slot = self
-            .background_slots
-            .entry(song_id)
-            .or_insert_with(|| BackgroundSlot {
-                cover_path: None,
-                colors_ready: false,
-                texture_ready: false,
-                primary: None,
-                secondary: None,
-                tertiary: None,
-                image_data: None,
-                image_width: 0,
-                image_height: 0,
-            });
+        let Some(slot) = self.background_slots.get_mut(&song_id) else {
+            return;
+        };
+
+        if slot.cover_path.as_deref() != Some(cover_path.as_str()) {
+            return;
+        }
+
         slot.primary = Some(primary);
         slot.secondary = Some(secondary);
         slot.tertiary = Some(tertiary);
@@ -216,16 +207,23 @@ impl PreloadCoordinator {
     pub fn store_background_texture(
         &mut self,
         song_id: i64,
+        cover_path: String,
         image_data: Vec<u8>,
         width: u32,
         height: u32,
     ) {
-        if let Some(slot) = self.background_slots.get_mut(&song_id) {
-            slot.image_data = Some(image_data);
-            slot.image_width = width;
-            slot.image_height = height;
-            slot.texture_ready = true;
+        let Some(slot) = self.background_slots.get_mut(&song_id) else {
+            return;
+        };
+
+        if slot.cover_path.as_deref() != Some(cover_path.as_str()) {
+            return;
         }
+
+        slot.image_data = Some(image_data);
+        slot.image_width = width;
+        slot.image_height = height;
+        slot.texture_ready = true;
     }
 
     /// Background is ready only if colors + texture are done AND slot exists with matching cover.

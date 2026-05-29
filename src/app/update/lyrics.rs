@@ -11,7 +11,6 @@ use iced::Task;
 use crate::app::message::Message;
 use crate::app::state::App;
 use crate::app::update::lyrics_preload_manager::DisplayFetchAction;
-use crate::ui::effects::background::color_to_array;
 
 impl App {
     /// Handle lyrics page related messages
@@ -21,7 +20,11 @@ impl App {
                 // Only open if there's a song playing
                 if let Some(song) = self.playback.current_song.clone() {
                     self.ui.lyrics.is_open = true;
-                    self.ui.lyrics.animation.start();
+                    if self.core.settings.display.power_saving_mode {
+                        self.ui.lyrics.animation.settle_at(1.0);
+                    } else {
+                        self.ui.lyrics.animation.start();
+                    }
 
                     // Render-ready source of truth: LyricsRenderManager
                     let viewport = self.current_lyrics_shape_metrics();
@@ -64,8 +67,15 @@ impl App {
             }
 
             Message::CloseLyricsPage => {
-                // Start close animation, actual close happens when animation completes
-                self.ui.lyrics.animation.stop();
+                if self.core.settings.display.power_saving_mode {
+                    self.ui.lyrics.animation.settle_at(0.0);
+                    self.ui.lyrics.is_open = false;
+                    self.ui.lyrics.pending_viewport_size = None;
+                    self.ui.lyrics.last_update = None;
+                } else {
+                    // Start close animation, actual close happens when animation completes
+                    self.ui.lyrics.animation.stop();
+                }
                 Some(Task::none())
             }
 
@@ -430,19 +440,16 @@ impl App {
             // Background color extraction result
             Message::LyricsBackgroundReady(song_id, cover_path, primary, secondary, tertiary) => {
                 // Always store in coordinator for any song in the window
-                self.playback
-                    .preload_coordinator
-                    .store_background_colors(*song_id, *primary, *secondary, *tertiary);
+                self.playback.preload_coordinator.store_background_colors(
+                    *song_id,
+                    cover_path.clone(),
+                    *primary,
+                    *secondary,
+                    *tertiary,
+                );
 
                 // Install into shader only if this is the current song
-                if self.playback.current_song.as_ref().map(|s| s.id) == Some(*song_id)
-                    && self
-                        .playback
-                        .current_song
-                        .as_ref()
-                        .and_then(|song| song.cover_path.as_ref())
-                        == Some(cover_path)
-                {
+                if self.background_result_matches_current_song(*song_id, cover_path) {
                     self.ui
                         .lyrics
                         .bg_shader
@@ -475,19 +482,14 @@ impl App {
                 // Always store in coordinator for any song in the window
                 self.playback.preload_coordinator.store_background_texture(
                     *song_id,
+                    cover_path.clone(),
                     image_data.clone(),
                     *width,
                     *height,
                 );
 
                 // Install into shader only if this is the current song
-                if self.playback.current_song.as_ref().map(|s| s.id) == Some(*song_id)
-                    && self
-                        .playback
-                        .current_song
-                        .as_ref()
-                        .and_then(|song| song.cover_path.as_ref())
-                        == Some(cover_path)
+                if self.background_result_matches_current_song(*song_id, cover_path)
                     && let Some(img) =
                         image::RgbImage::from_raw(*width, *height, image_data.clone())
                 {
@@ -1008,6 +1010,36 @@ impl App {
         (image_task, colors_task)
     }
 
+    pub(super) fn prepare_lyrics_background_for_cover_path(
+        &mut self,
+        song_id: i64,
+        cover_path: std::path::PathBuf,
+    ) -> Task<Message> {
+        if !cover_path.exists() {
+            return Task::none();
+        }
+
+        let cover_path = cover_path.to_string_lossy().to_string();
+        if crate::image::is_remote_url(&cover_path) {
+            return Task::none();
+        }
+
+        self.playback
+            .preload_coordinator
+            .ensure_background_slot(song_id, Some(cover_path.clone()));
+
+        if self
+            .playback
+            .preload_coordinator
+            .is_background_ready(song_id, Some(&cover_path))
+        {
+            return Task::none();
+        }
+
+        let (image_task, colors_task) = Self::prepare_background_for_song_task(song_id, cover_path);
+        Task::batch([image_task, colors_task])
+    }
+
     /// Schedule background prep for adjacent songs in the preload window.
     pub(super) fn schedule_background_prep(&mut self) -> Task<Message> {
         let window = self.playback.preload_coordinator.window();
@@ -1017,40 +1049,22 @@ impl App {
             .into_iter()
             .flatten()
         {
-            // Find cover path from queue
-            let cover_path = self
+            // Find cover path from queue / artwork cache
+            let Some(song) = self
                 .playback
                 .queue
                 .iter()
                 .find(|s| s.id == song_id)
-                .and_then(|s| s.cover_path.clone())
-                .filter(|p| !p.starts_with("http://") && !p.starts_with("https://"));
-
-            let Some(cover_path) = cover_path else {
+                .cloned()
+            else {
                 continue;
             };
 
-            self.playback
-                .preload_coordinator
-                .ensure_background_slot(song_id, Some(cover_path.clone()));
-
-            // Skip if already cached
-            if self
-                .playback
-                .preload_coordinator
-                .is_background_ready(song_id, Some(&cover_path))
-            {
+            let Some(cover_path) = self.resolved_song_cover_local_path(&song) else {
                 continue;
-            }
+            };
 
-            tracing::info!(
-                "Background prep: preparing cover for adjacent song {}",
-                song_id
-            );
-
-            let (img, colors) = Self::prepare_background_for_song_task(song_id, cover_path);
-            tasks.push(img);
-            tasks.push(colors);
+            tasks.push(self.prepare_lyrics_background_for_cover_path(song_id, cover_path));
         }
 
         if tasks.is_empty() {
@@ -1160,6 +1174,18 @@ impl App {
         self.ui.lyrics.pending_shape_generation = 0;
         self.ui.lyrics.pending_shape_content_width = 0.0;
         self.ui.lyrics.pending_shape_font_size = 0.0;
+    }
+
+    fn background_result_matches_current_song(&self, song_id: i64, cover_path: &str) -> bool {
+        let Some(current) = self.playback.current_song.as_ref() else {
+            return false;
+        };
+        if current.id != song_id {
+            return false;
+        }
+
+        self.resolved_song_cover_local_path(current)
+            .is_some_and(|path| path.as_path() == std::path::Path::new(cover_path))
     }
 
     /// Install cached background colors + texture from coordinator into shader.
@@ -1418,7 +1444,9 @@ impl App {
         };
         self.ui.lyrics.last_update = Some(now);
 
-        if let Some(start_time) = self.ui.lyrics.shader_start_time {
+        let power_saving = self.core.settings.display.power_saving_mode;
+
+        if !power_saving && let Some(start_time) = self.ui.lyrics.shader_start_time {
             let elapsed_ms = now.duration_since(start_time).as_secs_f32() * 1000.0;
             let shader_time = elapsed_ms / 10000.0;
             self.ui.lyrics.bg_shader.set_time(elapsed_ms);
@@ -1447,7 +1475,9 @@ impl App {
             self.ui.lyrics.current_line_idx = new_current_line;
         }
 
-        self.update_lyrics_engine(delta_secs);
+        if !power_saving {
+            self.update_lyrics_engine(delta_secs);
+        }
 
         Task::none()
     }
@@ -1659,28 +1689,28 @@ impl App {
     /// Update background asynchronously (color extraction + texture)
     fn update_background_async(&mut self, song: &crate::database::DbSong) -> Task<Message> {
         let song_id = song.id;
-        let cover_path = song.cover_path.clone();
-
-        self.playback
-            .preload_coordinator
-            .ensure_background_slot(song_id, cover_path.clone());
 
         // Reset shader time if needed
         if self.ui.lyrics.shader_start_time.is_none() {
             self.ui.lyrics.shader_start_time = Some(std::time::Instant::now());
         }
 
-        // If no cover, just clear and return
-        let Some(path) = cover_path else {
+        let Some(path) = self.resolved_song_cover_local_path(song) else {
             self.ui.lyrics.textured_bg_shader.clear_cover();
+            let colors = crate::utils::DominantColors::dark_default();
+            self.ui.lyrics.bg_shader.set_colors(
+                crate::ui::effects::background::color_to_array(colors.primary),
+                crate::ui::effects::background::color_to_array(colors.secondary),
+                crate::ui::effects::background::color_to_array(colors.tertiary),
+            );
+            self.ui.lyrics.bg_colors = colors;
             return Task::none();
         };
+        let path = path.to_string_lossy().to_string();
 
-        // Skip if cover is a URL (not downloaded yet)
-        if path.starts_with("http://") || path.starts_with("https://") {
-            tracing::debug!("Cover is URL, waiting for download: {}", path);
-            return Task::none();
-        }
+        self.playback
+            .preload_coordinator
+            .ensure_background_slot(song_id, Some(path.clone()));
 
         // Fast path: coordinator has cached data for this song + cover — install directly
         if self
@@ -1692,91 +1722,13 @@ impl App {
             return Task::none();
         }
 
-        // Check if we already have this image installed in shader (even faster path)
         let path_obj = std::path::Path::new(&path);
-        if self
-            .playback
-            .preload_coordinator
-            .is_background_ready(song_id, Some(path.as_str()))
-            && self.ui.lyrics.textured_bg_shader.is_same_image(path_obj)
-        {
-            tracing::debug!("Cover image already cached for song {}", song_id);
-            return Task::none();
-        }
-
         if self.ui.lyrics.textured_bg_shader.is_same_image(path_obj) {
             tracing::debug!("Cover image already cached for song {}", song_id);
-            // Sync coordinator state — background is effectively ready
-            self.playback
-                .preload_coordinator
-                .mark_background_colors_ready(song_id);
-            self.playback
-                .preload_coordinator
-                .mark_background_texture_ready(song_id);
             return Task::none();
         }
 
-        // Load both image and colors asynchronously
-        let path_for_image = path.clone();
-        let path_for_colors = path.clone();
-        let path_for_image_msg = path.clone();
-        let path_for_colors_msg = path.clone();
-
-        // Task 1: Load cover image for textured background
-        let image_task = Task::perform(
-            async move {
-                tokio::task::spawn_blocking(move || match image::open(&path_for_image) {
-                    Ok(img) => {
-                        let rgb = img.to_rgb8();
-                        let (width, height) = rgb.dimensions();
-                        let data = rgb.into_raw();
-                        Some((song_id, path_for_image_msg, data, width, height))
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to load cover image: {}", e);
-                        None
-                    }
-                })
-                .await
-                .ok()
-                .flatten()
-            },
-            |result| match result {
-                Some((song_id, path, data, width, height)) => {
-                    Message::LyricsCoverImageReady(song_id, path, data, width, height)
-                }
-                None => Message::Noop,
-            },
-        );
-
-        // Task 2: Extract colors
-        let colors_task = Task::perform(
-            async move {
-                tokio::task::spawn_blocking(move || {
-                    if let Some(colors) =
-                        crate::utils::DominantColors::from_image_path(&path_for_colors)
-                    {
-                        let primary = color_to_array(colors.primary);
-                        let secondary = color_to_array(colors.secondary);
-                        let tertiary = color_to_array(colors.tertiary);
-                        Some((song_id, path_for_colors_msg, primary, secondary, tertiary))
-                    } else {
-                        None
-                    }
-                })
-                .await
-                .ok()
-                .flatten()
-            },
-            |result| match result {
-                Some((song_id, path, primary, secondary, tertiary)) => {
-                    Message::LyricsBackgroundReady(song_id, path, primary, secondary, tertiary)
-                }
-                None => Message::Noop,
-            },
-        );
-
-        Task::batch([image_task, colors_task])
+        self.prepare_lyrics_background_for_cover_path(song_id, std::path::PathBuf::from(path))
     }
 
     /// 只更新歌词页面背景（封面下载完成后调用）

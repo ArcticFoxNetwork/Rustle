@@ -216,13 +216,20 @@ impl App {
             return Task::none();
         };
 
-        if let Some(path_or_url) = song.cover_path.as_deref() {
-            if crate::image::is_valid_local_path(path_or_url) {
-                self.store_image_path(kind, id, std::path::PathBuf::from(path_or_url));
-                return Task::none();
+        if let Some(local_path) = self.resolved_song_cover_local_path(&song) {
+            if self.ui.image_state.get(kind, id).is_none() {
+                self.store_image_path(kind, id, local_path.clone());
             }
 
-            if is_remote_image_url(path_or_url) {
+            if !cover_path_matches(song.cover_path.as_deref(), &local_path) {
+                return self.after_image_ready(kind, id, &local_path);
+            }
+
+            return Task::none();
+        }
+
+        if let Some(path_or_url) = song.cover_path.as_deref() {
+            if crate::image::is_remote_url(path_or_url) {
                 let enqueue_task = self.enqueue_image_download(kind, id, path_or_url);
                 return Task::batch([enqueue_task, self.pump_image_downloads()]);
             }
@@ -230,6 +237,34 @@ impl App {
 
         self.register_cached_image(kind, id)
             .unwrap_or_else(Task::none)
+    }
+
+    /// Return the already available local cover file for a song, using the
+    /// unified image state first and the on-disk image cache second.
+    pub(super) fn cached_song_cover_local_path(&self, song_id: i64) -> Option<std::path::PathBuf> {
+        let (kind, id) = crate::image::song_cover_key(song_id)?;
+
+        if let Some((path, _, _)) = self.ui.image_state.image_data(kind, id)
+            && path.exists()
+        {
+            return Some(path.clone());
+        }
+
+        crate::image::resolve_cached(kind, id)
+    }
+
+    /// Resolve the local cover file for a song without starting network work.
+    pub(super) fn resolved_song_cover_local_path(
+        &self,
+        song: &crate::database::DbSong,
+    ) -> Option<std::path::PathBuf> {
+        if let Some(path) = song.cover_path.as_deref()
+            && crate::image::is_valid_local_path(path)
+        {
+            return Some(std::path::PathBuf::from(path));
+        }
+
+        self.cached_song_cover_local_path(song.id)
     }
 
     // ── Internal ──
@@ -308,18 +343,23 @@ impl App {
         id: u64,
         path: &std::path::Path,
     ) -> Task<Message> {
-        let ImageKind::SongCover = kind else {
-            return Task::none();
+        let song_id = match kind {
+            ImageKind::SongCover => {
+                let Some(id) = i64::try_from(id).ok().and_then(|id| id.checked_neg()) else {
+                    return Task::none();
+                };
+                id
+            }
+            ImageKind::LocalSongCover => {
+                let Some(id) = i64::try_from(id).ok() else {
+                    return Task::none();
+                };
+                id
+            }
+            _ => return Task::none(),
         };
 
-        let Some(song_id) = i64::try_from(id).ok().and_then(|id| id.checked_neg()) else {
-            return Task::none();
-        };
         let path_string = path.to_string_lossy().to_string();
-
-        self.playback
-            .preload_coordinator
-            .ensure_background_slot(song_id, Some(path_string.clone()));
 
         if let Some(current) = &mut self.playback.current_song
             && current.id == song_id
@@ -335,12 +375,28 @@ impl App {
 
             if let Some(db) = &self.core.db {
                 let db = db.clone();
-                let song_clone = queue_song.clone();
-                tokio::spawn(async move {
-                    if let Err(e) = db.upsert_ncm_song(&song_clone).await {
-                        tracing::warn!("Failed to update cover path in database: {}", e);
+                match kind {
+                    ImageKind::SongCover => {
+                        let song_clone = queue_song.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = db.upsert_ncm_song(&song_clone).await {
+                                tracing::warn!("Failed to update cover path in database: {}", e);
+                            }
+                        });
                     }
-                });
+                    ImageKind::LocalSongCover => {
+                        let cover_path = path_string.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = db.update_song_cover(song_id, &cover_path).await {
+                                tracing::warn!(
+                                    "Failed to update local cover path in database: {}",
+                                    e
+                                );
+                            }
+                        });
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -349,6 +405,17 @@ impl App {
             && song.id == song_id
         {
             return self.update_lyrics_background(&song);
+        }
+
+        if self.ui.lyrics.is_open
+            && self
+                .playback
+                .preload_coordinator
+                .window()
+                .contains_song(song_id)
+        {
+            return self
+                .prepare_lyrics_background_for_cover_path(song_id, std::path::PathBuf::from(path));
         }
 
         Task::none()
@@ -520,8 +587,10 @@ fn remote_song_list_covers(
         .map(move |item| RemoteImage::new(kind, item.id, &item.cover_img_url))
 }
 
-fn is_remote_image_url(path_or_url: &str) -> bool {
-    path_or_url.starts_with("http://") || path_or_url.starts_with("https://")
+fn cover_path_matches(path_or_url: Option<&str>, local_path: &std::path::Path) -> bool {
+    path_or_url.is_some_and(|path| {
+        crate::image::is_valid_local_path(path) && std::path::Path::new(path) == local_path
+    })
 }
 
 fn ncm_playlist_page_id(id: u64) -> i64 {

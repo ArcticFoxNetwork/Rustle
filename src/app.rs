@@ -20,6 +20,72 @@ pub use state::{
     SearchTab, SongEditDialogState, UiState, UserInfo,
 };
 
+mod subscription_logic {
+    pub fn window_should_throttle(window_hidden: bool) -> bool {
+        window_hidden
+    }
+
+    pub fn animation_subscription_enabled(
+        window_throttled: bool,
+        has_animations: bool,
+        lyrics_needs_frames: bool,
+        audio_engine_needs_frames: bool,
+    ) -> bool {
+        !window_throttled && (has_animations || lyrics_needs_frames || audio_engine_needs_frames)
+    }
+
+    pub fn playback_tick_interval_ms(
+        is_playing: bool,
+        window_throttled: bool,
+        power_saving: bool,
+    ) -> Option<u64> {
+        if !is_playing {
+            None
+        } else if window_throttled {
+            Some(1000)
+        } else if power_saving {
+            Some(500)
+        } else {
+            Some(100)
+        }
+    }
+
+    #[cfg(test)]
+    pub fn needs_animation_subscription(
+        has_animations: bool,
+        lyrics_needs_frames: bool,
+        audio_engine_needs_frames: bool,
+    ) -> bool {
+        animation_subscription_enabled(
+            false,
+            has_animations,
+            lyrics_needs_frames,
+            audio_engine_needs_frames,
+        )
+    }
+
+    #[cfg(test)]
+    pub fn needs_playback_subscription(is_playing: bool) -> bool {
+        playback_tick_interval_ms(is_playing, false, false).is_some()
+    }
+
+    #[cfg(test)]
+    pub fn subscription_decisions(
+        has_animations: bool,
+        lyrics_needs_frames: bool,
+        audio_engine_needs_frames: bool,
+        is_playing: bool,
+    ) -> (bool, bool) {
+        let needs_animation = needs_animation_subscription(
+            has_animations,
+            lyrics_needs_frames,
+            audio_engine_needs_frames,
+        );
+        let needs_playback = needs_playback_subscription(is_playing);
+        (needs_animation, needs_playback)
+    }
+}
+
 impl App {
     /// Create new application instance
     pub fn new() -> (Self, Task<Message>) {
@@ -183,26 +249,26 @@ impl App {
         // 6. Window events
         let close_request_sub = iced::window::close_requests().map(|_id| Message::RequestClose);
 
-        let window_inactive = window_hidden || !self.core.window_focused;
+        let window_throttled = subscription_logic::window_should_throttle(window_hidden);
 
         // 7. Animation subscription
-        let animation_sub = if !window_inactive
-            && (has_animations || lyrics_needs_frames || audio_engine_needs_frames)
-        {
+        let animation_sub = if subscription_logic::animation_subscription_enabled(
+            window_throttled,
+            has_animations,
+            lyrics_needs_frames,
+            audio_engine_needs_frames,
+        ) {
             iced::time::every(Duration::from_micros(8333)).map(|_| Message::AnimationTick)
         } else {
             iced::Subscription::none()
         };
 
         // 8. Playback monitoring
-        let playback_sub = if is_playing {
-            let interval = if window_inactive {
-                1000
-            } else if power_saving {
-                500
-            } else {
-                100
-            };
+        let playback_sub = if let Some(interval) = subscription_logic::playback_tick_interval_ms(
+            is_playing,
+            window_throttled,
+            power_saving,
+        ) {
             iced::time::every(Duration::from_millis(interval)).map(|_| Message::PlaybackTick)
         } else {
             iced::Subscription::none()
@@ -268,38 +334,32 @@ impl Default for App {
 }
 
 #[cfg(test)]
-pub mod subscription_logic {
-    pub fn needs_animation_subscription(
-        has_animations: bool,
-        lyrics_needs_frames: bool,
-        audio_engine_needs_frames: bool,
-    ) -> bool {
-        has_animations || lyrics_needs_frames || audio_engine_needs_frames
-    }
-
-    pub fn needs_playback_subscription(is_playing: bool) -> bool {
-        is_playing
-    }
-
-    pub fn subscription_decisions(
-        has_animations: bool,
-        lyrics_needs_frames: bool,
-        audio_engine_needs_frames: bool,
-        is_playing: bool,
-    ) -> (bool, bool) {
-        let needs_animation = needs_animation_subscription(
-            has_animations,
-            lyrics_needs_frames,
-            audio_engine_needs_frames,
-        );
-        let needs_playback = needs_playback_subscription(is_playing);
-        (needs_animation, needs_playback)
-    }
-}
-
-#[cfg(test)]
 mod tests {
     use super::subscription_logic::*;
+
+    #[test]
+    fn unfocused_visible_window_is_not_throttled() {
+        assert!(
+            !window_should_throttle(false),
+            "Visible background windows should keep normal frame cadence"
+        );
+    }
+
+    #[test]
+    fn hidden_window_is_throttled_even_if_focused_state_is_stale() {
+        assert!(
+            window_should_throttle(true),
+            "Only hidden/closed-to-tray windows should use the low cadence"
+        );
+    }
+
+    #[test]
+    fn playback_interval_only_uses_low_cadence_when_hidden() {
+        assert_eq!(playback_tick_interval_ms(true, false, false), Some(100));
+        assert_eq!(playback_tick_interval_ms(true, false, true), Some(500));
+        assert_eq!(playback_tick_interval_ms(true, true, false), Some(1000));
+        assert_eq!(playback_tick_interval_ms(false, false, false), None);
+    }
 
     mod property_playback_independence {
         use super::*;

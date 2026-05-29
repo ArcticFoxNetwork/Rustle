@@ -192,6 +192,11 @@ impl SingleHoverAnimation {
         self.animation.update(0.0.into());
     }
 
+    /// Immediately finish at a specific progress value.
+    pub fn settle_at(&mut self, progress: f32) {
+        self.animation.settle_at(progress.clamp(0.0, 1.0));
+    }
+
     /// Get progress (0.0 to 1.0)
     pub fn progress(&self) -> f32 {
         *self.animation.value()
