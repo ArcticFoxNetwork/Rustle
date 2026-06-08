@@ -76,6 +76,20 @@ fn preferred_sans_serif_family(db: &Database) -> Option<&'static str> {
         .find(|family| has_font_family(db, family))
 }
 
+/// List all installed font family names from the font database.
+///
+/// Returns a sorted, deduplicated list of all font families available
+/// on the system. Useful for populating a font picker in the UI.
+pub fn list_installed_font_families(db: &Database) -> Vec<String> {
+    let mut families: Vec<String> = db
+        .faces()
+        .flat_map(|face| face.families.iter().map(|(name, _)| name.clone()))
+        .collect();
+    families.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    families.dedup();
+    families
+}
+
 fn has_font_family(db: &Database, candidate: &str) -> bool {
     db.faces().any(|face| {
         face.families

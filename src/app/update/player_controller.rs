@@ -971,10 +971,11 @@ impl App {
 
         if self.ui.lyrics.is_open {
             // Render-ready source of truth: LyricsRenderManager
+            let font_family = self.core.settings.lyrics.lyrics_font_family.as_deref();
             let lyrics_ready = self.current_lyrics_shape_metrics().is_some_and(|(cw, fs)| {
                 self.playback
                     .lyrics_render_manager
-                    .is_render_ready(current_song.id, cw, fs)
+                    .is_render_ready(current_song.id, cw, fs, font_family)
             });
 
             if lyrics_ready {

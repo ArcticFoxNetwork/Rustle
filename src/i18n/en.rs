@@ -134,6 +134,11 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::SettingsCloseBehaviorAsk, "Ask");
     m.insert(Key::SettingsCloseBehaviorExit, "Exit");
     m.insert(Key::SettingsCloseBehaviorMinimize, "Minimize to Tray");
+    m.insert(Key::SettingsLyricsFontFamily, "Lyrics Font");
+    m.insert(
+        Key::SettingsLyricsFontFamilyAuto,
+        "System Default (Auto Detect)",
+    );
 
     // Settings - System Section
     m.insert(Key::SettingsSystemTitle, "System Settings");
