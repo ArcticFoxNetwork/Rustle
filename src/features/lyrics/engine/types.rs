@@ -41,7 +41,6 @@ impl Default for FontConfig {
 
 impl FontConfig {
     /// Create a new FontConfig with a specific font family
-    #[cfg(test)]
     pub fn with_family(family: impl Into<String>) -> Self {
         Self {
             font_family: Some(family.into()),

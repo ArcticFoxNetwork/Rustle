@@ -28,10 +28,11 @@ impl App {
 
                     // Render-ready source of truth: LyricsRenderManager
                     let viewport = self.current_lyrics_shape_metrics();
+                    let font_family = self.core.settings.lyrics.lyrics_font_family.as_deref();
                     let render_ready = viewport.is_some_and(|(cw, fs)| {
                         self.playback
                             .lyrics_render_manager
-                            .is_render_ready(song.id, cw, fs)
+                            .is_render_ready(song.id, cw, fs, font_family)
                     });
 
                     if render_ready {
@@ -349,12 +350,14 @@ impl App {
                         .get(*song_id)
                         .map(|e| e.shape_generation.wrapping_add(1))
                         .unwrap_or(1);
+                    let font_family = self.core.settings.lyrics.lyrics_font_family.clone();
                     return Some(Self::request_lyrics_shaping_for_song(
                         *song_id,
                         engine_lines.clone(),
                         font_system,
                         cw,
                         fs,
+                        font_family,
                         gen_val,
                     ));
                 }
@@ -369,6 +372,7 @@ impl App {
                 pre_generated_bitmaps,
                 content_width,
                 font_size,
+                font_family,
             ) => {
                 // Store in render manager for ALL songs (enables adjacent preload)
                 self.playback.lyrics_render_manager.store_shaped_lines(
@@ -377,6 +381,7 @@ impl App {
                     *generation,
                     *content_width,
                     *font_size,
+                    font_family.clone(),
                 );
                 self.playback
                     .preload_coordinator
@@ -548,7 +553,7 @@ impl App {
         self.request_lyrics_shaping_for_current_viewport()
     }
 
-    fn request_lyrics_shaping_for_current_viewport(&mut self) -> Task<Message> {
+    pub(super) fn request_lyrics_shaping_for_current_viewport(&mut self) -> Task<Message> {
         let Some(lines_for_shaping) = self.ui.lyrics.cached_engine_lines.clone() else {
             return Task::none();
         };
@@ -591,18 +596,26 @@ impl App {
         self.ui.lyrics.pending_shape_content_width = content_width;
         self.ui.lyrics.pending_shape_font_size = font_size;
 
+        let font_family = self.core.settings.lyrics.lyrics_font_family.clone();
+
         Task::perform(
             async move {
                 tokio::task::spawn_blocking(move || {
                     use crate::features::lyrics::engine::{
-                        CachedShapedLine, TextShaper, pre_generate_sdf_batch,
+                        CachedShapedLine, FontConfig, TextShaper, pre_generate_sdf_batch,
                     };
 
                     let trans_height_ratio = 0.5;
                     let roman_height_ratio = 0.5;
                     let bg_font_size_ratio = 0.7;
 
-                    let text_shaper = TextShaper::new(font_system.clone());
+                    let text_shaper = match font_family {
+                        Some(ref family) => TextShaper::with_config(
+                            font_system.clone(),
+                            FontConfig::with_family(family),
+                        ),
+                        None => TextShaper::new(font_system.clone()),
+                    };
 
                     let shaped_lines: Vec<CachedShapedLine> = lines_for_shaping
                         .iter()
@@ -701,6 +714,7 @@ impl App {
                         pre_generated_bitmaps,
                         content_width,
                         font_size,
+                        font_family,
                     )
                 })
                 .await
@@ -714,6 +728,7 @@ impl App {
                     pre_generated_bitmaps,
                     content_width,
                     font_size,
+                    font_family,
                 )) = result
                 {
                     Message::LyricsShapedLinesReady(
@@ -723,6 +738,7 @@ impl App {
                         pre_generated_bitmaps,
                         content_width,
                         font_size,
+                        font_family,
                     )
                 } else {
                     Message::Noop
@@ -739,20 +755,27 @@ impl App {
         font_system: crate::features::lyrics::engine::SharedFontSystem,
         content_width: f32,
         font_size: f32,
+        font_family: Option<String>,
         generation: u64,
     ) -> Task<Message> {
         Task::perform(
             async move {
                 tokio::task::spawn_blocking(move || {
                     use crate::features::lyrics::engine::{
-                        CachedShapedLine, TextShaper, pre_generate_sdf_batch,
+                        CachedShapedLine, FontConfig, TextShaper, pre_generate_sdf_batch,
                     };
 
                     let trans_height_ratio = 0.5;
                     let roman_height_ratio = 0.5;
                     let bg_font_size_ratio = 0.7;
 
-                    let text_shaper = TextShaper::new(font_system.clone());
+                    let text_shaper = match font_family {
+                        Some(ref family) => TextShaper::with_config(
+                            font_system.clone(),
+                            FontConfig::with_family(family),
+                        ),
+                        None => TextShaper::new(font_system.clone()),
+                    };
 
                     let shaped_lines: Vec<CachedShapedLine> = engine_lines
                         .iter()
@@ -849,6 +872,7 @@ impl App {
                         pre_generated_bitmaps,
                         content_width,
                         font_size,
+                        font_family,
                     )
                 })
                 .await
@@ -862,6 +886,7 @@ impl App {
                     pre_generated_bitmaps,
                     content_width,
                     font_size,
+                    font_family,
                 )) = result
                 {
                     Message::LyricsShapedLinesReady(
@@ -871,6 +896,7 @@ impl App {
                         pre_generated_bitmaps,
                         content_width,
                         font_size,
+                        font_family,
                     )
                 } else {
                     Message::Noop
@@ -885,6 +911,7 @@ impl App {
         let window = self.playback.preload_coordinator.window();
         let shape_metrics = self.current_lyrics_shape_metrics();
         let font_system = self.ui.lyrics.shared_font_system.clone();
+        let font_family = self.core.settings.lyrics.lyrics_font_family.clone();
         let mut tasks = Vec::new();
 
         for song_id in [window.next_song_id, window.prev_song_id]
@@ -895,7 +922,7 @@ impl App {
                 && self
                     .playback
                     .lyrics_render_manager
-                    .is_render_ready(song_id, cw, fs)
+                    .is_render_ready(song_id, cw, fs, font_family.as_deref())
             {
                 continue;
             }
@@ -911,6 +938,7 @@ impl App {
                         font_system,
                         cw,
                         fs,
+                        font_family.clone(),
                         generation,
                     ));
                 }
@@ -1101,10 +1129,11 @@ impl App {
         let Some((content_width, font_size)) = self.current_lyrics_shape_metrics() else {
             return false;
         };
+        let font_family = self.core.settings.lyrics.lyrics_font_family.as_deref();
         if !self
             .playback
             .lyrics_render_manager
-            .is_render_ready(song_id, content_width, font_size)
+            .is_render_ready(song_id, content_width, font_size, font_family)
         {
             return false;
         }

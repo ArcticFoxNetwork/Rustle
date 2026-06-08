@@ -38,7 +38,7 @@ pub use line_animation::{AnimationBuffers, LineAnimationManager};
 pub use physics::{ScrollPhysics, ScrollState};
 pub use sdf_cache::{SharedFontSystem, pre_generate_sdf_batch};
 pub use text_shaper::TextShaper;
-pub use types::{FontSizeConfig, LyricLineData, LyricsLineTraits, WordData};
+pub use types::{FontConfig, FontSizeConfig, LyricLineData, LyricsLineTraits, WordData};
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -1161,6 +1161,24 @@ impl LyricsEngine {
     /// Check if playing
     pub fn is_playing(&self) -> bool {
         self.is_playing
+    }
+
+    /// Update the font family used for shaping.
+    ///
+    /// `None` triggers auto-detection via the platform font candidate list.
+    /// Call this when the user changes the font family in settings.
+    /// Invalidates layout so the next frame re-shapes all lines.
+    pub fn set_font_family(
+        &mut self,
+        font_family: Option<String>,
+        font_system: crate::features::lyrics::engine::sdf_cache::SharedFontSystem,
+    ) {
+        let config = FontConfig {
+            font_family: font_family.clone(),
+            ..Default::default()
+        };
+        self.text_shaper = TextShaper::with_config(font_system, config);
+        self.invalidate_layout();
     }
 
     /// Get interlude dots state for rendering

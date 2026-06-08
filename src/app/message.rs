@@ -135,6 +135,8 @@ pub enum Message {
     UpdateAppLanguage(String),
     /// Update power saving mode
     UpdatePowerSavingMode(bool),
+    /// Update lyrics panel settings
+    UpdateLyricsFontFamily(Option<String>),
     /// Update storage settings
     UpdateMaxCacheMb(u64),
     UpdateDownloadDir(Option<String>),
@@ -329,6 +331,7 @@ pub enum Message {
         >,
         f32,
         f32,
+        Option<String>,
     ),
     /// Background colors extracted asynchronously (song_id, cover_path, primary, secondary, tertiary)
     LyricsBackgroundReady(i64, String, [f32; 4], [f32; 4], [f32; 4]),
@@ -891,6 +894,9 @@ impl std::fmt::Debug for Message {
             Self::UpdateDarkMode(b) => simple!("UpdateDarkMode", "{}", b),
             Self::UpdateAppLanguage(l) => simple!("UpdateAppLanguage", "{}", l),
             Self::UpdatePowerSavingMode(b) => simple!("UpdatePowerSavingMode", "{}", b),
+            Self::UpdateLyricsFontFamily(f) => {
+                simple!("UpdateLyricsFontFamily", "{:?}", f)
+            }
             Self::UpdateMaxCacheMb(m) => simple!("UpdateMaxCacheMb", "{}", m),
             Self::UpdateDownloadQuality(q) => simple!("UpdateDownloadQuality", "{:?}", q),
             Self::UpdateDownloadDir(d) => simple!("UpdateDownloadDir", "{:?}", d),
@@ -992,7 +998,7 @@ impl std::fmt::Debug for Message {
             Self::LyricsEngineLinesReady(id, lines) => {
                 simple!("LyricsEngineLinesReady", "id={}, {} lines", id, lines.len())
             }
-            Self::LyricsShapedLinesReady(id, generation, lines, bitmaps, _, _) => simple!(
+            Self::LyricsShapedLinesReady(id, generation, lines, bitmaps, _, _, _) => simple!(
                 "LyricsShapedLinesReady",
                 "id={}, gen={}, {} lines, {} bitmaps",
                 id,

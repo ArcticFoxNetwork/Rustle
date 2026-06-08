@@ -154,6 +154,8 @@ pub enum Key {
     SettingsCloseBehaviorAsk,
     SettingsCloseBehaviorExit,
     SettingsCloseBehaviorMinimize,
+    SettingsLyricsFontFamily,
+    SettingsLyricsFontFamilyAuto,
 
     // Settings - System Section
     SettingsSystemTitle,

@@ -21,13 +21,22 @@ pub struct LyricsRenderEntry {
     pub content_width: f32,
     /// Font size used for shaping
     pub font_size: f32,
+    /// Font family used for shaping (None = auto-detected)
+    pub font_family: Option<String>,
     /// Monotonic generation counter to reject stale results
     pub shape_generation: u64,
 }
 
 impl LyricsRenderEntry {
-    pub fn shaped_viewport_matches(&self, content_width: f32, font_size: f32) -> bool {
-        (self.content_width - content_width).abs() < 0.5 && (self.font_size - font_size).abs() < 0.5
+    pub fn shaped_viewport_matches(
+        &self,
+        content_width: f32,
+        font_size: f32,
+        font_family: Option<&str>,
+    ) -> bool {
+        (self.content_width - content_width).abs() < 0.5
+            && (self.font_size - font_size).abs() < 0.5
+            && self.font_family.as_deref() == font_family
     }
 }
 
@@ -60,18 +69,27 @@ impl LyricsRenderManager {
         generation: u64,
         content_width: f32,
         font_size: f32,
+        font_family: Option<String>,
     ) {
         let entry = self.entry_mut(song_id);
         entry.shaped_lines = Some(lines);
         entry.shape_generation = generation;
         entry.content_width = content_width;
         entry.font_size = font_size;
+        entry.font_family = font_family;
     }
 
     /// Check if shaped lines are ready and match the given viewport
-    pub fn is_render_ready(&self, song_id: i64, content_width: f32, font_size: f32) -> bool {
+    pub fn is_render_ready(
+        &self,
+        song_id: i64,
+        content_width: f32,
+        font_size: f32,
+        font_family: Option<&str>,
+    ) -> bool {
         self.entries.get(&song_id).is_some_and(|e| {
-            e.shaped_lines.is_some() && e.shaped_viewport_matches(content_width, font_size)
+            e.shaped_lines.is_some()
+                && e.shaped_viewport_matches(content_width, font_size, font_family)
         })
     }
 
@@ -89,6 +107,7 @@ impl Default for LyricsRenderEntry {
             shaped_lines: None,
             content_width: 0.0,
             font_size: 0.0,
+            font_family: None,
             shape_generation: 0,
         }
     }

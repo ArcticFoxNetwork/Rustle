@@ -276,6 +276,35 @@ impl App {
                 tracing::info!("Language changed to: {}", lang.code());
                 Some(Task::perform(async { Message::SaveSettings }, |m| m))
             }
+            Message::UpdateLyricsFontFamily(family) => {
+                let changed =
+                    self.core.settings.lyrics.lyrics_font_family.as_deref() != family.as_deref();
+                if changed {
+                    self.core.settings.lyrics.lyrics_font_family = family.clone();
+
+                    // Update engine's text shaper so synchronous shaping uses the new font
+                    if let Some(engine_cell) = &self.ui.lyrics.engine {
+                        if let Some(font_system) = &self.ui.lyrics.shared_font_system {
+                            let mut engine = engine_cell.borrow_mut();
+                            engine.set_font_family(family.clone(), font_system.clone());
+                        }
+                    }
+
+                    // Invalidate all caches and trigger re-shape
+                    self.ui.lyrics.cached_shaped_lines = None;
+                    self.playback.lyrics_render_manager =
+                        crate::app::update::lyrics_render_manager::LyricsRenderManager::default();
+                    let reshape_task = self.request_lyrics_shaping_for_current_viewport();
+
+                    tracing::info!("Lyrics font family changed to {:?}", family);
+
+                    return Some(Task::batch([
+                        Task::perform(async { Message::SaveSettings }, |m| m),
+                        reshape_task,
+                    ]));
+                }
+                Some(Task::none())
+            }
             Message::UpdatePowerSavingMode(enabled) => {
                 self.core.settings.display.power_saving_mode = *enabled;
                 self.sync_audio_analysis_state();

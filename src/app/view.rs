@@ -228,6 +228,7 @@ impl App {
                 pages::settings::view(
                     &self.core.settings,
                     self.audio_output_devices(),
+                    self.lyrics_font_families(),
                     self.ui.active_settings_section,
                     self.core.locale,
                     self.ui.editing_keybinding,

@@ -535,6 +535,18 @@ impl App {
             .collect()
     }
 
+    /// List all installed font families available for lyrics rendering.
+    pub(crate) fn lyrics_font_families(&self) -> Vec<String> {
+        self.ui
+            .lyrics
+            .shared_font_system
+            .as_ref()
+            .map_or_else(Vec::new, |fs| {
+                let font_system = fs.lock();
+                crate::platform::theme::list_installed_font_families(font_system.db())
+            })
+    }
+
     pub(crate) fn set_audio_analysis_enabled(&self, enabled: bool) {
         self.core.audio_chain.set_analysis_enabled(enabled);
     }

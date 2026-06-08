@@ -19,6 +19,7 @@ use crate::ui::theme;
 pub fn view(
     settings: &Settings,
     audio_devices: Vec<(String, String)>,
+    font_families: Vec<String>,
     active_section: SettingsSection,
     locale: Locale,
     editing_keybinding: Option<Action>,
@@ -57,6 +58,7 @@ pub fn view(
     let all_sections = all_sections_content(
         settings,
         &audio_devices,
+        &font_families,
         locale,
         editing_keybinding,
         is_logged_in,
@@ -190,6 +192,7 @@ fn tab_bar(active_section: SettingsSection, locale: Locale) -> Element<'static, 
 fn all_sections_content(
     settings: &Settings,
     audio_devices: &[(String, String)],
+    font_families: &[String],
     locale: Locale,
     editing_keybinding: Option<Action>,
     is_logged_in: bool,
@@ -219,7 +222,7 @@ fn all_sections_content(
         container(column![
             section_header(locale.get(Key::SettingsDisplayTitle)),
             Space::new().height(16),
-            display_section(settings, locale),
+            display_section(settings, font_families, locale),
         ])
         .id(SettingsSection::Display.widget_id()),
         Space::new().height(40),
@@ -558,7 +561,11 @@ fn audio_engine_entry_row(locale: Locale) -> Element<'static, Message> {
         .into()
 }
 
-fn display_section(settings: &Settings, locale: Locale) -> Element<'static, Message> {
+fn display_section(
+    settings: &Settings,
+    font_families: &[String],
+    locale: Locale,
+) -> Element<'static, Message> {
     use crate::features::CloseBehavior;
 
     let close_behavior_options = vec![
@@ -615,6 +622,36 @@ fn display_section(settings: &Settings, locale: Locale) -> Element<'static, Mess
                 .on_toggle(Message::UpdatePowerSavingMode)
                 .size(theme::TEXT_SIZE_TITLE)
                 .into()
+        ),
+        divider(),
+        setting_row(
+            locale.get(Key::SettingsLyricsFontFamily),
+            None,
+            styled_pick_list(
+                {
+                    let auto_label = locale.get(Key::SettingsLyricsFontFamilyAuto).to_string();
+                    let mut opts = vec![auto_label];
+                    opts.extend(font_families.iter().cloned());
+                    opts
+                },
+                Some(
+                    settings
+                        .lyrics
+                        .lyrics_font_family
+                        .clone()
+                        .unwrap_or_else(|| locale.get(Key::SettingsLyricsFontFamilyAuto).to_string()),
+                ),
+                {
+                    let auto_label = locale.get(Key::SettingsLyricsFontFamilyAuto).to_string();
+                    move |value| {
+                        if value == auto_label {
+                            Message::UpdateLyricsFontFamily(None)
+                        } else {
+                            Message::UpdateLyricsFontFamily(Some(value))
+                        }
+                    }
+                },
+            )
         ),
         divider(),
         setting_row(
