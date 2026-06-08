@@ -46,6 +46,8 @@ pub struct Settings {
     pub playback: PlaybackSettings,
     /// Display and interface settings
     pub display: DisplaySettings,
+    /// Lyrics panel settings
+    pub lyrics: LyricsSettings,
     /// Storage settings
     pub storage: StorageSettings,
     /// System settings
@@ -253,6 +255,12 @@ pub struct DisplaySettings {
     pub power_saving_mode: bool,
 }
 
+// Lyrics panel settings
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LyricsSettings {
+    pub lyrics_font_family: Option<String>,
+}
+
 /// Storage settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageSettings {
@@ -431,6 +439,7 @@ impl Default for Settings {
             keybindings: KeyBindings::default(),
             playback: PlaybackSettings::default(),
             display: DisplaySettings::default(),
+            lyrics: LyricsSettings::default(),
             storage: StorageSettings::default(),
             system: SystemSettings::default(),
             network: NetworkSettings::default(),
@@ -450,6 +459,14 @@ impl Default for PlaybackSettings {
             spectrum_decay: 0.85,
             spectrum_bars_mode: true,
             music_quality: MusicQuality::High, // 320k default
+        }
+    }
+}
+
+impl Default for LyricsSettings {
+    fn default() -> Self {
+        Self {
+            lyrics_font_family: None,
         }
     }
 }
