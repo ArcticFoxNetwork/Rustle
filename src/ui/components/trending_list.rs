@@ -188,12 +188,11 @@ fn view_song_item<'a>(
             .width(Fill)
             .padding(0)
             .style(move |theme, _status| {
-                // Interpolate background color based on hover
-                let bg_color = interpolate_color(
-                    Color::TRANSPARENT,
-                    theme::surface_hover(theme),
-                    hover_progress,
-                );
+                // Only interpolate alpha; keep RGB fixed to surface_hover.
+                // Avoids dirty-looking mid-tones that RGB+alpha joint interpolation produces
+                // over a white background in light mode.
+                let target = theme::surface_hover(theme);
+                let bg_color = Color::from_rgba(target.r, target.g, target.b, target.a * hover_progress);
                 button::Style {
                     background: Some(bg_color.into()),
                     border: iced::Border {
@@ -218,12 +217,3 @@ fn format_duration(secs: u64) -> String {
     format!("{:02}:{:02}", mins, secs)
 }
 
-/// Interpolate between two colors
-fn interpolate_color(from: Color, to: Color, t: f32) -> Color {
-    Color::from_rgba(
-        from.r + (to.r - from.r) * t,
-        from.g + (to.g - from.g) * t,
-        from.b + (to.b - from.b) * t,
-        from.a + (to.a - from.a) * t,
-    )
-}
