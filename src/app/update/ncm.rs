@@ -53,9 +53,9 @@ fn format_social_count(value: u64) -> String {
 }
 
 impl App {
-    pub(crate) fn ncm_song_to_db_song(song_info: &crate::api::SongInfo) -> crate::database::DbSong {
-        let metadata = crate::metadata::SongMetadata::from(song_info);
-        let mut db_song = metadata.to_db_song(-(song_info.id as i64));
+    pub(crate) fn ncm_track_to_db_song(track: &crate::api::Track) -> crate::database::DbSong {
+        let metadata = crate::metadata::SongMetadata::from(track);
+        let mut db_song = metadata.to_db_song(-(track.id as i64));
         if db_song.format.is_none() {
             db_song.format = Some("mp3".to_string());
         }
@@ -76,22 +76,22 @@ impl App {
 
     fn handle_ncm_playlist_queue(
         &mut self,
-        songs: &[crate::api::SongInfo],
+        tracks: &[crate::api::Track],
         play_now: bool,
         source_id: Option<u64>,
     ) -> Option<Task<Message>> {
         debug!(
-            "Adding {} NCM songs to playlist, play_now: {}",
-            songs.len(),
+            "Adding {} NCM tracks to playlist, play_now: {}",
+            tracks.len(),
             play_now
         );
-        self.ui.home.current_ncm_playlist_songs = songs.to_vec();
+        self.ui.home.current_ncm_playlist_songs = tracks.to_vec();
 
         let source_id = if self.is_fm_mode() { None } else { source_id };
         self.set_ncm_scrobble_source(source_id);
 
         let db_songs: Vec<crate::database::DbSong> =
-            songs.iter().map(Self::ncm_song_to_db_song).collect();
+            tracks.iter().map(Self::ncm_track_to_db_song).collect();
 
         if self.is_fm_mode() && !play_now {
             debug!("FM mode: appending {} songs to queue", db_songs.len());
@@ -129,8 +129,8 @@ impl App {
 
             Task::perform(
                 async move {
-                    match client.client.personal_fm().await {
-                        Ok(songs) if !songs.is_empty() => Some(songs),
+                    match client.personal_fm_tracks().await {
+                        Ok(tracks) if !tracks.is_empty() => Some(tracks),
                         Ok(_) => None,
                         Err(e) => {
                             error!("Failed to get personal FM: {}", e);
@@ -197,7 +197,7 @@ impl App {
                 .user_playlists
                 .iter()
                 .find(|p| p.id == playlist_id)
-                .map(|p| (p.name.clone(), p.author.clone()))
+                .map(|p| (p.name.clone(), p.creator.nickname.clone()))
                 .unwrap_or_else(|| ("加载中...".to_string(), String::new()))
         };
 
@@ -236,72 +236,67 @@ impl App {
         self.ui.playlist_page.load_state =
             crate::app::update::page_loader::PlaylistLoadState::Loading;
 
-        if let Some(client) = &self.core.ncm_client {
-            let client = client.clone();
-            if is_daily_recommend {
-                let locale = &self.core.locale;
-                let name = locale
-                    .get(crate::i18n::Key::DiscoverDailyRecommend)
-                    .to_string();
-                let desc = locale
-                    .get(crate::i18n::Key::DiscoverDailyRecommendDesc)
-                    .to_string();
-                let creator = locale
-                    .get(crate::i18n::Key::DiscoverDailyRecommendCreator)
-                    .to_string();
-                Task::perform(
-                    async move {
-                        match client.client.recommend_songs().await {
-                            Ok(songs) => Some(crate::api::PlayListDetail {
+        let Some(client) = &self.core.ncm_client else {
+            self.ui.playlist_page.load_state =
+                crate::app::update::page_loader::PlaylistLoadState::Idle;
+            return Self::toast_warning(self.core.locale.get(Key::NotLoggedIn).to_string());
+        };
+
+        let client = client.clone();
+        if is_daily_recommend {
+            let locale = &self.core.locale;
+            let name = locale
+                .get(crate::i18n::Key::DiscoverDailyRecommend)
+                .to_string();
+            let desc = locale
+                .get(crate::i18n::Key::DiscoverDailyRecommendDesc)
+                .to_string();
+            let creator = locale
+                .get(crate::i18n::Key::DiscoverDailyRecommendCreator)
+                .to_string();
+            Task::perform(
+                async move {
+                    match client.recommend_tracks().await {
+                        Ok(tracks) => Ok(crate::api::PlaylistDetail {
+                            id: 0,
+                            name,
+                            cover_url: String::new(),
+                            description: desc,
+                            create_time: 0,
+                            track_update_time: 0,
+                            creator: crate::api::UserSummary {
                                 id: 0,
-                                name,
-                                cover_img_url: String::new(),
-                                description: desc,
-                                create_time: 0,
-                                track_update_time: 0,
-                                creator_id: 0,
-                                creator_nickname: creator,
-                                creator_avatar_url: String::new(),
-                                track_count: songs.len() as u64,
-                                subscribed: false,
-                                songs,
-                            }),
-                            Err(e) => {
-                                error!("Failed to load daily recommend: {:?}", e);
-                                None
-                            }
+                                nickname: creator,
+                                avatar_url: String::new(),
+                            },
+                            track_count: tracks.len() as u64,
+                            subscribed: false,
+                            tracks,
+                        }),
+                        Err(e) => {
+                            error!("Failed to load daily recommend: {:?}", e);
+                            Err("加载每日推荐失败".to_string())
                         }
-                    },
-                    move |result| {
-                        if let Some(detail) = result {
-                            Message::NcmPlaylistDetailLoaded(detail)
-                        } else {
-                            Message::ShowErrorToast("加载每日推荐失败".to_string())
-                        }
-                    },
-                )
-            } else {
-                Task::perform(
-                    async move {
-                        match client.client.song_list_detail(playlist_id).await {
-                            Ok(detail) => Some(detail),
-                            Err(e) => {
-                                error!("Failed to load NCM playlist detail: {:?}", e);
-                                None
-                            }
-                        }
-                    },
-                    move |result| {
-                        if let Some(detail) = result {
-                            Message::NcmPlaylistDetailLoaded(detail)
-                        } else {
-                            Message::ShowErrorToast("加载歌单失败".to_string())
-                        }
-                    },
-                )
-            }
+                    }
+                },
+                move |result| match result {
+                    Ok(detail) => Message::NcmPlaylistDetailLoaded(detail),
+                    Err(message) => Message::PlaylistPageLoadFailed(internal_id, message),
+                },
+            )
         } else {
-            Task::none()
+            Task::perform(
+                async move {
+                    client.playlist_detail(playlist_id).await.map_err(|e| {
+                        error!("Failed to load NCM playlist detail: {:?}", e);
+                        "加载歌单失败".to_string()
+                    })
+                },
+                move |result| match result {
+                    Ok(detail) => Message::NcmPlaylistDetailLoaded(detail),
+                    Err(message) => Message::PlaylistPageLoadFailed(internal_id, message),
+                },
+            )
         }
     }
 
@@ -342,7 +337,7 @@ impl App {
                     .map(|album| {
                         (
                             album.name.clone(),
-                            album.author.clone(),
+                            album.artist_names(),
                             page.owner_artist_id,
                         )
                     })
@@ -353,7 +348,13 @@ impl App {
                     .albums
                     .iter()
                     .find(|album| album.id == album_id)
-                    .map(|album| (album.name.clone(), album.author.clone(), None))
+                    .map(|album| {
+                        (
+                            album.name.clone(),
+                            album.artist_names(),
+                            album.primary_artist().map(|artist| artist.id),
+                        )
+                    })
             });
 
         let (name, owner, owner_artist_id) =
@@ -394,7 +395,7 @@ impl App {
         if let Some(client) = &self.core.ncm_client {
             let client = client.clone();
             return Task::perform(
-                async move { client.client.album_detail(album_id).await.ok() },
+                async move { client.album_detail(album_id).await.ok() },
                 |result| {
                     if let Some(detail) = result {
                         Message::AlbumDetailLoaded(detail)
@@ -458,7 +459,7 @@ impl App {
         if let Some(client) = &self.core.ncm_client {
             let client = client.clone();
             return Task::perform(
-                async move { client.client.artist_detail(artist_id).await.ok() },
+                async move { client.artist_detail(artist_id).await.ok() },
                 |result| {
                     if let Some(detail) = result {
                         Message::ArtistDetailLoaded(detail)
@@ -524,7 +525,6 @@ impl App {
             return Task::perform(
                 async move {
                     client
-                        .client
                         .user_detail(user_id)
                         .await
                         .ok()
@@ -549,14 +549,13 @@ impl App {
             Message::TryAutoLogin(retry_count) => {
                 let retry = *retry_count;
                 let proxy_url = self.core.settings.network.proxy_url();
-                if let Some((cookie_jar, csrf_token)) = NcmClient::load_cookie_jar_from_file() {
-                    let client =
-                        NcmClient::from_cookie_jar_with_proxy(cookie_jar, csrf_token, proxy_url);
+                if let Some(cookie) = NcmClient::load_cookie_from_file() {
+                    let client = NcmClient::from_cookie_with_proxy(cookie, proxy_url);
                     self.set_ncm_client(client.clone());
 
                     Some(Task::perform(
                         async move {
-                            match client.client.login_status().await {
+                            match client.login_status().await {
                                 Ok(login_info) => Some(login_info),
                                 Err(e) => {
                                     error!("Auto login failed (attempt {}): {:?}", retry + 1, e);
@@ -578,11 +577,11 @@ impl App {
                     self.core.is_logged_in = true;
 
                     if let Some(client) = &self.core.ncm_client {
-                        client.save_cookie_jar_to_file();
+                        client.save_cookie_to_file();
                     }
 
                     let mut user_info = UserInfo::new(
-                        login_info.uid,
+                        login_info.user_id,
                         login_info.nickname.clone(),
                         login_info.avatar_url.clone(),
                     );
@@ -590,7 +589,7 @@ impl App {
                     self.core.user_info = Some(user_info);
 
                     let client = self.core.ncm_client.clone();
-                    let uid = login_info.uid;
+                    let user_id = login_info.user_id;
 
                     Some(Task::batch([
                         self.load_homepage_data(),
@@ -600,14 +599,14 @@ impl App {
                                 async move {
                                     if let Some(client) = client
                                         && let Ok(song_ids) =
-                                            client.client.user_song_id_list(uid).await
+                                            client.user_song_id_list(user_id).await
                                     {
                                         let mut user_info =
-                                            UserInfo::new(uid, String::new(), String::new());
+                                            UserInfo::new(user_id, String::new(), String::new());
                                         user_info.like_songs = song_ids.into_iter().collect();
                                         return user_info;
                                     }
-                                    UserInfo::new(uid, String::new(), String::new())
+                                    UserInfo::new(user_id, String::new(), String::new())
                                 }
                             },
                             Message::UserInfoLoaded,
@@ -690,7 +689,7 @@ impl App {
 
                 Some(Task::perform(
                     async move {
-                        match client.client.login_qr_check(unikey.clone()).await {
+                        match client.login_qr_check(unikey.clone()).await {
                             Ok(msg) => match msg.code {
                                 800 => QrLoginStatus::Expired,
                                 801 => QrLoginStatus::WaitingForScan,
@@ -748,9 +747,9 @@ impl App {
                         let client = client.clone();
                         return Some(Task::perform(
                             async move {
-                                match client.client.login_status().await {
+                                match client.login_status().await {
                                     Ok(login_info) => {
-                                        client.save_cookie_jar_to_file();
+                                        client.save_cookie_to_file();
                                         login_info
                                     }
                                     Err(e) => {
@@ -777,7 +776,7 @@ impl App {
                 self.ui.home.login_popup_open = false;
 
                 let mut user_info = UserInfo::new(
-                    login_info.uid,
+                    login_info.user_id,
                     login_info.nickname.clone(),
                     login_info.avatar_url.clone(),
                 );
@@ -795,7 +794,7 @@ impl App {
                 if let Some(client) = &self.core.ncm_client {
                     let client = client.clone();
                     tokio::spawn(async move {
-                        client.client.logout().await;
+                        client.logout().await;
                     });
                 }
 
@@ -836,18 +835,18 @@ impl App {
                 if let Some(banner) = self.ui.home.banners.get(*index) {
                     debug!(
                         "Playing banner {}: {} (Type: {:?}, ID: {})",
-                        index, banner.type_title, banner.target_type, banner.target_id
+                        index, banner.title, banner.target, banner.target_id
                     );
 
-                    match banner.target_type {
-                        crate::api::TargetType::Song => {
+                    match banner.target {
+                        crate::api::BannerTarget::Song => {
                             let song_id = banner.target_id;
                             if let Some(client) = &self.core.ncm_client {
                                 let client = client.clone();
                                 return Some(Task::perform(
                                     async move {
-                                        match client.song_detail(&[song_id]).await {
-                                            Ok(songs) => songs.first().cloned(),
+                                        match client.track_detail(&[song_id]).await {
+                                            Ok(tracks) => tracks.first().cloned(),
                                             Err(e) => {
                                                 error!("Failed to get banner song detail: {}", e);
                                                 None
@@ -864,11 +863,11 @@ impl App {
                                 ));
                             }
                         }
-                        crate::api::TargetType::Album => {
+                        crate::api::BannerTarget::Album => {
                             debug!("Album playback from banner not implemented yet");
                         }
                         _ => {
-                            debug!("Unsupported banner target type: {:?}", banner.target_type);
+                            debug!("Unsupported banner target type: {:?}", banner.target);
                         }
                     }
                 }
@@ -877,14 +876,14 @@ impl App {
 
             Message::ToggleBannerFavorite(index) => {
                 if let Some(banner) = self.ui.home.banners.get(*index) {
-                    match banner.target_type {
-                        crate::api::TargetType::Song => {
+                    match banner.target {
+                        crate::api::BannerTarget::Song => {
                             return Some(self.update(Message::ToggleFavorite(banner.target_id)));
                         }
                         _ => {
                             debug!(
                                 "Favorite not implemented for banner type: {:?}",
-                                banner.target_type
+                                banner.target
                             );
                         }
                     }
@@ -953,7 +952,7 @@ impl App {
 
                     Some(Task::perform(
                         async move {
-                            match client.client.like_song(song_id, !is_liked).await {
+                            match client.like_song(song_id, !is_liked).await {
                                 Ok(_) => Some(!is_liked),
                                 Err(e) => {
                                     error!("Failed to toggle like: {}", e);
@@ -1003,7 +1002,7 @@ impl App {
             }
 
             Message::PlayNcmSong(song_info) => {
-                debug!("Playing NCM song: {}", song_info.name);
+                debug!("Playing NCM song: {}", song_info.title);
 
                 require_ncm_client!(self);
 
@@ -1013,7 +1012,7 @@ impl App {
                 self.playback.queue.clear();
                 self.playback
                     .queue
-                    .push(Self::ncm_song_to_db_song(song_info));
+                    .push(Self::ncm_track_to_db_song(song_info));
                 self.persist_queue_snapshot();
 
                 Some(self.play_song_at_index(0))
@@ -1069,12 +1068,11 @@ impl App {
                     Some(Task::perform(
                         async move {
                             client
-                                .client
-                                .search(&keyword, crate::api::ncm_api::SearchType::Artists, 1, 0)
+                                .search(&keyword, crate::api::SearchType::Artists, 1, 0)
                                 .await
                                 .ok()
                                 .and_then(|response| {
-                                    response.albums.first().map(|artist| artist.id)
+                                    response.artists.first().map(|artist| artist.id)
                                 })
                         },
                         |result| {
@@ -1094,15 +1092,15 @@ impl App {
 
             Message::NcmPlaylistDetailLoaded(detail) => {
                 debug!(
-                    "NCM playlist detail loaded: {} with {} songs",
+                    "NCM playlist detail loaded: {} with {} tracks",
                     detail.name,
-                    detail.songs.len()
+                    detail.tracks.len()
                 );
 
                 let playlist_id = -(detail.id as i64);
 
                 // Calculate total duration
-                let total_secs: u64 = detail.songs.iter().map(|s| s.duration / 1000).sum();
+                let total_secs: u64 = detail.tracks.iter().map(|s| s.duration_ms / 1000).sum();
                 let total_mins = total_secs / 60;
                 let total_hours = total_mins / 60;
                 let remaining_mins = total_mins % 60;
@@ -1122,27 +1120,27 @@ impl App {
                     } else {
                         Some(detail.description.clone())
                     };
-                    playlist.owner = if detail.creator_nickname.is_empty() {
+                    playlist.owner = if detail.creator.nickname.is_empty() {
                         "网易云音乐".to_string()
                     } else {
-                        detail.creator_nickname.clone()
+                        detail.creator.nickname.clone()
                     };
-                    playlist.creator_id = detail.creator_id;
-                    playlist.song_count = detail.songs.len() as u32;
+                    playlist.creator_id = detail.creator.id;
+                    playlist.song_count = detail.tracks.len() as u32;
                     playlist.total_duration = total_duration;
                     playlist.is_subscribed = detail.subscribed;
                 }
 
-                // Store NCM songs for playback
-                self.ui.home.current_ncm_playlist_songs = detail.songs.clone();
+                // Store NCM tracks for playback
+                self.ui.home.current_ncm_playlist_songs = detail.tracks.clone();
 
-                let creator_detail_task = if detail.creator_id != 0 {
+                let creator_detail_task = if detail.creator.id != 0 {
                     if let Some(client) = &self.core.ncm_client {
                         let client = client.clone();
-                        let creator_id = detail.creator_id;
+                        let creator_id = detail.creator.id;
                         let internal_id = playlist_id;
                         Task::perform(
-                            async move { client.client.user_detail(creator_id).await.ok() },
+                            async move { client.user_detail(creator_id).await.ok() },
                             move |result| {
                                 if let Some(user_detail) = result {
                                     Message::PlaylistCreatorDetailLoaded(internal_id, user_detail)
@@ -1158,17 +1156,19 @@ impl App {
                     Task::none()
                 };
 
-                // Spawn async task to convert songs (covers are handled by ImageState).
-                let songs = detail.songs.clone();
+                // Spawn async task to convert tracks (covers are handled by ImageState).
+                let tracks = detail.tracks.clone();
 
-                // Start songs conversion task
-                let songs_task = Task::perform(
+                // Start tracks conversion task
+                let tracks_task = Task::perform(
                     async move {
                         // Run all blocking operations in spawn_blocking
                         tokio::task::spawn_blocking(move || {
-                            // Convert songs to views
+                            // Convert tracks to views
                             let song_views =
-                                crate::app::update::page_loader::convert_ncm_songs_to_views(&songs);
+                                crate::app::update::page_loader::convert_ncm_tracks_to_views(
+                                    &tracks,
+                                );
 
                             (playlist_id, song_views)
                         })
@@ -1180,7 +1180,22 @@ impl App {
                     },
                 );
 
-                Some(Task::batch([songs_task, creator_detail_task]))
+                Some(Task::batch([tracks_task, creator_detail_task]))
+            }
+
+            Message::PlaylistPageLoadFailed(playlist_id, message) => {
+                if self
+                    .ui
+                    .playlist_page
+                    .current
+                    .as_ref()
+                    .is_some_and(|playlist| playlist.id == *playlist_id)
+                {
+                    self.ui.playlist_page.load_state =
+                        crate::app::update::page_loader::PlaylistLoadState::Idle;
+                }
+
+                Some(Self::toast_error(message.clone()))
             }
 
             Message::NcmPlaylistSongsReady(playlist_id, song_views) => {
@@ -1218,13 +1233,17 @@ impl App {
 
             Message::AlbumDetailLoaded(detail) => {
                 debug!(
-                    "Album detail loaded: {} with {} songs",
+                    "Album detail loaded: {} with {} tracks",
                     detail.name,
-                    detail.songs.len()
+                    detail.tracks.len()
                 );
 
                 let page_id = album_page_id(detail.id);
-                let total_secs: u64 = detail.songs.iter().map(|song| song.duration / 1000).sum();
+                let total_secs: u64 = detail
+                    .tracks
+                    .iter()
+                    .map(|song| song.duration_ms / 1000)
+                    .sum();
                 let total_mins = total_secs / 60;
                 let total_hours = total_mins / 60;
                 let remaining_mins = total_mins % 60;
@@ -1241,24 +1260,25 @@ impl App {
                     playlist.name = detail.name.clone();
                     playlist.description = (!detail.description.trim().is_empty())
                         .then_some(detail.description.clone());
-                    playlist.owner = if detail.artist_name.trim().is_empty() {
+                    let artist_name = detail.artist_names();
+                    playlist.owner = if artist_name.trim().is_empty() {
                         "网易云音乐".to_string()
                     } else {
-                        detail.artist_name.clone()
+                        artist_name
                     };
-                    playlist.owner_artist_id = (detail.artist_id != 0).then_some(detail.artist_id);
-                    playlist.song_count = detail.track_count.max(detail.songs.len() as u32);
+                    playlist.owner_artist_id = detail.primary_artist().map(|artist| artist.id);
+                    playlist.song_count = detail.track_count.max(detail.tracks.len() as u32);
                     playlist.total_duration = total_duration;
                     playlist.like_count.clear();
                 }
 
-                self.ui.home.current_ncm_playlist_songs = detail.songs.clone();
+                self.ui.home.current_ncm_playlist_songs = detail.tracks.clone();
 
-                let songs = detail.songs.clone();
-                let songs_task = Task::perform(
+                let tracks = detail.tracks.clone();
+                let tracks_task = Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            crate::app::update::page_loader::convert_ncm_songs_to_views(&songs)
+                            crate::app::update::page_loader::convert_ncm_tracks_to_views(&tracks)
                         })
                         .await
                         .unwrap_or_default()
@@ -1266,18 +1286,18 @@ impl App {
                     move |song_views| Message::NcmPlaylistSongsReady(page_id, song_views),
                 );
 
-                Some(songs_task)
+                Some(tracks_task)
             }
 
             Message::ArtistDetailLoaded(detail) => {
                 debug!(
-                    "Artist detail loaded: {} with {} songs",
+                    "Artist detail loaded: {} with {} tracks",
                     detail.name,
-                    detail.hot_songs.len()
+                    detail.top_tracks.len()
                 );
 
                 let page_id = artist_page_id(detail.id);
-                let total_secs: u64 = detail.hot_songs.iter().map(|s| s.duration / 1000).sum();
+                let total_secs: u64 = detail.top_tracks.iter().map(|s| s.duration_ms / 1000).sum();
                 let total_mins = total_secs / 60;
                 let total_hours = total_mins / 60;
                 let remaining_mins = total_mins % 60;
@@ -1290,7 +1310,7 @@ impl App {
                 let description = if detail.description.trim().is_empty() {
                     Some(format!(
                         "{} 首热门单曲 · {} 张专辑",
-                        detail.music_size, detail.album_size
+                        detail.track_count, detail.album_count
                     ))
                 } else {
                     Some(detail.description.clone())
@@ -1304,22 +1324,22 @@ impl App {
                     playlist.description = description;
                     playlist.profile_stats = Some(format!(
                         "{} 首热门单曲 · {} 张专辑",
-                        detail.music_size, detail.album_size
+                        detail.track_count, detail.album_count
                     ));
                     playlist.owner = "歌手热门作品".to_string();
                     playlist.owner_artist_id = Some(detail.id);
-                    playlist.song_count = detail.hot_songs.len() as u32;
+                    playlist.song_count = detail.top_tracks.len() as u32;
                     playlist.total_duration = total_duration;
-                    playlist.like_count = format!("{} 张专辑", detail.album_size);
+                    playlist.like_count = format!("{} 张专辑", detail.album_count);
                 }
 
-                self.ui.home.current_ncm_playlist_songs = detail.hot_songs.clone();
+                self.ui.home.current_ncm_playlist_songs = detail.top_tracks.clone();
 
-                let songs = detail.hot_songs.clone();
-                let songs_task = Task::perform(
+                let tracks = detail.top_tracks.clone();
+                let tracks_task = Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            crate::app::update::page_loader::convert_ncm_songs_to_views(&songs)
+                            crate::app::update::page_loader::convert_ncm_tracks_to_views(&tracks)
                         })
                         .await
                         .unwrap_or_default()
@@ -1330,25 +1350,14 @@ impl App {
                 let albums_task = if let Some(client) = &self.core.ncm_client {
                     let client = client.clone();
                     let page_id = page_id;
-                    let artist_name = detail.name.clone();
+                    let artist_id = detail.id;
                     Task::perform(
                         async move {
                             client
-                                .client
-                                .search(
-                                    &artist_name,
-                                    crate::api::ncm_api::SearchType::Albums,
-                                    50,
-                                    0,
-                                )
+                                .artist_albums(artist_id, 50)
                                 .await
                                 .ok()
-                                .map(|response| {
-                                    let mut albums: Vec<_> = response
-                                        .albums
-                                        .into_iter()
-                                        .filter(|album| album.author.trim() == artist_name.trim())
-                                        .collect();
+                                .map(|mut albums| {
                                     albums.sort_by(|a, b| a.name.cmp(&b.name));
                                     (page_id, albums)
                                 })
@@ -1365,7 +1374,7 @@ impl App {
                     Task::none()
                 };
 
-                Some(Task::batch([songs_task, albums_task]))
+                Some(Task::batch([tracks_task, albums_task]))
             }
 
             Message::ArtistAlbumsLoaded(page_id, albums) => {
@@ -1415,7 +1424,6 @@ impl App {
                         Task::perform(
                             async move {
                                 client
-                                    .client
                                     .artist_detail(artist_id)
                                     .await
                                     .ok()
@@ -1442,7 +1450,7 @@ impl App {
                     let client = client.clone();
                     let user_id = detail.user_id;
                     Task::perform(
-                        async move { client.client.user_song_list(user_id, 0, 30).await.ok() },
+                        async move { client.user_playlists(user_id, 0, 30).await.ok() },
                         move |result| {
                             if let Some(playlists) = result {
                                 Message::UserPagePlaylistsLoaded(page_id, playlists)
@@ -1470,7 +1478,7 @@ impl App {
 
             Message::UserArtistDetailLoaded(page_id, detail) => {
                 let page_id = *page_id;
-                let total_secs: u64 = detail.hot_songs.iter().map(|s| s.duration / 1000).sum();
+                let total_secs: u64 = detail.top_tracks.iter().map(|s| s.duration_ms / 1000).sum();
                 let total_mins = total_secs / 60;
                 let total_hours = total_mins / 60;
                 let remaining_mins = total_mins % 60;
@@ -1492,7 +1500,7 @@ impl App {
                     {
                         playlist.description = Some(format!(
                             "{} 首热门单曲 · {} 张专辑",
-                            detail.music_size, detail.album_size
+                            detail.track_count, detail.album_count
                         ));
                     }
                     if playlist
@@ -1504,25 +1512,25 @@ impl App {
                     {
                         playlist.profile_stats = Some(format!(
                             "{} 首热门单曲 · {} 张专辑",
-                            detail.music_size, detail.album_size
+                            detail.track_count, detail.album_count
                         ));
                     }
                     playlist.owner = "热门作品".to_string();
                     playlist.owner_artist_id = Some(detail.id);
-                    playlist.song_count = detail.hot_songs.len() as u32;
+                    playlist.song_count = detail.top_tracks.len() as u32;
                     playlist.total_duration = total_duration;
-                    playlist.like_count = format!("{} 张专辑", detail.album_size);
+                    playlist.like_count = format!("{} 张专辑", detail.album_count);
                 }
 
-                self.ui.home.current_ncm_playlist_songs = detail.hot_songs.clone();
+                self.ui.home.current_ncm_playlist_songs = detail.top_tracks.clone();
                 self.ui.playlist_page.load_state =
                     crate::app::update::page_loader::PlaylistLoadState::Ready;
 
-                let songs = detail.hot_songs.clone();
-                let songs_task = Task::perform(
+                let tracks = detail.top_tracks.clone();
+                let tracks_task = Task::perform(
                     async move {
                         tokio::task::spawn_blocking(move || {
-                            crate::app::update::page_loader::convert_ncm_songs_to_views(&songs)
+                            crate::app::update::page_loader::convert_ncm_tracks_to_views(&tracks)
                         })
                         .await
                         .unwrap_or_default()
@@ -1530,7 +1538,7 @@ impl App {
                     move |song_views| Message::NcmPlaylistSongsReady(page_id, song_views),
                 );
 
-                Some(songs_task)
+                Some(tracks_task)
             }
 
             Message::PlaylistCreatorDetailLoaded(playlist_id, detail) => {
@@ -1564,7 +1572,7 @@ impl App {
                         async move {
                             // NCM playlist IDs are stored as negative in our system
                             let ncm_id = (-playlist_id) as u64;
-                            match client.client.playlist_subscribe(new_status, ncm_id).await {
+                            match client.playlist_subscribe(new_status, ncm_id).await {
                                 Ok(_) => Some((playlist_id, new_status)),
                                 Err(e) => {
                                     error!("Failed to toggle playlist subscription: {}", e);
@@ -1622,7 +1630,6 @@ impl App {
                     return Some(Task::perform(
                         async move {
                             client
-                                .client
                                 .playlist_add_tracks(pid, &sid.to_string(), "add")
                                 .await
                         },
@@ -1664,7 +1671,7 @@ impl App {
                     let client = client.clone();
                     async move {
                         if let Some(client) = client {
-                            match client.client.banners().await {
+                            match client.banners().await {
                                 Ok(banners) => banners,
                                 Err(e) => {
                                     error!("Failed to load banners: {:?}", e);
@@ -1684,8 +1691,8 @@ impl App {
                     async move {
                         if let Some(client) = client {
                             const TRENDING_CHART_ID: u64 = 19723756;
-                            match client.client.song_list_detail(TRENDING_CHART_ID).await {
-                                Ok(detail) => detail.songs,
+                            match client.playlist_detail(TRENDING_CHART_ID).await {
+                                Ok(detail) => detail.tracks,
                                 Err(e) => {
                                     error!("Failed to load trending songs: {:?}", e);
                                     Vec::new()
@@ -1703,7 +1710,7 @@ impl App {
                     let client = client.clone();
                     async move {
                         if let Some(client) = client {
-                            match client.client.top_song_list("全部", "hot", 0, 8).await {
+                            match client.top_playlists("全部", "hot", 0, 8).await {
                                 Ok(playlists) => playlists,
                                 Err(e) => {
                                     error!("Failed to load top picks: {:?}", e);
@@ -1738,7 +1745,7 @@ impl App {
         Task::perform(
             async move {
                 if let Some(client) = client {
-                    match client.client.user_song_list(uid, 0, 100).await {
+                    match client.user_playlists(uid, 0, 100).await {
                         Ok(mut playlists) => {
                             // First playlist is "liked songs", rename it
                             if let Some(first) = playlists.first_mut() {
@@ -1777,7 +1784,7 @@ impl App {
                     let client = client.clone();
                     async move {
                         if let Some(client) = client {
-                            match client.client.recommend_resource().await {
+                            match client.recommend_playlists().await {
                                 Ok(playlists) => playlists,
                                 Err(e) => {
                                     error!("Failed to load recommended playlists: {:?}", e);
@@ -1799,7 +1806,7 @@ impl App {
                 let client = client.clone();
                 async move {
                     if let Some(client) = client {
-                        match client.client.top_song_list("全部", "hot", 0, 30).await {
+                        match client.top_playlists("全部", "hot", 0, 30).await {
                             Ok(playlists) => {
                                 let has_more = playlists.len() >= 30;
                                 (playlists, has_more)

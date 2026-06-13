@@ -54,7 +54,7 @@ pub enum ModalKind {
     PlaylistPicker {
         song_id: i64,
         /// NCM online playlists (user's created + subscribed); None for local songs
-        ncm_playlists: Option<Vec<crate::api::SongList>>,
+        ncm_playlists: Option<Vec<crate::api::PlaylistSummary>>,
     },
 }
 

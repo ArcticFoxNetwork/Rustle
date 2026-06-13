@@ -59,12 +59,12 @@ pub fn view<'a>(
     } else {
         match state.active_tab {
             SearchTab::Songs => {
-                if state.songs.is_empty() {
+                if state.tracks.is_empty() {
                     empty_results_state(&state.keyword)
                 } else {
                     // Use VirtualList for high performance song list
-                    let song_count = state.songs.len();
-                    let songs = &state.songs;
+                    let song_count = state.tracks.len();
+                    let songs = &state.tracks;
                     let song_animations = &state.song_animations;
                     let current_page = state.current_page;
 
@@ -79,7 +79,7 @@ pub fn view<'a>(
                             let song = &songs[index];
                             let hover_progress = song_animations.get_progress(&song.id);
                             let index_num = current_page * PAGE_SIZE + index as u32 + 1;
-                            let duration_secs = song.duration / 1000;
+                            let duration_secs = song.duration_ms / 1000;
                             let duration_str =
                                 format!("{}:{:02}", duration_secs / 60, duration_secs % 60);
 
@@ -92,25 +92,25 @@ pub fn view<'a>(
                                         })
                                         .width(40),
                                     column![
-                                        text(song.name.as_str()).size(theme::TEXT_SIZE_BODY).style(
-                                            move |theme| {
+                                        text(song.title.as_str())
+                                            .size(theme::TEXT_SIZE_BODY)
+                                            .style(move |theme| {
                                                 iced::widget::text::Style {
                                                     color: Some(theme::animated_text(
                                                         theme,
                                                         hover_progress,
                                                     )),
                                                 }
-                                            }
-                                        ),
+                                            }),
                                     ]
                                     .width(Fill),
-                                    text(song.singer.as_str())
+                                    text(song.artist_names())
                                         .size(theme::TEXT_SIZE_LABEL)
                                         .style(|theme| iced::widget::text::Style {
                                             color: Some(theme::text_secondary(theme)),
                                         })
                                         .width(Length::FillPortion(2)),
-                                    text(song.album.as_str())
+                                    text(song.album.name.as_str())
                                         .size(theme::TEXT_SIZE_LABEL)
                                         .style(|theme| iced::widget::text::Style {
                                             color: Some(theme::text_muted(theme)),
@@ -170,7 +170,11 @@ pub fn view<'a>(
                 }
             }
             SearchTab::Albums | SearchTab::Artists => {
-                let content = if state.albums.is_empty() {
+                let is_empty = match state.active_tab {
+                    SearchTab::Artists => state.artists.is_empty(),
+                    _ => state.albums.is_empty(),
+                };
+                let content = if is_empty {
                     empty_results_state(&state.keyword)
                 } else {
                     let grid = grid_results(state, image_state, state.active_tab);
@@ -365,9 +369,10 @@ fn grid_results<'a>(
     image_state: &'a ImageState,
     tab: SearchTab,
 ) -> Element<'a, Message> {
-    let items = match tab {
-        SearchTab::Albums | SearchTab::Artists => &state.albums,
-        SearchTab::Playlists => &state.playlists,
+    let items: Vec<GridItemRef<'a>> = match tab {
+        SearchTab::Albums => state.albums.iter().map(GridItemRef::Album).collect(),
+        SearchTab::Artists => state.artists.iter().map(GridItemRef::Artist).collect(),
+        SearchTab::Playlists => state.playlists.iter().map(GridItemRef::Playlist).collect(),
         _ => return Space::new().into(),
     };
     let kind = search_image_kind(tab);
@@ -384,12 +389,12 @@ fn grid_results<'a>(
         let mut row_items: Vec<Element<'a, Message>> = Vec::new();
 
         for item in chunk {
-            let hover_progress = state.card_animations.get_progress(&item.id);
-            let item_id = item.id;
+            let hover_progress = state.card_animations.get_progress(&item.id());
+            let item_id = item.id();
             let item_tab = tab;
 
             let cover_handle = image_state.get(kind, item_id);
-            let card = grid_card(item, cover_handle, kind, hover_progress, item_id, item_tab);
+            let card = grid_card(*item, cover_handle, kind, hover_progress, item_id, item_tab);
             row_items.push(card);
 
             if row_items.len() < columns * 2 - 1 {
@@ -415,7 +420,7 @@ fn grid_results<'a>(
 
 /// Grid card for album/playlist
 fn grid_card<'a>(
-    item: &'a crate::api::SongList,
+    item: GridItemRef<'a>,
     cover_handle: Option<&'a iced::widget::image::Handle>,
     kind: ImageKind,
     hover_progress: f32,
@@ -441,13 +446,13 @@ fn grid_card<'a>(
     let card_content = column![
         cover,
         Space::new().height(8),
-        text(&item.name)
+        text(item.name())
             .size(theme::TEXT_SIZE_BODY)
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_primary(theme)),
             })
             .width(CARD_WIDTH),
-        text(&item.author)
+        text(item.subtitle())
             .size(theme::TEXT_SIZE_CAPTION)
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_muted(theme)),
@@ -468,6 +473,39 @@ fn grid_card<'a>(
         .on_enter(Message::HoverSearchCard(Some(item_id)))
         .on_exit(Message::HoverSearchCard(None))
         .into()
+}
+
+#[derive(Clone, Copy)]
+enum GridItemRef<'a> {
+    Album(&'a crate::api::AlbumSummary),
+    Artist(&'a crate::api::ArtistSummary),
+    Playlist(&'a crate::api::PlaylistSummary),
+}
+
+impl<'a> GridItemRef<'a> {
+    fn id(self) -> u64 {
+        match self {
+            Self::Album(item) => item.id,
+            Self::Artist(item) => item.id,
+            Self::Playlist(item) => item.id,
+        }
+    }
+
+    fn name(self) -> &'a str {
+        match self {
+            Self::Album(item) => &item.name,
+            Self::Artist(item) => &item.name,
+            Self::Playlist(item) => &item.name,
+        }
+    }
+
+    fn subtitle(self) -> String {
+        match self {
+            Self::Album(item) => item.artist_names(),
+            Self::Artist(_) => "歌手".to_string(),
+            Self::Playlist(item) => item.creator.nickname.clone(),
+        }
+    }
 }
 
 fn search_image_kind(tab: SearchTab) -> ImageKind {

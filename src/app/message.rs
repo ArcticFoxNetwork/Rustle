@@ -6,8 +6,8 @@ use std::sync::Arc;
 use iced::keyboard::{Key, Modifiers};
 
 use crate::api::{
-    AlbumDetail, ArtistDetail, BannersInfo, LoginInfo, PlayListDetail, SongInfo, SongList,
-    UserDetail,
+    AlbumDetail, AlbumSummary, ArtistDetail, ArtistSummary, Banner, LoginInfo, PlaylistDetail,
+    PlaylistSummary, Track, UserDetail,
 };
 use crate::app::state::UserInfo;
 use crate::app::update::audio_preload_manager::PreloadDirection;
@@ -59,9 +59,10 @@ pub enum ContentWidthTarget {
 #[derive(Debug, Clone)]
 pub struct SearchResultsPayload {
     pub tab: crate::app::state::SearchTab,
-    pub songs: Vec<SongInfo>,
-    pub albums: Vec<SongList>,
-    pub playlists: Vec<SongList>,
+    pub tracks: Vec<Track>,
+    pub albums: Vec<AlbumSummary>,
+    pub artists: Vec<ArtistSummary>,
+    pub playlists: Vec<PlaylistSummary>,
     pub total_count: u32,
 }
 
@@ -498,7 +499,7 @@ pub enum Message {
 
     // ============ NCM Homepage Data ============
     /// Banners loaded
-    BannersLoaded(Vec<BannersInfo>),
+    BannersLoaded(Vec<Banner>),
     /// Banner play button clicked
     BannerPlay(usize),
     /// Carousel navigate
@@ -506,9 +507,9 @@ pub enum Message {
     /// Carousel auto-advance tick
     CarouselTick,
     /// Top picks (trending playlists) loaded
-    TopPicksLoaded(Vec<SongList>),
+    TopPicksLoaded(Vec<PlaylistSummary>),
     /// Trending songs (飙升榜) loaded
-    TrendingSongsLoaded(Vec<SongInfo>),
+    TrendingSongsLoaded(Vec<Track>),
     /// Navigate to trending songs page
     OpenTrendingSongs,
     /// Toggle favorite status for a song
@@ -516,10 +517,10 @@ pub enum Message {
     /// Favorite status changed
     FavoriteStatusChanged(u64, bool),
     /// Play NCM song
-    PlayNcmSong(SongInfo),
+    PlayNcmSong(Track),
     /// Add NCM songs to queue
-    AddNcmPlaylist(Vec<SongInfo>, bool),
-    AddNcmPlaylistWithSource(Vec<SongInfo>, bool, Option<u64>),
+    AddNcmPlaylist(Vec<Track>, bool),
+    AddNcmPlaylistWithSource(Vec<Track>, bool, Option<u64>),
     /// Open NCM playlist detail page
     OpenNcmPlaylist(u64),
     /// Open user detail page
@@ -535,19 +536,21 @@ pub enum Message {
 
     // ============ Cloud Playlist ============
     /// User playlists loaded
-    UserPlaylistsLoaded(Vec<SongList>),
+    UserPlaylistsLoaded(Vec<PlaylistSummary>),
     /// NCM playlist detail loaded
-    NcmPlaylistDetailLoaded(PlayListDetail),
+    NcmPlaylistDetailLoaded(PlaylistDetail),
+    /// Playlist-like detail page failed to load (internal page id, user-facing message)
+    PlaylistPageLoadFailed(i64, String),
     /// Artist detail loaded
     ArtistDetailLoaded(ArtistDetail),
     /// Album detail loaded
     AlbumDetailLoaded(AlbumDetail),
     /// Artist albums loaded for artist page
-    ArtistAlbumsLoaded(i64, Vec<SongList>),
+    ArtistAlbumsLoaded(i64, Vec<AlbumSummary>),
     /// User page detail loaded
     UserPageDetailLoaded(i64, UserDetail),
     /// User playlists loaded for user page
-    UserPagePlaylistsLoaded(i64, Vec<SongList>),
+    UserPagePlaylistsLoaded(i64, Vec<PlaylistSummary>),
     /// Artist detail loaded for a user page
     UserArtistDetailLoaded(i64, ArtistDetail),
     /// Playlist creator user detail loaded
@@ -569,9 +572,9 @@ pub enum Message {
 
     // ============ Discover Page ============
     /// Recommended playlists loaded (for logged-in users)
-    RecommendedPlaylistsLoaded(Vec<SongList>),
+    RecommendedPlaylistsLoaded(Vec<PlaylistSummary>),
     /// Hot playlists loaded (playlists, has_more)
-    HotPlaylistsLoaded(Vec<SongList>, bool),
+    HotPlaylistsLoaded(Vec<PlaylistSummary>, bool),
     /// Hover over a discover playlist card
     HoverDiscoverPlaylist(Option<u64>),
     /// Play a playlist from discover page
@@ -632,7 +635,7 @@ pub enum Message {
     /// Show context menu for a local song (triggered by right-click)
     RightClickSong(i64),
     /// Show context menu for an NCM/online song
-    RightClickNcmSong(SongInfo),
+    RightClickNcmSong(Track),
     /// Show context menu for a song with explicit position
     ShowContextMenu {
         song_id: i64,
@@ -796,6 +799,9 @@ impl std::fmt::Debug for Message {
 
             // Complex types - show key identifier only
             Self::NcmPlaylistDetailLoaded(d) => simple!("NcmPlaylistDetailLoaded", "id={}", d.id),
+            Self::PlaylistPageLoadFailed(id, _) => {
+                simple!("PlaylistPageLoadFailed", "id={}", id)
+            }
             Self::ArtistDetailLoaded(d) => simple!("ArtistDetailLoaded", "id={}", d.id),
             Self::AlbumDetailLoaded(d) => simple!("AlbumDetailLoaded", "id={}", d.id),
             Self::ArtistAlbumsLoaded(id, albums) => {
@@ -1132,9 +1138,10 @@ impl std::fmt::Debug for Message {
             Self::SearchResultsLoaded(payload) => {
                 simple!(
                     "SearchResultsLoaded",
-                    "tab={:?}, songs={}, albums={}, playlists={}",
+                    "tab={:?}, tracks={}, artists={}, albums={}, playlists={}",
                     payload.tab,
-                    payload.songs.len(),
+                    payload.tracks.len(),
+                    payload.artists.len(),
                     payload.albums.len(),
                     payload.playlists.len()
                 )

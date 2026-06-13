@@ -132,9 +132,9 @@ impl App {
             .current_ncm_playlist_songs
             .iter()
             .chain(self.ui.home.trending_songs.iter())
-            .chain(self.ui.search.songs.iter())
-            .find(|song| song.id == ncm_id && crate::image::is_remote_url(&song.pic_url))
-            .map(|song| song.pic_url.clone())
+            .chain(self.ui.search.tracks.iter())
+            .find(|song| song.id == ncm_id && crate::image::is_remote_url(song.cover_url()))
+            .map(|song| song.cover_url().to_string())
     }
 }
 
@@ -168,11 +168,11 @@ async fn resolve_discord_cover_url(
         return None;
     };
 
-    match client.song_detail(&[ncm_id]).await {
-        Ok(songs) => songs
+    match client.track_detail(&[ncm_id]).await {
+        Ok(tracks) => tracks
             .into_iter()
-            .find(|song| song.id == ncm_id && crate::image::is_remote_url(&song.pic_url))
-            .map(|song| song.pic_url),
+            .find(|song| song.id == ncm_id && crate::image::is_remote_url(song.cover_url()))
+            .map(|song| song.cover_url().to_string()),
         Err(err) => {
             tracing::debug!("Discord RPC: failed to fetch cover URL for {ncm_id}: {err}");
             None

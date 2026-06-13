@@ -116,7 +116,7 @@ pub async fn resolve_song(
 
     // Get song URL
     tracing::info!("Downloading song {} from NCM (streaming)", ncm_id);
-    let urls = match client.songs_url(&[ncm_id]).await {
+    let urls = match client.track_urls(&[ncm_id]).await {
         Ok(urls) => urls,
         Err(e) => {
             tracing::error!("Failed to get song URL for {}: {}", ncm_id, e);

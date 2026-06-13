@@ -339,6 +339,7 @@ where
                     t.diff(&element);
                     t
                 });
+            tree.diff(&element);
 
             let node = element.as_widget_mut().layout(tree, renderer, &item_limits);
 

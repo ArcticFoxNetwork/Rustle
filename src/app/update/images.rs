@@ -57,13 +57,13 @@ impl App {
             Message::AutoLoginResult(Some(login_info), _) | Message::LoginSuccess(login_info) => {
                 refs.push(RemoteImage::new(
                     ImageKind::UserAvatar,
-                    login_info.uid,
+                    login_info.user_id,
                     &login_info.avatar_url,
                 ));
             }
             Message::BannersLoaded(banners) => {
                 refs.extend(banners.iter().enumerate().map(|(index, banner)| {
-                    RemoteImage::new(ImageKind::Banner, index as u64, &banner.pic)
+                    RemoteImage::new(ImageKind::Banner, index as u64, &banner.image_url)
                 }));
             }
             Message::TopPicksLoaded(playlists)
@@ -77,38 +77,32 @@ impl App {
             Message::TrendingSongsLoaded(songs)
             | Message::AddNcmPlaylist(songs, _)
             | Message::AddNcmPlaylistWithSource(songs, _, _) => {
-                refs.extend(remote_song_covers(songs));
+                refs.extend(remote_track_covers(songs));
             }
             Message::UserArtistDetailLoaded(
                 _,
                 crate::api::ArtistDetail {
-                    hot_songs: songs, ..
+                    top_tracks: tracks, ..
                 },
             ) => {
-                refs.extend(remote_song_covers(songs));
+                refs.extend(remote_track_covers(tracks));
             }
             Message::PlayNcmSong(song) => {
                 refs.push(RemoteImage::new(
                     ImageKind::SongCover,
                     song.id,
-                    &song.pic_url,
+                    song.cover_url(),
                 ));
             }
             Message::SearchResultsLoaded(payload) => match payload.tab {
                 crate::app::state::SearchTab::Songs => {
-                    refs.extend(remote_song_covers(&payload.songs))
+                    refs.extend(remote_track_covers(&payload.tracks))
                 }
                 crate::app::state::SearchTab::Albums => {
-                    refs.extend(remote_song_list_covers(
-                        ImageKind::AlbumCover,
-                        &payload.albums,
-                    ));
+                    refs.extend(remote_album_covers(&payload.albums));
                 }
                 crate::app::state::SearchTab::Artists => {
-                    refs.extend(remote_song_list_covers(
-                        ImageKind::ArtistCover,
-                        &payload.albums,
-                    ));
+                    refs.extend(remote_artist_covers(&payload.artists));
                 }
                 crate::app::state::SearchTab::Playlists => {
                     refs.extend(remote_playlist_covers(&payload.playlists));
@@ -118,42 +112,42 @@ impl App {
                 refs.push(RemoteImage::new(
                     ImageKind::PlaylistCover,
                     detail.id,
-                    &detail.cover_img_url,
+                    &detail.cover_url,
                 ));
-                if detail.creator_id != 0 {
+                if detail.creator.id != 0 {
                     refs.push(RemoteImage::new(
                         ImageKind::UserAvatar,
-                        detail.creator_id,
-                        &detail.creator_avatar_url,
+                        detail.creator.id,
+                        &detail.creator.avatar_url,
                     ));
                 }
-                refs.extend(remote_song_covers(&detail.songs));
+                refs.extend(remote_track_covers(&detail.tracks));
             }
             Message::AlbumDetailLoaded(detail) => {
                 refs.push(RemoteImage::new(
                     ImageKind::AlbumCover,
                     detail.id,
-                    &detail.cover_img_url,
+                    &detail.image_url,
                 ));
-                if detail.artist_id != 0 {
+                if let Some(artist) = detail.primary_artist() {
                     refs.push(RemoteImage::new(
                         ImageKind::ArtistCover,
-                        detail.artist_id,
-                        &detail.artist_pic_url,
+                        artist.id,
+                        &artist.image_url,
                     ));
                 }
-                refs.extend(remote_song_covers(&detail.songs));
+                refs.extend(remote_track_covers(&detail.tracks));
             }
             Message::ArtistDetailLoaded(detail) => {
                 refs.push(RemoteImage::new(
                     ImageKind::ArtistCover,
                     detail.id,
-                    &detail.pic_url,
+                    &detail.image_url,
                 ));
-                refs.extend(remote_song_covers(&detail.hot_songs));
+                refs.extend(remote_track_covers(&detail.top_tracks));
             }
             Message::ArtistAlbumsLoaded(_, albums) => {
-                refs.extend(remote_song_list_covers(ImageKind::AlbumCover, albums));
+                refs.extend(remote_album_covers(albums));
             }
             Message::UserPageDetailLoaded(_, detail) => {
                 refs.push(RemoteImage::new(
@@ -568,25 +562,34 @@ impl RemoteImage {
     }
 }
 
-fn remote_song_covers(songs: &[crate::api::SongInfo]) -> impl Iterator<Item = RemoteImage> + '_ {
-    songs
+fn remote_track_covers(tracks: &[crate::api::Track]) -> impl Iterator<Item = RemoteImage> + '_ {
+    tracks
         .iter()
-        .map(|song| RemoteImage::new(ImageKind::SongCover, song.id, &song.pic_url))
+        .map(|track| RemoteImage::new(ImageKind::SongCover, track.id, track.cover_url()))
 }
 
 fn remote_playlist_covers(
-    playlists: &[crate::api::SongList],
+    playlists: &[crate::api::PlaylistSummary],
 ) -> impl Iterator<Item = RemoteImage> + '_ {
-    remote_song_list_covers(ImageKind::PlaylistCover, playlists)
+    playlists
+        .iter()
+        .map(|item| RemoteImage::new(ImageKind::PlaylistCover, item.id, &item.cover_url))
 }
 
-fn remote_song_list_covers(
-    kind: ImageKind,
-    items: &[crate::api::SongList],
+fn remote_album_covers(
+    albums: &[crate::api::AlbumSummary],
 ) -> impl Iterator<Item = RemoteImage> + '_ {
-    items
+    albums
         .iter()
-        .map(move |item| RemoteImage::new(kind, item.id, &item.cover_img_url))
+        .map(|item| RemoteImage::new(ImageKind::AlbumCover, item.id, &item.image_url))
+}
+
+fn remote_artist_covers(
+    artists: &[crate::api::ArtistSummary],
+) -> impl Iterator<Item = RemoteImage> + '_ {
+    artists
+        .iter()
+        .map(|item| RemoteImage::new(ImageKind::ArtistCover, item.id, &item.image_url))
 }
 
 fn cover_path_matches(path_or_url: Option<&str>, local_path: &std::path::Path) -> bool {

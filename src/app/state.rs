@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::api::{BannersInfo, NcmClient, SongInfo, SongList};
+use crate::api::{AlbumSummary, ArtistSummary, Banner, NcmClient, PlaylistSummary, Track};
 use crate::app::SettingsSection;
 use crate::audio::{AudioAnalysisData, AudioProcessingChain, PlaybackInfo, PlaybackStatus};
 use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong, DbWatchedFolder};
@@ -579,9 +579,9 @@ pub struct UserInfo {
 }
 
 impl UserInfo {
-    pub fn new(uid: u64, nickname: String, avatar_url: String) -> Self {
+    pub fn new(user_id: u64, nickname: String, avatar_url: String) -> Self {
         Self {
-            user_id: uid,
+            user_id,
             nickname,
             avatar_url,
             vip_type: 0,
@@ -1176,12 +1176,12 @@ pub enum SearchTab {
 
 impl SearchTab {
     /// Get the NCM API search type code
-    pub fn to_search_type(&self) -> crate::api::ncm_api::SearchType {
+    pub fn to_search_type(&self) -> crate::api::SearchType {
         match self {
-            SearchTab::Songs => crate::api::ncm_api::SearchType::Songs,
-            SearchTab::Artists => crate::api::ncm_api::SearchType::Artists,
-            SearchTab::Albums => crate::api::ncm_api::SearchType::Albums,
-            SearchTab::Playlists => crate::api::ncm_api::SearchType::Playlists,
+            SearchTab::Songs => crate::api::SearchType::Songs,
+            SearchTab::Artists => crate::api::SearchType::Artists,
+            SearchTab::Albums => crate::api::SearchType::Albums,
+            SearchTab::Playlists => crate::api::SearchType::Playlists,
         }
     }
 }
@@ -1193,11 +1193,13 @@ pub struct SearchPageState {
     /// Active search tab
     pub active_tab: SearchTab,
     /// Song search results
-    pub songs: Vec<SongInfo>,
+    pub tracks: Vec<Track>,
     /// Album search results
-    pub albums: Vec<SongList>,
+    pub albums: Vec<AlbumSummary>,
+    /// Artist search results
+    pub artists: Vec<ArtistSummary>,
     /// Playlist search results
-    pub playlists: Vec<SongList>,
+    pub playlists: Vec<PlaylistSummary>,
     /// Total count for pagination
     pub total_count: u32,
     /// Current page (0-indexed)
@@ -1219,8 +1221,9 @@ impl Default for SearchPageState {
         Self {
             keyword: String::new(),
             active_tab: SearchTab::default(),
-            songs: Vec::new(),
+            tracks: Vec::new(),
             albums: Vec::new(),
+            artists: Vec::new(),
             playlists: Vec::new(),
             total_count: 0,
             current_page: 0,
@@ -1240,9 +1243,9 @@ pub struct DiscoverPageState {
     /// Current view mode
     pub view_mode: DiscoverViewMode,
     /// Recommended playlists (for logged-in users)
-    pub recommended_playlists: Vec<SongList>,
+    pub recommended_playlists: Vec<PlaylistSummary>,
     /// Hot playlists (for all users)
-    pub hot_playlists: Vec<SongList>,
+    pub hot_playlists: Vec<PlaylistSummary>,
     /// Hover animations for playlist cards
     pub card_animations: HoverAnimations<u64>,
     /// Loading state for recommended playlists
@@ -1281,12 +1284,12 @@ impl Default for DiscoverPageState {
 /// Homepage state for NCM data
 pub struct HomePageState {
     // Carousel banners
-    pub banners: Vec<BannersInfo>,
+    pub banners: Vec<Banner>,
     pub current_banner: usize,
 
     // Content sections
-    pub top_picks: Vec<SongList>,
-    pub trending_songs: Vec<SongInfo>,
+    pub top_picks: Vec<PlaylistSummary>,
+    pub trending_songs: Vec<Track>,
 
     // Login popup
     pub login_popup_open: bool,
@@ -1294,9 +1297,9 @@ pub struct HomePageState {
     pub qr_unikey: Option<String>,
     pub qr_status: Option<String>,
 
-    pub user_playlists: Vec<SongList>,
+    pub user_playlists: Vec<PlaylistSummary>,
     /// Current NCM playlist songs (for playback)
-    pub current_ncm_playlist_songs: Vec<SongInfo>,
+    pub current_ncm_playlist_songs: Vec<Track>,
 
     // Hover animations for song list
     pub song_hover_animations: HoverAnimations<u64>,

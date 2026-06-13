@@ -48,11 +48,25 @@ impl App {
                 true,
             ),
             ProtocolAction::PlaySong(id) => {
-                let song = crate::api::SongInfo {
-                    id,
-                    ..Default::default()
+                let Some(client) = self.core.ncm_client.clone() else {
+                    return Task::done(Message::ShowWarningToast("未登录".to_string()));
                 };
-                Task::done(Message::PlayNcmSong(song))
+                Task::perform(
+                    async move {
+                        client
+                            .track_detail(&[id])
+                            .await
+                            .ok()
+                            .and_then(|tracks| tracks.into_iter().next())
+                    },
+                    |track| {
+                        if let Some(track) = track {
+                            Message::PlayNcmSong(track)
+                        } else {
+                            Message::ShowErrorToast("无法获取歌曲信息".to_string())
+                        }
+                    },
+                )
             }
             ProtocolAction::PlaybackControl(cmd) => {
                 let msg = match cmd {

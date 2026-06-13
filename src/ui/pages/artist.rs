@@ -337,7 +337,7 @@ fn build_albums_view<'a>(
 }
 
 fn build_album_card<'a>(
-    album: &crate::api::SongList,
+    album: &crate::api::AlbumSummary,
     cover_handle: Option<&'a iced::widget::image::Handle>,
     card_width: f32,
 ) -> Element<'a, Message> {
@@ -353,7 +353,7 @@ fn build_album_card<'a>(
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_primary(theme)),
                 }),
-            text(album.author.clone())
+            text(album.artist_names())
                 .size(theme::TEXT_SIZE_BODY)
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_secondary(theme)),

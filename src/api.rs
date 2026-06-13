@@ -3,10 +3,10 @@
 //! Provides NCM client with cookie management, QR login, and API wrappers.
 
 mod ncm;
-pub mod ncm_api;
 
-pub use ncm::NcmClient;
-pub use ncm_api::model::{
-    AlbumDetail, ArtistDetail, BannersInfo, LoginInfo, PlayListDetail, SongInfo, SongList,
-    TargetType, UserDetail,
+pub use ncm::{
+    AlbumDetail, AlbumSummary, ArtistDetail, ArtistSummary, Banner, BannerTarget, LoginInfo,
+    NcmClient, PlaylistDetail, PlaylistSummary, SearchType, Track, UserDetail, UserSummary,
 };
+#[allow(unused_imports)]
+pub use ncm::TrackAvailability;

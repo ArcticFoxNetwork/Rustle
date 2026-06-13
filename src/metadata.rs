@@ -124,7 +124,7 @@ impl SongMetadata {
     /// playlist views, or personal FM).
     pub fn resolve_with_api(
         song: &crate::database::DbSong,
-        song_info: Option<&crate::api::SongInfo>,
+        track: Option<&crate::api::Track>,
     ) -> Self {
         let path = std::path::Path::new(&song.file_path);
         if path.is_absolute()
@@ -133,8 +133,8 @@ impl SongMetadata {
         {
             return SongMetadata::from(meta);
         }
-        if let Some(info) = song_info {
-            return SongMetadata::from(info);
+        if let Some(track) = track {
+            return SongMetadata::from(track);
         }
         SongMetadata::from(song)
     }
@@ -239,33 +239,35 @@ impl From<crate::features::import::AudioMetadata> for SongMetadata {
     }
 }
 
-impl From<&crate::api::SongInfo> for SongMetadata {
-    fn from(s: &crate::api::SongInfo) -> Self {
-        let cover = if s.pic_url.is_empty() {
+impl From<&crate::api::Track> for SongMetadata {
+    fn from(track: &crate::api::Track) -> Self {
+        let cover_url = track.cover_url();
+        let cover = if cover_url.is_empty() {
             None
         } else {
-            Some(CoverSource::Url(s.pic_url.clone()))
+            Some(CoverSource::Url(cover_url.to_string()))
         };
+        let artist = track.artist_names();
         SongMetadata {
-            title: if s.name.is_empty() {
+            title: if track.title.is_empty() {
                 "Unknown Title".into()
             } else {
-                s.name.clone()
+                track.title.clone()
             },
-            artist: if s.singer.is_empty() {
+            artist: if artist.is_empty() {
                 "Unknown Artist".into()
             } else {
-                s.singer.clone()
+                artist
             },
-            album: if s.album.is_empty() {
+            album: if track.album.name.is_empty() {
                 "Unknown Album".into()
             } else {
-                s.album.clone()
+                track.album.name.clone()
             },
-            duration: Duration::from_millis(s.duration),
-            track_number: s.track_number,
-            year: s.year,
-            genre: s.genre.clone(),
+            duration: Duration::from_millis(track.duration_ms),
+            track_number: track.track_number,
+            year: track.year,
+            genre: track.genre.clone(),
             cover,
             format: None,
         }

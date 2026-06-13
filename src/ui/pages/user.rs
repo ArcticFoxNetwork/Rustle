@@ -250,7 +250,7 @@ fn build_playlist_grid<'a>(
 }
 
 fn build_playlist_card<'a>(
-    playlist: &crate::api::SongList,
+    playlist: &crate::api::PlaylistSummary,
     cover_handle: Option<&'a iced::widget::image::Handle>,
     card_width: f32,
 ) -> Element<'a, Message> {
@@ -266,7 +266,7 @@ fn build_playlist_card<'a>(
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_primary(theme)),
                 }),
-            text(playlist.author.clone())
+            text(playlist.creator.nickname.clone())
                 .size(theme::TEXT_SIZE_BODY)
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_secondary(theme)),

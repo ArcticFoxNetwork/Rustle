@@ -305,13 +305,7 @@ impl App {
                 .current_ncm_playlist_songs
                 .iter()
                 .find(|s| s.id == id)
-                .and_then(|s| {
-                    if s.singer_id != 0 {
-                        Some(s.singer_id)
-                    } else {
-                        None
-                    }
-                });
+                .and_then(|s| s.primary_artist().map(|artist| artist.id));
             if let Some(aid) = artist_id {
                 return Some(Task::done(Message::OpenArtist(aid)));
             }
@@ -339,13 +333,7 @@ impl App {
                 .current_ncm_playlist_songs
                 .iter()
                 .find(|s| s.id == id)
-                .and_then(|s| {
-                    if s.album_id != 0 {
-                        Some(s.album_id)
-                    } else {
-                        None
-                    }
-                });
+                .and_then(|s| (s.album.id != 0).then_some(s.album.id));
             if let Some(aid) = album_id {
                 return Some(Task::done(Message::OpenAlbum(aid)));
             }
@@ -416,7 +404,6 @@ impl App {
                     return Some(Task::perform(
                         async move {
                             client
-                                .client
                                 .playlist_add_tracks(playlist_id, &ncm_id.to_string(), "del")
                                 .await
                         },
@@ -469,7 +456,7 @@ impl App {
                 .iter()
                 .find(|s| s.id == ncm_id)
             {
-                let mut song = Self::ncm_song_to_db_song(info);
+                let mut song = Self::ncm_track_to_db_song(info);
                 // Try download dir first, then streaming cache dir
                 let dl =
                     crate::features::settings::StorageSettings::default().effective_download_dir();

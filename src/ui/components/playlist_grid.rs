@@ -5,7 +5,7 @@
 use iced::widget::{Space, column, container, row, text};
 use iced::{Color, Element, Fill};
 
-use crate::api::SongList;
+use crate::api::PlaylistSummary;
 use crate::app::{ImageState, Message};
 use crate::image::ImageKind;
 use crate::ui::animation::HoverAnimations;
@@ -60,7 +60,7 @@ fn daily_recommend_cover_style(hover_progress: f32) -> iced::widget::container::
 
 /// Create a playlist grid element
 pub fn view<'a>(
-    playlists: &'a [SongList],
+    playlists: &'a [PlaylistSummary],
     image_state: &'a ImageState,
     animations: &'a HoverAnimations<u64>,
     max_items: Option<usize>,
@@ -93,7 +93,7 @@ pub fn view<'a>(
                 let cover = daily_recommend_cover(hover_progress);
                 playlist_card::view_with_custom_cover(
                     &playlist.name,
-                    &playlist.author,
+                    &playlist.creator.nickname,
                     cover,
                     hover_progress,
                     Message::OpenNcmPlaylist(0),
@@ -105,7 +105,7 @@ pub fn view<'a>(
                 let cover_handle = image_state.get(ImageKind::PlaylistCover, playlist.id);
                 playlist_card::view(
                     &playlist.name,
-                    &playlist.author,
+                    &playlist.creator.nickname,
                     cover_handle,
                     hover_progress,
                     Message::OpenNcmPlaylist(playlist.id),

@@ -9,7 +9,7 @@ use iced::{
 };
 use std::path::PathBuf;
 
-use crate::api::BannersInfo;
+use crate::api::Banner;
 use crate::app::{ImageState, Message};
 use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
@@ -119,7 +119,7 @@ impl<'a, Message> canvas::Program<Message> for BannerDrawer<'a> {
 
 /// Build the carousel banner component
 pub fn view<'a>(
-    banners: &'a [BannersInfo],
+    banners: &'a [Banner],
     image_state: &'a ImageState,
     current_index: usize,
     last_index: usize,

@@ -164,4 +164,4 @@ Windows / macOS 安装好 [Rust 工具链](https://rustup.rs) 后直接 `cargo b
 ## 🙏 致谢
 
 - [AMLL](https://github.com/Steve-xmh/applemusic-like-lyrics) - 歌词格式参考
-- [NeteaseCloudMusicApi](https://github.com/Binaryify/NeteaseCloudMusicApi) - API 参考
+- [ncm-api-rs](https://github.com/SPlayer-Dev/ncm-api-rs) - 网易云音乐 API SDK

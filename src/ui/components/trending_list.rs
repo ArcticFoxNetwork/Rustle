@@ -5,7 +5,7 @@
 use iced::widget::{Space, button, column, container, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Padding};
 
-use crate::api::SongInfo;
+use crate::api::Track;
 use crate::app::{ImageState, Message};
 use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
@@ -18,7 +18,7 @@ const COVER_SIZE: f32 = 48.0;
 
 /// Build the trending songs list view
 pub fn view<'a>(
-    songs: &'a [SongInfo],
+    songs: &'a [Track],
     image_state: &'a ImageState,
     hover_animations: &'a HoverAnimations<u64>,
     locale: Locale,
@@ -88,7 +88,7 @@ pub fn view<'a>(
 
 /// Build a single song item with hover effect
 fn view_song_item<'a>(
-    song: &'a SongInfo,
+    song: &'a Track,
     rank: usize,
     is_hovered: bool,
     hover_progress: f32,
@@ -98,14 +98,14 @@ fn view_song_item<'a>(
     let song_id = song.id;
 
     // Song info
-    let song_name = text(&song.name)
+    let song_name = text(&song.title)
         .size(theme::TEXT_SIZE_BODY)
         .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT))
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         });
 
-    let artist_text = text(&song.singer)
+    let artist_text = text(song.artist_names())
         .size(theme::TEXT_SIZE_CAPTION)
         .style(|theme| text::Style {
             color: Some(theme::text_secondary(theme)),
@@ -129,7 +129,7 @@ fn view_song_item<'a>(
             .into();
             (favorite_btn, 32.0)
         } else {
-            let duration = text(format_duration(song.duration / 1000))
+            let duration = text(format_duration(song.duration_ms / 1000))
                 .size(theme::TEXT_SIZE_CAPTION)
                 .style(|theme| text::Style {
                     color: Some(theme::text_secondary(theme)),
@@ -192,7 +192,8 @@ fn view_song_item<'a>(
                 // Avoids dirty-looking mid-tones that RGB+alpha joint interpolation produces
                 // over a white background in light mode.
                 let target = theme::surface_hover(theme);
-                let bg_color = Color::from_rgba(target.r, target.g, target.b, target.a * hover_progress);
+                let bg_color =
+                    Color::from_rgba(target.r, target.g, target.b, target.a * hover_progress);
                 button::Style {
                     background: Some(bg_color.into()),
                     border: iced::Border {
@@ -216,4 +217,3 @@ fn format_duration(secs: u64) -> String {
     let secs = secs % 60;
     format!("{:02}:{:02}", mins, secs)
 }
-

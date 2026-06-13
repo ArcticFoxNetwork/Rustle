@@ -71,7 +71,7 @@ pub async fn fetch_yrc_lyrics(
     // This requires a different API endpoint that returns YRC format
     // For now, we'll use the standard lyrics API
 
-    let lyrics = client.client.song_lyric(ncm_id).await?;
+    let lyrics = client.song_lyric(ncm_id).await?;
 
     // Check if the lyrics contain YRC format markers
     let main_lyric = if !lyrics.lyric.is_empty() {

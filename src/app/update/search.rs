@@ -3,7 +3,7 @@
 
 use iced::Task;
 
-use crate::api::ncm_api::SearchType;
+use crate::api::SearchType;
 use crate::app::message::{Message, SearchResultsPayload};
 use crate::app::state::{App, Route, SearchTab};
 
@@ -45,10 +45,14 @@ impl App {
 
                 match payload.tab {
                     SearchTab::Songs => {
-                        self.ui.search.songs = payload.songs.clone();
+                        self.ui.search.tracks = payload.tracks.clone();
                         self.ui.search.total_count = payload.total_count;
                     }
-                    SearchTab::Artists | SearchTab::Albums => {
+                    SearchTab::Artists => {
+                        self.ui.search.artists = payload.artists.clone();
+                        self.ui.search.total_count = payload.total_count;
+                    }
+                    SearchTab::Albums => {
                         self.ui.search.albums = payload.albums.clone();
                         self.ui.search.total_count = payload.total_count;
                     }
@@ -94,7 +98,7 @@ impl App {
                 let Some(song_info) = self
                     .ui
                     .search
-                    .songs
+                    .tracks
                     .iter()
                     .find(|song| song.id == *song_id)
                     .cloned()
@@ -104,8 +108,8 @@ impl App {
 
                 tracing::info!(
                     "Playing search result: {} - {}",
-                    song_info.name,
-                    song_info.singer
+                    song_info.title,
+                    song_info.artist_names()
                 );
                 Some(Task::done(Message::PlayNcmSong(song_info)))
             }
@@ -144,34 +148,53 @@ impl App {
             return Task::done(Message::SearchFailed("未登录".to_string()));
         };
 
-        let api = client.client.clone();
+        let client = client.clone();
         let search_type = tab.to_search_type();
         let offset = page * PAGE_SIZE;
 
         Task::perform(
             async move {
-                match api.search(&keyword, search_type, PAGE_SIZE, offset).await {
+                match client
+                    .search(&keyword, search_type, PAGE_SIZE, offset)
+                    .await
+                {
                     Ok(response) => {
-                        let (songs, albums, playlists, total_count) = match search_type {
-                            SearchType::Songs => {
-                                (response.songs, vec![], vec![], response.song_count)
-                            }
-                            SearchType::Albums => {
-                                (vec![], response.albums, vec![], response.album_count)
-                            }
-                            SearchType::Artists => {
-                                // Artists are stored in albums field
-                                (vec![], response.albums, vec![], response.album_count)
-                            }
-                            SearchType::Playlists => {
-                                (vec![], vec![], response.playlists, response.playlist_count)
-                            }
+                        let (tracks, albums, artists, playlists, total_count) = match search_type {
+                            SearchType::Songs => (
+                                response.tracks,
+                                vec![],
+                                vec![],
+                                vec![],
+                                response.track_count,
+                            ),
+                            SearchType::Albums => (
+                                vec![],
+                                response.albums,
+                                vec![],
+                                vec![],
+                                response.album_count,
+                            ),
+                            SearchType::Artists => (
+                                vec![],
+                                vec![],
+                                response.artists,
+                                vec![],
+                                response.artist_count,
+                            ),
+                            SearchType::Playlists => (
+                                vec![],
+                                vec![],
+                                vec![],
+                                response.playlists,
+                                response.playlist_count,
+                            ),
                         };
 
                         Message::SearchResultsLoaded(SearchResultsPayload {
                             tab,
-                            songs,
+                            tracks,
                             albums,
+                            artists,
                             playlists,
                             total_count,
                         })

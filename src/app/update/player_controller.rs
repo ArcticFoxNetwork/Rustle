@@ -60,17 +60,17 @@ impl App {
             .current_ncm_playlist_songs
             .iter()
             .chain(self.ui.home.trending_songs.iter())
-            .chain(self.ui.search.songs.iter())
+            .chain(self.ui.search.tracks.iter())
             .find(|candidate| {
                 if let Some(id) = ncm_id {
                     candidate.id == id
                 } else {
-                    candidate.name == song.title
-                        && candidate.singer == song.artist
-                        && candidate.album == song.album
+                    candidate.title == song.title
+                        && candidate.artist_names() == song.artist
+                        && candidate.album.name == song.album
                 }
             })
-            .and_then(|song| (song.singer_id != 0).then_some(song.singer_id))
+            .and_then(|song| song.primary_artist().map(|artist| artist.id))
     }
 
     pub(super) fn effective_queue_play_mode(&self) -> PlayMode {
@@ -973,9 +973,12 @@ impl App {
             // Render-ready source of truth: LyricsRenderManager
             let font_family = self.core.settings.lyrics.lyrics_font_family.as_deref();
             let lyrics_ready = self.current_lyrics_shape_metrics().is_some_and(|(cw, fs)| {
-                self.playback
-                    .lyrics_render_manager
-                    .is_render_ready(current_song.id, cw, fs, font_family)
+                self.playback.lyrics_render_manager.is_render_ready(
+                    current_song.id,
+                    cw,
+                    fs,
+                    font_family,
+                )
             });
 
             if lyrics_ready {

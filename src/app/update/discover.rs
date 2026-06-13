@@ -5,7 +5,7 @@ use rand::SeedableRng;
 use rand::seq::SliceRandom;
 use tracing::{debug, error};
 
-use crate::api::SongList;
+use crate::api::{PlaylistSummary, UserSummary};
 use crate::app::message::Message;
 use crate::app::state::{App, Route};
 use crate::i18n::Key;
@@ -21,7 +21,7 @@ fn get_daily_seed() -> u64 {
 }
 
 /// Shuffle playlists using a daily seed for consistent daily randomization
-fn shuffle_daily(playlists: &mut [SongList]) {
+fn shuffle_daily(playlists: &mut [PlaylistSummary]) {
     let seed = get_daily_seed();
     let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
     playlists.shuffle(&mut rng);
@@ -39,12 +39,15 @@ impl App {
                 debug!("Loaded {} recommended playlists", playlists.len());
 
                 let locale = &self.core.locale;
-                let mut all_playlists = vec![SongList {
+                let mut all_playlists = vec![PlaylistSummary {
                     id: 0, // Special ID for daily recommend
                     name: locale.get(Key::DiscoverDailyRecommend).to_string(),
-                    cover_img_url: String::new(),
-                    author: locale.get(Key::DiscoverDailyRecommendDesc).to_string(),
-                    creator_id: 0,
+                    cover_url: String::new(),
+                    creator: UserSummary {
+                        id: 0,
+                        nickname: locale.get(Key::DiscoverDailyRecommendDesc).to_string(),
+                        avatar_url: String::new(),
+                    },
                     subscribed: false,
                 }];
                 all_playlists.extend(playlists.clone());
@@ -114,8 +117,8 @@ impl App {
                     if playlist_id == 0 {
                         return Some(Task::perform(
                             async move {
-                                match client.client.recommend_songs().await {
-                                    Ok(songs) if !songs.is_empty() => Some(songs),
+                                match client.recommend_tracks().await {
+                                    Ok(tracks) if !tracks.is_empty() => Some(tracks),
                                     Ok(_) => None,
                                     Err(e) => {
                                         error!("Failed to get daily recommend: {}", e);
@@ -123,9 +126,9 @@ impl App {
                                     }
                                 }
                             },
-                            move |songs_opt| {
-                                if let Some(songs) = songs_opt {
-                                    Message::AddNcmPlaylist(songs, true)
+                            move |tracks_opt| {
+                                if let Some(tracks) = tracks_opt {
+                                    Message::AddNcmPlaylist(tracks, true)
                                 } else {
                                     Message::ShowErrorToast(error_msg)
                                 }
@@ -135,13 +138,13 @@ impl App {
 
                     return Some(Task::perform(
                         async move {
-                            match client.client.song_list_detail(playlist_id).await {
+                            match client.playlist_detail(playlist_id).await {
                                 Ok(detail) => {
-                                    // Songs are already included in the detail
-                                    if detail.songs.is_empty() {
+                                    // Tracks are already included in the detail
+                                    if detail.tracks.is_empty() {
                                         return None;
                                     }
-                                    Some((detail.id, detail.songs))
+                                    Some((detail.id, detail.tracks))
                                 }
                                 Err(e) => {
                                     error!("Failed to get playlist detail: {}", e);
@@ -150,8 +153,8 @@ impl App {
                             }
                         },
                         move |detail_opt| {
-                            if let Some((detail_id, songs)) = detail_opt {
-                                Message::AddNcmPlaylistWithSource(songs, true, Some(detail_id))
+                            if let Some((detail_id, tracks)) = detail_opt {
+                                Message::AddNcmPlaylistWithSource(tracks, true, Some(detail_id))
                             } else {
                                 Message::ShowErrorToast(error_msg)
                             }
@@ -175,11 +178,7 @@ impl App {
 
                     return Some(Task::perform(
                         async move {
-                            match client
-                                .client
-                                .top_song_list("全部", "hot", offset, limit)
-                                .await
-                            {
+                            match client.top_playlists("全部", "hot", offset, limit).await {
                                 Ok(playlists) => {
                                     let has_more = playlists.len() >= limit as usize;
                                     (playlists, has_more)

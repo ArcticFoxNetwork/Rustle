@@ -430,7 +430,6 @@ pub async fn download_img(
     let temp_path = parent.join(format!("{}.tmp", stem));
 
     match client
-        .client
         .download_img(url, temp_path.clone(), width, height)
         .await
     {

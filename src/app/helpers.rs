@@ -498,7 +498,7 @@ impl App {
             let client = client.clone();
             Task::perform(
                 async move {
-                    match client.client.personal_fm().await {
+                    match client.personal_fm_tracks().await {
                         Ok(songs) if !songs.is_empty() => Some(songs),
                         _ => None,
                     }
@@ -524,7 +524,7 @@ impl App {
             let client = client.clone();
             Task::perform(
                 async move {
-                    match client.client.personal_fm().await {
+                    match client.personal_fm_tracks().await {
                         Ok(songs) if !songs.is_empty() => Some(songs),
                         _ => None,
                     }

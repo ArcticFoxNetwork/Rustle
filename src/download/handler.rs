@@ -233,7 +233,7 @@ impl App {
             .or_else(|| {
                 self.ui
                     .search
-                    .songs
+                    .tracks
                     .iter()
                     .find(|s| s.id == ncm_id)
                     .cloned()
@@ -254,7 +254,7 @@ impl App {
 
         let url_task = Task::perform(
             async move {
-                match client.songs_url(&[ncm_id]).await {
+                match client.track_urls(&[ncm_id]).await {
                     Ok(urls) => urls
                         .first()
                         .and_then(|u| {
@@ -315,23 +315,23 @@ impl App {
     }
 
     fn download_playlist(&mut self, _playlist_id: i64) -> Option<Task<crate::app::Message>> {
-        let songs: Vec<&crate::api::SongInfo> =
-            if !self.ui.home.current_ncm_playlist_songs.is_empty() {
-                self.ui.home.current_ncm_playlist_songs.iter().collect()
-            } else {
-                return Some(Self::toast_error("无可下载的歌曲"));
-            };
+        let tracks: Vec<&crate::api::Track> = if !self.ui.home.current_ncm_playlist_songs.is_empty()
+        {
+            self.ui.home.current_ncm_playlist_songs.iter().collect()
+        } else {
+            return Some(Self::toast_error("无可下载的歌曲"));
+        };
 
         let client = self.core.ncm_client.clone()?;
-        let all_ids: Vec<u64> = songs.iter().map(|s| s.id).collect();
-        let song_data: Vec<(i64, u64, SongMetadata)> = songs
+        let all_ids: Vec<u64> = tracks.iter().map(|s| s.id).collect();
+        let song_data: Vec<(i64, u64, SongMetadata)> = tracks
             .iter()
             .map(|s| (-(s.id as i64), s.id, SongMetadata::from(*s)))
             .collect();
 
         Some(Task::perform(
             async move {
-                match client.songs_url(&all_ids).await {
+                match client.track_urls(&all_ids).await {
                     Ok(urls) => {
                         let url_map: Vec<(u64, String)> = urls
                             .into_iter()

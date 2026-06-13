@@ -73,7 +73,7 @@ pub fn view(
     is_logged_in: bool,
     importing_playlist: Option<&ImportingPlaylist>,
     playlists: &[crate::database::DbPlaylist],
-    user_playlists: &[crate::api::SongList],
+    user_playlists: &[crate::api::PlaylistSummary],
     image_state: &ImageState,
     sidebar_animations: &HoverAnimations<SidebarId>,
     sidebar_width: f32,
@@ -207,29 +207,30 @@ pub fn view(
             user_playlists.iter().partition(|pl| !pl.subscribed);
 
         // Helper to render a playlist button
-        let render_playlist_btn = |playlist: &crate::api::SongList| -> Element<'static, Message> {
-            let name = playlist.name.clone();
-            let id = playlist.id;
-            let is_active =
-                matches!(current_route, Route::NcmPlaylist(current_id) if *current_id == id);
-            let hover_progress = sidebar_animations.get_progress(&SidebarId::UserPlaylist(id));
+        let render_playlist_btn =
+            |playlist: &crate::api::PlaylistSummary| -> Element<'static, Message> {
+                let name = playlist.name.clone();
+                let id = playlist.id;
+                let is_active =
+                    matches!(current_route, Route::NcmPlaylist(current_id) if *current_id == id);
+                let hover_progress = sidebar_animations.get_progress(&SidebarId::UserPlaylist(id));
 
-            let s = crate::image::CoverSize::Tiny;
-            let cover_el = crate::ui::components::cover_image::cover(
-                image_state.get(ImageKind::PlaylistCover, id),
-                ImageKind::PlaylistCover,
-                s,
-            );
-            sidebar_button_animated_opt_cover(
-                crate::ui::icons::MUSIC,
-                Some(cover_el),
-                name,
-                is_active,
-                hover_progress,
-                SidebarId::UserPlaylist(id),
-                Message::OpenNcmPlaylist(id),
-            )
-        };
+                let s = crate::image::CoverSize::Tiny;
+                let cover_el = crate::ui::components::cover_image::cover(
+                    image_state.get(ImageKind::PlaylistCover, id),
+                    ImageKind::PlaylistCover,
+                    s,
+                );
+                sidebar_button_animated_opt_cover(
+                    crate::ui::icons::MUSIC,
+                    Some(cover_el),
+                    name,
+                    is_active,
+                    hover_progress,
+                    SidebarId::UserPlaylist(id),
+                    Message::OpenNcmPlaylist(id),
+                )
+            };
 
         scrollable_items.push(Space::new().height(20).into());
 

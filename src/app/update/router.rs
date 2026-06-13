@@ -102,7 +102,8 @@ impl App {
                 self.ui.search.loading = should_reload_search;
                 self.ui.search_query = keyword.clone();
                 if should_reload_search {
-                    self.ui.search.songs.clear();
+                    self.ui.search.tracks.clear();
+                    self.ui.search.artists.clear();
                     self.ui.search.albums.clear();
                     self.ui.search.playlists.clear();
                     self.clear_search_cover_cache();

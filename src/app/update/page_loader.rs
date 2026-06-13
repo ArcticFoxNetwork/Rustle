@@ -37,25 +37,26 @@ impl App {
     }
 }
 
-/// Convert NCM songs to PlaylistSongView.
+/// Convert NCM tracks to PlaylistSongView.
 /// Cover resolution is deferred to `image::resolve` at render time.
-pub fn convert_ncm_songs_to_views(
-    songs: &[crate::api::SongInfo],
+pub fn convert_ncm_tracks_to_views(
+    tracks: &[crate::api::Track],
 ) -> Vec<crate::ui::pages::PlaylistSongView> {
-    songs
+    tracks
         .iter()
         .enumerate()
-        .map(|(i, song)| {
-            let meta = crate::metadata::SongMetadata::from(song);
+        .map(|(i, track)| {
+            let meta = crate::metadata::SongMetadata::from(track);
+            let artist_names = track.artist_names();
             let source = crate::utils::compute_source(
                 "",
-                -(song.id as i64),
-                Some(&song.singer),
-                Some(&song.name),
+                -(track.id as i64),
+                Some(&artist_names),
+                Some(&track.title),
             );
 
             crate::ui::components::playlist_view::SongItem::new(
-                -(song.id as i64),
+                -(track.id as i64),
                 i + 1,
                 meta.title.clone(),
                 meta.artist.clone(),
