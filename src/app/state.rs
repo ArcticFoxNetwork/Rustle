@@ -817,6 +817,8 @@ pub struct UiState {
     pub section_positions: Vec<(SettingsSection, f32)>,
     /// Whether section positions have been measured from the actual widget tree
     pub positions_measured: bool,
+    /// Whether the mouse is hovering over the volume slider area
+    pub is_volume_slider_hovered: bool,
     pub editing_keybinding: Option<crate::features::Action>,
     pub queue_visible: bool,
 
@@ -907,6 +909,7 @@ impl UiState {
                 (SettingsSection::About, 1965.0),
             ],
             positions_measured: false,
+            is_volume_slider_hovered: false,
             editing_keybinding: None,
             queue_visible: false,
             seek_preview_position: None,

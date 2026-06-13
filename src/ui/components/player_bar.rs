@@ -229,12 +229,22 @@ pub fn view(
     })
     .on_press(Message::ToggleQueue);
 
+    let volume_area = iced::widget::mouse_area(
+        row![
+            volume_icon,
+            Space::new().width(8),
+            volume_slider,
+        ]
+        .align_y(Alignment::Center)
+        .width(Length::Shrink),
+    )
+    .on_enter(Message::VolumeSliderHovered(true))
+    .on_exit(Message::VolumeSliderHovered(false));
+
     let right_section = row![
         play_mode_btn,
         Space::new().width(8),
-        volume_icon,
-        Space::new().width(8),
-        volume_slider,
+        volume_area,
         Space::new().width(12),
         queue_btn,
     ]

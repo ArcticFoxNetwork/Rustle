@@ -109,6 +109,22 @@ impl App {
                 Some(Task::none())
             }
 
+            Message::MouseWheelScrolled { delta_y } => {
+                if self.ui.is_volume_slider_hovered && *delta_y != 0.0 {
+                    // 每个滚轮步长 = 2% 音量，signum 保证步长恒定
+                    let step = delta_y.signum() * 0.02;
+                    let current = self.playback_info().volume;
+                    let new_volume = (current + step).clamp(0.0, 1.0);
+                    self.set_output_volume(new_volume, true);
+                }
+                Some(Task::none())
+            }
+
+            Message::VolumeSliderHovered(hovered) => {
+                self.ui.is_volume_slider_hovered = *hovered;
+                Some(Task::none())
+            }
+
             _ => None,
         }
     }

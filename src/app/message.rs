@@ -107,6 +107,10 @@ pub enum Message {
     MouseReleased,
     /// Mouse moved (track cursor position for drag area)
     MouseMoved(iced::Point),
+    /// Mouse wheel scrolled (for volume control etc.)
+    MouseWheelScrolled { delta_y: f32 },
+    /// Mouse entered/exited volume slider area
+    VolumeSliderHovered(bool),
     /// Open settings
     OpenSettings,
     /// Open settings and close lyrics page
@@ -870,6 +874,10 @@ impl std::fmt::Debug for Message {
             Self::MousePressed => simple!("MousePressed"),
             Self::MouseReleased => simple!("MouseReleased"),
             Self::MouseMoved(_) => simple!("MouseMoved"),
+            Self::MouseWheelScrolled { delta_y } => {
+                simple!("MouseWheelScrolled", "{:.2}", delta_y)
+            }
+            Self::VolumeSliderHovered(h) => simple!("VolumeSliderHovered", "{}", h),
             Self::OpenSettings => simple!("OpenSettings"),
             Self::OpenSettingsWithCloseLyrics => simple!("OpenSettingsWithCloseLyrics"),
             Self::OpenAudioEngine => simple!("OpenAudioEngine"),
