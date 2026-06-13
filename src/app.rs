@@ -291,7 +291,7 @@ impl App {
             _ => None,
         });
 
-        // 11. Mouse events for window dragging and sidebar resize
+        // 11. Mouse events for window dragging, sidebar resize, and volume scroll
         let mouse_sub = if !window_hidden {
             iced::event::listen().filter_map(|event| match event {
                 iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
@@ -302,6 +302,13 @@ impl App {
                 )) => Some(Message::MouseReleased),
                 iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
                     Some(Message::MouseMoved(position))
+                }
+                iced::Event::Mouse(iced::mouse::Event::WheelScrolled { delta }) => {
+                    let delta_y = match delta {
+                        iced::mouse::ScrollDelta::Lines { y, .. } => y * 50.0,
+                        iced::mouse::ScrollDelta::Pixels { y, .. } => y,
+                    };
+                    Some(Message::MouseWheelScrolled { delta_y })
                 }
                 _ => None,
             })
