@@ -138,23 +138,6 @@ impl EqualizerParams {
         self.coeffs_dirty.store(true, Ordering::Release);
     }
 
-    /// Set a single band gain
-    #[allow(dead_code)]
-    pub fn set_band_gain(&self, band: usize, gain_db: f32) {
-        if band < 10 {
-            if let Ok(mut inner) = self.inner.write() {
-                inner.gains[band] = gain_db.clamp(-12.0, 12.0);
-            }
-            self.coeffs_dirty.store(true, Ordering::Release);
-        }
-    }
-
-    /// Get current gains
-    #[allow(dead_code)]
-    pub fn get_gains(&self) -> [f32; 10] {
-        self.inner.read().map(|i| i.gains).unwrap_or([0.0; 10])
-    }
-
     /// Update sample rate (call when audio format changes)
     pub fn set_sample_rate(&self, sample_rate: u32) {
         if let Ok(mut inner) = self.inner.write()

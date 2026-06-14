@@ -27,7 +27,6 @@ use super::streaming::{HIGH_WATER_MARK_BYTES, LOW_WATER_MARK_BYTES, SharedBuffer
 struct PreloadedSink {
     sink: Sink,
     duration: Duration,
-    #[allow(dead_code)]
     path: PathBuf,
     track_gain: f32,
     runtime: PlaybackProcessingRuntime,
@@ -38,7 +37,6 @@ struct PreloadedSink {
 pub struct AudioThreadHandle {
     pub handle: AudioHandle,
     pub event_rx: Option<super::events::AudioEventReceiver>,
-    #[allow(dead_code)]
     thread_handle: Option<JoinHandle<()>>,
 }
 
@@ -50,7 +48,16 @@ impl AudioThreadHandle {
 
 impl Drop for AudioThreadHandle {
     fn drop(&mut self) {
-        self.handle.stop();
+        self.handle.shutdown();
+        if let Some(thread_handle) = self.thread_handle.take() {
+            if thread_handle.is_finished() {
+                if thread_handle.join().is_err() {
+                    tracing::warn!("Audio thread panicked during shutdown");
+                }
+            } else {
+                tracing::debug!("Audio thread shutdown requested; leaving join handle detached");
+            }
+        }
     }
 }
 
@@ -378,7 +385,6 @@ fn audio_thread_main(
             AudioCommand::PlayPreloaded {
                 request_id,
                 playback_request_id,
-                path,
                 fade_in,
             } => {
                 if let Some(ref old_buffer) = current_buffer {
@@ -396,9 +402,24 @@ fn audio_thread_main(
                     &mut preloaded_sinks,
                     playback_request_id,
                     request_id,
-                    path,
                     fade_in,
                 );
+            }
+
+            AudioCommand::Shutdown => {
+                if let Some(ref old_buffer) = current_buffer.take() {
+                    old_buffer.clear_buffer_callback();
+                }
+                for (_, preloaded) in preloaded_sinks.drain() {
+                    if let Some(shared_buffer) = preloaded.shared_buffer {
+                        shared_buffer.clear_buffer_callback();
+                    }
+                }
+                player.stop();
+                update_state_from_player(&player, &state);
+                state.set_current_path(None);
+                let _ = event_tx.send(AudioEvent::Stopped);
+                break;
             }
 
             AudioCommand::ReleasePreload { request_id } => {
@@ -907,15 +928,24 @@ fn handle_play_preloaded_by_id(
     preloaded_sinks: &mut HashMap<u64, PreloadedSink>,
     playback_request_id: u64,
     request_id: u64,
-    path: PathBuf,
     fade_in: bool,
 ) {
     if let Some(preloaded) = preloaded_sinks.remove(&request_id) {
+        let PreloadedSink {
+            sink,
+            duration,
+            path,
+            track_gain,
+            runtime,
+            is_streaming,
+            shared_buffer,
+        } = preloaded;
+
         // Clear pending seek from previous track (important for correct display_position)
         state.set_pending_seek(None);
 
         // Set up buffer callback for streaming preloads
-        if let Some(shared_buffer) = &preloaded.shared_buffer {
+        if let Some(shared_buffer) = &shared_buffer {
             // Reset buffer progress for new track
             let downloaded = shared_buffer.downloaded();
             let total = shared_buffer.total_size();
@@ -934,13 +964,13 @@ fn handle_play_preloaded_by_id(
         }
 
         match player.play_preloaded_sink(
-            preloaded.sink,
-            preloaded.duration,
+            sink,
+            duration,
             path.clone(),
-            preloaded.is_streaming,
+            is_streaming,
             fade_in,
-            preloaded.track_gain,
-            preloaded.runtime,
+            track_gain,
+            runtime,
         ) {
             Ok(_) => {
                 update_state_from_player(player, state);

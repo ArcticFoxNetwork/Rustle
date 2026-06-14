@@ -2,7 +2,6 @@
 //! Positioned at top of the application with navigation on left, search in center, and controls on right
 
 use iced::border::Radius;
-use iced::mouse::Interaction;
 use iced::widget::{Space, button, container, image, mouse_area, row, stack, svg, text, tooltip};
 use iced::{Alignment, ContentFit, Element, Fill, Length, Padding};
 
@@ -267,7 +266,6 @@ pub fn view<'a>(
             .width(Fill)
             .height(Length::Fixed(TITLE_BAR_HEIGHT)),
     )
-    .interaction(Interaction::Grab)
     .on_press(Message::WindowDrag);
 
     let controls = container(

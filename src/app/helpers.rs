@@ -21,6 +21,7 @@ use crate::utils::format_relative_time;
 pub fn init_audio(
     settings: &crate::features::Settings,
 ) -> (
+    Option<crate::audio::AudioThreadHandle>,
     Option<crate::audio::AudioHandle>,
     AudioProcessingChain,
     Task<Message>,
@@ -61,11 +62,11 @@ pub fn init_audio(
                 Task::none()
             };
 
-            (Some(handle), audio_chain, listener_task)
+            (Some(thread_handle), Some(handle), audio_chain, listener_task)
         }
         Err(e) => {
             tracing::error!("Failed to spawn audio thread: {}", e);
-            (None, audio_chain, Task::none())
+            (None, None, audio_chain, Task::none())
         }
     }
 }

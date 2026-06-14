@@ -53,94 +53,6 @@ pub fn update_menu_state(state: &TrayState) {
     }
 }
 
-#[allow(dead_code)]
-pub async fn start_native_tray()
--> anyhow::Result<(TrayHandle, mpsc::UnboundedReceiver<TrayCommand>)> {
-    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-    let (state_tx, mut state_rx) = mpsc::unbounded_channel();
-
-    // Load icon
-    let icon = load_icon()?;
-
-    // Create initial menu
-    let (menu, play_pause, sequential, loop_all, loop_one, shuffle) =
-        create_native_menu_with_items(&TrayState::default())?;
-
-    // Leak menu items and store pointers
-    let play_pause = Box::leak(Box::new(play_pause));
-    let sequential = Box::leak(Box::new(sequential));
-    let loop_all = Box::leak(Box::new(loop_all));
-    let loop_one = Box::leak(Box::new(loop_one));
-    let shuffle = Box::leak(Box::new(shuffle));
-
-    let _ = MENU_ITEMS.set(MenuItemsWrapper {
-        play_pause: play_pause as *const _,
-        sequential: sequential as *const _,
-        loop_all: loop_all as *const _,
-        loop_one: loop_one as *const _,
-        shuffle: shuffle as *const _,
-    });
-
-    // Create tray icon
-    let tray = TrayIconBuilder::new()
-        .with_menu(Box::new(menu))
-        .with_menu_on_left_click(false)
-        .with_tooltip("Rustle Music Player")
-        .with_icon(icon)
-        .build()
-        .map_err(|e| anyhow::anyhow!("Failed to create tray icon: {}", e))?;
-
-    // Leak the tray icon to keep it alive for the lifetime of the application
-    Box::leak(Box::new(tray));
-
-    // 设置事件处理器，将事件转发到 channel
-    let cmd_tx_menu = cmd_tx.clone();
-    tray_icon::menu::MenuEvent::set_event_handler(Some(
-        move |event: tray_icon::menu::MenuEvent| {
-            let id_str = event.id.0.as_str();
-            let command = match id_str {
-                PLAY_PAUSE_ID => Some(TrayCommand::PlayPause),
-                PREV_TRACK_ID => Some(TrayCommand::PrevTrack),
-                NEXT_TRACK_ID => Some(TrayCommand::NextTrack),
-                TOGGLE_FAVORITE_ID => Some(TrayCommand::ToggleFavorite),
-                SEQUENTIAL_ID => Some(TrayCommand::SetPlayMode(PlayMode::Sequential)),
-                LOOP_ALL_ID => Some(TrayCommand::SetPlayMode(PlayMode::LoopAll)),
-                LOOP_ONE_ID => Some(TrayCommand::SetPlayMode(PlayMode::LoopOne)),
-                SHUFFLE_ID => Some(TrayCommand::SetPlayMode(PlayMode::Shuffle)),
-                TOGGLE_WINDOW_ID => Some(TrayCommand::ToggleWindow),
-                QUIT_ID => Some(TrayCommand::Quit),
-                _ => None,
-            };
-            if let Some(cmd) = command {
-                let _ = cmd_tx_menu.send(cmd);
-            }
-        },
-    ));
-
-    TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| match event {
-        TrayIconEvent::Click {
-            button,
-            button_state,
-            ..
-        } => {
-            if button == MouseButton::Left && button_state == MouseButtonState::Up {
-                let _ = cmd_tx.send(TrayCommand::ShowOrFocusWindow);
-            }
-        }
-        _ => {}
-    }));
-
-    // Handle state updates
-    tokio::spawn(async move {
-        while let Some(state) = state_rx.recv().await {
-            tracing::debug!("Tray state updated: {:?}", state);
-            update_menu_state(&state);
-        }
-    });
-
-    Ok((TrayHandle { tx: state_tx }, cmd_rx))
-}
-
 /// Synchronous version for Windows main thread requirement
 pub fn start_native_tray_sync() -> anyhow::Result<(TrayHandle, mpsc::UnboundedReceiver<TrayCommand>)>
 {
@@ -365,9 +277,4 @@ fn create_native_menu_with_items(
     menu.append(&quit).ok();
 
     Ok((menu, play_pause, sequential, loop_all, loop_one, shuffle))
-}
-
-#[allow(dead_code)]
-fn create_native_menu(state: &TrayState) -> anyhow::Result<Menu> {
-    create_native_menu_with_items(state).map(|(menu, _, _, _, _, _)| menu)
 }

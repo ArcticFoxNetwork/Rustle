@@ -39,7 +39,6 @@ pub(super) enum PlaybackSource {
     },
     Preloaded {
         request_id: u64,
-        path: PathBuf,
         buffer: Option<crate::audio::SharedBuffer>,
     },
 }
@@ -336,12 +335,8 @@ impl App {
         self.play_streaming_audio(buffer, duration, cache_path, fade_in, track_gain)
     }
 
-    pub(super) fn play_preloaded_request(
-        &self,
-        request_id: u64,
-        path: PathBuf,
-    ) -> Result<u64, String> {
-        self.play_preloaded_audio(request_id, path, self.fade_in_enabled())
+    pub(super) fn play_preloaded_request(&self, request_id: u64) -> Result<u64, String> {
+        self.play_preloaded_audio(request_id, self.fade_in_enabled())
     }
 
     pub(super) fn audio_path_source_for_song(song: &DbSong) -> Result<PlaybackSource, String> {
@@ -400,13 +395,9 @@ impl App {
                 self.replace_active_streaming_buffer(Some(active_buffer));
                 self.play_streaming_buffer_for_song(song, buffer, duration_secs, &file_path)
             }
-            PlaybackSource::Preloaded {
-                request_id,
-                path,
-                buffer,
-            } => {
+            PlaybackSource::Preloaded { request_id, buffer } => {
                 self.replace_active_streaming_buffer(buffer);
-                self.play_preloaded_request(request_id, path)
+                self.play_preloaded_request(request_id)
             }
         }
     }

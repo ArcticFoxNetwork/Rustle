@@ -156,6 +156,8 @@ pub struct CoreState {
     pub db_error: Option<String>,
     /// Download manager for offline downloads
     pub download_manager: crate::download::DownloadManager,
+    /// Owns the audio thread lifetime.
+    audio_thread: Option<crate::audio::AudioThreadHandle>,
     /// Audio handle for non-blocking audio control
     audio: Option<crate::audio::AudioHandle>,
     /// Audio processing chain (preamp, EQ, analyzer) - shared with AudioPlayer
@@ -206,6 +208,7 @@ impl CoreState {
     pub fn new(
         settings: crate::features::Settings,
         locale: Locale,
+        audio_thread: Option<crate::audio::AudioThreadHandle>,
         audio: Option<crate::audio::AudioHandle>,
         audio_chain: AudioProcessingChain,
     ) -> Self {
@@ -214,6 +217,7 @@ impl CoreState {
             db: None,
             db_error: None,
             download_manager: Default::default(),
+            audio_thread,
             audio,
             audio_chain,
             volume_before_mute: None,
@@ -234,6 +238,13 @@ impl CoreState {
             window_height: 720.0,
             mouse_position: iced::Point::ORIGIN,
         }
+    }
+}
+
+impl Drop for CoreState {
+    fn drop(&mut self) {
+        self.audio = None;
+        let _ = self.audio_thread.take();
     }
 }
 
@@ -382,11 +393,10 @@ impl App {
     pub(crate) fn play_preloaded_audio(
         &self,
         request_id: u64,
-        path: PathBuf,
         fade_in: bool,
     ) -> Result<u64, String> {
         let audio = self.require_audio_handle()?;
-        Ok(audio.play_preloaded(request_id, path, fade_in))
+        Ok(audio.play_preloaded(request_id, fade_in))
     }
 
     pub(crate) fn load_audio_file_paused(

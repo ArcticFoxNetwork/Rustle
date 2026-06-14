@@ -98,9 +98,10 @@ pub enum AudioCommand {
     PlayPreloaded {
         request_id: u64,
         playback_request_id: u64,
-        path: PathBuf,
         fade_in: bool,
     },
+    /// Stop playback and exit the audio thread.
+    Shutdown,
     /// Release a preloaded sink by request_id without playing it
     ReleasePreload { request_id: u64 },
     /// Switch audio output device
@@ -216,15 +217,14 @@ impl std::fmt::Debug for AudioCommand {
             Self::PlayPreloaded {
                 request_id,
                 playback_request_id,
-                path,
                 fade_in,
             } => f
                 .debug_struct("PlayPreloaded")
                 .field("request_id", request_id)
                 .field("playback_request_id", playback_request_id)
-                .field("path", path)
                 .field("fade_in", fade_in)
                 .finish(),
+            Self::Shutdown => write!(f, "Shutdown"),
             Self::ReleasePreload { request_id } => f
                 .debug_struct("ReleasePreload")
                 .field("request_id", request_id)

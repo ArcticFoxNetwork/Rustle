@@ -143,12 +143,6 @@ impl<K: Eq + Hash + Clone> HoverAnimations<K> {
         self.fading_anim = Animated::transition(0.0, hover_easing());
     }
 
-    /// Check if a specific key is currently the active (hovered) item
-    #[allow(dead_code)]
-    pub fn is_active(&self, key: &K) -> bool {
-        self.active_key.as_ref() == Some(key)
-    }
-
     /// Tick the animations forward in time
     /// Must be called on each animation frame to update values
     pub fn tick(&mut self, now: Instant) {
@@ -227,12 +221,11 @@ mod tests {
 
         // After hover enter
         anims.set_hovered_exclusive(Some(1));
-        assert!(anims.is_active(&1));
+        assert_eq!(anims.active_key, Some(1));
 
         // Switch to another item
         anims.set_hovered_exclusive(Some(2));
-        assert!(anims.is_active(&2));
-        assert!(!anims.is_active(&1));
+        assert_eq!(anims.active_key, Some(2));
     }
 
     #[test]

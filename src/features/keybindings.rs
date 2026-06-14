@@ -54,32 +54,6 @@ impl KeyBinding {
         self
     }
 
-    #[allow(dead_code)]
-    pub fn ctrl(mut self) -> Self {
-        self.modifiers.ctrl = true;
-        self
-    }
-
-    #[allow(dead_code)]
-    pub fn cmd(mut self) -> Self {
-        self.modifiers.cmd = true;
-        self
-    }
-
-    /// Add Shift modifier
-    #[allow(dead_code)]
-    pub fn shift(mut self) -> Self {
-        self.modifiers.shift = true;
-        self
-    }
-
-    /// Add Alt modifier
-    #[allow(dead_code)]
-    pub fn alt(mut self) -> Self {
-        self.modifiers.alt = true;
-        self
-    }
-
     /// Check if this keybinding matches the given key event
     pub fn matches(&self, key: &Key, modifiers: &Modifiers) -> bool {
         self.key.matches(key) && self.modifiers.matches(modifiers)
@@ -505,7 +479,14 @@ mod tests {
 
     #[test]
     fn test_keybinding_display() {
-        let binding = KeyBinding::new(KeyCode::P).ctrl().shift();
+        let binding = KeyBinding {
+            modifiers: ModifierSet {
+                ctrl: true,
+                shift: true,
+                ..Default::default()
+            },
+            key: KeyCode::P,
+        };
         assert_eq!(binding.display(), "Ctrl+Shift+P");
     }
 }

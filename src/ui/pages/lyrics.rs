@@ -6,7 +6,6 @@
 
 use std::sync::Arc;
 
-use iced::mouse::Interaction;
 use iced::widget::{
     Sensor, Space, button, column, container, mouse_area, opaque, row, shader, svg, text,
 };
@@ -101,7 +100,6 @@ pub fn view<'a>(
             .width(Fill)
             .height(Length::Fixed(TITLE_BAR_HEIGHT)),
     )
-    .interaction(Interaction::Grab)
     .on_press(Message::WindowDrag);
 
     // Back button overlay in top-left corner

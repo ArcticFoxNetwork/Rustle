@@ -100,10 +100,11 @@ impl App {
         };
 
         // 2. Initialize audio system
-        let (audio, audio_chain, audio_listener_task) = helpers::init_audio(&settings);
+        let (audio_thread, audio, audio_chain, audio_listener_task) =
+            helpers::init_audio(&settings);
 
         // 3. Initialize sub-states
-        let core = CoreState::new(settings, locale, audio, audio_chain);
+        let core = CoreState::new(settings, locale, audio_thread, audio, audio_chain);
         let library = LibraryState::default();
         let playback = PlaybackSessionState::default();
         let ui = UiState::new();

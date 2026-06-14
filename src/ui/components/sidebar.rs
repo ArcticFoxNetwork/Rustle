@@ -1,7 +1,6 @@
 //! Left sidebar navigation component
 //! Dark gray panel with logo, menu, library section, and user profile
 
-use iced::mouse::Interaction;
 use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, svg, text};
 use iced::{Alignment, Color, Element, Fill, Padding};
 
@@ -103,9 +102,7 @@ pub fn view(
     .align_y(Alignment::Center)
     .padding(Padding::new(24.0).bottom(34.0));
 
-    let logo = mouse_area(logo_content)
-        .interaction(Interaction::Grab)
-        .on_press(Message::WindowDrag);
+    let logo = mouse_area(logo_content).on_press(Message::WindowDrag);
 
     // Main navigation menu with hover animations
     let nav_items = [

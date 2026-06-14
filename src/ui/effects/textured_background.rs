@@ -174,9 +174,15 @@ impl std::fmt::Debug for MeshState {
 /// 缓存的 GPU 资源
 struct CachedMeshState {
     texture_id: u64,
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "keeps the cached GPU texture alive with its bind group"
+    )]
     texture: wgpu::Texture,
-    #[allow(dead_code)]
+    #[expect(
+        dead_code,
+        reason = "keeps the cached GPU texture view alive with its bind group"
+    )]
     texture_view: wgpu::TextureView,
     uniform_buffer: wgpu::Buffer,
     bind_group: wgpu::BindGroup,

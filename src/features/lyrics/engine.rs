@@ -95,12 +95,6 @@ pub struct LyricsEngineConfig {
     /// Scroll timeout before auto-return (seconds)
     /// Default: 5.0
     pub scroll_timeout: f32,
-    /// Friction coefficient for inertia scrolling
-    pub scroll_friction: f32,
-    /// Snap threshold velocity
-    pub snap_threshold: f32,
-    /// Maximum overscroll distance
-    pub max_overscroll: f32,
 
     // === Spring Parameters ===
     // Position Y: mass=0.9, damping=15, stiffness=90
@@ -163,9 +157,6 @@ impl Default for LyricsEngineConfig {
 
             // Physics
             scroll_timeout: 5.0,
-            scroll_friction: 0.995,
-            snap_threshold: 50.0,
-            max_overscroll: 200.0,
 
             // Spring (defaults for position Y)
             spring_mass: 0.9,
@@ -288,10 +279,7 @@ impl LyricsEngine {
         config: LyricsEngineConfig,
         font_system: sdf_cache::SharedFontSystem,
     ) -> Self {
-        let mut physics = ScrollPhysics::new(800.0, config.line_height);
-        physics.set_friction(config.scroll_friction);
-        physics.set_snap_threshold(config.snap_threshold);
-        physics.set_max_overscroll(config.max_overscroll);
+        let physics = ScrollPhysics::new();
         debug_assert!(
             [AlignAnchor::Top, AlignAnchor::Center, AlignAnchor::Bottom]
                 .contains(&config.align_anchor)
@@ -534,7 +522,6 @@ impl LyricsEngine {
         self.viewport_height = viewport_height;
         self.viewport_width = viewport_width;
         self.line_animations.set_viewport_height(viewport_height);
-        self.physics.set_viewport_height(viewport_height);
         self.calculate_line_heights(lines, content_width, font_size);
     }
 

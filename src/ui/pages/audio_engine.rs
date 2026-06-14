@@ -227,7 +227,6 @@ fn audio_visualization_section(
     let spectrum = Canvas::new(SpectrumAnalyzer {
         spectrum_db,
         sample_rate,
-        decay,
         bars_mode,
     })
     .width(Fill)
@@ -587,8 +586,6 @@ impl canvas::Program<Message> for VolumeMeter {
 struct SpectrumAnalyzer {
     spectrum_db: [f32; SPECTRUM_BARS],
     sample_rate: u32,
-    #[allow(dead_code)]
-    decay: f32,
     bars_mode: bool,
 }
 

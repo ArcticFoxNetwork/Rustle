@@ -378,11 +378,7 @@ impl App {
                 path,
                 buffer.is_some()
             );
-            return Some(PlaybackSource::Preloaded {
-                request_id,
-                path,
-                buffer,
-            });
+            return Some(PlaybackSource::Preloaded { request_id, buffer });
         }
         tracing::debug!("No {} preloaded track available for idx={}", direction, idx);
         None

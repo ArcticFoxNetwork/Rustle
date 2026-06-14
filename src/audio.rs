@@ -32,4 +32,4 @@ pub use events::AudioEvent;
 pub use handle::AudioHandle;
 pub use player::{PlaybackError, PlaybackInfo, PlaybackStatus, get_audio_devices};
 pub use streaming::{SharedBuffer, StreamingBuffer};
-pub use thread::spawn_audio_thread;
+pub use thread::{AudioThreadHandle, spawn_audio_thread};

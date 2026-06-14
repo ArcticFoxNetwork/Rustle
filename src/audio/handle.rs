@@ -145,12 +145,6 @@ impl AudioHandle {
         let _ = self.command_tx.send(AudioCommand::Pause { fade_out });
     }
 
-    /// Resume playback
-    #[allow(dead_code)] // Public API, used via resume_with_fade
-    pub fn resume(&self) {
-        self.resume_with_fade(false);
-    }
-
     /// Resume playback with optional fade in
     pub fn resume_with_fade(&self, fade_in: bool) {
         let _ = self.command_tx.send(AudioCommand::Resume { fade_in });
@@ -230,12 +224,11 @@ impl AudioHandle {
     ///
     /// The sink must have been created via `create_preload_sink` or
     /// `create_preload_sink_streaming` and received `AudioEvent::PreloadReady`.
-    pub fn play_preloaded(&self, request_id: u64, path: PathBuf, fade_in: bool) -> u64 {
+    pub fn play_preloaded(&self, request_id: u64, fade_in: bool) -> u64 {
         let playback_request_id = Self::next_playback_request_id();
         let _ = self.command_tx.send(AudioCommand::PlayPreloaded {
             request_id,
             playback_request_id,
-            path,
             fade_in,
         });
         playback_request_id
@@ -246,6 +239,10 @@ impl AudioHandle {
         let _ = self
             .command_tx
             .send(AudioCommand::ReleasePreload { request_id });
+    }
+
+    pub(crate) fn shutdown(&self) {
+        let _ = self.command_tx.send(AudioCommand::Shutdown);
     }
 
     // ============ Device Control ============
