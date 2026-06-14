@@ -190,9 +190,6 @@ impl Style {
     fn is_danger(&self) -> bool {
         matches!(self, Style::Danger)
     }
-    fn is_normal(&self) -> bool {
-        matches!(self, Style::Normal)
-    }
 }
 
 fn item<'a>(

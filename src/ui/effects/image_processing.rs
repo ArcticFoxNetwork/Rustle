@@ -183,41 +183,6 @@ pub fn contrast_image(data: &mut [u8], contrast: f32) {
     }
 }
 
-/// 图像预处理参数
-#[derive(Debug, Clone, Copy)]
-pub struct ImageProcessingParams {
-    pub blur_radius: usize,
-    pub blur_quality: usize,
-    pub saturation: f32,
-    pub brightness: f32,
-    pub contrast: f32,
-}
-
-impl Default for ImageProcessingParams {
-    fn default() -> Self {
-        Self {
-            blur_radius: 32,
-            blur_quality: 2,
-            saturation: 1.2,
-            brightness: 0.8,
-            contrast: 1.1,
-        }
-    }
-}
-
-impl ImageProcessingParams {
-    /// 默认参数 (简化版，用于单次处理)
-    pub fn default() -> Self {
-        Self {
-            blur_radius: 2,
-            blur_quality: 4,
-            saturation: 3.0,
-            brightness: 0.75,
-            contrast: 1.7,
-        }
-    }
-}
-
 /// 处理图像用于背景渲染
 ///
 /// 按 的方式处理图像 (来自 MeshGradientRenderer.setAlbum):
@@ -234,7 +199,6 @@ impl ImageProcessingParams {
 pub fn process_image_for_background(
     image: &DynamicImage,
     target_size: u32,
-    _params: &ImageProcessingParams,
 ) -> ProcessedImage {
     // 缩小图像以提高处理速度 (使用 32x32)
     let resized = image.resize_exact(
@@ -256,14 +220,4 @@ pub fn process_image_for_background(
     blur_image(&mut data, width as usize, height as usize, 2, 4); // 原始参数
 
     ProcessedImage::from_rgba(width, height, data)
-}
-
-/// 从文件路径加载并处理图像
-pub fn load_and_process_image(
-    path: &std::path::Path,
-    target_size: u32,
-    params: &ImageProcessingParams,
-) -> Option<ProcessedImage> {
-    let image = image::open(path).ok()?;
-    Some(process_image_for_background(&image, target_size, params))
 }

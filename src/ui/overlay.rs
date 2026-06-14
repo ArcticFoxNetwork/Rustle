@@ -103,8 +103,6 @@ pub struct ModalConfig {
     pub escape_close: bool,
     /// Border radius of the content panel.
     pub border_radius: f32,
-    /// Padding inside the content panel.
-    pub padding: f32,
 }
 
 impl Default for ModalConfig {
@@ -114,7 +112,6 @@ impl Default for ModalConfig {
             backdrop_dismiss: true,
             escape_close: true,
             border_radius: 16.0,
-            padding: 24.0,
         }
     }
 }
@@ -127,11 +124,6 @@ impl ModalConfig {
 
     pub fn no_backdrop_dismiss(mut self) -> Self {
         self.backdrop_dismiss = false;
-        self
-    }
-
-    pub fn no_escape(mut self) -> Self {
-        self.escape_close = false;
         self
     }
 }

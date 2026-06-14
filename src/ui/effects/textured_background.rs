@@ -18,9 +18,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use super::image_processing::{
-    ImageProcessingParams, ProcessedImage, process_image_for_background,
-};
+use super::image_processing::{ProcessedImage, process_image_for_background};
 use super::mesh::{BhpMesh, ControlPointPreset, MeshVertex, choose_preset_or_random};
 
 /// Mesh 顶点数据 (GPU 格式)
@@ -636,7 +634,7 @@ impl TexturedBackgroundProgram {
         // 使用预设生成 mesh
         let preset = choose_control_point_preset();
         let colors = vec![[1.0, 1.0, 1.0]; preset.width * preset.height];
-        let mesh = BhpMesh::from_preset(&preset, 15, &colors);
+        let mesh = BhpMesh::from_preset(&preset, 20, &colors);
 
         Some(MeshState {
             mesh: Arc::new(mesh),
@@ -667,12 +665,11 @@ impl TexturedBackgroundProgram {
 
         tracing::info!("Processing new background image...");
 
-        let params = ImageProcessingParams::default();
-        let processed = process_image_for_background(&image, 32, &params);
+        let processed = process_image_for_background(&image, 32);
 
         let preset = choose_control_point_preset();
         let colors = extract_mesh_colors(&processed, preset.width, preset.height);
-        let mesh = BhpMesh::from_preset(&preset, 15, &colors); // 原始参数
+        let mesh = BhpMesh::from_preset(&preset, 20, &colors);
 
         // 如果是第一次设置封面（没有旧状态），直接设置 alpha=1.0
         // 否则从 alpha=0.0 开始过渡

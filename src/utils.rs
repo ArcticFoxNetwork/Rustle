@@ -79,8 +79,6 @@ pub struct DominantColors {
     pub secondary: Color,
     /// Tertiary dominant color
     pub tertiary: Color,
-    /// Average brightness (0.0 = dark, 1.0 = bright)
-    pub brightness: f32,
 }
 
 impl DominantColors {
@@ -90,7 +88,6 @@ impl DominantColors {
             primary: Color::from_rgb(0.08, 0.06, 0.12),
             secondary: Color::from_rgb(0.05, 0.05, 0.08),
             tertiary: Color::from_rgb(0.02, 0.02, 0.04),
-            brightness: 0.1,
         }
     }
 
@@ -121,12 +118,6 @@ impl DominantColors {
         }
 
         let colors = kmeans_colors(&pixels, 3);
-
-        let brightness = colors
-            .iter()
-            .map(|(r, g, b)| (*r as f32 * 0.299 + *g as f32 * 0.587 + *b as f32 * 0.114) / 255.0)
-            .sum::<f32>()
-            / colors.len() as f32;
 
         let to_background_color =
             |r: u8, g: u8, b: u8, brightness_factor: f32, saturation_boost: f32| -> Color {
@@ -160,7 +151,6 @@ impl DominantColors {
             primary: to_background_color(colors[0].0, colors[0].1, colors[0].2, 0.65, 1.6),
             secondary: to_background_color(colors[1].0, colors[1].1, colors[1].2, 0.50, 1.5),
             tertiary: to_background_color(colors[2].0, colors[2].1, colors[2].2, 0.25, 1.3),
-            brightness,
         })
     }
 }

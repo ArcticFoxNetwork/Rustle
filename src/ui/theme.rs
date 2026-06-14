@@ -74,7 +74,6 @@ mod light {
     pub const SIDEBAR: Color = color!(0xf5f5f5);
     pub const SURFACE: Color = color!(0xeeeeee);
     pub const BORDER: Color = color!(0xdddddd);
-    pub const SURFACE_LIGHT: Color = color!(0xe0e0e0);
     pub const TEXT_MUTED: Color = color!(0x777777);
     pub const TEXT_SECONDARY: Color = color!(0x555555);
     pub const TEXT_PRIMARY: Color = color!(0x1a1a1a);
@@ -466,15 +465,6 @@ pub fn surface_container(theme: &Theme) -> Color {
     }
 }
 
-/// Surface dim color (for disabled states)
-pub fn surface_dim(theme: &Theme) -> Color {
-    if is_dark(theme) {
-        Color::from_rgb(0.08, 0.08, 0.08)
-    } else {
-        Color::from_rgb(0.88, 0.88, 0.88)
-    }
-}
-
 /// Danger/error color
 pub fn danger(theme: &Theme) -> Color {
     if is_dark(theme) {
@@ -715,15 +705,6 @@ pub fn shadow_color(theme: &Theme) -> Color {
         Color::from_rgba(0.0, 0.0, 0.0, 0.5)
     } else {
         Color::from_rgba(0.0, 0.0, 0.0, 0.15)
-    }
-}
-
-/// Placeholder background (for missing covers, etc.)
-pub fn placeholder_bg(theme: &Theme) -> Color {
-    if is_dark(theme) {
-        Color::from_rgb(0.18, 0.18, 0.18)
-    } else {
-        Color::from_rgb(0.9, 0.9, 0.9)
     }
 }
 

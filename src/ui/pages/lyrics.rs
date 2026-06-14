@@ -712,21 +712,6 @@ pub struct LyricLine {
     pub is_duet: bool,
 }
 
-impl LyricLine {
-    pub fn with_end(start_ms: u64, end_ms: u64, text: String) -> Self {
-        Self {
-            start_ms,
-            end_ms,
-            text,
-            words: Vec::new(),
-            translated: None,
-            romanized: None,
-            is_background: false,
-            is_duet: false,
-        }
-    }
-}
-
 /// Find the current lyric line index based on playback position
 pub fn find_current_line(lyrics: &[LyricLine], position_ms: u64) -> Option<usize> {
     if lyrics.is_empty() {

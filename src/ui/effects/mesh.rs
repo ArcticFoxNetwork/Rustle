@@ -22,17 +22,6 @@ pub struct ControlPoint {
 }
 
 impl ControlPoint {
-    pub fn new(x: f32, y: f32) -> Self {
-        Self {
-            x,
-            y,
-            ur: 0.0,
-            vr: 0.0,
-            up: 1.0,
-            vp: 1.0,
-        }
-    }
-
     pub fn with_tangents(x: f32, y: f32, ur: f32, vr: f32, up: f32, vp: f32) -> Self {
         Self {
             x,

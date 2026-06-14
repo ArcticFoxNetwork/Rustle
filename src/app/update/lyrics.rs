@@ -478,7 +478,6 @@ impl App {
                             tertiary[2],
                             tertiary[3],
                         ),
-                        brightness: (primary[0] * 0.299 + primary[1] * 0.587 + primary[2] * 0.114),
                     };
                     tracing::debug!("Applied background colors for song {}", song_id);
                 }
@@ -1244,7 +1243,6 @@ impl App {
                 secondary[3],
             ),
             tertiary: iced::Color::from_rgba(tertiary[0], tertiary[1], tertiary[2], tertiary[3]),
-            brightness: primary[0] * 0.299 + primary[1] * 0.587 + primary[2] * 0.114,
         };
 
         if let Some(img) = image::RgbImage::from_raw(width, height, image_data) {
