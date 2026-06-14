@@ -65,7 +65,7 @@ pub fn setup_macos_url_handler(tx: crate::protocol::ipc::IpcSender) {
     let handler = RustleURLHandler::new();
 
     // kAEGetURL: eventClass = 'GURL', eventID = 'GURL'
-    let manager = unsafe { NSAppleEventManager::sharedAppleEventManager() };
+    let manager = NSAppleEventManager::sharedAppleEventManager();
 
     unsafe {
         let _: () = msg_send![

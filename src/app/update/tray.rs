@@ -32,11 +32,10 @@ impl App {
 
             Message::TrayCommand(cmd) => {
                 match cmd {
-                    TrayCommand::ShowOrFocusWindow => {
-                        return Some(self.update(Message::ShowOrFocusWindow));
-                    }
-                    TrayCommand::ToggleWindow => {
-                        return Some(self.update(Message::ToggleWindow));
+                    TrayCommand::Window(window_command) => {
+                        let message = window_command
+                            .resolve_message(Message::ShowOrFocusWindow, Message::ToggleWindow);
+                        return Some(self.update(message));
                     }
                     TrayCommand::PlayPause => {
                         return Some(self.update(Message::TogglePlayback));

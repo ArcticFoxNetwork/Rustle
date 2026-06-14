@@ -1,6 +1,6 @@
 //! Windows/macOS system tray implementation using tray-icon
 
-use super::{TrayCommand, TrayHandle, TrayState};
+use super::{TrayCommand, TrayHandle, TrayState, TrayWindowCommand};
 use crate::features::PlayMode;
 use tokio::sync::mpsc;
 use tray_icon::{
@@ -108,7 +108,7 @@ pub fn start_native_tray_sync() -> anyhow::Result<(TrayHandle, mpsc::UnboundedRe
                 LOOP_ALL_ID => Some(TrayCommand::SetPlayMode(PlayMode::LoopAll)),
                 LOOP_ONE_ID => Some(TrayCommand::SetPlayMode(PlayMode::LoopOne)),
                 SHUFFLE_ID => Some(TrayCommand::SetPlayMode(PlayMode::Shuffle)),
-                TOGGLE_WINDOW_ID => Some(TrayCommand::ToggleWindow),
+                TOGGLE_WINDOW_ID => Some(TrayCommand::Window(TrayWindowCommand::Toggle)),
                 QUIT_ID => Some(TrayCommand::Quit),
                 _ => None,
             };
@@ -129,9 +129,11 @@ pub fn start_native_tray_sync() -> anyhow::Result<(TrayHandle, mpsc::UnboundedRe
         } => {
             tracing::info!("Tray icon clicked: {:?} {:?}", button, button_state);
             if button == MouseButton::Left && button_state == MouseButtonState::Up {
-                tracing::info!("Sending ShowOrFocusWindow command");
-                if let Err(e) = cmd_tx.send(TrayCommand::ShowOrFocusWindow) {
-                    tracing::error!("Failed to send ShowOrFocusWindow command: {}", e);
+                tracing::info!("Sending primary tray activation command");
+                if let Err(e) =
+                    cmd_tx.send(TrayCommand::Window(TrayWindowCommand::PrimaryActivation))
+                {
+                    tracing::error!("Failed to send primary tray activation command: {}", e);
                 }
             }
         }

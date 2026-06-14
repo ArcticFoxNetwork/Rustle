@@ -14,6 +14,7 @@
 pub const APP_BINARY_NAME: &str = "rustle";
 #[cfg(target_os = "linux")]
 pub const APP_DISPLAY_NAME: &str = "Rustle";
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub const APP_ID: &str = "life.fxs.rustle";
 
 pub mod discord;

@@ -1,6 +1,6 @@
 //! Linux system tray implementation using ksni (freedesktop StatusNotifierItem)
 
-use super::{TrayCommand, TrayHandle, TrayState};
+use super::{TrayCommand, TrayHandle, TrayState, TrayWindowCommand};
 use crate::features::PlayMode;
 use ksni::{Icon, MenuItem, Status, ToolTip, Tray as KsniTray, TrayMethods, menu::*};
 use tokio::sync::mpsc;
@@ -75,7 +75,9 @@ impl KsniTray for LinuxTray {
     }
 
     fn activate(&mut self, _x: i32, _y: i32) {
-        let _ = self.tx.send(TrayCommand::ToggleWindow);
+        let _ = self
+            .tx
+            .send(TrayCommand::Window(TrayWindowCommand::PrimaryActivation));
     }
 }
 
@@ -288,7 +290,9 @@ fn create_menu(
             label: "显示/隐藏窗口".to_string(),
             icon_name: "view-restore-symbolic".to_string(),
             activate: Box::new(|tray: &mut LinuxTray| {
-                let _ = tray.tx.send(TrayCommand::ToggleWindow);
+                let _ = tray
+                    .tx
+                    .send(TrayCommand::Window(TrayWindowCommand::Toggle));
             }),
             ..Default::default()
         }

@@ -19,10 +19,8 @@ mod windows;
 /// Commands that can be sent from the tray to the application
 #[derive(Debug, Clone)]
 pub enum TrayCommand {
-    /// Show window and bring to front (left click behavior for Windows/macOS)
-    ShowOrFocusWindow,
-    /// Toggle show/hide window (Linux behavior)
-    ToggleWindow,
+    /// Window visibility/focus action.
+    Window(TrayWindowCommand),
     /// Toggle play/pause
     PlayPause,
     /// Play next track
@@ -35,6 +33,34 @@ pub enum TrayCommand {
     ToggleFavorite,
     /// Quit the application
     Quit,
+}
+
+/// Window-related command emitted by tray implementations.
+#[derive(Debug, Clone, Copy)]
+pub enum TrayWindowCommand {
+    /// Primary tray activation (left click / activate).
+    PrimaryActivation,
+    /// Explicit show/hide menu action.
+    Toggle,
+}
+
+impl TrayWindowCommand {
+    pub fn resolve_message<Message>(self, show_or_focus: Message, toggle: Message) -> Message {
+        match self {
+            Self::Toggle => toggle,
+            Self::PrimaryActivation => primary_activation_message(show_or_focus, toggle),
+        }
+    }
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+fn primary_activation_message<Message>(show_or_focus: Message, _toggle: Message) -> Message {
+    show_or_focus
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn primary_activation_message<Message>(_show_or_focus: Message, toggle: Message) -> Message {
+    toggle
 }
 
 /// State shared between tray and application
