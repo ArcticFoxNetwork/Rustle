@@ -6,6 +6,7 @@
 
 use std::sync::Arc;
 
+use iced::mouse::Interaction;
 use iced::widget::{
     Sensor, Space, button, column, container, mouse_area, opaque, row, shader, svg, text,
 };
@@ -87,19 +88,37 @@ pub fn view<'a>(
 
     let content = container(content_row).width(Fill).height(Fill);
 
+    const TITLE_BAR_HEIGHT: f32 = 64.0;
+    const TOP_BAR_PADDING_X: f32 = 20.0;
+    const TOP_BAR_PADDING_Y: f32 = 14.0;
+    const WINDOW_BUTTON_SIZE: f32 = 36.0;
+    const WINDOW_ICON_SIZE: f32 = 15.0;
+    const BACK_BUTTON_SIZE: f32 = 36.0;
+    const BACK_ICON_SIZE: f32 = 22.0;
+
+    let title_bar_drag_region = mouse_area(
+        container(Space::new())
+            .width(Fill)
+            .height(Length::Fixed(TITLE_BAR_HEIGHT)),
+    )
+    .interaction(Interaction::Grab)
+    .on_press(Message::WindowDrag);
+
     // Back button overlay in top-left corner
     let back_btn = button(
         svg(svg::Handle::from_memory(icons::CHEVRON_DOWN.as_bytes()))
-            .width(24)
-            .height(24)
+            .width(BACK_ICON_SIZE)
+            .height(BACK_ICON_SIZE)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::text_primary(_theme)),
             }),
     )
-    .padding(12)
-    .style(|theme, status| {
+    .width(BACK_BUTTON_SIZE)
+    .height(BACK_BUTTON_SIZE)
+    .style(|_theme, status| {
         let bg = match status {
-            button::Status::Hovered => theme::hover_bg(theme),
+            button::Status::Hovered => Color::from_rgba(1.0, 1.0, 1.0, 0.12),
+            button::Status::Pressed => Color::from_rgba(1.0, 1.0, 1.0, 0.2),
             _ => Color::TRANSPARENT,
         };
         button::Style {
@@ -177,53 +196,53 @@ pub fn view<'a>(
 
     let settings_btn = button(
         svg(svg::Handle::from_memory(icons::SETTINGS.as_bytes()))
-            .width(14)
-            .height(14)
+            .width(WINDOW_ICON_SIZE)
+            .height(WINDOW_ICON_SIZE)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::text_primary(_theme)),
             }),
     )
-    .width(32)
-    .height(32)
+    .width(WINDOW_BUTTON_SIZE)
+    .height(WINDOW_BUTTON_SIZE)
     .style(icon_btn_style)
     .on_press(Message::OpenSettingsWithCloseLyrics);
 
     let minimize_btn = button(
         svg(svg::Handle::from_memory(icons::MINIMIZE.as_bytes()))
-            .width(14)
-            .height(14)
+            .width(WINDOW_ICON_SIZE)
+            .height(WINDOW_ICON_SIZE)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::text_primary(_theme)),
             }),
     )
-    .width(32)
-    .height(32)
+    .width(WINDOW_BUTTON_SIZE)
+    .height(WINDOW_BUTTON_SIZE)
     .style(icon_btn_style)
     .on_press(Message::WindowMinimize);
 
     let maximize_btn = button(
         svg(svg::Handle::from_memory(icons::MAXIMIZE.as_bytes()))
-            .width(14)
-            .height(14)
+            .width(WINDOW_ICON_SIZE)
+            .height(WINDOW_ICON_SIZE)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::text_primary(_theme)),
             }),
     )
-    .width(32)
-    .height(32)
+    .width(WINDOW_BUTTON_SIZE)
+    .height(WINDOW_BUTTON_SIZE)
     .style(icon_btn_style)
     .on_press(Message::WindowMaximize);
 
     let close_btn = button(
         svg(svg::Handle::from_memory(icons::CLOSE.as_bytes()))
-            .width(14)
-            .height(14)
+            .width(WINDOW_ICON_SIZE)
+            .height(WINDOW_ICON_SIZE)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::text_primary(_theme)),
             }),
     )
-    .width(32)
-    .height(32)
+    .width(WINDOW_BUTTON_SIZE)
+    .height(WINDOW_BUTTON_SIZE)
     .style(close_btn_style)
     .on_press(Message::RequestClose);
 
@@ -240,11 +259,19 @@ pub fn view<'a>(
 
     let top_bar = row![back_btn, Space::new().width(Fill), top_right_buttons,]
         .align_y(Alignment::Center)
-        .padding(20);
+        .padding(
+            Padding::new(TOP_BAR_PADDING_Y)
+                .left(TOP_BAR_PADDING_X)
+                .right(TOP_BAR_PADDING_X),
+        );
 
-    let content_with_overlay = iced::widget::stack![content, container(top_bar).width(Fill),]
-        .width(Fill)
-        .height(Fill);
+    let content_with_overlay = iced::widget::stack![
+        content,
+        title_bar_drag_region,
+        container(top_bar).width(Fill),
+    ]
+    .width(Fill)
+    .height(Fill);
 
     let slide_offset = (1.0 - animation_progress) * 30.0;
 

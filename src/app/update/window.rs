@@ -162,6 +162,16 @@ impl App {
 
             Message::ShowOrFocusWindow => Some(self.begin_show_or_focus_window()),
 
+            Message::WindowMinimize => {
+                Some(iced::window::latest().and_then(|id| iced::window::minimize(id, true)))
+            }
+
+            Message::WindowMaximize => {
+                Some(iced::window::latest().and_then(iced::window::toggle_maximize))
+            }
+
+            Message::WindowDrag => Some(iced::window::latest().and_then(iced::window::drag)),
+
             Message::WindowShown => {
                 if self.core.window_visibility == WindowVisibilityState::Showing
                     && self.core.window_operation_pending

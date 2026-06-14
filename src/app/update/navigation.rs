@@ -64,14 +64,6 @@ impl App {
                 Some(Task::perform(open_folder_dialog(), Message::FolderSelected))
             }
 
-            Message::WindowMinimize => {
-                Some(iced::window::latest().and_then(|id| iced::window::minimize(id, true)))
-            }
-
-            Message::WindowMaximize => {
-                Some(iced::window::latest().and_then(iced::window::toggle_maximize))
-            }
-
             Message::MouseMoved(position) => {
                 self.core.mouse_position = *position;
                 // Update sidebar width if dragging
@@ -89,16 +81,6 @@ impl App {
                         (self.ui.search.content_width + delta).max(200.0);
                 }
                 Some(Task::none())
-            }
-
-            Message::MousePressed => {
-                // Drag window if mouse is in top 48px area (title bar)
-                const DRAG_AREA_HEIGHT: f32 = 48.0;
-                if self.core.mouse_position.y < DRAG_AREA_HEIGHT {
-                    Some(iced::window::latest().and_then(iced::window::drag))
-                } else {
-                    Some(Task::none())
-                }
             }
 
             Message::MouseReleased => {

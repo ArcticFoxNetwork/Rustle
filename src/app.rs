@@ -291,12 +291,9 @@ impl App {
             _ => None,
         });
 
-        // 11. Mouse events for window dragging, sidebar resize, and volume scroll
+        // 11. Mouse events for sidebar resize, context menus, and volume scroll
         let mouse_sub = if !window_hidden {
             iced::event::listen().filter_map(|event| match event {
-                iced::Event::Mouse(iced::mouse::Event::ButtonPressed(
-                    iced::mouse::Button::Left,
-                )) => Some(Message::MousePressed),
                 iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
                     iced::mouse::Button::Left,
                 )) => Some(Message::MouseReleased),

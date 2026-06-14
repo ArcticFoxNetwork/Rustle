@@ -2,8 +2,9 @@
 //! Positioned at top of the application with navigation on left, search in center, and controls on right
 
 use iced::border::Radius;
-use iced::widget::{Space, button, container, image, row, svg, text, tooltip};
-use iced::{Alignment, ContentFit, Element, Fill, Padding};
+use iced::mouse::Interaction;
+use iced::widget::{Space, button, container, image, mouse_area, row, stack, svg, text, tooltip};
+use iced::{Alignment, ContentFit, Element, Fill, Length, Padding};
 
 use crate::app::{ImageState, Message, UserInfo};
 use crate::i18n::{Key, Locale};
@@ -21,6 +22,8 @@ pub fn view<'a>(
     user_info: Option<&UserInfo>,
     image_state: &ImageState,
 ) -> Element<'a, Message> {
+    const TITLE_BAR_HEIGHT: f32 = 60.0;
+
     let button_size = 36;
     let icon_size = 16;
     let nav_icon_size = 18;
@@ -259,8 +262,15 @@ pub fn view<'a>(
     // Search bar (left, after nav buttons)
     let search_bar = search_bar::view(search_query, locale, SearchBarStyle::top_bar());
 
-    // Complete top bar layout: nav + search on left, user info + window controls on right
-    container(
+    let drag_region = mouse_area(
+        container(Space::new())
+            .width(Fill)
+            .height(Length::Fixed(TITLE_BAR_HEIGHT)),
+    )
+    .interaction(Interaction::Grab)
+    .on_press(Message::WindowDrag);
+
+    let controls = container(
         row![
             nav_buttons,
             Space::new().width(16),
@@ -279,8 +289,15 @@ pub fn view<'a>(
         .align_y(Alignment::Center),
     )
     .width(Fill)
-    .padding(Padding::new(0.0).right(12.0))
-    .into()
+    .height(Length::Fixed(TITLE_BAR_HEIGHT))
+    .padding(Padding::new(0.0).right(12.0));
+
+    // Complete top bar layout: nav + search on left, user info + window controls on right.
+    // The bottom layer provides dragging only in empty space; controls stay interactive above it.
+    stack![drag_region, controls]
+        .width(Fill)
+        .height(Length::Fixed(TITLE_BAR_HEIGHT))
+        .into()
 }
 
 /// Navigation group container style (rounded border)

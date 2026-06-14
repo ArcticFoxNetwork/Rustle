@@ -101,14 +101,16 @@ pub enum Message {
     WindowMinimize,
     /// Maximize window
     WindowMaximize,
-    /// Mouse pressed (for window drag detection)
-    MousePressed,
+    /// Start dragging the window
+    WindowDrag,
     /// Mouse released (for sidebar resize end)
     MouseReleased,
     /// Mouse moved (track cursor position for drag area)
     MouseMoved(iced::Point),
     /// Mouse wheel scrolled (for volume control etc.)
-    MouseWheelScrolled { delta_y: f32 },
+    MouseWheelScrolled {
+        delta_y: f32,
+    },
     /// Mouse entered/exited volume slider area
     VolumeSliderHovered(bool),
     /// Open settings
@@ -871,7 +873,7 @@ impl std::fmt::Debug for Message {
             // Window
             Self::WindowMinimize => simple!("WindowMinimize"),
             Self::WindowMaximize => simple!("WindowMaximize"),
-            Self::MousePressed => simple!("MousePressed"),
+            Self::WindowDrag => simple!("WindowDrag"),
             Self::MouseReleased => simple!("MouseReleased"),
             Self::MouseMoved(_) => simple!("MouseMoved"),
             Self::MouseWheelScrolled { delta_y } => {
