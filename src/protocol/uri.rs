@@ -85,6 +85,10 @@ pub const SCHEME: &str = "rustle";
 /// URI scheme name for development builds
 pub const SCHEME_DEV: &str = "rustle-dev";
 
+fn strip_scheme<'a>(uri: &'a str, scheme: &str) -> Option<&'a str> {
+    uri.strip_prefix(scheme)?.strip_prefix("://")
+}
+
 /// Parse a rustle:// URI into a typed ProtocolAction.
 ///
 /// Supported URI formats:
@@ -110,10 +114,9 @@ pub fn parse_rustle_uri(uri: &str) -> Result<ProtocolAction, UriError> {
 
     // Strip scheme
     let content = if cfg!(debug_assertions) {
-        uri.strip_prefix("rustle-dev://")
-            .or_else(|| uri.strip_prefix("rustle://"))
+        strip_scheme(uri, SCHEME_DEV).or_else(|| strip_scheme(uri, SCHEME))
     } else {
-        uri.strip_prefix("rustle://")
+        strip_scheme(uri, SCHEME)
     }
     .ok_or(UriError::MissingScheme)?;
 
@@ -154,10 +157,13 @@ fn parse_song_action(segments: &[&str], query: Option<&str>) -> Result<ProtocolA
             .map(|(_, v)| v)
     });
 
-    if action == Some("play") {
-        Ok(ProtocolAction::PlaySong(id))
-    } else {
-        Ok(ProtocolAction::NavigateToSong(id))
+    match action {
+        Some("play") => Ok(ProtocolAction::PlaySong(id)),
+        Some(value) => Err(UriError::InvalidParameter(
+            "action".to_string(),
+            value.to_string(),
+        )),
+        None => Ok(ProtocolAction::NavigateToSong(id)),
     }
 }
 

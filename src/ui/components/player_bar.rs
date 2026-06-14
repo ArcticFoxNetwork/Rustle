@@ -9,6 +9,7 @@ use crate::features::PlayMode;
 use crate::ui::theme::MEDIUM_WEIGHT;
 use crate::ui::widgets::{self, ControlSize, PlayModeButtonSize, SliderSize};
 use crate::ui::{icons, theme};
+use crate::utils;
 
 /// Player bar height
 pub const PLAYER_BAR_HEIGHT: f32 = 80.0;
@@ -28,15 +29,8 @@ pub fn view(
     is_first_song: bool,            // Whether at first song in queue
     current_song_cover: Option<&iced::widget::image::Handle>,
 ) -> Element<'static, Message> {
-    // Format time as mm:ss
-    let format_time = |secs: f32| -> String {
-        let mins = (secs / 60.0) as u32;
-        let secs = (secs % 60.0) as u32;
-        format!("{}:{:02}", mins, secs)
-    };
-
-    let current_time = format_time(position * duration_secs);
-    let total_time = format_time(duration_secs);
+    let current_time = utils::format_time(position * duration_secs);
+    let total_time = utils::format_time(duration_secs);
 
     // Left section: Song info or placeholder (fixed width to prevent layout issues)
     const LEFT_SECTION_WIDTH: f32 = 240.0;

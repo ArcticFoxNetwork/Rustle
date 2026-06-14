@@ -145,7 +145,6 @@ pub fn text_primary(theme: &Theme) -> Color {
 
 // Legacy constants for backward compatibility (dark mode defaults)
 pub const BLACK: Color = dark::BACKGROUND;
-pub const SURFACE_GRAY: Color = dark::SURFACE;
 pub const BORDER_GRAY: Color = dark::BORDER;
 pub const SURFACE_LIGHT: Color = dark::SURFACE_LIGHT;
 pub const TEXT_MUTED: Color = dark::TEXT_MUTED;
@@ -168,12 +167,6 @@ pub const ACCENT_HOVER: Color = color!(0x4169e1);
 
 /// Surface secondary color
 pub const SURFACE_SECONDARY: Color = color!(0x1a1a1a);
-
-/// Background dark color
-pub const BACKGROUND_DARK: Color = dark::BACKGROUND;
-
-/// Surface hover color (legacy constant)
-pub const SURFACE_HOVER: Color = color!(0x2a2a2a);
 
 /// Dynamic surface hover color based on theme
 pub fn surface_hover(theme: &Theme) -> Color {

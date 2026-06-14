@@ -10,7 +10,9 @@
 //! - `theme.rs` - Platform-specific theme constants
 //! - `keybindings.rs` - Keybinding display format
 
+#[cfg(target_os = "linux")]
 pub const APP_BINARY_NAME: &str = "rustle";
+#[cfg(target_os = "linux")]
 pub const APP_DISPLAY_NAME: &str = "Rustle";
 pub const APP_ID: &str = "life.fxs.rustle";
 
@@ -29,10 +31,9 @@ pub fn init() {
 
 /// Open the parent directory of the given file path in the system file manager.
 pub fn open_in_file_manager(path: &std::path::Path) {
-    #[cfg_attr(target_os = "macos", allow(unused_variables))]
-    let dir = path.parent().unwrap_or(path);
     #[cfg(target_os = "linux")]
     {
+        let dir = path.parent().unwrap_or(path);
         let _ = std::process::Command::new("xdg-open").arg(dir).spawn();
     }
     #[cfg(target_os = "windows")]

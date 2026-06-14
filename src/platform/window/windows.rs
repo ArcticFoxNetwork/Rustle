@@ -23,7 +23,7 @@ pub fn initialize_process() {
 }
 
 pub fn native_window_handle(id: iced::window::Id) -> Task<Option<usize>> {
-    use iced::window::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    use iced::window::raw_window_handle::RawWindowHandle;
 
     iced::window::run(id, |window| match window.window_handle() {
         Ok(handle) => match handle.as_raw() {

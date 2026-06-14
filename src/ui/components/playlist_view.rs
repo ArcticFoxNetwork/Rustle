@@ -51,8 +51,6 @@ pub struct SongItem {
     pub title: String,
     /// Original artist for search/filter
     pub artist: String,
-    /// Original album for search/filter
-    pub album: String,
     /// Pre-normalized searchable text to avoid lowercasing on every view rebuild.
     search_text: String,
     /// Pre-truncated display title
@@ -96,7 +94,6 @@ impl SongItem {
             index_str,
             title,
             artist,
-            album,
             search_text,
             display_title,
             display_artist,
@@ -427,7 +424,7 @@ fn build_song_row(
     };
     let is_liked = liked_songs.is_some_and(|songs| songs.contains(&ncm_song_id));
 
-    // Duration or like button 
+    // Duration or like button
     let duration_or_like: Element<'static, Message> = if columns.show_like && is_hovered {
         let heart_handle = if is_liked {
             HEART_ICON_HANDLE.clone()

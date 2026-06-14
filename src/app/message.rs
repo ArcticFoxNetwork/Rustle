@@ -16,7 +16,6 @@ use crate::features::Action;
 use crate::features::import::{CoverCache, ScanProgress, WatchEvent};
 use crate::ui::components::{LibraryItem, NavItem};
 use crate::ui::pages;
-use crate::utils::Source;
 
 /// Settings sections for navigation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -415,8 +414,6 @@ pub enum Message {
     DownloadError(i64, String),
     /// Delete a download history entry by song_id
     DeleteDownloadHistory(i64),
-    /// Open the downloads panel
-    OpenDownloads,
     /// Switch download panel tab
     SwitchDownloadTab(crate::app::DownloadTab),
 
@@ -636,13 +633,6 @@ pub enum Message {
     RightClickSong(i64),
     /// Show context menu for an NCM/online song
     RightClickNcmSong(Track),
-    /// Show context menu for a song with explicit position
-    ShowContextMenu {
-        song_id: i64,
-        x: f32,
-        y: f32,
-        source: Source,
-    },
     /// Close context menu
     CloseContextMenu,
     /// Context menu item selected
@@ -724,7 +714,6 @@ pub enum SidebarId {
     Library(usize),    // Library items
     Playlist(i64),     // Playlist by ID
     UserPlaylist(u64), // NCM Playlist by ID
-    UserCard,          // User profile card at bottom
 }
 
 /// QR login status
@@ -1185,12 +1174,6 @@ impl std::fmt::Debug for Message {
             // Context Menu
             Self::RightClickSong(id) => simple!("RightClickSong", "{}", id),
             Self::RightClickNcmSong(info) => simple!("RightClickNcmSong", "{}", info.id),
-            Self::ShowContextMenu {
-                song_id,
-                x: _,
-                y: _,
-                source: _,
-            } => simple!("ShowContextMenu", "song_id={}", song_id),
             Self::CloseContextMenu => simple!("CloseContextMenu"),
             Self::ContextMenuAction(action, id) => {
                 simple!("ContextMenuAction", "{:?}, {}", action, id)
@@ -1254,7 +1237,6 @@ impl std::fmt::Debug for Message {
             }
             Self::DownloadError(sid, e) => simple!("DownloadError", "{}, {}", sid, e),
             Self::DeleteDownloadHistory(sid) => simple!("DeleteDownloadHistory", "{}", sid),
-            Self::OpenDownloads => simple!("OpenDownloads"),
             Self::SwitchDownloadTab(_) => simple!("SwitchDownloadTab"),
             Self::DownloadBatchEnqueue(items) => {
                 simple!("DownloadBatchEnqueue", "{} items", items.len())

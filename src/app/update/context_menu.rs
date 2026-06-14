@@ -78,30 +78,6 @@ impl App {
                 });
                 Some(Task::none())
             }
-            Message::ShowContextMenu {
-                song_id,
-                x,
-                y,
-                source,
-            } => {
-                let is_liked = if *source != crate::utils::Source::Local {
-                    self.core
-                        .user_info
-                        .as_ref()
-                        .map(|u| u.like_songs.contains(&(song_id.unsigned_abs())))
-                        .unwrap_or(false)
-                } else {
-                    false
-                };
-                self.ui.context_menu = Some(crate::app::state::ContextMenuState {
-                    song_id: *song_id,
-                    x: *x,
-                    y: *y,
-                    source: *source,
-                    is_liked,
-                });
-                Some(Task::none())
-            }
             Message::CloseContextMenu => {
                 self.ui.context_menu = None;
                 Some(Task::none())

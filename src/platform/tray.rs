@@ -193,12 +193,3 @@ where
         })
     }
 }
-
-/// Check if system tray is available on this platform
-pub fn is_available() -> bool {
-    cfg!(any(
-        target_os = "linux",
-        target_os = "windows",
-        target_os = "macos"
-    ))
-}

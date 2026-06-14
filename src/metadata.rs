@@ -3,7 +3,7 @@
 //! `SongMetadata` is the canonical representation of a song's descriptive metadata,
 //! regardless of source (local file tags, NCM API, or database cache).
 //!
-//! ## Source priority for `resolve` / `resolve_with_api`
+//! ## Source priority for `resolve`
 //! 1. Local file tags (authoritative — read fresh from disk)
 //! 2. NCM API data   (current — more recent than DB cache)
 //! 3. Database cache (fallback — may be stale)
@@ -56,13 +56,8 @@ impl Default for SongMetadata {
 }
 
 impl SongMetadata {
-    pub fn duration_secs(&self) -> u64 {
-        self.duration.as_secs()
-    }
-
     pub fn duration_display(&self) -> String {
-        let secs = self.duration.as_secs();
-        format!("{:02}:{:02}", secs / 60, secs % 60)
+        crate::utils::format_time_padded(self.duration.as_secs_f32())
     }
 
     /// Resolve the best available cover for display.
@@ -113,28 +108,6 @@ impl SongMetadata {
             && let Ok(meta) = crate::features::import::extract_metadata(path)
         {
             return SongMetadata::from(meta);
-        }
-        SongMetadata::from(song)
-    }
-
-    /// Resolve metadata with API data for NCM songs.
-    ///
-    /// Priority: local file → NCM API → database cache.
-    /// Use this when you have fresh API data available (e.g. in search results,
-    /// playlist views, or personal FM).
-    pub fn resolve_with_api(
-        song: &crate::database::DbSong,
-        track: Option<&crate::api::Track>,
-    ) -> Self {
-        let path = std::path::Path::new(&song.file_path);
-        if path.is_absolute()
-            && path.exists()
-            && let Ok(meta) = crate::features::import::extract_metadata(path)
-        {
-            return SongMetadata::from(meta);
-        }
-        if let Some(track) = track {
-            return SongMetadata::from(track);
         }
         SongMetadata::from(song)
     }

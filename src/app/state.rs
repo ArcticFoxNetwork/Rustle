@@ -573,17 +573,15 @@ impl App {
 pub struct UserInfo {
     pub user_id: u64,
     pub nickname: String,
-    pub avatar_url: String,
     pub vip_type: i32,
     pub like_songs: HashSet<u64>,
 }
 
 impl UserInfo {
-    pub fn new(user_id: u64, nickname: String, avatar_url: String) -> Self {
+    pub fn new(user_id: u64, nickname: String) -> Self {
         Self {
             user_id,
             nickname,
-            avatar_url,
             vip_type: 0,
             like_songs: HashSet::new(),
         }

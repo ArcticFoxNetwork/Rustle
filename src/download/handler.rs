@@ -210,9 +210,6 @@ impl App {
                 self.core.download_manager.restore_from_rows(rows.clone());
                 Some(Task::none())
             }
-            Message::OpenDownloads => Some(Task::done(Message::Navigate(
-                crate::ui::components::NavItem::Downloads,
-            ))),
             _ => None,
         }
     }

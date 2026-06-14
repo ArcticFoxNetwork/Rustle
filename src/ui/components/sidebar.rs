@@ -132,14 +132,15 @@ pub fn view(
         .width(Fill);
 
     // Recently played button - use same animated style as nav buttons
+    let recently_played_item = LibraryItem::RecentlyPlayed;
     let recently_played_progress = sidebar_animations.get_progress(&SidebarId::Library(0));
     let recently_played = sidebar_button_animated(
-        crate::ui::icons::CLOCK,
-        locale.get(Key::LibraryRecentlyPlayed).to_string(),
+        recently_played_item.icon_svg(),
+        locale.get(recently_played_item.i18n_key()).to_string(),
         matches!(current_route, Route::RecentlyPlayed),
         recently_played_progress,
         SidebarId::Library(0),
-        Message::LibrarySelect(LibraryItem::RecentlyPlayed),
+        Message::LibrarySelect(recently_played_item),
     );
 
     // Import local playlist button - use same animated style as nav buttons

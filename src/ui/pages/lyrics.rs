@@ -291,15 +291,8 @@ fn build_left_panel<'a>(
     download_progress: Option<f32>,
     is_fm_mode: bool,
 ) -> Element<'a, Message> {
-    // Format time as mm:ss
-    let format_time = |secs: f32| -> String {
-        let mins = (secs / 60.0) as u32;
-        let secs = (secs % 60.0) as u32;
-        format!("{}:{:02}", mins, secs)
-    };
-
-    let current_time = format_time(position * duration_secs);
-    let total_time = format_time(duration_secs);
+    let current_time = crate::utils::format_time(position * duration_secs);
+    let total_time = crate::utils::format_time(duration_secs);
 
     let s = crate::image::CoverSize::ExtraLarge;
     let (cover_kind, cover_id) =

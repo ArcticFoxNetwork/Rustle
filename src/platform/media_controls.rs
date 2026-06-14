@@ -62,11 +62,17 @@ pub struct MediaState {
     pub status: MediaPlaybackStatus,
     pub metadata: MediaMetadata,
     pub position_us: i64,
+    #[cfg(target_os = "linux")]
     pub volume: f64,
+    #[cfg(target_os = "linux")]
     pub can_go_next: bool,
+    #[cfg(target_os = "linux")]
     pub can_go_previous: bool,
+    #[cfg(target_os = "linux")]
     pub can_play: bool,
+    #[cfg(target_os = "linux")]
     pub can_pause: bool,
+    #[cfg(target_os = "linux")]
     pub can_seek: bool,
 }
 

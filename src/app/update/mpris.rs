@@ -167,26 +167,37 @@ impl App {
             };
 
             let position = runtime.info.position.as_micros() as i64;
+            #[cfg(target_os = "linux")]
             let volume = runtime.info.volume;
-
+            #[cfg(target_os = "linux")]
             let can_go_next = self
                 .playback
                 .current_index
                 .is_some_and(|i| i + 1 < self.playback.queue.len());
+            #[cfg(target_os = "linux")]
             let can_go_previous = self.playback.current_index.is_some_and(|i| i > 0);
+            #[cfg(target_os = "linux")]
             let can_play = self.playback_output_available();
+            #[cfg(target_os = "linux")]
             let can_pause = can_play;
+            #[cfg(target_os = "linux")]
             let can_seek = can_play;
 
             let state = MediaState {
                 status,
                 metadata,
                 position_us: position,
+                #[cfg(target_os = "linux")]
                 volume: volume as f64,
+                #[cfg(target_os = "linux")]
                 can_go_next,
+                #[cfg(target_os = "linux")]
                 can_go_previous,
+                #[cfg(target_os = "linux")]
                 can_play,
+                #[cfg(target_os = "linux")]
                 can_pause,
+                #[cfg(target_os = "linux")]
                 can_seek,
             };
 

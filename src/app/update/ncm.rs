@@ -580,11 +580,8 @@ impl App {
                         client.save_cookie_to_file();
                     }
 
-                    let mut user_info = UserInfo::new(
-                        login_info.user_id,
-                        login_info.nickname.clone(),
-                        login_info.avatar_url.clone(),
-                    );
+                    let mut user_info =
+                        UserInfo::new(login_info.user_id, login_info.nickname.clone());
                     user_info.vip_type = login_info.vip_type;
                     self.core.user_info = Some(user_info);
 
@@ -601,12 +598,11 @@ impl App {
                                         && let Ok(song_ids) =
                                             client.user_song_id_list(user_id).await
                                     {
-                                        let mut user_info =
-                                            UserInfo::new(user_id, String::new(), String::new());
+                                        let mut user_info = UserInfo::new(user_id, String::new());
                                         user_info.like_songs = song_ids.into_iter().collect();
                                         return user_info;
                                     }
-                                    UserInfo::new(user_id, String::new(), String::new())
+                                    UserInfo::new(user_id, String::new())
                                 }
                             },
                             Message::UserInfoLoaded,
@@ -775,11 +771,7 @@ impl App {
                 self.core.is_logged_in = true;
                 self.ui.home.login_popup_open = false;
 
-                let mut user_info = UserInfo::new(
-                    login_info.user_id,
-                    login_info.nickname.clone(),
-                    login_info.avatar_url.clone(),
-                );
+                let mut user_info = UserInfo::new(login_info.user_id, login_info.nickname.clone());
                 user_info.vip_type = login_info.vip_type;
                 self.core.user_info = Some(user_info);
 
