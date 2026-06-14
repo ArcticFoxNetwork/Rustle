@@ -172,6 +172,11 @@ impl App {
 
             Message::WindowDrag => Some(iced::window::latest().and_then(iced::window::drag)),
 
+            Message::WindowResize(direction) => {
+                let direction = *direction;
+                Some(window::drag_resize(direction))
+            }
+
             Message::WindowShown => {
                 if self.core.window_visibility == WindowVisibilityState::Showing
                     && self.core.window_operation_pending

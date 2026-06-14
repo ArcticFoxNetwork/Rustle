@@ -51,6 +51,16 @@ pub fn focus_window<Message: Send + 'static>() -> Task<Message> {
     }
 }
 
+pub fn drag_resize<Message: Send + 'static>(
+    direction: iced::window::Direction,
+) -> Task<Message> {
+    iced::window::latest().and_then(move |id| iced::window::drag_resize(id, direction))
+}
+
+pub fn needs_manual_resize_handles() -> bool {
+    cfg!(target_os = "windows")
+}
+
 pub fn is_wayland_backend() -> bool {
     #[cfg(target_os = "linux")]
     {

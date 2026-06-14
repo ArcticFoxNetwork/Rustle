@@ -720,6 +720,8 @@ impl App {
             }
         };
 
+        let resize_handles = components::window_resize_handles::view();
+
         stack![
             main_layout,
             lyrics_overlay,
@@ -729,6 +731,7 @@ impl App {
             modal_slot(1),
             modal_slot(2),
             context_menu_overlay,
+            resize_handles,
         ]
         .width(Fill)
         .height(Fill)

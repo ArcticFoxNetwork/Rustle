@@ -103,6 +103,8 @@ pub enum Message {
     WindowMaximize,
     /// Start dragging the window
     WindowDrag,
+    /// Start resizing the window from a border/corner
+    WindowResize(iced::window::Direction),
     /// Mouse released (for sidebar resize end)
     MouseReleased,
     /// Mouse moved (track cursor position for drag area)
@@ -874,6 +876,7 @@ impl std::fmt::Debug for Message {
             Self::WindowMinimize => simple!("WindowMinimize"),
             Self::WindowMaximize => simple!("WindowMaximize"),
             Self::WindowDrag => simple!("WindowDrag"),
+            Self::WindowResize(direction) => simple!("WindowResize", "{:?}", direction),
             Self::MouseReleased => simple!("MouseReleased"),
             Self::MouseMoved(_) => simple!("MouseMoved"),
             Self::MouseWheelScrolled { delta_y } => {
