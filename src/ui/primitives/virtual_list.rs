@@ -25,7 +25,8 @@ use iced::advanced::widget::{self, Tree, Widget};
 use iced::mouse::{self, Cursor};
 use iced::{Color, Element, Event, Length, Point, Rectangle, Size};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::hash::Hash;
 use std::rc::Rc;
 
 /// Buffer items to render above and below the visible area
@@ -110,9 +111,10 @@ impl VirtualListState {
 }
 
 /// A virtual list widget that only renders visible items
-pub struct VirtualList<'a, Message, Theme, Renderer>
+pub struct VirtualList<'a, Message, Theme, Renderer, Key = usize>
 where
     Renderer: renderer::Renderer,
+    Key: Eq + Hash + Clone + 'static,
 {
     /// Total number of items
     item_count: usize,
@@ -120,6 +122,8 @@ where
     item_height: f32,
     /// Function to build an item element by index
     item_builder: Box<dyn Fn(usize) -> Element<'a, Message, Theme, Renderer> + 'a>,
+    /// Function to return a stable identity key for an item index
+    item_key: Box<dyn Fn(usize) -> Key + 'a>,
     /// Shared state
     state: Rc<RefCell<VirtualListState>>,
     /// Width of the list
@@ -134,7 +138,7 @@ where
     on_item_hover: Option<Box<dyn Fn(usize) -> Message + 'a>>,
 }
 
-impl<'a, Message, Theme, Renderer> VirtualList<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer> VirtualList<'a, Message, Theme, Renderer, usize>
 where
     Renderer: renderer::Renderer,
 {
@@ -148,6 +152,7 @@ where
             item_count,
             item_height,
             item_builder: Box::new(item_builder),
+            item_key: Box::new(|index| index),
             state,
             width: Length::Fill,
             height: Length::Fill,
@@ -156,7 +161,13 @@ where
             on_item_hover: None,
         }
     }
+}
 
+impl<'a, Message, Theme, Renderer, Key> VirtualList<'a, Message, Theme, Renderer, Key>
+where
+    Renderer: renderer::Renderer,
+    Key: Eq + Hash + Clone + 'static,
+{
     /// Set the width of the list
     pub fn width(mut self, width: impl Into<Length>) -> Self {
         self.width = width.into();
@@ -203,12 +214,35 @@ where
         self.on_item_hover = Some(Box::new(f));
         self
     }
+
+    /// Set a stable identity key for each item.
+    ///
+    /// Use a domain identifier (for example, a track id plus original index) when
+    /// list order can change because of filtering, sorting, or pagination.
+    pub fn keyed_by<NewKey, F>(self, f: F) -> VirtualList<'a, Message, Theme, Renderer, NewKey>
+    where
+        NewKey: Eq + Hash + Clone + 'static,
+        F: Fn(usize) -> NewKey + 'a,
+    {
+        VirtualList {
+            item_count: self.item_count,
+            item_height: self.item_height,
+            item_builder: self.item_builder,
+            item_key: Box::new(f),
+            state: self.state,
+            width: self.width,
+            height: self.height,
+            show_scrollbar: self.show_scrollbar,
+            on_empty_area: self.on_empty_area,
+            on_item_hover: self.on_item_hover,
+        }
+    }
 }
 
 /// Internal state for widget tree
-struct VirtualListInternalState {
-    /// Trees keyed by item index (persistent across scrolls)
-    item_trees: HashMap<usize, Tree>,
+struct VirtualListInternalState<Key> {
+    /// Trees keyed by item identity (persistent across scrolls and filtering)
+    item_trees: HashMap<Key, Tree>,
     /// Cached visible range from layout phase
     cached_visible_range: (usize, usize),
     /// Whether the scrollbar is being dragged
@@ -217,15 +251,11 @@ struct VirtualListInternalState {
     drag_start_offset: f32,
     /// Whether mouse is hovering over scrollbar
     scrollbar_hovered: bool,
-    /// Last hovered item index for deduplication
-    last_hovered_item: Option<usize>,
-    /// Frame counter to track when elements need rebuilding
-    frame_id: u64,
-    /// Last frame's visible range for smart diffing
-    last_visible_range: (usize, usize),
+    /// Last hovered item key for deduplication
+    last_hovered_item: Option<Key>,
 }
 
-impl Default for VirtualListInternalState {
+impl<Key> Default for VirtualListInternalState<Key> {
     fn default() -> Self {
         Self {
             item_trees: HashMap::new(),
@@ -234,17 +264,16 @@ impl Default for VirtualListInternalState {
             drag_start_offset: 0.0,
             scrollbar_hovered: false,
             last_hovered_item: None,
-            frame_id: 0,
-            last_visible_range: (0, 0),
         }
     }
 }
 
-impl<'a, Message, Theme, Renderer> Widget<Message, Theme, Renderer>
-    for VirtualList<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer, Key> Widget<Message, Theme, Renderer>
+    for VirtualList<'a, Message, Theme, Renderer, Key>
 where
     Message: Clone + 'a,
     Renderer: renderer::Renderer,
+    Key: Eq + Hash + Clone + 'static,
 {
     fn diff(&self, tree: &mut Tree) {
         let (start, end) = {
@@ -254,24 +283,27 @@ where
             state.visible_range()
         };
 
-        let internal_state = tree.state.downcast_mut::<VirtualListInternalState>();
+        let internal_state = tree.state.downcast_mut::<VirtualListInternalState<Key>>();
 
         internal_state.cached_visible_range = (start, end);
-        internal_state.last_visible_range = (start, end);
 
         // Prune trees for items far outside the visible range (keep a generous buffer)
         let prune_start = start.saturating_sub(BUFFER_ITEMS * 2);
         let prune_end = (end + BUFFER_ITEMS * 2).min(self.item_count);
+        let retained_keys: HashSet<Key> = (prune_start..prune_end)
+            .map(|idx| (self.item_key)(idx))
+            .collect();
         internal_state
             .item_trees
-            .retain(|&idx, _| idx >= prune_start && idx < prune_end);
+            .retain(|key, _| retained_keys.contains(key));
 
         // Ensure trees exist for all visible items and diff them
         for item_idx in start..end {
             let element = (self.item_builder)(item_idx);
+            let item_key = (self.item_key)(item_idx);
             let tree = internal_state
                 .item_trees
-                .entry(item_idx)
+                .entry(item_key)
                 .or_insert_with(Tree::empty);
             tree.diff(&element);
         }
@@ -282,11 +314,11 @@ where
     }
 
     fn tag(&self) -> widget::tree::Tag {
-        widget::tree::Tag::of::<VirtualListInternalState>()
+        widget::tree::Tag::of::<VirtualListInternalState<Key>>()
     }
 
     fn state(&self) -> widget::tree::State {
-        widget::tree::State::new(VirtualListInternalState::default())
+        widget::tree::State::new(VirtualListInternalState::<Key>::default())
     }
 
     fn layout(
@@ -311,13 +343,7 @@ where
         drop(state);
 
         // Get internal state
-        let internal_state = tree.state.downcast_mut::<VirtualListInternalState>();
-
-        // Increment frame counter
-        internal_state.frame_id = internal_state.frame_id.wrapping_add(1);
-
-        // Track visible range for potential future optimizations
-        internal_state.last_visible_range = (start, end);
+        let internal_state = tree.state.downcast_mut::<VirtualListInternalState<Key>>();
 
         // Cache the visible range
         internal_state.cached_visible_range = (start, end);
@@ -328,12 +354,13 @@ where
 
         for item_idx in start..end {
             let mut element = (self.item_builder)(item_idx);
+            let item_key = (self.item_key)(item_idx);
 
             // Get tree — normally diffed in diff(), but range may have changed
             // if viewport_height was updated between diff() and layout().
             let tree = internal_state
                 .item_trees
-                .entry(item_idx)
+                .entry(item_key)
                 .or_insert_with(|| {
                     let mut t = Tree::empty();
                     t.diff(&element);
@@ -362,7 +389,7 @@ where
         viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
-        let internal_state = tree.state.downcast_ref::<VirtualListInternalState>();
+        let internal_state = tree.state.downcast_ref::<VirtualListInternalState<Key>>();
         let (start, end) = internal_state.cached_visible_range;
 
         // Early return if no items to draw
@@ -399,12 +426,13 @@ where
             }
 
             for item_idx in on_screen_start..on_screen_end {
+                let item_key = (self.item_key)(item_idx);
                 let child_layout = match children.next() {
                     Some(l) => l,
                     None => break,
                 };
 
-                if let Some(child_tree) = internal_state.item_trees.get(&item_idx) {
+                if let Some(child_tree) = internal_state.item_trees.get(&item_key) {
                     let element = (self.item_builder)(item_idx);
                     element.as_widget().draw(
                         child_tree,
@@ -445,7 +473,7 @@ where
         viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
-        let internal_state = tree.state.downcast_mut::<VirtualListInternalState>();
+        let internal_state = tree.state.downcast_mut::<VirtualListInternalState<Key>>();
 
         let scrollbar_bounds = {
             let state = self.state.borrow();
@@ -521,8 +549,9 @@ where
                         let target_item_idx = (relative_y / self.item_height).floor() as usize;
 
                         if target_item_idx < item_count {
-                            if internal_state.last_hovered_item != Some(target_item_idx) {
-                                internal_state.last_hovered_item = Some(target_item_idx);
+                            let target_item_key = (self.item_key)(target_item_idx);
+                            if internal_state.last_hovered_item.as_ref() != Some(&target_item_key) {
+                                internal_state.last_hovered_item = Some(target_item_key);
                                 shell.publish((on_hover)(target_item_idx));
                             }
                         } else if internal_state.last_hovered_item.is_some() {
@@ -598,9 +627,8 @@ where
                     let (cached_start, _) = internal_state.cached_visible_range;
                     if target_item_idx >= cached_start {
                         let slot_idx = target_item_idx - cached_start;
-                        if let Some(child_tree) =
-                            internal_state.item_trees.get_mut(&target_item_idx)
-                        {
+                        let item_key = (self.item_key)(target_item_idx);
+                        if let Some(child_tree) = internal_state.item_trees.get_mut(&item_key) {
                             let mut children = layout.children();
                             if let Some(child_layout) = children.nth(slot_idx) {
                                 let mut element = (self.item_builder)(target_item_idx);
@@ -635,9 +663,8 @@ where
                     let (cached_start, _) = internal_state.cached_visible_range;
                     if target_item_idx >= cached_start {
                         let slot_idx = target_item_idx - cached_start;
-                        if let Some(child_tree) =
-                            internal_state.item_trees.get_mut(&target_item_idx)
-                        {
+                        let item_key = (self.item_key)(target_item_idx);
+                        if let Some(child_tree) = internal_state.item_trees.get_mut(&item_key) {
                             let mut children = layout.children();
                             if let Some(child_layout) = children.nth(slot_idx) {
                                 let mut element = (self.item_builder)(target_item_idx);
@@ -660,8 +687,9 @@ where
                 let (start, end) = internal_state.cached_visible_range;
                 let mut children = layout.children();
                 for item_idx in start..end {
+                    let item_key = (self.item_key)(item_idx);
                     if let Some(child_layout) = children.next()
-                        && let Some(child_tree) = internal_state.item_trees.get_mut(&item_idx)
+                        && let Some(child_tree) = internal_state.item_trees.get_mut(&item_key)
                     {
                         let mut element = (self.item_builder)(item_idx);
                         element.as_widget_mut().update(
@@ -690,7 +718,7 @@ where
         renderer: &Renderer,
     ) -> mouse::Interaction {
         let bounds = layout.bounds();
-        let internal_state = tree.state.downcast_ref::<VirtualListInternalState>();
+        let internal_state = tree.state.downcast_ref::<VirtualListInternalState<Key>>();
 
         if internal_state.scrollbar_dragging {
             return mouse::Interaction::Grabbing;
@@ -720,7 +748,8 @@ where
         let (cached_start, _) = internal_state.cached_visible_range;
         if target_item_idx >= cached_start {
             let slot_idx = target_item_idx - cached_start;
-            if let Some(child_tree) = internal_state.item_trees.get(&target_item_idx) {
+            let item_key = (self.item_key)(target_item_idx);
+            if let Some(child_tree) = internal_state.item_trees.get(&item_key) {
                 let mut children = layout.children();
                 if let Some(child_layout) = children.nth(slot_idx) {
                     let element = (self.item_builder)(target_item_idx);
@@ -739,9 +768,10 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> VirtualList<'a, Message, Theme, Renderer>
+impl<'a, Message, Theme, Renderer, Key> VirtualList<'a, Message, Theme, Renderer, Key>
 where
     Renderer: renderer::Renderer,
+    Key: Eq + Hash + Clone + 'static,
 {
     fn calculate_scrollbar_bounds(
         &self,
@@ -812,14 +842,15 @@ where
     }
 }
 
-impl<'a, Message, Theme, Renderer> From<VirtualList<'a, Message, Theme, Renderer>>
+impl<'a, Message, Theme, Renderer, Key> From<VirtualList<'a, Message, Theme, Renderer, Key>>
     for Element<'a, Message, Theme, Renderer>
 where
     Message: Clone + 'a,
     Theme: 'a,
     Renderer: renderer::Renderer + 'a,
+    Key: Eq + Hash + Clone + 'static,
 {
-    fn from(list: VirtualList<'a, Message, Theme, Renderer>) -> Self {
+    fn from(list: VirtualList<'a, Message, Theme, Renderer, Key>) -> Self {
         Element::new(list)
     }
 }

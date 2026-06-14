@@ -307,7 +307,20 @@ pub fn build_list<'a>(
         .into()
     };
 
+    let indices_for_key = filtered_indices.clone();
+
     VirtualList::new(song_count, SONG_ROW_HEIGHT, item_builder)
+        .keyed_by(move |index| {
+            let song_index = indices_for_key
+                .as_ref()
+                .and_then(|indices| indices.get(index).copied())
+                .unwrap_or(index);
+
+            songs
+                .get(song_index)
+                .map(|song| (song.id, song_index))
+                .unwrap_or((i64::MIN, index))
+        })
         .state(scroll_state)
         .width(Length::Fill)
         .height(Length::Fill)
@@ -345,7 +358,7 @@ fn build_song_row(
     let duration = song.duration.clone();
     let added_date = song.added_date.clone();
 
-    // --- Index or play icon (use cached SVG handles) ---
+    // --- Index or play icon (fixed slot width; content is re-diffed by VirtualList) ---
     let index_content: Element<'static, Message> = if is_hovered {
         svg(PLAY_ICON_HANDLE.clone())
             .width(16)
@@ -414,7 +427,7 @@ fn build_song_row(
     };
     let is_liked = liked_songs.is_some_and(|songs| songs.contains(&ncm_song_id));
 
-    // Duration or like button (use cached SVG handles)
+    // Duration or like button 
     let duration_or_like: Element<'static, Message> = if columns.show_like && is_hovered {
         let heart_handle = if is_liked {
             HEART_ICON_HANDLE.clone()
@@ -434,10 +447,7 @@ fn build_song_row(
                 }),
         )
         .padding(0)
-        .style(|_theme, _status| iced::widget::button::Style {
-            background: None,
-            ..Default::default()
-        })
+        .style(transparent_button)
         .on_press(Message::ToggleFavorite(ncm_song_id))
         .into()
     } else {
@@ -513,6 +523,16 @@ fn build_song_row(
     mouse_area(btn)
         .on_right_press(Message::RightClickSong(song_id))
         .into()
+}
+
+fn transparent_button(
+    _theme: &iced::Theme,
+    _status: button::Status,
+) -> iced::widget::button::Style {
+    iced::widget::button::Style {
+        background: None,
+        ..Default::default()
+    }
 }
 
 /// Filter songs by search query (title, artist, album)

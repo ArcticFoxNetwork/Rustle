@@ -639,7 +639,9 @@ fn display_section(
                         .lyrics
                         .lyrics_font_family
                         .clone()
-                        .unwrap_or_else(|| locale.get(Key::SettingsLyricsFontFamilyAuto).to_string()),
+                        .unwrap_or_else(|| locale
+                            .get(Key::SettingsLyricsFontFamilyAuto)
+                            .to_string()),
                 ),
                 {
                     let auto_label = locale.get(Key::SettingsLyricsFontFamilyAuto).to_string();

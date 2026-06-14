@@ -30,9 +30,12 @@ impl App {
                     let viewport = self.current_lyrics_shape_metrics();
                     let font_family = self.core.settings.lyrics.lyrics_font_family.as_deref();
                     let render_ready = viewport.is_some_and(|(cw, fs)| {
-                        self.playback
-                            .lyrics_render_manager
-                            .is_render_ready(song.id, cw, fs, font_family)
+                        self.playback.lyrics_render_manager.is_render_ready(
+                            song.id,
+                            cw,
+                            fs,
+                            font_family,
+                        )
                     });
 
                     if render_ready {
@@ -919,10 +922,12 @@ impl App {
             .flatten()
         {
             if let Some((cw, fs)) = shape_metrics
-                && self
-                    .playback
-                    .lyrics_render_manager
-                    .is_render_ready(song_id, cw, fs, font_family.as_deref())
+                && self.playback.lyrics_render_manager.is_render_ready(
+                    song_id,
+                    cw,
+                    fs,
+                    font_family.as_deref(),
+                )
             {
                 continue;
             }
@@ -1130,11 +1135,12 @@ impl App {
             return false;
         };
         let font_family = self.core.settings.lyrics.lyrics_font_family.as_deref();
-        if !self
-            .playback
-            .lyrics_render_manager
-            .is_render_ready(song_id, content_width, font_size, font_family)
-        {
+        if !self.playback.lyrics_render_manager.is_render_ready(
+            song_id,
+            content_width,
+            font_size,
+            font_family,
+        ) {
             return false;
         }
 

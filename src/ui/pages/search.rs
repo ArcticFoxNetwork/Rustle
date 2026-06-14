@@ -135,6 +135,12 @@ pub fn view<'a>(
 
                             Element::from(song_row)
                         })
+                        .keyed_by(move |index| {
+                            songs
+                                .get(index)
+                                .map(|song| (song.id, current_page, index))
+                                .unwrap_or((0, current_page, index))
+                        })
                         .state(state.scroll_state.clone())
                         .on_item_hover(move |index| {
                             if index < songs.len() {
