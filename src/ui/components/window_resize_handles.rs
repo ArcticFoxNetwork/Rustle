@@ -13,8 +13,8 @@ pub fn view<'a>() -> Element<'a, Message> {
 
     use iced::window::Direction;
 
-    const EDGE_SIZE: f32 = 8.0;
-    const CORNER_SIZE: f32 = 16.0;
+    const EDGE_SIZE: f32 = 3.0;
+    const CORNER_SIZE: f32 = 10.0;
 
     fn handle<'a>(
         direction: Direction,
