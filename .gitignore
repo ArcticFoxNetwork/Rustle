@@ -24,3 +24,5 @@ target
 .claude
 .agents
 .workflow
+.trellis
+AGENTS.md
