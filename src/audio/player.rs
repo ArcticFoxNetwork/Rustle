@@ -85,6 +85,30 @@ struct OutgoingTransition {
     advanced: bool,
 }
 
+fn prepare_transition_for_handoff<F>(
+    transition: TransitionDirective,
+    current_position: Duration,
+    mut try_seek_entry: F,
+) -> TransitionDirective
+where
+    F: FnMut(Duration) -> bool,
+{
+    if transition.kind != TransitionKind::Automix {
+        return transition;
+    }
+    let scheduler_late = transition.expected_exit.is_some_and(|expected| {
+        current_position
+            > expected.saturating_add(Duration::from_millis(super::automix::SCHEDULER_HORIZON_MS))
+    });
+    if scheduler_late {
+        return TransitionDirective::baseline_natural(transition.group);
+    }
+    if transition.entry > Duration::ZERO && !try_seek_entry(transition.entry) {
+        return TransitionDirective::baseline_natural(transition.group);
+    }
+    transition
+}
+
 /// Audio player - simplified, focused on playback control
 /// Preloading is managed externally by PreloadManager
 pub struct AudioPlayer {
@@ -605,20 +629,9 @@ impl AudioPlayer {
                 .current_runtime
                 .take()
                 .unwrap_or_else(|| self.prepare_runtime(false));
-            if transition.kind == TransitionKind::Automix {
-                let current_position = old_sink.get_pos();
-                let scheduler_late = transition.expected_exit.is_some_and(|expected| {
-                    current_position
-                        > expected.saturating_add(Duration::from_millis(
-                            super::automix::SCHEDULER_HORIZON_MS,
-                        ))
-                });
-                let entry_seek_failed =
-                    transition.entry > Duration::ZERO && sink.try_seek(transition.entry).is_err();
-                if scheduler_late || entry_seek_failed {
-                    transition = TransitionDirective::baseline_natural(transition.group);
-                }
-            }
+            transition = prepare_transition_for_handoff(transition, old_sink.get_pos(), |entry| {
+                sink.try_seek(entry).is_ok()
+            });
             let crossfade = transition.duration;
             let advanced = transition.kind == TransitionKind::Automix;
             old_runtime.reset_automix();
@@ -1119,6 +1132,59 @@ impl AudioPlayer {
         } else {
             false
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::automix::{AdvancedAutomation, ScheduleGroup};
+
+    #[test]
+    fn scheduler_late_fallback_does_not_seek_the_automix_entry() {
+        let group = ScheduleGroup(9);
+        let transition = TransitionDirective {
+            kind: TransitionKind::Automix,
+            duration: Duration::from_secs(3),
+            entry: Duration::from_secs(12),
+            expected_exit: Some(Duration::from_secs(20)),
+            group,
+            automation: AdvancedAutomation {
+                rate: 1.02,
+                gain_db: 3.0,
+                bass_swap: true,
+            },
+        };
+        let mut seek_calls = 0;
+        let resolved =
+            prepare_transition_for_handoff(transition, Duration::from_millis(21_501), |_| {
+                seek_calls += 1;
+                true
+            });
+
+        assert_eq!(seek_calls, 0);
+        assert_eq!(resolved, TransitionDirective::baseline_natural(group));
+    }
+
+    #[test]
+    fn entry_seek_failure_falls_back_before_advanced_automation() {
+        let group = ScheduleGroup(10);
+        let transition = TransitionDirective {
+            kind: TransitionKind::Automix,
+            duration: Duration::from_secs(3),
+            entry: Duration::from_secs(12),
+            expected_exit: Some(Duration::from_secs(20)),
+            group,
+            automation: AdvancedAutomation {
+                rate: 1.02,
+                gain_db: 3.0,
+                bass_swap: true,
+            },
+        };
+        let resolved =
+            prepare_transition_for_handoff(transition, Duration::from_secs(20), |_| false);
+
+        assert_eq!(resolved, TransitionDirective::baseline_natural(group));
     }
 }
 

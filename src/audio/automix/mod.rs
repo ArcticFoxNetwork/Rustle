@@ -10,15 +10,15 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::hash::Hasher;
-use std::io::BufReader;
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use rodio::Source;
 use serde::{Deserialize, Serialize};
 
-pub const ANALYSIS_SCHEMA_VERSION: u32 = 2;
-pub const ANALYZER_VERSION: &str = "rustle-native-v2";
+pub const ANALYSIS_SCHEMA_VERSION: u32 = 3;
+pub const ANALYZER_VERSION: &str = "rustle-native-v3";
 pub const DEFAULT_ANALYSIS_MAX_SECONDS: u32 = 60;
 pub const BASELINE_CROSSFADE_MS: u32 = 5_000;
 pub const MANUAL_CROSSFADE_MS: u32 = 300;
@@ -39,6 +39,19 @@ impl Default for AnalysisConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnergyPoint {
+    pub at: Duration,
+    pub rms_db: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VocalRegion {
+    pub start: Duration,
+    pub end: Duration,
+    pub confidence: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct TrackAnalysis {
     pub schema_version: u32,
     pub analyzer_version: String,
@@ -51,12 +64,18 @@ pub struct TrackAnalysis {
     pub bar_beats: u8,
     pub lufs: Option<f32>,
     pub energy: f32,
+    pub energy_profile: Vec<EnergyPoint>,
     pub vocals_confidence: f32,
+    pub vocal_regions: Vec<VocalRegion>,
+    pub vocal_out: Option<Duration>,
+    pub outro_energy_db: Option<f32>,
     pub key: Option<String>,
     pub cut_start: Duration,
+    pub cut_out: Duration,
     pub fade_out_start: Duration,
     pub recommended_exit: Duration,
     pub recommended_entry: Duration,
+    pub transition_confidence: f32,
 }
 
 impl TrackAnalysis {
@@ -74,12 +93,18 @@ impl TrackAnalysis {
             bar_beats: 4,
             lufs: None,
             energy: 0.0,
+            energy_profile: Vec::new(),
             vocals_confidence: 0.0,
+            vocal_regions: Vec::new(),
+            vocal_out: None,
+            outro_energy_db: None,
             key: None,
             cut_start: Duration::ZERO,
+            cut_out: duration,
             fade_out_start: exit,
             recommended_exit: exit,
             recommended_entry: Duration::ZERO,
+            transition_confidence: 0.0,
         }
     }
 
@@ -90,6 +115,41 @@ impl TrackAnalysis {
             && self.duration > Duration::ZERO
             && self.bpm_confidence.is_finite()
             && (0.0..=1.0).contains(&self.bpm_confidence)
+            && self
+                .bpm
+                .is_none_or(|value| value.is_finite() && value > 0.0)
+            && self.lufs.is_none_or(f32::is_finite)
+            && self.energy.is_finite()
+            && (0.0..=1.0).contains(&self.energy)
+            && self.vocals_confidence.is_finite()
+            && (0.0..=1.0).contains(&self.vocals_confidence)
+            && self.transition_confidence.is_finite()
+            && (0.0..=1.0).contains(&self.transition_confidence)
+            && self.cut_start <= self.cut_out
+            && self.cut_out <= self.duration
+            && self.fade_out_start <= self.cut_out
+            && self.recommended_exit <= self.cut_out
+            && self.recommended_entry <= self.duration
+            && self.vocal_out.is_none_or(|value| value <= self.cut_out)
+            && self.outro_energy_db.is_none_or(f32::is_finite)
+            && self
+                .energy_profile
+                .iter()
+                .all(|point| point.at <= self.duration && point.rms_db.is_finite())
+            && self
+                .energy_profile
+                .windows(2)
+                .all(|pair| pair[0].at <= pair[1].at)
+            && self.vocal_regions.iter().all(|region| {
+                region.start < region.end
+                    && region.end <= self.duration
+                    && region.confidence.is_finite()
+                    && (0.0..=1.0).contains(&region.confidence)
+            })
+            && self
+                .vocal_regions
+                .windows(2)
+                .all(|pair| pair[0].start <= pair[1].start)
     }
 }
 
@@ -129,6 +189,14 @@ pub struct AnalysisCache {
     max_entries: usize,
 }
 
+struct CacheClaim(PathBuf);
+
+impl Drop for CacheClaim {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.0);
+    }
+}
+
 impl AnalysisCache {
     pub fn new(root: impl Into<PathBuf>, max_entries: usize) -> Self {
         Self {
@@ -159,9 +227,13 @@ impl AnalysisCache {
         };
         let analysis: TrackAnalysis = match serde_json::from_slice(&bytes) {
             Ok(analysis) => analysis,
-            Err(_) => return Ok(None),
+            Err(_) => {
+                let _ = fs::remove_file(&path);
+                return Ok(None);
+            }
         };
         if analysis.content_id != content_id || !analysis.is_compatible(config) {
+            let _ = fs::remove_file(&path);
             return Ok(None);
         }
         Ok(Some(analysis))
@@ -174,17 +246,64 @@ impl AnalysisCache {
         fs::create_dir_all(&self.root)
             .map_err(|error| format!("create Automix cache {:?}: {error}", self.root))?;
         let path = self.path_for(&analysis.content_id, config);
-        let temp = path.with_extension(format!("{}.tmp", std::process::id()));
+        let claim = path.with_extension("write.lock");
+        let claim_file = match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&claim)
+        {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                return match self.load(&analysis.content_id, config) {
+                    Ok(Some(_)) => Ok(()),
+                    Ok(None) => Err(format!(
+                        "Automix cache write already in progress: {claim:?}"
+                    )),
+                    Err(load_error) => Err(load_error),
+                };
+            }
+            Err(error) => return Err(format!("claim Automix cache write {:?}: {error}", claim)),
+        };
+        let _claim = CacheClaim(claim);
+        drop(claim_file);
+
+        if path.exists() {
+            match self.load(&analysis.content_id, config)? {
+                Some(_) => return Ok(()),
+                None => {
+                    // `load` removes corrupt or incompatible entries. The
+                    // following rename therefore publishes into an absent
+                    // destination instead of deleting a valid cache first.
+                }
+            }
+        }
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|value| value.as_nanos())
+            .unwrap_or(0);
+        let temp = path.with_extension(format!("{}.{}.tmp", std::process::id(), unique));
         let bytes = serde_json::to_vec(analysis)
             .map_err(|error| format!("serialize Automix analysis: {error}"))?;
-        fs::write(&temp, bytes)
-            .map_err(|error| format!("write Automix cache {:?}: {error}", temp))?;
-        if path.exists() {
-            fs::remove_file(&path)
-                .map_err(|error| format!("replace Automix cache {:?}: {error}", path))?;
+        let write_result = (|| {
+            let mut file = fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp)
+                .map_err(|error| format!("create Automix cache temp {:?}: {error}", temp))?;
+            file.write_all(&bytes)
+                .map_err(|error| format!("write Automix cache {:?}: {error}", temp))?;
+            file.sync_all()
+                .map_err(|error| format!("sync Automix cache {:?}: {error}", temp))?;
+            drop(file);
+            fs::rename(&temp, &path)
+                .map_err(|error| format!("publish Automix cache {:?}: {error}", path))?;
+            Ok::<(), String>(())
+        })();
+        if write_result.is_err() {
+            let _ = fs::remove_file(&temp);
         }
-        fs::rename(&temp, &path)
-            .map_err(|error| format!("finalize Automix cache {:?}: {error}", path))?;
+        write_result?;
         self.prune()?;
         Ok(())
     }
@@ -219,16 +338,17 @@ impl AnalysisCache {
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => return Ok(false),
             Err(error) => return Err(format!("claim Automix analysis {:?}: {error}", claim)),
         };
-        let result = analyze_file(path, content_id.to_string(), config).and_then(|analysis| {
-            if is_cancelled() {
-                Ok(false)
-            } else {
-                self.store(&analysis, config).map(|_| true)
-            }
-        });
+        let result = analyze_file_cancellable(path, content_id.to_string(), config, &is_cancelled)
+            .and_then(|analysis| {
+                if is_cancelled() {
+                    Ok(false)
+                } else {
+                    self.store(&analysis, config).map(|_| true)
+                }
+            });
         drop(claim_file);
         let _ = fs::remove_file(claim);
-        result
+        if is_cancelled() { Ok(false) } else { result }
     }
 
     fn prune(&self) -> Result<(), String> {
@@ -279,9 +399,182 @@ impl Fnv64 {
     }
 }
 
-/// Analyze a bounded in-memory sample window. This is deliberately modest:
-/// it supplies stable energy/BPM hints and leaves advanced feature extraction
-/// optional rather than blocking playback.
+const PROFILE_FRAME_MS: u64 = 100;
+
+#[derive(Default)]
+struct TimelineFeatures {
+    energy_profile: Vec<EnergyPoint>,
+    vocal_regions: Vec<VocalRegion>,
+    vocals_confidence: f32,
+    cut_start: Duration,
+    cut_out: Duration,
+}
+
+fn mix_to_mono(samples: &[f32], channels: u16) -> Vec<f32> {
+    let channel_count = channels.max(1) as usize;
+    samples
+        .chunks(channel_count)
+        .map(|frame| frame.iter().copied().sum::<f32>() / frame.len().max(1) as f32)
+        .collect()
+}
+
+fn timeline_features(
+    mono: &[f32],
+    sample_rate: u32,
+    track_energy: f32,
+    offset: Duration,
+    duration: Duration,
+) -> TimelineFeatures {
+    if mono.is_empty() || sample_rate == 0 {
+        return TimelineFeatures {
+            cut_out: duration,
+            ..TimelineFeatures::default()
+        };
+    }
+
+    let frame_samples = ((u64::from(sample_rate) * PROFILE_FRAME_MS) / 1_000).max(1) as usize;
+    let audible_threshold = (track_energy * 0.12).max(0.002);
+    let low_alpha = 1.0 - (-std::f32::consts::TAU * 300.0 / sample_rate as f32).exp();
+    let high_alpha = 1.0 - (-std::f32::consts::TAU * 3_400.0 / sample_rate as f32).exp();
+    let mut low_300 = 0.0f32;
+    let mut low_3400 = 0.0f32;
+    let mut audible_frames = Vec::new();
+    let mut vocal_candidates = Vec::new();
+    let mut energy_profile = Vec::new();
+
+    for (index, frame) in mono.chunks(frame_samples).enumerate() {
+        let mut total_power = 0.0f32;
+        let mut voice_power = 0.0f32;
+        let mut crossings = 0usize;
+        let mut previous = frame.first().copied().unwrap_or(0.0);
+        for &sample in frame {
+            low_300 += low_alpha * (sample - low_300);
+            low_3400 += high_alpha * (sample - low_3400);
+            let voice_band = low_3400 - low_300;
+            total_power += sample * sample;
+            voice_power += voice_band * voice_band;
+            crossings += usize::from((previous >= 0.0) != (sample >= 0.0));
+            previous = sample;
+        }
+        let mean_square = total_power / frame.len().max(1) as f32;
+        let rms = mean_square.sqrt();
+        let start = offset.saturating_add(Duration::from_millis(index as u64 * PROFILE_FRAME_MS));
+        let end = start
+            .saturating_add(Duration::from_millis(PROFILE_FRAME_MS))
+            .min(duration);
+        energy_profile.push(EnergyPoint {
+            at: start.min(duration),
+            rms_db: 20.0 * rms.max(1.0e-6).log10(),
+        });
+        if rms >= audible_threshold {
+            audible_frames.push((start, end));
+        }
+
+        let voice_ratio = voice_power / total_power.max(1.0e-12);
+        let crossing_rate = crossings as f32 / frame.len().max(1) as f32;
+        let band_score = ((voice_ratio - 0.08) / 0.55).clamp(0.0, 1.0);
+        let crossing_score = (1.0 - (crossing_rate - 0.08).abs() / 0.12).clamp(0.0, 1.0);
+        let loudness_score = (rms / track_energy.max(0.01)).clamp(0.0, 1.0);
+        let confidence =
+            (band_score * 0.55 + crossing_score * 0.25 + loudness_score * 0.20).clamp(0.0, 1.0);
+        if rms >= audible_threshold && confidence >= 0.52 {
+            vocal_candidates.push((start, end, confidence));
+        }
+    }
+
+    let mut vocal_regions = Vec::new();
+    let mut open: Option<(Duration, Duration, f32, u32)> = None;
+    for (start, end, confidence) in vocal_candidates {
+        match open.as_mut() {
+            Some((_, region_end, confidence_sum, count))
+                if start <= region_end.saturating_add(Duration::from_millis(300)) =>
+            {
+                *region_end = end;
+                *confidence_sum += confidence;
+                *count += 1;
+            }
+            _ => {
+                if let Some((region_start, region_end, confidence_sum, count)) = open.take()
+                    && region_end.saturating_sub(region_start) >= Duration::from_millis(400)
+                {
+                    vocal_regions.push(VocalRegion {
+                        start: region_start,
+                        end: region_end,
+                        confidence: (confidence_sum / count.max(1) as f32).clamp(0.0, 1.0),
+                    });
+                }
+                open = Some((start, end, confidence, 1));
+            }
+        }
+    }
+    if let Some((region_start, region_end, confidence_sum, count)) = open
+        && region_end.saturating_sub(region_start) >= Duration::from_millis(400)
+    {
+        vocal_regions.push(VocalRegion {
+            start: region_start,
+            end: region_end,
+            confidence: (confidence_sum / count.max(1) as f32).clamp(0.0, 1.0),
+        });
+    }
+
+    let vocals_confidence = vocal_regions
+        .iter()
+        .map(|region| region.confidence)
+        .fold(0.0f32, f32::max);
+    let cut_start = audible_frames
+        .first()
+        .map(|(start, _)| *start)
+        .unwrap_or(offset.min(duration));
+    let cut_out = audible_frames
+        .last()
+        .map(|(_, end)| *end)
+        .unwrap_or(duration)
+        .min(duration);
+    TimelineFeatures {
+        energy_profile,
+        vocal_regions,
+        vocals_confidence,
+        cut_start,
+        cut_out,
+    }
+}
+
+fn profile_energy_after(profile: &[EnergyPoint], start: Duration) -> Option<f32> {
+    let mut count = 0usize;
+    let power = profile
+        .iter()
+        .filter(|point| point.at >= start)
+        .map(|point| {
+            count += 1;
+            10.0_f32.powf(point.rms_db / 10.0)
+        })
+        .sum::<f32>();
+    (count > 0).then(|| 10.0 * (power / count as f32).max(1.0e-12).log10())
+}
+
+fn transition_confidence(
+    bpm_confidence: f32,
+    timeline: &TimelineFeatures,
+    duration: Duration,
+) -> f32 {
+    let profile_score = if timeline.energy_profile.is_empty() {
+        0.0
+    } else {
+        1.0
+    };
+    let bounds_score = if timeline.cut_start < timeline.cut_out && timeline.cut_out <= duration {
+        1.0
+    } else {
+        0.0
+    };
+    (bpm_confidence.clamp(0.0, 1.0) * 0.45
+        + timeline.vocals_confidence.clamp(0.0, 1.0) * 0.20
+        + profile_score * 0.20
+        + bounds_score * 0.15)
+        .clamp(0.0, 1.0)
+}
+
+/// Analyze a bounded in-memory sample window without touching the playback Sink.
 pub fn analyze_samples(
     content_id: impl Into<String>,
     samples: &[f32],
@@ -295,11 +588,7 @@ pub fn analyze_samples(
         .saturating_mul(sample_rate as usize)
         .saturating_mul(channels.max(1) as usize);
     let window = &samples[..samples.len().min(max_samples)];
-    let channel_count = channels.max(1) as usize;
-    let mono: Vec<f32> = window
-        .chunks(channel_count)
-        .map(|frame| frame.iter().copied().sum::<f32>() / frame.len().max(1) as f32)
-        .collect();
+    let mono = mix_to_mono(window, channels);
     let mean_square = if mono.is_empty() {
         0.0
     } else {
@@ -318,36 +607,31 @@ pub fn analyze_samples(
         .windows(2)
         .map(|pair| (pair[1] - pair[0]).max(0.0))
         .collect();
-    let (bpm, confidence, first_beat) = estimate_tempo(&onset);
+    let (bpm, bpm_confidence, first_beat) = estimate_tempo(&onset);
     let beat_period = bpm.map(|value| Duration::from_secs_f32(60.0 / value));
-    let audible_threshold = (energy * 0.12).max(0.002);
-    let cut_frame = frame_energy
-        .iter()
-        .position(|value| *value >= audible_threshold)
-        .unwrap_or(0);
-    let last_audible_frame = frame_energy
-        .iter()
-        .rposition(|value| *value >= audible_threshold)
-        .unwrap_or_else(|| frame_energy.len().saturating_sub(1));
-    let frame_duration = Duration::from_millis(20);
-    let cut_start = frame_duration.saturating_mul(cut_frame as u32);
-    let last_audible = frame_duration.saturating_mul(last_audible_frame as u32);
-    let fade_out_start = last_audible.saturating_sub(Duration::from_secs(4));
-    let exit = fade_out_start.min(duration.saturating_sub(Duration::from_millis(100)));
-    let crossings = mono
-        .windows(2)
-        .filter(|pair| (pair[0] >= 0.0) != (pair[1] >= 0.0))
-        .count();
-    let crossing_rate = crossings as f32 / mono.len().max(1) as f32;
-    let vocals_confidence =
-        ((crossing_rate - 0.02) / 0.18).clamp(0.0, 1.0) * (energy * 4.0).clamp(0.0, 1.0);
+    let timeline = timeline_features(&mono, sample_rate, energy, Duration::ZERO, duration);
+    let vocal_out = timeline.vocal_regions.last().map(|region| region.end);
+    let fade_out_start = timeline.cut_out.saturating_sub(Duration::from_secs(4));
+    let exit = fade_out_start
+        .max(vocal_out.unwrap_or(Duration::ZERO))
+        .min(duration.saturating_sub(Duration::from_millis(100)));
+    let outro_energy_db =
+        vocal_out.and_then(|out| profile_energy_after(&timeline.energy_profile, out));
+    let confidence = transition_confidence(bpm_confidence, &timeline, duration);
+    let TimelineFeatures {
+        energy_profile,
+        vocal_regions,
+        vocals_confidence,
+        cut_start,
+        cut_out,
+    } = timeline;
     TrackAnalysis {
         schema_version: config.schema_version,
         analyzer_version: ANALYZER_VERSION.to_string(),
         content_id: content_id.into(),
         duration,
         bpm,
-        bpm_confidence: confidence,
+        bpm_confidence,
         first_beat,
         beat_period,
         bar_beats: 4,
@@ -357,12 +641,18 @@ pub fn analyze_samples(
             None
         },
         energy,
+        energy_profile,
         vocals_confidence,
+        vocal_regions,
+        vocal_out,
+        outro_energy_db,
         key: estimate_key(&mono, sample_rate, energy),
         cut_start,
+        cut_out,
         fade_out_start,
         recommended_exit: exit,
         recommended_entry: cut_start,
+        transition_confidence: confidence,
     }
 }
 
@@ -435,6 +725,39 @@ pub fn analyze_file(
     content_id: impl Into<String>,
     config: AnalysisConfig,
 ) -> Result<TrackAnalysis, String> {
+    analyze_file_cancellable(path, content_id, config, &|| false)
+}
+
+fn collect_samples<I, F>(source: &mut I, limit: usize, is_cancelled: &F) -> Result<Vec<f32>, String>
+where
+    I: Iterator<Item = f32>,
+    F: Fn() -> bool,
+{
+    let mut samples = Vec::with_capacity(limit.min(1_048_576));
+    for (index, sample) in source.take(limit).enumerate() {
+        if index % 4_096 == 0 && is_cancelled() {
+            return Err("Automix analysis cancelled".to_string());
+        }
+        samples.push(sample);
+    }
+    if is_cancelled() {
+        return Err("Automix analysis cancelled".to_string());
+    }
+    Ok(samples)
+}
+
+fn analyze_file_cancellable<F>(
+    path: &Path,
+    content_id: impl Into<String>,
+    config: AnalysisConfig,
+    is_cancelled: &F,
+) -> Result<TrackAnalysis, String>
+where
+    F: Fn() -> bool,
+{
+    if is_cancelled() {
+        return Err("Automix analysis cancelled".to_string());
+    }
     let file = fs::File::open(path).map_err(|error| format!("open {:?}: {error}", path))?;
     let byte_len = file.metadata().map(|metadata| metadata.len()).unwrap_or(0);
     let mut decoder = rodio::Decoder::builder()
@@ -451,7 +774,7 @@ pub fn analyze_file(
         .saturating_mul(sample_rate as usize)
         .saturating_mul(channels.max(1) as usize);
     let split_samples = max_samples / 2;
-    let mut head: Vec<f32> = decoder.by_ref().take(split_samples.max(1)).collect();
+    let mut head = collect_samples(&mut decoder, split_samples.max(1), is_cancelled)?;
     let mut tail = Vec::new();
     let analyzed_head_duration = Duration::from_secs_f64(
         head.len() as f64 / sample_rate.max(1) as f64 / channels.max(1) as f64,
@@ -461,18 +784,18 @@ pub fn analyze_file(
             split_samples as f64 / sample_rate.max(1) as f64 / channels.max(1) as f64,
         );
         let tail_start = duration.saturating_sub(tail_duration);
-        if decoder.try_seek(tail_start).is_ok() {
-            tail = decoder.by_ref().take(split_samples.max(1)).collect();
-        }
+        decoder
+            .try_seek(tail_start)
+            .map_err(|error| format!("seek Automix tail {:?}: {error}", path))?;
+        tail = collect_samples(&mut decoder, split_samples.max(1), is_cancelled)?;
     } else {
-        head.extend(
-            decoder
-                .by_ref()
-                .take(max_samples.saturating_sub(head.len())),
-        );
+        let remaining = max_samples.saturating_sub(head.len());
+        head.extend(collect_samples(&mut decoder, remaining, is_cancelled)?);
     }
-    let mut samples = head;
+    let mut samples = Vec::with_capacity(head.len().saturating_add(tail.len()));
+    samples.extend_from_slice(&head);
     samples.extend_from_slice(&tail);
+    let content_id = content_id.into();
     let mut analysis = analyze_samples(
         content_id,
         &samples,
@@ -482,46 +805,68 @@ pub fn analyze_file(
         config,
     );
     if !tail.is_empty() {
+        let head_mono = mix_to_mono(&head, channels);
+        let tail_mono = mix_to_mono(&tail, channels);
         let tail_frames = tail.len() / channels.max(1) as usize;
         let tail_duration = Duration::from_secs_f64(tail_frames as f64 / sample_rate.max(1) as f64);
         let tail_start = duration.saturating_sub(tail_duration);
-        let tail_fade =
-            detect_tail_fade_start(&tail, sample_rate, channels, analysis.energy, tail_start);
-        analysis.fade_out_start = tail_fade;
-        analysis.recommended_exit =
-            tail_fade.min(duration.saturating_sub(Duration::from_millis(100)));
+        let head_timeline = timeline_features(
+            &head_mono,
+            sample_rate,
+            analysis.energy,
+            Duration::ZERO,
+            duration,
+        );
+        let tail_timeline = timeline_features(
+            &tail_mono,
+            sample_rate,
+            analysis.energy,
+            tail_start,
+            duration,
+        );
+        let mut combined_timeline = TimelineFeatures {
+            cut_start: head_timeline.cut_start,
+            cut_out: tail_timeline.cut_out,
+            vocals_confidence: head_timeline
+                .vocals_confidence
+                .max(tail_timeline.vocals_confidence),
+            energy_profile: head_timeline.energy_profile,
+            vocal_regions: head_timeline.vocal_regions,
+        };
+        combined_timeline
+            .energy_profile
+            .extend(tail_timeline.energy_profile);
+        combined_timeline
+            .vocal_regions
+            .extend(tail_timeline.vocal_regions);
+        combined_timeline
+            .energy_profile
+            .sort_by_key(|point| point.at);
+        combined_timeline
+            .vocal_regions
+            .sort_by_key(|region| region.start);
+        analysis.vocal_out = combined_timeline
+            .vocal_regions
+            .last()
+            .map(|region| region.end);
+        analysis.outro_energy_db = analysis
+            .vocal_out
+            .and_then(|out| profile_energy_after(&combined_timeline.energy_profile, out));
+        analysis.cut_start = combined_timeline.cut_start;
+        analysis.cut_out = combined_timeline.cut_out;
+        analysis.fade_out_start = analysis.cut_out.saturating_sub(Duration::from_secs(4));
+        analysis.recommended_exit = analysis
+            .fade_out_start
+            .max(analysis.vocal_out.unwrap_or(Duration::ZERO))
+            .min(duration.saturating_sub(Duration::from_millis(100)));
+        analysis.recommended_entry = analysis.cut_start;
+        analysis.transition_confidence =
+            transition_confidence(analysis.bpm_confidence, &combined_timeline, duration);
+        analysis.energy_profile = combined_timeline.energy_profile;
+        analysis.vocals_confidence = combined_timeline.vocals_confidence;
+        analysis.vocal_regions = combined_timeline.vocal_regions;
     }
     Ok(analysis)
-}
-
-fn detect_tail_fade_start(
-    samples: &[f32],
-    sample_rate: u32,
-    channels: u16,
-    track_energy: f32,
-    tail_start: Duration,
-) -> Duration {
-    let channel_count = channels.max(1) as usize;
-    let mono: Vec<f32> = samples
-        .chunks(channel_count)
-        .map(|frame| frame.iter().copied().sum::<f32>() / frame.len().max(1) as f32)
-        .collect();
-    let frame_samples = (sample_rate as usize / 50).max(1);
-    let threshold = (track_energy * 0.12).max(0.002);
-    let last_audible = mono
-        .chunks(frame_samples)
-        .enumerate()
-        .filter_map(|(index, frame)| {
-            let rms = (frame.iter().map(|sample| sample * sample).sum::<f32>()
-                / frame.len().max(1) as f32)
-                .sqrt();
-            (rms >= threshold).then_some(index)
-        })
-        .next_back()
-        .unwrap_or(0);
-    tail_start
-        .saturating_add(Duration::from_millis(last_audible as u64 * 20))
-        .saturating_sub(Duration::from_secs(4))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -594,6 +939,7 @@ pub struct TransitionPlan {
     pub entry: Duration,
     pub duration: Duration,
     pub beat_aligned: bool,
+    pub bar_aligned: bool,
     pub aggressive_outro: bool,
     pub fallback: Option<TransitionFallback>,
 }
@@ -606,6 +952,7 @@ impl TransitionPlan {
             entry: Duration::ZERO,
             duration: max_duration,
             beat_aligned: false,
+            bar_aligned: false,
             aggressive_outro: false,
             fallback: None,
         }
@@ -620,20 +967,26 @@ pub fn plan_transition(
     if current.duration.is_zero() || next.duration.is_zero() {
         return Err(TransitionFallback::InvalidBounds);
     }
-    if current.bpm_confidence < 0.6 || next.bpm_confidence < 0.6 {
+    if current.bpm_confidence <= 0.4
+        || next.bpm_confidence <= 0.4
+        || current.transition_confidence < 0.5
+        || next.transition_confidence < 0.5
+    {
         return Err(TransitionFallback::LowConfidence);
     }
+    let minimum_duration = Duration::from_millis(100);
     let mut duration = default_duration
         .min(current.duration)
         .min(next.duration)
-        .max(Duration::from_millis(100));
+        .max(minimum_duration);
     let mut exit = current
         .recommended_exit
-        .min(current.duration.saturating_sub(duration));
+        .min(current.duration.saturating_sub(minimum_duration));
     let mut entry = next
         .recommended_entry
-        .min(next.duration.saturating_sub(duration));
+        .min(next.duration.saturating_sub(minimum_duration));
     let mut beat_aligned = false;
+    let mut bar_aligned = false;
     if let (Some(current_period), Some(current_first), Some(next_period), Some(next_first)) = (
         current.beat_period,
         current.first_beat,
@@ -642,43 +995,150 @@ pub fn plan_transition(
     ) && current_period > Duration::ZERO
         && next_period > Duration::ZERO
     {
-        exit = snap_to_beat(exit, current_first, current_period)
-            .min(current.duration.saturating_sub(duration));
-        entry = snap_to_beat(entry, next_first, next_period)
-            .min(next.duration.saturating_sub(duration));
-        duration = duration.min(current.duration.saturating_sub(exit));
-        beat_aligned = true;
+        let current_bar_period = current_period.saturating_mul(current.bar_beats.max(1) as u32);
+        let full_duration_grid = || {
+            Some((
+                snap_to_grid_with_limit(
+                    exit,
+                    current_first,
+                    current_bar_period,
+                    current.duration.saturating_sub(duration),
+                )?,
+                snap_to_grid_with_limit(
+                    entry,
+                    next_first,
+                    next_period,
+                    next.duration.saturating_sub(duration),
+                )?,
+            ))
+        };
+        let contracted_grid = || {
+            Some((
+                snap_to_grid_with_limit(
+                    exit,
+                    current_first,
+                    current_bar_period,
+                    current.duration.saturating_sub(minimum_duration),
+                )?,
+                snap_to_grid_with_limit(
+                    entry,
+                    next_first,
+                    next_period,
+                    next.duration.saturating_sub(minimum_duration),
+                )?,
+            ))
+        };
+        if let Some((snapped_exit, snapped_entry)) = full_duration_grid().or_else(contracted_grid) {
+            exit = snapped_exit;
+            entry = snapped_entry;
+            beat_aligned = true;
+            bar_aligned = current.bar_beats > 1;
+        }
     }
-    if duration < Duration::from_millis(100) {
+    duration = duration
+        .min(current.duration.saturating_sub(exit))
+        .min(next.duration.saturating_sub(entry));
+    if duration < minimum_duration {
         return Err(TransitionFallback::InvalidBounds);
     }
-    let aggressive_outro = current.vocals_confidence < 0.3 && current.energy < 0.45;
-    if aggressive_outro {
-        let advance = current
-            .beat_period
-            .unwrap_or(Duration::from_millis(500))
-            .saturating_mul(2);
-        exit = exit.saturating_sub(advance);
-        duration = duration
-            .min(Duration::from_secs(3))
-            .max(Duration::from_millis(300));
+    let aggressive_outro = apply_aggressive_outro(current, exit, duration);
+    if let Some((new_exit, new_duration)) = aggressive_outro {
+        exit = new_exit;
+        duration = new_duration
+            .min(current.duration.saturating_sub(exit))
+            .min(next.duration.saturating_sub(entry));
+    }
+    if duration < minimum_duration {
+        return Err(TransitionFallback::InvalidBounds);
     }
     Ok(TransitionPlan {
         exit,
         entry,
         duration,
         beat_aligned,
-        aggressive_outro,
+        bar_aligned,
+        aggressive_outro: aggressive_outro.is_some(),
         fallback: None,
     })
 }
 
-fn snap_to_beat(value: Duration, first: Duration, period: Duration) -> Duration {
+fn snap_to_grid(value: Duration, first: Duration, period: Duration) -> Duration {
     if value <= first {
         return first;
     }
     let steps = value.saturating_sub(first).as_secs_f64() / period.as_secs_f64();
     first + period.mul_f64(steps.round().max(0.0))
+}
+
+fn snap_to_grid_with_limit(
+    value: Duration,
+    first: Duration,
+    period: Duration,
+    latest: Duration,
+) -> Option<Duration> {
+    if period.is_zero() || first > latest {
+        return None;
+    }
+    let snapped = snap_to_grid(value, first, period);
+    if snapped <= latest {
+        return Some(snapped);
+    }
+    let steps = latest.saturating_sub(first).as_secs_f64() / period.as_secs_f64();
+    Some(first + period.mul_f64(steps.floor().max(0.0)))
+}
+
+fn apply_aggressive_outro(
+    analysis: &TrackAnalysis,
+    current_exit: Duration,
+    current_duration: Duration,
+) -> Option<(Duration, Duration)> {
+    if analysis.vocals_confidence < 0.55 {
+        return None;
+    }
+    let vocal_out = analysis.vocal_out?;
+    let tail_end = analysis.cut_out.min(analysis.duration);
+    let tail_length = tail_end.saturating_sub(vocal_out);
+    if tail_length <= Duration::from_secs(8) {
+        return None;
+    }
+
+    let high_energy = analysis.outro_energy_db? > -12.0;
+    let mut new_exit = if let (Some(first), Some(period)) =
+        (analysis.first_beat, analysis.beat_period)
+        && period > Duration::ZERO
+    {
+        let relative = vocal_out.saturating_sub(first).as_secs_f64();
+        let period_seconds = period.as_secs_f64();
+        let mut beat_index = (relative / period_seconds).floor().max(0.0) as u64;
+        if relative % period_seconds > period_seconds * 0.9 {
+            beat_index = beat_index.saturating_add(1);
+        }
+        beat_index = beat_index.saturating_add(if high_energy { 8 } else { 1 });
+        if high_energy {
+            let bar = u64::from(analysis.bar_beats.max(1));
+            beat_index = beat_index.saturating_add(bar - 1) / bar * bar;
+        }
+        first.saturating_add(period.saturating_mul(beat_index.min(u32::MAX as u64) as u32))
+    } else {
+        vocal_out.saturating_add(if high_energy {
+            Duration::from_secs(4)
+        } else {
+            Duration::from_millis(500)
+        })
+    };
+    new_exit = new_exit.min(tail_end.saturating_sub(Duration::from_secs(1)));
+    if new_exit >= current_exit {
+        return None;
+    }
+    let max_fade = if high_energy {
+        Duration::from_secs(5)
+    } else {
+        Duration::from_secs(3)
+    };
+    let duration = current_duration
+        .min(max_fade)
+        .min(tail_end.saturating_sub(new_exit));
+    (duration >= Duration::from_millis(300)).then_some((new_exit, duration))
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -825,11 +1285,54 @@ mod tests {
         let config = AnalysisConfig::default();
         let analysis = TrackAnalysis::fallback("song", Duration::from_secs(30));
         cache.store(&analysis, config).unwrap();
-        assert_eq!(cache.load("song", config).unwrap(), Some(analysis));
+        assert_eq!(cache.load("song", config).unwrap(), Some(analysis.clone()));
 
         let path = cache.path_for("song", config);
         fs::write(&path, b"not-json").unwrap();
         assert_eq!(cache.load("song", config).unwrap(), None);
+        assert!(!path.exists());
+        cache.store(&analysis, config).unwrap();
+        assert_eq!(cache.load("song", config).unwrap(), Some(analysis));
+        assert!(fs::read_dir(&root).unwrap().all(|entry| {
+            let extension = entry
+                .unwrap()
+                .path()
+                .extension()
+                .map(|value| value.to_owned());
+            extension.as_deref() == Some(std::ffi::OsStr::new("json"))
+        }));
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn cache_invalidates_old_schema_and_preserves_a_competing_valid_publish() {
+        let root = std::env::temp_dir().join(format!(
+            "rustle-automix-version-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let cache = AnalysisCache::new(&root, 2);
+        let config = AnalysisConfig::default();
+        let analysis = TrackAnalysis::fallback("song", Duration::from_secs(30));
+        fs::create_dir_all(&root).unwrap();
+        let path = cache.path_for("song", config);
+        let mut old = analysis.clone();
+        old.schema_version = config.schema_version.saturating_sub(1);
+        fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+        assert_eq!(cache.load("song", config).unwrap(), None);
+        assert!(!path.exists());
+
+        cache.store(&analysis, config).unwrap();
+        let claim = path.with_extension("write.lock");
+        fs::write(&claim, b"writer").unwrap();
+        let mut competing = analysis.clone();
+        competing.energy = 0.9;
+        cache.store(&competing, config).unwrap();
+        assert_eq!(cache.load("song", config).unwrap(), Some(analysis));
+        let _ = fs::remove_file(claim);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -849,6 +1352,8 @@ mod tests {
         );
         assert_eq!(analysis.energy, 0.0);
         assert_eq!(analysis.bpm_confidence, 0.0);
+        assert!(!analysis.energy_profile.is_empty());
+        assert!(analysis.vocal_regions.is_empty());
         assert!(analysis.is_compatible(config));
     }
 
@@ -874,12 +1379,49 @@ mod tests {
     }
 
     #[test]
-    fn tail_fade_detection_uses_absolute_track_time() {
-        let mut tail = vec![0.4; 5_000];
-        tail.extend(vec![0.0; 5_000]);
-        let fade = detect_tail_fade_start(&tail, 1_000, 1, 0.4, Duration::from_secs(90));
-        assert!(fade >= Duration::from_secs(90));
-        assert!(fade < Duration::from_secs(96));
+    fn timeline_features_keep_absolute_tail_positions_and_vocal_regions() {
+        let sample_rate = 8_000;
+        let mut samples = Vec::with_capacity(sample_rate as usize * 10);
+        for index in 0..sample_rate as usize * 5 {
+            let time = index as f32 / sample_rate as f32;
+            samples.push((time * 500.0 * std::f32::consts::TAU).sin() * 0.5);
+        }
+        for index in 0..sample_rate as usize * 5 {
+            let time = index as f32 / sample_rate as f32;
+            samples.push((time * 100.0 * std::f32::consts::TAU).sin() * 0.15);
+        }
+        let timeline = timeline_features(
+            &samples,
+            sample_rate,
+            0.3,
+            Duration::from_secs(90),
+            Duration::from_secs(100),
+        );
+        assert!(
+            timeline
+                .energy_profile
+                .iter()
+                .all(|point| point.at >= Duration::from_secs(90))
+        );
+        assert_eq!(timeline.cut_out, Duration::from_secs(100));
+        assert!(
+            timeline
+                .vocal_regions
+                .iter()
+                .all(|region| region.start >= Duration::from_secs(90))
+        );
+        assert!(timeline.vocals_confidence >= 0.55);
+    }
+
+    #[test]
+    fn bounded_collection_stops_cooperatively_when_cancelled() {
+        let checks = std::cell::Cell::new(0usize);
+        let result = collect_samples(&mut std::iter::repeat(0.1), 20_000, &|| {
+            checks.set(checks.get() + 1);
+            checks.get() > 1
+        });
+        assert_eq!(result.unwrap_err(), "Automix analysis cancelled");
+        assert!(checks.get() >= 2);
     }
 
     #[test]
@@ -892,16 +1434,19 @@ mod tests {
         );
         current.bpm = Some(120.0);
         current.bpm_confidence = 0.9;
+        current.transition_confidence = 0.9;
         current.beat_period = Some(Duration::from_millis(500));
         current.first_beat = Some(Duration::from_millis(100));
         let mut next = next;
         next.bpm = Some(120.0);
         next.bpm_confidence = 0.9;
+        next.transition_confidence = 0.9;
         next.beat_period = Some(Duration::from_millis(500));
         next.first_beat = Some(Duration::from_millis(100));
         let plan = plan_transition(&current, &next, Duration::from_secs(5)).unwrap();
         assert!(plan.duration <= Duration::from_secs(2));
         assert!(plan.beat_aligned);
+        assert!(plan.bar_aligned);
     }
 
     #[test]
@@ -947,22 +1492,76 @@ mod tests {
     }
 
     #[test]
-    fn aggressive_outro_advances_quiet_non_vocal_exit() {
-        let mut current = TrackAnalysis::fallback("a", Duration::from_secs(30));
-        let mut next = TrackAnalysis::fallback("b", Duration::from_secs(30));
+    fn aggressive_outro_uses_trusted_vocal_out_and_outro_energy() {
+        let mut current = TrackAnalysis::fallback("a", Duration::from_secs(40));
+        let mut next = TrackAnalysis::fallback("b", Duration::from_secs(40));
         for analysis in [&mut current, &mut next] {
             analysis.bpm = Some(120.0);
             analysis.bpm_confidence = 0.9;
+            analysis.transition_confidence = 0.9;
             analysis.first_beat = Some(Duration::ZERO);
             analysis.beat_period = Some(Duration::from_millis(500));
             analysis.energy = 0.8;
         }
-        current.energy = 0.2;
-        current.vocals_confidence = 0.1;
+        current.cut_out = Duration::from_secs(40);
+        current.recommended_exit = Duration::from_secs(35);
+        current.vocals_confidence = 0.8;
+        current.vocal_out = Some(Duration::from_secs(20));
+        current.outro_energy_db = Some(-20.0);
         let plan = plan_transition(&current, &next, Duration::from_secs(5)).unwrap();
         assert!(plan.aggressive_outro);
         assert!(plan.duration <= Duration::from_secs(3));
         assert!(plan.exit < current.recommended_exit);
+
+        current.vocals_confidence = 0.4;
+        let plan = plan_transition(&current, &next, Duration::from_secs(5)).unwrap();
+        assert!(!plan.aggressive_outro);
+    }
+
+    #[test]
+    fn planner_snaps_exit_to_bar_and_entry_to_beat() {
+        let mut current = TrackAnalysis::fallback("a", Duration::from_secs(40));
+        let mut next = TrackAnalysis::fallback("b", Duration::from_secs(40));
+        for analysis in [&mut current, &mut next] {
+            analysis.bpm = Some(120.0);
+            analysis.bpm_confidence = 0.9;
+            analysis.transition_confidence = 0.9;
+            analysis.first_beat = Some(Duration::from_millis(100));
+            analysis.beat_period = Some(Duration::from_millis(500));
+            analysis.bar_beats = 4;
+        }
+        current.recommended_exit = Duration::from_millis(13_300);
+        next.recommended_entry = Duration::from_millis(1_320);
+        let plan = plan_transition(&current, &next, Duration::from_secs(5)).unwrap();
+        assert_eq!(plan.exit, Duration::from_millis(14_100));
+        assert_eq!(plan.entry, Duration::from_millis(1_100));
+        assert!(plan.beat_aligned);
+        assert!(plan.bar_aligned);
+    }
+
+    #[test]
+    fn planner_keeps_grid_alignment_when_the_nearest_point_exceeds_bounds() {
+        let mut current = TrackAnalysis::fallback("a", Duration::from_millis(10_100));
+        let mut next = TrackAnalysis::fallback("b", Duration::from_millis(10_100));
+        for analysis in [&mut current, &mut next] {
+            analysis.bpm = Some(120.0);
+            analysis.bpm_confidence = 0.9;
+            analysis.transition_confidence = 0.9;
+            analysis.first_beat = Some(Duration::from_millis(100));
+            analysis.beat_period = Some(Duration::from_millis(500));
+            analysis.bar_beats = 4;
+        }
+        current.recommended_exit = Duration::from_millis(5_100);
+        next.recommended_entry = Duration::from_millis(5_100);
+
+        let plan = plan_transition(&current, &next, Duration::from_secs(5)).unwrap();
+        assert_eq!(plan.exit, Duration::from_millis(4_100));
+        assert_eq!(plan.entry, Duration::from_millis(5_100));
+        assert_eq!(plan.duration, Duration::from_secs(5));
+        assert!(plan.beat_aligned);
+        assert!(plan.bar_aligned);
+        assert!(plan.exit + plan.duration <= current.duration);
+        assert!(plan.entry + plan.duration <= next.duration);
     }
 
     #[test]
