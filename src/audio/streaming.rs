@@ -35,6 +35,10 @@ pub const HIGH_WATER_MARK_BYTES: u64 = 3 * 1024 * 1024;
 /// The remote object length must never determine the in-memory allocation.
 pub const STREAMING_BUFFER_CAPACITY_BYTES: usize = 4 * 1024 * 1024;
 
+fn range_window_needs_refill(buffered_ahead: u64) -> bool {
+    buffered_ahead < HIGH_WATER_MARK_BYTES
+}
+
 /// Maximum prefix read while identifying a finalized cache file.
 const FORMAT_DETECTION_PREFIX_BYTES: usize = 64 * 1024;
 
@@ -1028,7 +1032,6 @@ pub fn start_buffer_download(
         let mut start = 1u64;
         let mut active_epoch = buffer_clone.window_epoch();
         let mut feed_ring = true;
-        let mut refilling = true;
 
         'download: loop {
             if identity_for_task.is_cancelled() || buffer_clone.is_cancelled() {
@@ -1044,17 +1047,11 @@ pub fn start_buffer_download(
                 active_epoch = epoch;
                 start = offset.min(total_size.saturating_sub(1));
                 feed_ring = true;
-                refilling = true;
             }
 
             if feed_ring {
                 let buffered_ahead = buffer_clone.buffered_ahead();
-                if !refilling && buffered_ahead > LOW_WATER_MARK_BYTES {
-                    tokio::time::sleep(Duration::from_millis(25)).await;
-                    continue;
-                }
-                refilling = true;
-                if buffered_ahead >= HIGH_WATER_MARK_BYTES {
+                if !range_window_needs_refill(buffered_ahead) {
                     if !playable_sent {
                         if let Some(tx) = &event_tx {
                             let _ = tx
@@ -1066,7 +1063,6 @@ pub fn start_buffer_download(
                         }
                         playable_sent = true;
                     }
-                    refilling = false;
                     tokio::time::sleep(Duration::from_millis(25)).await;
                     continue;
                 }
@@ -1238,9 +1234,6 @@ pub fn start_buffer_download(
                 ));
             }
             start = end.saturating_add(1);
-            if feed_ring && buffer_clone.buffered_ahead() >= HIGH_WATER_MARK_BYTES {
-                refilling = false;
-            }
         }
 
         if let Err(error) = file.flush() {
@@ -1395,6 +1388,13 @@ pub async fn wait_for_buffer_playable(buffer: &SharedBuffer, timeout_secs: u64) 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn range_window_refills_through_the_previous_low_high_dead_zone() {
+        assert!(range_window_needs_refill(LOW_WATER_MARK_BYTES + 1));
+        assert!(range_window_needs_refill(HIGH_WATER_MARK_BYTES - 1));
+        assert!(!range_window_needs_refill(HIGH_WATER_MARK_BYTES));
+    }
 
     #[test]
     fn test_shared_buffer_new() {

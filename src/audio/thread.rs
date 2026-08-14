@@ -421,22 +421,15 @@ fn audio_thread_main(
                 if !generation.accepts(&context) {
                     continue;
                 }
-                // Check data availability before resuming
-                // Use HIGH water mark to ensure smooth playback after resume
                 if let Some(ref buf) = current_buffer {
                     let remaining_bytes = buf.buffered_ahead();
-
-                    // Require HIGH water mark worth of data before resuming
-                    // This prevents immediate re-buffering after resume
-                    if remaining_bytes < HIGH_WATER_MARK_BYTES
-                        && !buf.is_complete()
-                        && !buf.remote_eof_reached()
-                    {
-                        // Not enough data, enter Buffering instead of Playing
+                    let source_has_all_required_bytes =
+                        buf.is_complete() || buf.remote_eof_reached();
+                    if should_enter_buffering(remaining_bytes, source_has_all_required_bytes) {
                         tracing::info!(
-                            "Resume: remaining {} bytes < {} (high water mark), entering Buffering",
+                            "Resume: remaining {} bytes < {} (low water mark), entering Buffering",
                             remaining_bytes,
-                            HIGH_WATER_MARK_BYTES
+                            LOW_WATER_MARK_BYTES
                         );
                         let position = player.get_info().position;
                         enter_buffering(&mut player, &state, &event_tx, position, context.clone());
@@ -1486,18 +1479,21 @@ fn check_buffer_status(
 
     match &current_status {
         PlaybackStatus::Playing
-            // Check if we need to enter Buffering (LOW water mark)
-            // Only enter Buffering if:
-            // 1. Remaining data is below LOW_WATER_MARK_BYTES, AND
-            // 2. Download is not complete
-            if remaining_bytes < LOW_WATER_MARK_BYTES && !source_has_all_required_bytes => {
-                tracing::info!(
-                    "Buffer low: remaining {} bytes < {} (low water mark), entering Buffering",
-                    remaining_bytes,
-                    LOW_WATER_MARK_BYTES
-                );
-                enter_buffering(player, state, event_tx, player_info.position, context.clone());
-            }
+            if should_enter_buffering(remaining_bytes, source_has_all_required_bytes) =>
+        {
+            tracing::info!(
+                "Buffer low: remaining {} bytes < {} (low water mark), entering Buffering",
+                remaining_bytes,
+                LOW_WATER_MARK_BYTES
+            );
+            enter_buffering(
+                player,
+                state,
+                event_tx,
+                player_info.position,
+                context.clone(),
+            );
+        }
         PlaybackStatus::Buffering { .. } => {
             // Check if we can exit Buffering (HIGH water mark)
             // Exit Buffering if:
@@ -1518,6 +1514,10 @@ fn check_buffer_status(
         }
         _ => {}
     }
+}
+
+fn should_enter_buffering(remaining_bytes: u64, source_has_all_required_bytes: bool) -> bool {
+    remaining_bytes < LOW_WATER_MARK_BYTES && !source_has_all_required_bytes
 }
 
 /// Enter Buffering state
@@ -1694,5 +1694,13 @@ mod tests {
             crate::audio::identity::PlaybackGeneration(2),
             FinishReason::Natural
         ));
+    }
+
+    #[test]
+    fn resume_buffering_uses_low_water_mark_without_hysteresis_deadlock() {
+        assert!(should_enter_buffering(LOW_WATER_MARK_BYTES - 1, false));
+        assert!(!should_enter_buffering(LOW_WATER_MARK_BYTES, false));
+        assert!(!should_enter_buffering(HIGH_WATER_MARK_BYTES - 1, false));
+        assert!(!should_enter_buffering(0, true));
     }
 }
