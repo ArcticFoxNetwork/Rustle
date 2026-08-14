@@ -201,10 +201,11 @@ impl App {
 
                 return Task::perform(
                     async move {
-                        // Startup restore does not surface streaming progress, but a
-                        // cached resolution emits both Playable and Complete before
-                        // returning. Keep enough capacity for both terminal events.
-                        let (event_tx, _event_rx) = tokio::sync::mpsc::channel(2);
+                        // Startup restore does not surface streaming progress. Drain
+                        // the resolver channel so strict Range startup can reach its
+                        // high watermark without progress backpressure.
+                        let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(32);
+                        tokio::spawn(async move { while event_rx.recv().await.is_some() {} });
                         crate::app::update::song_resolver::resolve_song(
                             client,
                             &song_clone,

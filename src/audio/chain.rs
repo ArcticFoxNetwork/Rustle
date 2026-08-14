@@ -225,6 +225,10 @@ impl PlaybackProcessingRuntime {
         self.fade_control.fade_to(volume, duration);
     }
 
+    pub(crate) fn fade_from_to(&self, from: f32, volume: f32, duration: std::time::Duration) {
+        self.fade_control.fade_from_to(from, volume, duration);
+    }
+
     pub(crate) fn crossfade_to(&self, volume: f32, duration: std::time::Duration) {
         self.fade_control.fade_to_equal_power(volume, duration);
     }

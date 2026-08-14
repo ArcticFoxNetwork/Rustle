@@ -407,14 +407,14 @@ fn audio_thread_main(
                     player.pause_with_fade(true);
                 } else {
                     player.pause();
+                    update_state_from_player(&player, &state);
+                    let pos = player.get_info().position;
+                    let _ = event_tx.send(AudioEvent::Paused {
+                        context,
+                        request_id: None,
+                        position: pos,
+                    });
                 }
-                update_state_from_player(&player, &state);
-                let pos = player.get_info().position;
-                let _ = event_tx.send(AudioEvent::Paused {
-                    context,
-                    request_id: None,
-                    position: pos,
-                });
             }
 
             AudioCommand::Resume { context, fade_in } => {
@@ -424,28 +424,22 @@ fn audio_thread_main(
                 // Check data availability before resuming
                 // Use HIGH water mark to ensure smooth playback after resume
                 if let Some(ref buf) = current_buffer {
-                    let info = player.get_info();
-                    let byte_pos =
-                        estimate_byte_position(info.position, buf.total_size(), info.duration);
-                    let downloaded = buf.downloaded();
-                    let remaining_bytes = downloaded.saturating_sub(byte_pos);
+                    let remaining_bytes = buf.buffered_ahead();
 
                     // Require HIGH water mark worth of data before resuming
                     // This prevents immediate re-buffering after resume
-                    if remaining_bytes < HIGH_WATER_MARK_BYTES && !buf.is_complete() {
+                    if remaining_bytes < HIGH_WATER_MARK_BYTES
+                        && !buf.is_complete()
+                        && !buf.remote_eof_reached()
+                    {
                         // Not enough data, enter Buffering instead of Playing
                         tracing::info!(
                             "Resume: remaining {} bytes < {} (high water mark), entering Buffering",
                             remaining_bytes,
                             HIGH_WATER_MARK_BYTES
                         );
-                        enter_buffering(
-                            &mut player,
-                            &state,
-                            &event_tx,
-                            info.position,
-                            context.clone(),
-                        );
+                        let position = player.get_info().position;
+                        enter_buffering(&mut player, &state, &event_tx, position, context.clone());
                         continue;
                     }
                 }
@@ -796,15 +790,17 @@ fn audio_thread_main(
 
         let _ = player.poll_transition();
 
-        if player.poll_pending_pause()
-            && let Some(context) = current_context.as_ref()
-            && generation.accepts(context)
-        {
-            let _ = event_tx.send(AudioEvent::Paused {
-                context: context.clone(),
-                request_id: None,
-                position: player.get_info().position,
-            });
+        if player.poll_pending_pause() {
+            update_state_from_player(&player, &state);
+            if let Some(context) = current_context.as_ref()
+                && generation.accepts(context)
+            {
+                let _ = event_tx.send(AudioEvent::Paused {
+                    context: context.clone(),
+                    request_id: None,
+                    position: player.get_info().position,
+                });
+            }
         }
 
         // Check if playback finished after each command
@@ -1042,7 +1038,7 @@ fn handle_play_streaming(
     setup_buffer_callback(&shared_buffer, buffer_mailbox, &context);
 
     // Initialize buffer progress (may be 0 if HTTP response not yet received)
-    let downloaded = shared_buffer.downloaded();
+    let downloaded = shared_buffer.cached_bytes();
     let total = shared_buffer.total_size();
     state.set_buffer_bytes(downloaded, total);
 
@@ -1099,7 +1095,7 @@ fn handle_load_paused_streaming(
     let shared_buffer = buffer.shared().clone();
     setup_buffer_callback(&shared_buffer, buffer_mailbox, &context);
 
-    let downloaded = shared_buffer.downloaded();
+    let downloaded = shared_buffer.cached_bytes();
     let total = shared_buffer.total_size();
     state.set_buffer_bytes(downloaded, total);
 
@@ -1453,24 +1449,12 @@ fn handle_buffer_data_update(
     if let Some(buf) = current_buffer
         && let PlaybackStatus::Buffering { .. } = state.get_info().status
     {
-        let player_info = player.get_info();
-        let check_position = state.pending_seek_target().unwrap_or(player_info.position);
-        let byte_pos = estimate_byte_position(check_position, total, player_info.duration);
-        let remaining_bytes = downloaded.saturating_sub(byte_pos);
-        if buf.is_complete() || remaining_bytes > HIGH_WATER_MARK_BYTES {
+        let remaining_bytes = buf.buffered_ahead();
+        if buf.is_complete() || buf.remote_eof_reached() || remaining_bytes >= HIGH_WATER_MARK_BYTES
+        {
             exit_buffering(player, state, event_tx, generation, context);
         }
     }
-}
-
-/// This is an approximation assuming constant bitrate.
-/// For VBR files, this may not be accurate, but it's good enough for buffering decisions.
-fn estimate_byte_position(time_pos: Duration, total_bytes: u64, duration: Duration) -> u64 {
-    if duration.as_secs_f64() <= 0.0 || total_bytes == 0 {
-        return 0;
-    }
-    let progress = time_pos.as_secs_f64() / duration.as_secs_f64();
-    (total_bytes as f64 * progress) as u64
 }
 
 /// Check buffer status and enter/exit Buffering state as needed
@@ -1478,8 +1462,8 @@ fn estimate_byte_position(time_pos: Duration, total_bytes: u64, duration: Durati
 /// Called periodically from Tick handler for streaming playback.
 ///
 /// Uses hysteresis (watermark) mechanism to prevent rapid state oscillation:
-/// - Enter Buffering when remaining data < LOW_WATER_MARK_BYTES (~1 second)
-/// - Exit Buffering when remaining data > HIGH_WATER_MARK_BYTES (~10 seconds)
+/// - Enter Buffering when decoder-visible data < LOW_WATER_MARK_BYTES
+/// - Exit Buffering when decoder-visible data >= HIGH_WATER_MARK_BYTES
 ///
 /// IMPORTANT: Uses state.get_info().status (SharedPlaybackState) instead of
 /// player.get_info().status because enter_buffering/exit_buffering only update
@@ -1495,20 +1479,10 @@ fn check_buffer_status(
 ) {
     // Use SharedPlaybackState for status check (single source of truth)
     let current_status = state.get_info().status;
-    // Use player for position and duration (playback info)
+    // Use player for the user-visible position only.
     let player_info = player.get_info();
-
-    // CRITICAL: If there's a pending seek, we must check buffer at the SEEK TARGET position,
-    // not the current playback position. Otherwise, we might incorrectly exit Buffering
-    // because the old position has enough data, then execute seek to unbuffered position
-    // which would block the audio thread.
-    let check_position = state.pending_seek_target().unwrap_or(player_info.position);
-
-    // Calculate byte position and remaining buffered bytes at check_position
-    let byte_pos =
-        estimate_byte_position(check_position, buffer.total_size(), player_info.duration);
-    let downloaded = buffer.downloaded();
-    let remaining_bytes = downloaded.saturating_sub(byte_pos);
+    let remaining_bytes = buffer.buffered_ahead();
+    let source_has_all_required_bytes = buffer.is_complete() || buffer.remote_eof_reached();
 
     match &current_status {
         PlaybackStatus::Playing
@@ -1516,7 +1490,7 @@ fn check_buffer_status(
             // Only enter Buffering if:
             // 1. Remaining data is below LOW_WATER_MARK_BYTES, AND
             // 2. Download is not complete
-            if remaining_bytes < LOW_WATER_MARK_BYTES && !buffer.is_complete() => {
+            if remaining_bytes < LOW_WATER_MARK_BYTES && !source_has_all_required_bytes => {
                 tracing::info!(
                     "Buffer low: remaining {} bytes < {} (low water mark), entering Buffering",
                     remaining_bytes,
@@ -1529,10 +1503,10 @@ fn check_buffer_status(
             // Exit Buffering if:
             // 1. Remaining data exceeds HIGH_WATER_MARK_BYTES, OR
             // 2. Download is complete (no more data coming)
-            if buffer.is_complete() {
-                tracing::info!("Download complete, exiting Buffering");
+            if source_has_all_required_bytes {
+                tracing::info!("Streaming window reached EOF, exiting Buffering");
                 exit_buffering(player, state, event_tx, generation, context.clone());
-            } else if remaining_bytes > HIGH_WATER_MARK_BYTES {
+            } else if remaining_bytes >= HIGH_WATER_MARK_BYTES {
                 tracing::info!(
                     "Buffer sufficient: remaining {} bytes > {} (high water mark), exiting Buffering",
                     remaining_bytes,
@@ -1663,6 +1637,7 @@ fn check_playback_finished(
     // For streaming playback, check if we should enter Buffering instead of finishing
     if let Some(buffer) = current_buffer
         && !buffer.is_complete()
+        && !buffer.remote_eof_reached()
     {
         return;
     }

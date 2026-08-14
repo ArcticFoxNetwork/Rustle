@@ -14,17 +14,21 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::time::Duration;
 
 use crate::audio::identity::{PlaybackContext, PreloadIdentity};
 use parking_lot::{Condvar, Mutex, RwLock};
 
 // ============ Constants ============
 
-/// When remaining buffered data falls below this, enter Buffering state.
-pub const LOW_WATER_MARK_BYTES: u64 = 40 * 1024;
+/// Refill once decoder-visible bytes fall below this threshold.
+pub const LOW_WATER_MARK_BYTES: u64 = 1024 * 1024;
 
-/// When buffered data exceeds this, exit Buffering and resume Playing.
-pub const HIGH_WATER_MARK_BYTES: u64 = 400 * 1024;
+/// Start/resume once decoder-visible bytes reach this threshold.
+///
+/// Keep this below the retained capacity so consumed history can remain
+/// available for container probes and short backward seeks.
+pub const HIGH_WATER_MARK_BYTES: u64 = 3 * 1024 * 1024;
 
 /// Fixed upper bound for decoder-facing retained bytes.
 ///
@@ -150,16 +154,6 @@ fn validate_range_response(
     Ok(range)
 }
 
-fn next_range_start(start: u64, total: u64, cached_prefix: u64) -> Option<u64> {
-    if start < total {
-        Some(start)
-    } else if cached_prefix < total {
-        Some(cached_prefix)
-    } else {
-        None
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StreamingIdentity {
     Playback(PlaybackContext),
@@ -234,6 +228,9 @@ struct SharedBufferInner {
     total_size: AtomicU64,
     /// Absolute end offset of bytes received so far.
     downloaded: AtomicU64,
+    /// Absolute decoder read position. The coordinator uses this instead of
+    /// estimating a byte offset from wall-clock playback time.
+    reader_position: AtomicU64,
     /// Latest decoder-requested Range window generation and start offset.
     window_epoch: AtomicU64,
     requested_offset: AtomicU64,
@@ -297,6 +294,7 @@ impl SharedBuffer {
                 base_offset: AtomicU64::new(0),
                 total_size: AtomicU64::new(total_size),
                 downloaded: AtomicU64::new(0),
+                reader_position: AtomicU64::new(0),
                 window_epoch: AtomicU64::new(0),
                 requested_offset: AtomicU64::new(0),
                 request_pending: AtomicBool::new(false),
@@ -351,8 +349,27 @@ impl SharedBuffer {
         self.inner.data.read().len()
     }
 
-    pub fn buffered_bytes(&self) -> u64 {
-        self.inner.data.read().len() as u64
+    /// Bytes retained ahead of the decoder's actual absolute read position.
+    pub fn buffered_ahead(&self) -> u64 {
+        let reader = self.reader_position();
+        let base = self.base_offset();
+        let end = self.downloaded();
+        if reader < base || reader > end {
+            0
+        } else {
+            end.saturating_sub(reader)
+        }
+    }
+
+    fn reader_position(&self) -> u64 {
+        self.inner.reader_position.load(Ordering::Acquire)
+    }
+
+    fn set_reader_position(&self, position: u64) {
+        self.inner
+            .reader_position
+            .store(position, Ordering::Release);
+        self.inner.data_available.notify_all();
     }
 
     /// Append bytes, evicting the oldest bytes when the fixed window is full.
@@ -379,6 +396,9 @@ impl SharedBuffer {
         downloaded = downloaded.saturating_add(chunk.len() as u64);
         self.inner.base_offset.store(base, Ordering::Release);
         self.inner.downloaded.store(downloaded, Ordering::Release);
+        self.inner
+            .cached_prefix
+            .store(downloaded, Ordering::Release);
         drop(data);
 
         self.inner.data_available.notify_all();
@@ -388,6 +408,9 @@ impl SharedBuffer {
 
     fn append_window(&self, start: u64, chunk: &[u8], epoch: u64) -> bool {
         if chunk.is_empty() || self.window_epoch() != epoch {
+            return false;
+        }
+        if chunk.len() > self.inner.capacity {
             return false;
         }
         let mut data = self.inner.data.write();
@@ -400,17 +423,20 @@ impl SharedBuffer {
             data.clear();
             base = start;
         }
-        let mut input = chunk;
-        if input.len() >= self.inner.capacity {
-            input = &input[input.len() - self.inner.capacity..];
-            base = start.saturating_add(chunk.len() as u64 - input.len() as u64);
-            data.clear();
+
+        let required_evict = data
+            .len()
+            .saturating_add(chunk.len())
+            .saturating_sub(self.inner.capacity);
+        let consumed = self.reader_position().saturating_sub(base) as usize;
+        if required_evict > consumed.min(data.len()) {
+            return false;
         }
-        while data.len() + input.len() > self.inner.capacity {
+        for _ in 0..required_evict {
             let _ = data.pop_front();
             base = base.saturating_add(1);
         }
-        data.extend(input.iter().copied());
+        data.extend(chunk.iter().copied());
         let end = start.saturating_add(chunk.len() as u64);
         self.inner.base_offset.store(base, Ordering::Release);
         self.inner.downloaded.store(end, Ordering::Release);
@@ -418,7 +444,7 @@ impl SharedBuffer {
         drop(data);
         self.inner.data_available.notify_all();
         self.notify_callback(BufferEvent::DataAppended {
-            downloaded: end,
+            downloaded: self.cached_prefix(),
             total: self.total_size(),
         });
         true
@@ -575,6 +601,16 @@ impl SharedBuffer {
                 return Err(io::Error::other(err.clone()));
             }
 
+            if !self.inner.coordinator_active.load(Ordering::Acquire) {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    format!(
+                        "streaming coordinator stopped before position {} became available",
+                        position
+                    ),
+                ));
+            }
+
             // Data not yet available, wait for download to progress
             // This enables seeking to positions that haven't been downloaded yet
             wait_count += 1;
@@ -615,6 +651,16 @@ impl SharedBuffer {
         self.inner.total_size.load(Ordering::Acquire)
     }
 
+    /// The active decoder window has reached the validated remote EOF. This
+    /// is independent from sparse cache backfill/finalization.
+    pub fn remote_eof_reached(&self) -> bool {
+        let total = self.total_size();
+        let reader = self.reader_position();
+        let base = self.base_offset();
+        let end = self.downloaded();
+        total > 0 && end >= total && reader >= base && reader <= end
+    }
+
     /// Update total size (when actual content-length is received)
     pub fn set_total_size(&self, size: u64) {
         self.inner.total_size.store(size, Ordering::Release);
@@ -628,6 +674,10 @@ impl SharedBuffer {
     /// Check if cancelled
     pub fn is_cancelled(&self) -> bool {
         self.inner.cancelled.load(Ordering::Acquire)
+    }
+
+    pub fn has_error(&self) -> bool {
+        self.inner.error.read().is_some()
     }
 
     /// Cancel the download
@@ -655,8 +705,13 @@ impl SharedBuffer {
         if total == 0 {
             return 0.0;
         }
-        let downloaded = self.inner.downloaded.load(Ordering::Acquire);
+        let downloaded = self.cached_prefix();
         (downloaded as f32 / total as f32).min(1.0)
+    }
+
+    /// Contiguous bytes persisted from the start of the remote object.
+    pub fn cached_bytes(&self) -> u64 {
+        self.cached_prefix()
     }
 }
 
@@ -686,8 +741,10 @@ impl StreamingBuffer {
 
 impl Read for StreamingBuffer {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.shared.set_reader_position(self.position);
         let bytes_read = self.shared.read_at(self.position, buf)?;
         self.position += bytes_read as u64;
+        self.shared.set_reader_position(self.position);
         Ok(bytes_read)
     }
 }
@@ -737,10 +794,16 @@ impl Seek for StreamingBuffer {
         };
 
         self.position = new_pos;
+        self.shared.set_reader_position(new_pos);
         let base = self.shared.base_offset();
         let end = self.shared.downloaded();
-        if new_pos < base || new_pos > end {
+        if new_pos < base || (new_pos >= end && new_pos < total) {
             self.shared.request_window(new_pos);
+        } else if self.shared.requested_window().is_some() {
+            // A rapid seek can return to retained data while an older miss is
+            // still in flight. Supersede that epoch with the current window's
+            // continuation so the stale response cannot replace readable data.
+            self.shared.request_window(end);
         }
         tracing::debug!(
             "StreamingBuffer seek to {} (downloaded: {}, total: {}, complete: {})",
@@ -818,6 +881,10 @@ pub fn start_buffer_download(
                 return;
             }
         };
+        if identity_for_task.is_cancelled() {
+            buffer_clone.cancel();
+            return;
+        }
 
         let probe = match client
             .get(&url)
@@ -840,6 +907,10 @@ pub fn start_buffer_download(
                 return;
             }
         };
+        if identity_for_task.is_cancelled() {
+            buffer_clone.cancel();
+            return;
+        }
 
         let probe_range = match validate_range_response(&probe, 0, 0) {
             Ok(range) => range,
@@ -888,6 +959,10 @@ pub fn start_buffer_download(
                 return;
             }
         };
+        if identity_for_task.is_cancelled() {
+            buffer_clone.cancel();
+            return;
+        }
         let total_size = probe_range.total;
         buffer_clone.set_total_size(total_size);
 
@@ -952,9 +1027,12 @@ pub fn start_buffer_download(
         }
         let mut start = 1u64;
         let mut active_epoch = buffer_clone.window_epoch();
+        let mut feed_ring = true;
+        let mut refilling = true;
 
-        loop {
-            if buffer_clone.is_cancelled() {
+        'download: loop {
+            if identity_for_task.is_cancelled() || buffer_clone.is_cancelled() {
+                buffer_clone.cancel();
                 drop(file);
                 let _ = std::fs::remove_file(&temp_path);
                 return;
@@ -965,18 +1043,44 @@ pub fn start_buffer_download(
             {
                 active_epoch = epoch;
                 start = offset.min(total_size.saturating_sub(1));
+                feed_ring = true;
+                refilling = true;
             }
 
-            match next_range_start(start, total_size, buffer_clone.cached_prefix()) {
-                Some(next) if next != start => {
-                    // A decoder-requested window can jump ahead and leave a hole
-                    // in the disk cache. Once that window reaches remote EOF,
-                    // resume from the contiguous prefix so finalization can finish.
-                    start = next;
+            if feed_ring {
+                let buffered_ahead = buffer_clone.buffered_ahead();
+                if !refilling && buffered_ahead > LOW_WATER_MARK_BYTES {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
                     continue;
                 }
-                Some(_) => {}
-                None => break,
+                refilling = true;
+                if buffered_ahead >= HIGH_WATER_MARK_BYTES {
+                    if !playable_sent {
+                        if let Some(tx) = &event_tx {
+                            let _ = tx
+                                .send(StreamingEvent::new(
+                                    identity.clone(),
+                                    StreamingEventKind::Playable,
+                                ))
+                                .await;
+                        }
+                        playable_sent = true;
+                    }
+                    refilling = false;
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                    continue;
+                }
+            }
+
+            if start >= total_size {
+                let cached_prefix = buffer_clone.cached_prefix();
+                if cached_prefix >= total_size {
+                    break;
+                }
+                // A seek can leave holes in the sparse cache. Backfill them
+                // without replacing the decoder's retained playback window.
+                start = cached_prefix;
+                feed_ring = false;
             }
 
             let end = (start.saturating_add(RANGE_CHUNK_BYTES).saturating_sub(1))
@@ -1003,6 +1107,12 @@ pub fn start_buffer_download(
                     return;
                 }
             };
+            if identity_for_task.is_cancelled() {
+                buffer_clone.cancel();
+                drop(file);
+                let _ = std::fs::remove_file(&temp_path);
+                return;
+            }
 
             if let Err(message) = validate_range_response(&response, start, end) {
                 fail(message.clone(), &buffer_clone);
@@ -1054,9 +1164,15 @@ pub fn start_buffer_download(
                     return;
                 }
             };
+            if identity_for_task.is_cancelled() {
+                buffer_clone.cancel();
+                drop(file);
+                let _ = std::fs::remove_file(&temp_path);
+                return;
+            }
 
             if buffer_clone.window_epoch() != active_epoch {
-                continue;
+                continue 'download;
             }
 
             if let Err(error) = file
@@ -1079,12 +1195,32 @@ pub fn start_buffer_download(
             if start == buffer_clone.cached_prefix() {
                 buffer_clone.set_cached_prefix(end.saturating_add(1));
             }
-            if !buffer_clone.append_window(start, &body, active_epoch) {
-                continue;
+            if feed_ring {
+                while !buffer_clone.append_window(start, &body, active_epoch) {
+                    if identity_for_task.is_cancelled() || buffer_clone.is_cancelled() {
+                        buffer_clone.cancel();
+                        drop(file);
+                        let _ = std::fs::remove_file(&temp_path);
+                        return;
+                    }
+                    if buffer_clone.window_epoch() != active_epoch {
+                        continue 'download;
+                    }
+                    // The ring is full of bytes the decoder has not consumed.
+                    // Keep the fetched chunk bounded and wait instead of
+                    // evicting unread audio.
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            } else {
+                buffer_clone.notify_callback(BufferEvent::DataAppended {
+                    downloaded: buffer_clone.cached_prefix(),
+                    total: total_size,
+                });
             }
             downloaded = end.saturating_add(1);
 
-            if !playable_sent && buffer_clone.buffered_bytes() >= HIGH_WATER_MARK_BYTES {
+            if feed_ring && !playable_sent && buffer_clone.buffered_ahead() >= HIGH_WATER_MARK_BYTES
+            {
                 if let Some(tx) = &event_tx {
                     let _ = tx
                         .send(StreamingEvent::new(
@@ -1096,14 +1232,15 @@ pub fn start_buffer_download(
                 playable_sent = true;
             }
             if let Some(tx) = &event_tx {
-                let _ = tx
-                    .send(StreamingEvent::new(
-                        identity.clone(),
-                        StreamingEventKind::Progress(buffer_clone.cached_prefix(), total_size),
-                    ))
-                    .await;
+                let _ = tx.try_send(StreamingEvent::new(
+                    identity.clone(),
+                    StreamingEventKind::Progress(buffer_clone.cached_prefix(), total_size),
+                ));
             }
             start = end.saturating_add(1);
+            if feed_ring && buffer_clone.buffered_ahead() >= HIGH_WATER_MARK_BYTES {
+                refilling = false;
+            }
         }
 
         if let Err(error) = file.flush() {
@@ -1231,6 +1368,28 @@ pub async fn wait_for_playable(
     .unwrap_or(false)
 }
 
+/// Wait until the retained decoder window itself reaches the startup high
+/// watermark. Unlike event-channel waiting, this remains safe for callers
+/// that intentionally discard progress events (for example startup restore).
+pub async fn wait_for_buffer_playable(buffer: &SharedBuffer, timeout_secs: u64) -> bool {
+    tokio::time::timeout(Duration::from_secs(timeout_secs), async {
+        loop {
+            if buffer.is_cancelled() || buffer.has_error() {
+                return false;
+            }
+            if buffer.buffered_ahead() >= HIGH_WATER_MARK_BYTES
+                || buffer.remote_eof_reached()
+                || buffer.is_complete()
+            {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .unwrap_or(false)
+}
+
 // ============ Tests ============
 
 #[cfg(test)]
@@ -1299,6 +1458,28 @@ mod tests {
     }
 
     #[test]
+    fn retained_seek_supersedes_an_older_in_flight_window_miss() {
+        let buffer = SharedBuffer::with_capacity(100, 8);
+        buffer.append(&[0, 1, 2, 3, 4, 5, 6, 7]);
+        buffer
+            .inner
+            .coordinator_active
+            .store(true, Ordering::Release);
+        let stale_epoch = buffer.request_window(40);
+
+        let mut streaming = StreamingBuffer::new(buffer.clone());
+        assert_eq!(streaming.seek(SeekFrom::Start(2)).unwrap(), 2);
+        let (current_epoch, requested_offset) = buffer.requested_window().unwrap();
+
+        assert_ne!(current_epoch, stale_epoch);
+        assert_eq!(requested_offset, 8);
+        assert!(!buffer.append_window(40, &[9, 9, 9], stale_epoch));
+        let mut bytes = [0; 2];
+        assert_eq!(buffer.read_at(2, &mut bytes).unwrap(), 2);
+        assert_eq!(bytes, [2, 3]);
+    }
+
+    #[test]
     fn declared_remote_eof_does_not_wait_for_sparse_cache_finalization() {
         let buffer = SharedBuffer::with_capacity(100, 8);
         buffer.append_window(92, &[1, 2, 3, 4, 5, 6, 7, 8], 0);
@@ -1308,10 +1489,77 @@ mod tests {
     }
 
     #[test]
-    fn range_coordinator_backfills_prefix_after_a_jump_and_stops_when_complete() {
-        assert_eq!(next_range_start(100, 100, 20), Some(20));
-        assert_eq!(next_range_start(40, 100, 20), Some(40));
-        assert_eq!(next_range_start(100, 100, 100), None);
+    fn retained_window_never_evicts_unread_decoder_bytes() {
+        let buffer = SharedBuffer::with_capacity(100, 8);
+        assert!(buffer.append_window(0, &[0, 1, 2, 3, 4, 5], 0));
+
+        assert!(!buffer.append_window(6, &[6, 7, 8, 9], 0));
+        assert_eq!(buffer.base_offset(), 0);
+        assert_eq!(buffer.end_offset(), 6);
+
+        buffer.set_reader_position(2);
+        assert!(buffer.append_window(6, &[6, 7, 8, 9], 0));
+        assert_eq!(buffer.base_offset(), 2);
+        assert_eq!(buffer.end_offset(), 10);
+        let mut bytes = [0; 8];
+        assert_eq!(buffer.read_at(2, &mut bytes).unwrap(), 8);
+        assert_eq!(bytes, [2, 3, 4, 5, 6, 7, 8, 9]);
+    }
+
+    #[test]
+    fn buffered_ahead_tracks_the_decoder_read_position() {
+        let buffer = SharedBuffer::with_capacity(100, 16);
+        assert!(buffer.append_window(0, &[0; 12], 0));
+        assert_eq!(buffer.buffered_ahead(), 12);
+
+        let mut streaming = StreamingBuffer::new(buffer.clone());
+        let mut bytes = [0; 5];
+        assert_eq!(streaming.read(&mut bytes).unwrap(), 5);
+        assert_eq!(buffer.buffered_ahead(), 7);
+
+        assert!(buffer.append_window(12, &[0; 4], 0));
+        assert_eq!(buffer.buffered_ahead(), 11);
+    }
+
+    #[test]
+    fn remote_eof_is_independent_from_cache_finalization() {
+        let buffer = SharedBuffer::with_capacity(12, 12);
+        assert!(buffer.append_window(0, &[0; 12], 0));
+        assert!(buffer.remote_eof_reached());
+        assert!(!buffer.is_complete());
+    }
+
+    #[test]
+    fn remote_eof_only_applies_while_reader_is_inside_the_eof_window() {
+        let buffer = SharedBuffer::with_capacity(100, 8);
+        assert!(buffer.append_window(92, &[0; 8], 0));
+
+        assert!(!buffer.remote_eof_reached());
+        buffer.set_reader_position(92);
+        assert!(buffer.remote_eof_reached());
+        buffer.set_reader_position(40);
+        assert!(!buffer.remote_eof_reached());
+    }
+
+    #[test]
+    fn stopped_coordinator_fails_unavailable_reads_instead_of_waiting_forever() {
+        let buffer = SharedBuffer::with_capacity(100, 8);
+        buffer.append(&[0; 4]);
+
+        let error = buffer.read_at(4, &mut [0; 1]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+    }
+
+    #[test]
+    fn cache_progress_does_not_jump_to_a_sparse_decoder_window() {
+        let buffer = SharedBuffer::with_capacity(100, 16);
+        buffer.append(&[0; 10]);
+        let epoch = buffer.request_window(80);
+        buffer.set_reader_position(80);
+        assert!(buffer.append_window(80, &[0; 8], epoch));
+
+        assert_eq!(buffer.cached_bytes(), 10);
+        assert!((buffer.progress() - 0.1).abs() < f32::EPSILON);
     }
 
     #[test]

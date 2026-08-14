@@ -524,15 +524,6 @@ impl SharedPlaybackState {
         self.inner.read().pending_seek.clone()
     }
 
-    /// Get pending seek target.
-    pub fn pending_seek_target(&self) -> Option<Duration> {
-        self.inner
-            .read()
-            .pending_seek
-            .as_ref()
-            .map(|pending| pending.target)
-    }
-
     /// Update from PlaybackInfo
     pub fn update_from_info(&self, info: &super::PlaybackInfo) {
         let mut inner = self.inner.write();

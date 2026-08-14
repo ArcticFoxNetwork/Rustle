@@ -24,6 +24,9 @@ struct FadeControlInner {
     target_volume: AtomicU32,
     /// Fade duration in milliseconds
     fade_duration_ms: AtomicU32,
+    /// Optional explicit ramp start. NaN means continue from the envelope's
+    /// current sample gain.
+    requested_start_volume: AtomicU32,
     /// Generation counter - incremented on each fade_to() call
     /// Used to detect new fade requests
     generation: AtomicU32,
@@ -40,6 +43,7 @@ impl FadeControl {
             inner: Arc::new(FadeControlInner {
                 target_volume: AtomicU32::new(initial_volume.to_bits()),
                 fade_duration_ms: AtomicU32::new(0),
+                requested_start_volume: AtomicU32::new(f32::NAN.to_bits()),
                 generation: AtomicU32::new(0),
                 completed_generation: AtomicU32::new(0),
                 curve: AtomicU32::new(0),
@@ -54,15 +58,24 @@ impl FadeControl {
     /// - Fade out: `fade_to(0.0, Duration::from_millis(300))`
     /// - Instant: `fade_to(0.5, Duration::ZERO)`
     pub fn fade_to(&self, volume: f32, duration: Duration) {
-        self.fade_to_with_curve(volume, duration, 0);
+        self.fade_to_with_curve(None, volume, duration, 0);
     }
 
     pub(crate) fn fade_to_equal_power(&self, volume: f32, duration: Duration) {
-        self.fade_to_with_curve(volume, duration, 1);
+        self.fade_to_with_curve(None, volume, duration, 1);
     }
 
-    fn fade_to_with_curve(&self, volume: f32, duration: Duration, curve: u32) {
+    pub(crate) fn fade_from_to(&self, from: f32, volume: f32, duration: Duration) {
+        self.fade_to_with_curve(Some(from), volume, duration, 0);
+    }
+
+    fn fade_to_with_curve(&self, from: Option<f32>, volume: f32, duration: Duration, curve: u32) {
         let volume = volume.clamp(0.0, 1.0);
+        self.inner.requested_start_volume.store(
+            from.map_or(f32::NAN, |value| value.clamp(0.0, 1.0))
+                .to_bits(),
+            Ordering::Release,
+        );
         self.inner
             .target_volume
             .store(volume.to_bits(), Ordering::Release);
@@ -125,6 +138,9 @@ where
     last_generation: u32,
     /// Cached sample rate
     sample_rate: u32,
+    /// Cached channel count. `Source::next()` yields interleaved samples, so
+    /// wall-clock fade duration must count every channel sample in a frame.
+    channels: u16,
     equal_power: bool,
 }
 
@@ -135,6 +151,7 @@ where
     /// Create a new fade envelope wrapping a source
     pub fn new(source: S, control: FadeControl) -> Self {
         let sample_rate = source.sample_rate();
+        let channels = source.channels();
         let initial_volume = control.target_volume();
         let generation = control.generation();
 
@@ -147,6 +164,7 @@ where
             fade_samples_total: 0,
             last_generation: generation,
             sample_rate,
+            channels,
             equal_power: false,
         }
     }
@@ -160,6 +178,15 @@ where
             let duration_ms = self.control.fade_duration_ms();
             let target = self.control.target_volume();
             self.equal_power = self.control.inner.curve.load(Ordering::Acquire) == 1;
+            let requested_start = f32::from_bits(
+                self.control
+                    .inner
+                    .requested_start_volume
+                    .load(Ordering::Acquire),
+            );
+            if requested_start.is_finite() {
+                self.current_volume = requested_start.clamp(0.0, 1.0);
+            }
 
             if duration_ms == 0 {
                 // Instant change
@@ -172,8 +199,11 @@ where
             } else {
                 // Start new fade
                 self.fade_start_volume = self.current_volume;
-                self.fade_samples_total =
-                    (self.sample_rate as u64 * duration_ms as u64 / 1000) as u32;
+                let total_samples = self.sample_rate as u64
+                    * u64::from(self.channels.max(1))
+                    * u64::from(duration_ms)
+                    / 1000;
+                self.fade_samples_total = total_samples.clamp(1, u64::from(u32::MAX)) as u32;
                 self.fade_samples_remaining = self.fade_samples_total;
             }
         }
@@ -269,6 +299,7 @@ mod tests {
     struct TestSource {
         samples: std::vec::IntoIter<f32>,
         sample_rate: u32,
+        channels: u16,
     }
 
     impl Iterator for TestSource {
@@ -285,7 +316,7 @@ mod tests {
         }
 
         fn channels(&self) -> u16 {
-            1
+            self.channels
         }
 
         fn sample_rate(&self) -> u32 {
@@ -309,6 +340,7 @@ mod tests {
         let source = TestSource {
             samples: vec![1.0; 8].into_iter(),
             sample_rate: 1_000,
+            channels: 1,
         };
         let mut envelope = FadeEnvelope::new(source, control.clone());
         control.fade_to(0.0, Duration::from_millis(4));
@@ -325,6 +357,7 @@ mod tests {
         let source = TestSource {
             samples: vec![1.0; 4].into_iter(),
             sample_rate: 1_000,
+            channels: 1,
         };
         let mut envelope = FadeEnvelope::new(source, control.clone());
         control.fade_to(0.0, Duration::from_millis(10));
@@ -338,12 +371,50 @@ mod tests {
     }
 
     #[test]
+    fn explicit_start_restarts_a_fade_after_the_source_is_already_running() {
+        let control = FadeControl::new(1.0);
+        let source = TestSource {
+            samples: vec![1.0; 8].into_iter(),
+            sample_rate: 1_000,
+            channels: 1,
+        };
+        let mut envelope = FadeEnvelope::new(source, control.clone());
+        assert_eq!(envelope.next().unwrap(), 1.0);
+
+        control.fade_from_to(0.0, 1.0, Duration::from_millis(4));
+        let faded: Vec<_> = (&mut envelope).take(4).collect();
+
+        assert!(faded[0] < 1.0);
+        assert!(faded.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert_eq!(faded[3], 1.0);
+        assert!(control.is_complete());
+    }
+
+    #[test]
+    fn stereo_fade_duration_is_measured_in_frames_not_interleaved_samples() {
+        let control = FadeControl::new(1.0);
+        let source = TestSource {
+            samples: vec![1.0; 8].into_iter(),
+            sample_rate: 1_000,
+            channels: 2,
+        };
+        let mut envelope = FadeEnvelope::new(source, control.clone());
+        control.fade_to(0.0, Duration::from_millis(4));
+
+        let values: Vec<_> = (&mut envelope).collect();
+        assert!(values[3] > 0.0);
+        assert_eq!(values[7], 0.0);
+        assert!(control.is_complete());
+    }
+
+    #[test]
     fn equal_power_pair_preserves_unit_power() {
         let outgoing_control = FadeControl::new(1.0);
         let incoming_control = FadeControl::new(0.0);
         let source = || TestSource {
             samples: vec![1.0; 4].into_iter(),
             sample_rate: 1_000,
+            channels: 1,
         };
         let mut outgoing = FadeEnvelope::new(source(), outgoing_control.clone());
         let mut incoming = FadeEnvelope::new(source(), incoming_control.clone());

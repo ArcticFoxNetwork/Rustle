@@ -851,16 +851,27 @@ impl AudioPlayer {
     /// Resume playback with optional fade in
     pub fn resume_with_fade(&mut self, fade_in: bool) {
         if let Some(sink) = &self.current_sink {
+            let interrupted_pause_fade = self.pending_pause_fade;
             self.pending_pause_fade = false;
             let target_volume = self.get_sink_volume();
 
             if fade_in {
-                sink.set_volume(0.0);
+                // User volume remains on the Sink. Fade is owned exclusively
+                // by the sample-driven DSP envelope so later volume mailbox
+                // updates cannot bypass or cancel the ramp.
+                sink.set_volume(target_volume);
                 sink.play();
                 if let Some(runtime) = self.current_runtime.as_ref() {
-                    runtime.fade_to(1.0, Self::FADE_DURATION);
+                    if interrupted_pause_fade {
+                        runtime.fade_to(1.0, Self::FADE_DURATION);
+                    } else {
+                        runtime.fade_from_to(0.0, 1.0, Self::FADE_DURATION);
+                    }
                 }
             } else {
+                if let Some(runtime) = self.current_runtime.as_ref() {
+                    runtime.set_fade_volume(1.0);
+                }
                 sink.set_volume(target_volume);
                 sink.play();
             }
@@ -882,6 +893,10 @@ impl AudioPlayer {
     pub fn play_sink(&self) {
         if let Some(sink) = &self.current_sink {
             sink.play();
+            if let Ok(mut state) = self.state.lock() {
+                state.status = PlaybackStatus::Playing;
+                state.paused_position = None;
+            }
         }
     }
 

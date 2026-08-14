@@ -10,6 +10,7 @@ use crate::api::NcmClient;
 use crate::audio::identity::PlaybackContext;
 use crate::audio::streaming::{
     SharedBuffer, StreamingEvent, StreamingEventKind, StreamingIdentity, start_buffer_download,
+    wait_for_buffer_playable,
 };
 use crate::database::DbSong;
 
@@ -168,9 +169,17 @@ pub async fn resolve_song(
     let shared_buffer =
         start_buffer_download(song_url, cache_path.clone(), identity, Some(event_tx));
 
-    // Return immediately with the buffer
-    // The downloader uses a temporary stem path internally and finalizes it with
-    // the detected extension after the download completes.
+    if !wait_for_buffer_playable(&shared_buffer, 30).await {
+        tracing::error!(
+            "Song {} did not reach the streaming startup watermark",
+            ncm_id
+        );
+        shared_buffer.cancel();
+        return None;
+    }
+
+    // The downloader continues filling the bounded window and sparse cache in
+    // the background after the decoder has a stable startup reserve.
     Some(ResolvedSong {
         finalized_cache_path: None,
         cover_path,
