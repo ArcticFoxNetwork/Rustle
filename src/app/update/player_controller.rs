@@ -184,17 +184,6 @@ impl App {
         }
     }
 
-    fn restore_current_playback_position(&mut self, position_secs: f64) {
-        let seek_pos = std::time::Duration::from_secs_f64(position_secs);
-        if self.playback_output_available() {
-            self.seek_audio_output(seek_pos);
-            tracing::info!("Restored playback position to {:?}", seek_pos);
-        }
-        if let Some(state) = &mut self.playback.saved_state {
-            state.position_secs = 0.0;
-        }
-    }
-
     pub(super) fn apply_resolved_song_to_queue(
         &mut self,
         idx: usize,
@@ -222,7 +211,6 @@ impl App {
     fn playback_source_from_resolved_song(
         song: &DbSong,
         resolved: &ResolvedSong,
-        restore_position: Option<f64>,
     ) -> Result<PlaybackSource, String> {
         if let Some(buffer) = resolved.shared_buffer.clone() {
             return Ok(PlaybackSource::StreamingBuffer {
@@ -232,14 +220,7 @@ impl App {
             });
         }
 
-        if let Some(position) = restore_position {
-            Self::audio_path_source_for_song_at_position(
-                song,
-                std::time::Duration::from_secs_f64(position),
-            )
-        } else {
-            Self::audio_path_source_for_song(song)
-        }
+        Self::audio_path_source_for_song(song)
     }
 
     pub(super) fn resolve_track_gain_for_song(
@@ -447,6 +428,61 @@ impl App {
         }
     }
 
+    pub(super) fn start_resolved_audio_source_for_song(
+        &mut self,
+        song: &DbSong,
+        source: PlaybackSource,
+        context: &crate::audio::identity::PlaybackContext,
+    ) -> Result<u64, String> {
+        match source {
+            PlaybackSource::AudioPath {
+                path,
+                gain_mode,
+                start_position,
+            } => {
+                self.clear_scheduled_transition_state();
+                let track_gain = self.resolve_track_gain_for_song(song, gain_mode);
+                let fade_in = self.fade_in_enabled();
+                let request_id = if let Some(position) = start_position {
+                    self.play_audio_file_at_position_in_context(
+                        context, path, position, fade_in, track_gain,
+                    )?
+                } else {
+                    self.play_audio_file_in_context(context, path, fade_in, track_gain)?
+                };
+                self.replace_active_streaming_buffer(None);
+                Ok(request_id)
+            }
+            PlaybackSource::StreamingBuffer {
+                buffer,
+                duration_secs,
+                finalized_cache_path,
+            } => {
+                self.clear_scheduled_transition_state();
+                let track_gain =
+                    self.resolve_track_gain_for_song(song, TrackGainMode::MetadataOnly);
+                let fade_in = self.fade_in_enabled();
+                let duration = std::time::Duration::from_secs(
+                    duration_secs.unwrap_or(song.duration_secs as u64),
+                );
+                let cache_path = finalized_cache_path.map(PathBuf::from);
+                let request_id = self.play_streaming_audio_in_context(
+                    context,
+                    buffer.clone(),
+                    duration,
+                    cache_path,
+                    fade_in,
+                    track_gain,
+                )?;
+                self.replace_active_streaming_buffer(Some(buffer));
+                Ok(request_id)
+            }
+            PlaybackSource::Preloaded { .. } => {
+                Err("resolved playback cannot promote a preload".to_string())
+            }
+        }
+    }
+
     pub(super) fn load_audio_path_paused_for_song(
         &mut self,
         song: &DbSong,
@@ -466,19 +502,42 @@ impl App {
         Ok(())
     }
 
-    pub(super) fn load_streaming_buffer_paused_for_song(
+    pub(super) fn load_audio_path_paused_for_song_in_context(
+        &mut self,
+        song: &DbSong,
+        path: PathBuf,
+        position: std::time::Duration,
+        context: &crate::audio::identity::PlaybackContext,
+    ) -> Result<(), String> {
+        let track_gain = self.resolve_track_gain_for_song(song, TrackGainMode::AnalyzeIfMissing);
+        let request_id =
+            self.load_audio_file_paused_in_context(context, path, position, track_gain)?;
+        let queue_index = self.resolve_queue_index_for_song(song);
+        self.queue_pending_playback_request(
+            request_id,
+            queue_index,
+            song.clone(),
+            PendingPlaybackKind::LoadPausedTrack,
+        );
+        self.replace_active_streaming_buffer(None);
+        Ok(())
+    }
+
+    pub(super) fn load_streaming_buffer_paused_for_song_in_context(
         &mut self,
         song: &DbSong,
         buffer: crate::audio::SharedBuffer,
         duration_secs: Option<u64>,
         finalized_cache_path: Option<String>,
         position: std::time::Duration,
+        context: &crate::audio::identity::PlaybackContext,
     ) -> Result<(), String> {
         let track_gain = self.resolve_track_gain_for_song(song, TrackGainMode::MetadataOnly);
         let duration =
             std::time::Duration::from_secs(duration_secs.unwrap_or(song.duration_secs as u64));
         let cache_path = finalized_cache_path.map(PathBuf::from);
-        let request_id = self.load_streaming_audio_paused(
+        let request_id = self.load_streaming_audio_paused_in_context(
+            context,
             buffer.clone(),
             duration,
             cache_path,
@@ -520,6 +579,23 @@ impl App {
         source: PlaybackSource,
     ) -> Result<Task<Message>, String> {
         let request_id = self.start_audio_source_for_song(&song, source)?;
+        self.queue_pending_playback_request(
+            request_id,
+            Some(idx),
+            song,
+            PendingPlaybackKind::StartPlayingTrack,
+        );
+        Ok(Task::none())
+    }
+
+    fn start_resolved_queue_song_from_source(
+        &mut self,
+        idx: usize,
+        song: DbSong,
+        source: PlaybackSource,
+        context: &crate::audio::identity::PlaybackContext,
+    ) -> Result<Task<Message>, String> {
+        let request_id = self.start_resolved_audio_source_for_song(&song, source, context)?;
         self.queue_pending_playback_request(
             request_id,
             Some(idx),
@@ -1237,11 +1313,11 @@ impl App {
 
         if let Some(client) = &self.core.ncm_client {
             let client = std::sync::Arc::new(client.clone());
-            let context = match self.current_audio_context() {
-                Some(context) => context,
-                None => {
+            let context = match self.begin_audio_resolution_context() {
+                Ok(context) => context,
+                Err(error) => {
                     self.playback.pending_resolution_index = None;
-                    return Self::toast_warning("没有可用的播放上下文".to_string());
+                    return Self::toast_warning(error);
                 }
             };
             let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(32);
@@ -1326,14 +1402,6 @@ impl App {
             return Task::none();
         }
 
-        // Check if we should restore playback position (for app restart scenario)
-        let restore_position = self
-            .playback
-            .saved_state
-            .as_ref()
-            .filter(|s| s.position_secs > 0.0 && s.queue_position == idx as i64)
-            .map(|s| s.position_secs);
-
         // Clear pending state
         self.playback.pending_resolution_index = None;
 
@@ -1341,19 +1409,14 @@ impl App {
             return Task::none();
         };
 
-        let Ok(source) =
-            Self::playback_source_from_resolved_song(&song, &resolved, restore_position)
-        else {
+        let Ok(source) = Self::playback_source_from_resolved_song(&song, &resolved) else {
             return self.skip_to_next_playable(idx);
         };
 
-        match self.start_queue_song_from_source(idx, song, source) {
+        match self.start_resolved_queue_song_from_source(idx, song, source, &context) {
             Ok(task) => {
                 if resolved.shared_buffer.is_some() {
                     tracing::info!("Playing from streaming buffer");
-                }
-                if let Some(pos) = restore_position {
-                    self.restore_current_playback_position(pos);
                 }
                 task
             }

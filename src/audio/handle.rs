@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use super::PlaybackInfo;
 use super::events::{AudioCommand, AudioCommandSender, LatestControlMailbox, SharedPlaybackState};
-use super::identity::{PlaybackGenerationController, PreloadIdentity};
+use super::identity::{PlaybackContext, PlaybackGenerationController, PreloadIdentity};
 use super::streaming::StreamingBuffer;
 
 /// Handle for controlling audio from UI thread
@@ -55,6 +55,29 @@ impl AudioHandle {
     fn next_playback_request_id(&self) -> u64 {
         self.generation.next_request_id()
     }
+
+    fn send_with_context<F>(&self, context: &PlaybackContext, build: F) -> Result<u64, String>
+    where
+        F: FnOnce(PlaybackContext, u64) -> AudioCommand,
+    {
+        let permit = self.command_tx.try_reserve().map_err(|error| match error {
+            tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                "audio command queue is full".to_string()
+            }
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                "audio command queue is closed".to_string()
+            }
+        })?;
+
+        if !self.generation.accepts(context) {
+            return Err("playback context is stale or cancelled".to_string());
+        }
+
+        let request_id = self.next_playback_request_id();
+        permit.send(build(context.clone(), request_id));
+        Ok(request_id)
+    }
+
     pub fn current_context(&self) -> Option<super::identity::PlaybackContext> {
         self.generation.active_context()
     }
@@ -91,6 +114,26 @@ impl AudioHandle {
 
     // ============ Playback Control ============
 
+    /// Start an async source-resolution request as a new playback generation.
+    ///
+    /// The stop command and the returned context share the same generation, so
+    /// a later resolved source can be enqueued without cancelling its download.
+    pub fn begin_playback_resolution(&self) -> Result<PlaybackContext, String> {
+        let permit = self.command_tx.try_reserve().map_err(|error| match error {
+            tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                "audio command queue is full".to_string()
+            }
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                "audio command queue is closed".to_string()
+            }
+        })?;
+        let context = self.generation.activate_generation();
+        permit.send(AudioCommand::Stop {
+            context: context.clone(),
+        });
+        Ok(context)
+    }
+
     /// Play a local file with optional fade in.
     pub fn play_with_fade(
         &self,
@@ -107,6 +150,22 @@ impl AudioHandle {
             track_gain,
         })?;
         Ok(request_id)
+    }
+
+    pub fn play_with_fade_in_context(
+        &self,
+        context: &PlaybackContext,
+        path: PathBuf,
+        fade_in: bool,
+        track_gain: f32,
+    ) -> Result<u64, String> {
+        self.send_with_context(context, |context, request_id| AudioCommand::Play {
+            context,
+            request_id,
+            path,
+            fade_in,
+            track_gain,
+        })
     }
 
     pub fn load_paused(
@@ -126,25 +185,42 @@ impl AudioHandle {
         Ok(request_id)
     }
 
-    pub fn load_streaming_paused(
+    pub fn load_paused_in_context(
         &self,
+        context: &PlaybackContext,
+        path: PathBuf,
+        position: Duration,
+        track_gain: f32,
+    ) -> Result<u64, String> {
+        self.send_with_context(context, |context, request_id| AudioCommand::LoadPaused {
+            context,
+            request_id,
+            path,
+            position,
+            track_gain,
+        })
+    }
+
+    pub fn load_streaming_paused_in_context(
+        &self,
+        context: &PlaybackContext,
         buffer: StreamingBuffer,
         duration: Duration,
         cache_path: Option<PathBuf>,
         position: Duration,
         track_gain: f32,
     ) -> Result<u64, String> {
-        let request_id = self.next_playback_request_id();
-        self.send_critical(|| AudioCommand::LoadPausedStreaming {
-            context: self.generation.activate_generation(),
-            request_id,
-            buffer,
-            duration,
-            cache_path,
-            position,
-            track_gain,
-        })?;
-        Ok(request_id)
+        self.send_with_context(context, |context, request_id| {
+            AudioCommand::LoadPausedStreaming {
+                context,
+                request_id,
+                buffer,
+                duration,
+                cache_path,
+                position,
+                track_gain,
+            }
+        })
     }
 
     pub fn play_from_position_with_fade(
@@ -166,6 +242,24 @@ impl AudioHandle {
         Ok(request_id)
     }
 
+    pub fn play_from_position_with_fade_in_context(
+        &self,
+        context: &PlaybackContext,
+        path: PathBuf,
+        position: Duration,
+        fade_in: bool,
+        track_gain: f32,
+    ) -> Result<u64, String> {
+        self.send_with_context(context, |context, request_id| AudioCommand::PlayAt {
+            context,
+            request_id,
+            path,
+            position,
+            fade_in,
+            track_gain,
+        })
+    }
+
     pub fn play_streaming(
         &self,
         buffer: StreamingBuffer,
@@ -185,6 +279,26 @@ impl AudioHandle {
             track_gain,
         })?;
         Ok(request_id)
+    }
+
+    pub fn play_streaming_in_context(
+        &self,
+        context: &PlaybackContext,
+        buffer: StreamingBuffer,
+        duration: Duration,
+        cache_path: Option<PathBuf>,
+        fade_in: bool,
+        track_gain: f32,
+    ) -> Result<u64, String> {
+        self.send_with_context(context, |context, request_id| AudioCommand::PlayStreaming {
+            context,
+            request_id,
+            buffer,
+            duration,
+            cache_path,
+            fade_in,
+            track_gain,
+        })
     }
 
     /// Pause playback with optional fade out
@@ -212,9 +326,7 @@ impl AudioHandle {
     ///
     /// Sends Stop command to audio thread.
     pub fn stop(&self) -> Result<(), String> {
-        self.send_critical(|| AudioCommand::Stop {
-            context: self.generation.activate_generation(),
-        })
+        self.begin_playback_resolution().map(|_| ())
     }
 
     /// Seek to position
@@ -451,6 +563,67 @@ mod tests {
         let result = handle.play_with_fade(PathBuf::from("missing.mp3"), false, 1.0);
         assert_eq!(result.unwrap_err(), "audio command queue is full");
         assert!(handle.current_context().is_none());
+    }
+
+    #[test]
+    fn resolution_context_stops_then_starts_without_advancing_generation() {
+        let (tx, mut rx) = super::super::events::audio_command_channel();
+        let latest = LatestControlMailbox::new(tx.clone());
+        let handle = AudioHandle::new(tx, latest, SharedPlaybackState::new());
+
+        let context = handle.begin_playback_resolution().unwrap();
+        let request_id = handle
+            .play_with_fade_in_context(&context, PathBuf::from("cached.flac"), false, 1.0)
+            .unwrap();
+
+        assert_eq!(handle.current_context(), Some(context.clone()));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            AudioCommand::Stop { context: stopped } if stopped == context
+        ));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            AudioCommand::Play {
+                context: started,
+                request_id: queued_request_id,
+                ..
+            } if started == context && queued_request_id == request_id
+        ));
+    }
+
+    #[test]
+    fn stale_resolution_context_cannot_start_playback() {
+        let (tx, mut rx) = super::super::events::audio_command_channel();
+        let latest = LatestControlMailbox::new(tx.clone());
+        let handle = AudioHandle::new(tx, latest, SharedPlaybackState::new());
+
+        let stale = handle.begin_playback_resolution().unwrap();
+        let current = handle.begin_playback_resolution().unwrap();
+        let error = handle
+            .play_with_fade_in_context(&stale, PathBuf::from("stale.flac"), false, 1.0)
+            .unwrap_err();
+
+        assert_eq!(error, "playback context is stale or cancelled");
+        assert_eq!(handle.current_context(), Some(current));
+        assert!(matches!(rx.try_recv().unwrap(), AudioCommand::Stop { .. }));
+        assert!(matches!(rx.try_recv().unwrap(), AudioCommand::Stop { .. }));
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn full_queue_cannot_begin_or_cancel_playback_resolution() {
+        let (tx, _rx) = super::super::events::audio_command_channel();
+        let latest = LatestControlMailbox::new(tx.clone());
+        let handle = AudioHandle::new(tx.clone(), latest, SharedPlaybackState::new());
+        let active = handle.begin_playback_resolution().unwrap();
+        while tx.try_send(AudioCommand::WatchdogWake).is_ok() {}
+
+        assert_eq!(
+            handle.begin_playback_resolution().unwrap_err(),
+            "audio command queue is full"
+        );
+        assert_eq!(handle.current_context(), Some(active.clone()));
+        assert!(!active.cancellation.is_cancelled());
     }
 
     #[test]
