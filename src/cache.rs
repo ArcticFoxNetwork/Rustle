@@ -7,7 +7,9 @@ use std::path::PathBuf;
 use std::time::SystemTime;
 use tracing::{info, warn};
 
-use crate::utils::{avatars_cache_dir, banners_cache_dir, covers_cache_dir, songs_cache_dir};
+use crate::utils::{
+    automix_cache_dir, avatars_cache_dir, banners_cache_dir, covers_cache_dir, songs_cache_dir,
+};
 
 /// Information about a cached file
 #[derive(Debug)]
@@ -38,6 +40,7 @@ fn cache_directories() -> Vec<PathBuf> {
         songs_cache_dir(),
         banners_cache_dir(),
         avatars_cache_dir(),
+        automix_cache_dir(),
     ]
 }
 
