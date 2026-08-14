@@ -16,15 +16,59 @@ use rodio::Sink;
 use super::PlaybackStatus;
 use super::chain::{AudioProcessingChain, PlaybackProcessingRuntime};
 use super::events::{
-    AudioCommand, AudioCommandReceiver, AudioEvent, AudioEventSender, SharedPlaybackState,
-    audio_command_channel, audio_event_channel,
+    AudioCommand, AudioCommandReceiver, AudioEvent, AudioEventSender, BufferDataMailbox,
+    BufferDataUpdate, LatestControlMailbox, SharedPlaybackState, audio_command_channel,
+    audio_event_channel,
 };
 use super::handle::AudioHandle;
 use super::player::AudioPlayer;
 use super::streaming::{HIGH_WATER_MARK_BYTES, LOW_WATER_MARK_BYTES, SharedBuffer};
 
+#[derive(Default)]
+struct FinishedGuard {
+    generation: Option<super::identity::PlaybackGeneration>,
+    emitted: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FinishReason {
+    Natural,
+    Stop,
+    SeekRebuild,
+    TransitionDisposed,
+    Stale,
+}
+
+impl FinishedGuard {
+    fn reset(&mut self) {
+        self.generation = None;
+        self.emitted = false;
+    }
+
+    fn try_mark(
+        &mut self,
+        generation: super::identity::PlaybackGeneration,
+        reason: FinishReason,
+    ) -> bool {
+        if reason != FinishReason::Natural {
+            return false;
+        }
+        if self.generation != Some(generation) {
+            self.generation = Some(generation);
+            self.emitted = false;
+        }
+        if self.emitted {
+            false
+        } else {
+            self.emitted = true;
+            true
+        }
+    }
+}
+
 /// Preloaded sink with metadata
 struct PreloadedSink {
+    identity: super::identity::PreloadIdentity,
     sink: Sink,
     duration: Duration,
     path: PathBuf,
@@ -32,6 +76,14 @@ struct PreloadedSink {
     runtime: PlaybackProcessingRuntime,
     is_streaming: bool,
     shared_buffer: Option<SharedBuffer>,
+}
+
+struct ScheduledPreloadedTransition {
+    owner: super::identity::PlaybackContext,
+    identity: super::identity::PreloadIdentity,
+    playback_request_id: u64,
+    fade_in: bool,
+    transition: super::automix::TransitionDirective,
 }
 
 pub struct AudioThreadHandle {
@@ -49,15 +101,9 @@ impl AudioThreadHandle {
 impl Drop for AudioThreadHandle {
     fn drop(&mut self) {
         self.handle.shutdown();
-        if let Some(thread_handle) = self.thread_handle.take() {
-            if thread_handle.is_finished() {
-                if thread_handle.join().is_err() {
-                    tracing::warn!("Audio thread panicked during shutdown");
-                }
-            } else {
-                tracing::debug!("Audio thread shutdown requested; leaving join handle detached");
-            }
-        }
+        // Intentionally detach in every case. The audio thread owns its backend
+        // resources and must never be joined from arbitrary UI teardown paths.
+        let _ = self.thread_handle.take();
     }
 }
 
@@ -79,16 +125,31 @@ pub fn spawn_audio_thread(
     // Create channels
     let (command_tx, command_rx) = audio_command_channel();
     let (event_tx, event_rx) = audio_event_channel();
+    let latest_controls = LatestControlMailbox::new(command_tx.clone());
+    let watchdog_tx = command_tx.clone();
+    let _ = thread::Builder::new()
+        .name("audio-watchdog".to_string())
+        .spawn(move || {
+            loop {
+                std::thread::sleep(Duration::from_millis(super::automix::SCHEDULER_POLL_MS));
+                if watchdog_tx.is_closed() {
+                    break;
+                }
+                let _ = watchdog_tx.try_send(AudioCommand::WatchdogWake);
+            }
+        });
 
     // Create shared state
     let state = SharedPlaybackState::new();
     let state_clone = state.clone();
 
-    // Clone command_tx for use in buffer callbacks (DRY: single callback setup point)
-    let command_tx_for_callbacks = command_tx.clone();
+    // The mailbox owns the only callback wake sender; the audio thread itself
+    // does not need a command sender once the handle has been created.
+    let buffer_mailbox = BufferDataMailbox::new(command_tx.clone());
 
     // Create handle for UI
-    let handle = AudioHandle::new(command_tx, state);
+    let handle = AudioHandle::new(command_tx, latest_controls.clone(), state);
+    let generation_controller = handle.generation_controller();
 
     // Clone device name for thread
     let device_name_owned = device_name.map(|s| s.to_string());
@@ -109,18 +170,15 @@ pub fn spawn_audio_thread(
                     audio_thread_main(
                         player,
                         command_rx,
-                        command_tx_for_callbacks,
+                        buffer_mailbox,
+                        latest_controls,
                         event_tx,
                         state_clone,
+                        generation_controller,
                     );
                 }
                 Err(e) => {
                     tracing::error!("Failed to create audio player: {}", e);
-                    let _ = event_tx.send(AudioEvent::Error {
-                        request_id: None,
-                        message: e,
-                        error_kind: None,
-                    });
                 }
             }
         })
@@ -141,9 +199,11 @@ pub fn spawn_audio_thread(
 fn audio_thread_main(
     mut player: AudioPlayer,
     mut command_rx: AudioCommandReceiver,
-    command_tx: super::events::AudioCommandSender,
+    buffer_mailbox: BufferDataMailbox,
+    latest_controls: LatestControlMailbox,
     event_tx: AudioEventSender,
     state: SharedPlaybackState,
+    generation: super::identity::PlaybackGenerationController,
 ) {
     tracing::info!("Audio thread started");
 
@@ -154,24 +214,57 @@ fn audio_thread_main(
     // Set when PlayStreaming command is processed, cleared on Play/Stop
     let mut current_buffer: Option<SharedBuffer> = None;
 
-    // Process commands until channel closes
+    let mut current_context: Option<super::identity::PlaybackContext> = None;
+    let mut finished_guard = FinishedGuard::default();
+    let mut scheduled_transition: Option<ScheduledPreloadedTransition> = None;
+    let mut transition_scheduler = super::automix::AudioClockScheduler::new(Duration::from_millis(
+        super::automix::SCHEDULER_HORIZON_MS,
+    ));
+
+    // Process commands
     while let Some(cmd) = command_rx.blocking_recv() {
+        if matches!(
+            &cmd,
+            AudioCommand::Play { .. }
+                | AudioCommand::LoadPaused { .. }
+                | AudioCommand::LoadPausedStreaming { .. }
+                | AudioCommand::PlayAt { .. }
+                | AudioCommand::PlayStreaming { .. }
+                | AudioCommand::Stop { .. }
+                | AudioCommand::Seek { .. }
+                | AudioCommand::PlayPreloaded { .. }
+                | AudioCommand::SwitchDevice { .. }
+        ) {
+            cancel_scheduled_transition(
+                &mut scheduled_transition,
+                &mut transition_scheduler,
+                &mut preloaded_sinks,
+            );
+        }
         match cmd {
             AudioCommand::Play {
+                context,
                 request_id,
                 path,
                 fade_in,
                 track_gain,
             } => {
+                if !generation.accepts(&context) {
+                    let _ = finished_guard.try_mark(context.generation, FinishReason::Stale);
+                    continue;
+                }
+                finished_guard.reset();
                 if let Some(ref old_buffer) = current_buffer {
                     old_buffer.clear_buffer_callback();
                 }
                 // Local file playback
                 current_buffer = None;
+                current_context = Some(context.clone());
                 handle_play(
                     &mut player,
                     &event_tx,
                     &state,
+                    context,
                     request_id,
                     path,
                     fade_in,
@@ -180,19 +273,26 @@ fn audio_thread_main(
             }
 
             AudioCommand::LoadPaused {
+                context,
                 request_id,
                 path,
                 position,
                 track_gain,
             } => {
+                if !generation.accepts(&context) {
+                    continue;
+                }
+                finished_guard.reset();
                 if let Some(ref old_buffer) = current_buffer {
                     old_buffer.clear_buffer_callback();
                 }
                 current_buffer = None;
+                current_context = Some(context.clone());
                 handle_load_paused(
                     &mut player,
                     &event_tx,
                     &state,
+                    context,
                     request_id,
                     path,
                     position,
@@ -201,6 +301,7 @@ fn audio_thread_main(
             }
 
             AudioCommand::LoadPausedStreaming {
+                context,
                 request_id,
                 buffer,
                 duration,
@@ -208,15 +309,20 @@ fn audio_thread_main(
                 position,
                 track_gain,
             } => {
+                if !generation.accepts(&context) {
+                    continue;
+                }
+                finished_guard.reset();
                 if let Some(ref old_buffer) = current_buffer {
                     old_buffer.clear_buffer_callback();
                 }
                 let shared_buffer = buffer.shared().clone();
                 handle_load_paused_streaming(
                     &mut player,
-                    &command_tx,
+                    &buffer_mailbox,
                     &event_tx,
                     &state,
+                    context.clone(),
                     request_id,
                     buffer,
                     duration,
@@ -225,23 +331,31 @@ fn audio_thread_main(
                     track_gain,
                 );
                 current_buffer = Some(shared_buffer);
+                current_context = Some(context.clone());
             }
 
             AudioCommand::PlayAt {
+                context,
                 request_id,
                 path,
                 position,
                 fade_in,
                 track_gain,
             } => {
+                if !generation.accepts(&context) {
+                    continue;
+                }
+                finished_guard.reset();
                 if let Some(ref old_buffer) = current_buffer {
                     old_buffer.clear_buffer_callback();
                 }
                 current_buffer = None;
+                current_context = Some(context.clone());
                 handle_play_at(
                     &mut player,
                     &event_tx,
                     &state,
+                    context,
                     request_id,
                     path,
                     position,
@@ -251,6 +365,7 @@ fn audio_thread_main(
             }
 
             AudioCommand::PlayStreaming {
+                context,
                 request_id,
                 buffer,
                 duration,
@@ -258,6 +373,10 @@ fn audio_thread_main(
                 fade_in,
                 track_gain,
             } => {
+                if !generation.accepts(&context) {
+                    continue;
+                }
+                finished_guard.reset();
                 if let Some(ref old_buffer) = current_buffer {
                     old_buffer.clear_buffer_callback();
                 }
@@ -265,9 +384,10 @@ fn audio_thread_main(
                 let shared_buffer = buffer.shared().clone();
                 handle_play_streaming(
                     &mut player,
-                    &command_tx,
+                    &buffer_mailbox,
                     &event_tx,
                     &state,
+                    context.clone(),
                     request_id,
                     buffer,
                     duration,
@@ -276,9 +396,13 @@ fn audio_thread_main(
                     track_gain,
                 );
                 current_buffer = Some(shared_buffer);
+                current_context = Some(context.clone());
             }
 
-            AudioCommand::Pause { fade_out } => {
+            AudioCommand::Pause { context, fade_out } => {
+                if !generation.accepts(&context) {
+                    continue;
+                }
                 if fade_out {
                     player.pause_with_fade(true);
                 } else {
@@ -287,12 +411,16 @@ fn audio_thread_main(
                 update_state_from_player(&player, &state);
                 let pos = player.get_info().position;
                 let _ = event_tx.send(AudioEvent::Paused {
+                    context,
                     request_id: None,
                     position: pos,
                 });
             }
 
-            AudioCommand::Resume { fade_in } => {
+            AudioCommand::Resume { context, fade_in } => {
+                if !generation.accepts(&context) {
+                    continue;
+                }
                 // Check data availability before resuming
                 // Use HIGH water mark to ensure smooth playback after resume
                 if let Some(ref buf) = current_buffer {
@@ -311,7 +439,13 @@ fn audio_thread_main(
                             remaining_bytes,
                             HIGH_WATER_MARK_BYTES
                         );
-                        enter_buffering(&mut player, &state, &event_tx, info.position);
+                        enter_buffering(
+                            &mut player,
+                            &state,
+                            &event_tx,
+                            info.position,
+                            context.clone(),
+                        );
                         continue;
                     }
                 }
@@ -322,112 +456,220 @@ fn audio_thread_main(
                     player.resume();
                 }
                 update_state_from_player(&player, &state);
-                let _ = event_tx.send(AudioEvent::Resumed);
+                let _ = event_tx.send(AudioEvent::Resumed { context });
             }
 
-            AudioCommand::Stop => {
+            AudioCommand::Stop { context } => {
+                if !generation.accepts(&context) {
+                    continue;
+                }
                 if let Some(ref old_buffer) = current_buffer {
                     old_buffer.clear_buffer_callback();
                 }
                 current_buffer = None;
+                let _ = finished_guard.try_mark(context.generation, FinishReason::Stop);
                 player.stop();
                 update_state_from_player(&player, &state);
                 state.set_current_path(None);
-                let _ = event_tx.send(AudioEvent::Stopped);
+                let _ = event_tx.send(AudioEvent::Stopped {
+                    context: context.clone(),
+                });
             }
 
-            AudioCommand::Seek { position } => {
+            AudioCommand::Seek {
+                context,
+                nonce,
+                position,
+            } => {
+                if context.cancellation.is_cancelled() {
+                    continue;
+                }
+                let _ = finished_guard.try_mark(context.generation, FinishReason::SeekRebuild);
                 handle_seek(
                     &mut player,
                     &event_tx,
                     &state,
+                    &generation,
+                    context,
+                    nonce,
                     position,
-                    current_buffer.as_ref(),
                 );
+                finished_guard.reset();
             }
 
-            AudioCommand::SetVolume { volume } => {
-                player.set_volume(volume);
-                state.set_volume(volume);
-            }
             AudioCommand::CreatePreloadSink {
+                identity,
                 path,
-                request_id,
                 track_gain,
             } => {
+                if !generation.accepts_preload(&identity) {
+                    continue;
+                }
                 handle_create_preload_sink(
                     &player,
                     &event_tx,
                     &mut preloaded_sinks,
+                    identity,
                     path,
-                    request_id,
                     track_gain,
                 );
             }
 
             AudioCommand::CreatePreloadSinkStreaming {
+                identity,
                 buffer,
                 duration,
-                request_id,
                 track_gain,
             } => {
+                if !generation.accepts_preload(&identity) {
+                    continue;
+                }
                 handle_create_preload_sink_streaming(
                     &player,
                     &event_tx,
                     &mut preloaded_sinks,
+                    identity,
                     buffer,
                     duration,
-                    request_id,
                     track_gain,
                 );
             }
 
             AudioCommand::PlayPreloaded {
-                request_id,
+                context,
+                identity,
                 playback_request_id,
                 fade_in,
+                transition,
             } => {
+                if !generation.accepts(&context) {
+                    continue;
+                }
+                let _ =
+                    finished_guard.try_mark(context.generation, FinishReason::TransitionDisposed);
+                finished_guard.reset();
                 if let Some(ref old_buffer) = current_buffer {
                     old_buffer.clear_buffer_callback();
                 }
-                // Check if this is a streaming preload and store buffer reference
-                if let Some(preloaded) = preloaded_sinks.get(&request_id) {
+                // Keep the preload's source identity separate from the new playback generation.
+                if let Some(preloaded) = preloaded_sinks.get(&identity.request_id)
+                    && preloaded.identity == identity
+                {
                     current_buffer = preloaded.shared_buffer.clone();
+                } else {
+                    current_buffer = None;
                 }
-                handle_play_preloaded_by_id(
+                current_context = Some(context.clone());
+                handle_play_preloaded(
                     &mut player,
-                    &command_tx,
+                    &buffer_mailbox,
                     &event_tx,
                     &state,
                     &mut preloaded_sinks,
+                    context,
                     playback_request_id,
-                    request_id,
+                    identity,
                     fade_in,
+                    transition,
                 );
             }
 
-            AudioCommand::Shutdown => {
-                if let Some(ref old_buffer) = current_buffer.take() {
-                    old_buffer.clear_buffer_callback();
+            AudioCommand::SchedulePreloadedTransition {
+                owner,
+                identity,
+                playback_request_id,
+                trigger_at,
+                fade_in,
+                transition,
+            } => {
+                let owner_current = generation.accepts(&owner);
+                let preload_ready = preloaded_sinks
+                    .get(&identity.request_id)
+                    .is_some_and(|preloaded| preloaded.identity == identity);
+                if !owner_current {
+                    continue;
                 }
-                for (_, preloaded) in preloaded_sinks.drain() {
-                    if let Some(shared_buffer) = preloaded.shared_buffer {
-                        shared_buffer.clear_buffer_callback();
+                if !generation.accepts_preload(&identity)
+                    || owner.generation != identity.generation
+                    || owner.cancellation != identity.cancellation
+                    || !preload_ready
+                {
+                    release_preloaded_identity(&mut preloaded_sinks, &identity);
+                    let _ = event_tx.send(AudioEvent::Error {
+                        context: owner,
+                        request_id: Some(playback_request_id),
+                        message: "Scheduled preload is no longer ready".to_string(),
+                        error_kind: None,
+                    });
+                    continue;
+                }
+                if let Some(existing) = scheduled_transition.as_ref() {
+                    if existing.identity == identity
+                        && existing.transition.group == transition.group
+                    {
+                        continue;
+                    }
+                    if existing.identity == identity {
+                        let existing = scheduled_transition
+                            .take()
+                            .expect("scheduled transition exists");
+                        transition_scheduler.cancel(existing.transition.group);
+                    } else {
+                        cancel_scheduled_transition(
+                            &mut scheduled_transition,
+                            &mut transition_scheduler,
+                            &mut preloaded_sinks,
+                        );
                     }
                 }
-                player.stop();
-                update_state_from_player(&player, &state);
-                state.set_current_path(None);
-                let _ = event_tx.send(AudioEvent::Stopped);
-                break;
+                transition_scheduler.schedule(transition.group, trigger_at);
+                scheduled_transition = Some(ScheduledPreloadedTransition {
+                    owner,
+                    identity,
+                    playback_request_id,
+                    fade_in,
+                    transition,
+                });
             }
 
-            AudioCommand::ReleasePreload { request_id } => {
-                if let Some(preloaded) = preloaded_sinks.remove(&request_id) {
+            AudioCommand::CancelScheduledTransition { owner } => {
+                if scheduled_transition
+                    .as_ref()
+                    .is_some_and(|scheduled| scheduled.owner == owner)
+                {
+                    cancel_scheduled_transition(
+                        &mut scheduled_transition,
+                        &mut transition_scheduler,
+                        &mut preloaded_sinks,
+                    );
+                }
+            }
+
+            AudioCommand::ReleasePreload { identity } => {
+                if scheduled_transition
+                    .as_ref()
+                    .is_some_and(|scheduled| scheduled.identity == identity)
+                {
+                    cancel_scheduled_transition(
+                        &mut scheduled_transition,
+                        &mut transition_scheduler,
+                        &mut preloaded_sinks,
+                    );
+                    continue;
+                }
+                // Exact-identity cleanup is allowed for stale generations; unlike publication,
+                // releasing an old sink must not leak resources after generation rollover.
+                if preloaded_sinks
+                    .get(&identity.request_id)
+                    .is_some_and(|preloaded| preloaded.identity == identity)
+                {
+                    let preloaded = preloaded_sinks
+                        .remove(&identity.request_id)
+                        .expect("preload exists");
                     if let Some(shared_buffer) = preloaded.shared_buffer {
                         shared_buffer.clear_buffer_callback();
                     }
-                    tracing::debug!("Released stale preload sink: request_id={}", request_id);
+                    tracing::debug!("Released stale preload sink: identity={:?}", identity);
                 }
             }
 
@@ -441,87 +683,225 @@ fn audio_thread_main(
                 handle_switch_device(&mut player, &event_tx, &state, device_name);
             }
 
-            AudioCommand::Tick => {
-                // Check buffer status for streaming playback
-                if let Some(ref buf) = current_buffer {
-                    check_buffer_status(&mut player, &state, &event_tx, buf);
-                }
+            AudioCommand::LatestMailboxWake => {}
+            AudioCommand::WatchdogWake => {}
 
-                // Update position in shared state
-                let info = player.get_info();
-                state.set_position(info.position);
-
-                // Status sync with protection for "intent" states:
-                // - Buffering: managed by check_buffer_status(), player doesn't know about it
-                // - Paused: user intent, should only be changed by Resume command
-                let current_status = state.get_info().status;
-                if !matches!(
-                    current_status,
-                    PlaybackStatus::Buffering { .. } | PlaybackStatus::Paused
-                ) {
-                    state.set_status(info.status);
-                }
-            }
-
-            AudioCommand::BufferDataAvailable { downloaded, total } => {
-                // Update buffer progress in shared state
-                state.set_buffer_bytes(downloaded, total);
-
-                // Send progress event to UI
-                let progress = if total > 0 {
-                    downloaded as f32 / total as f32
-                } else {
-                    0.0
-                };
-                let _ = event_tx.send(AudioEvent::BufferProgress {
-                    downloaded,
-                    total,
-                    progress,
-                });
-
-                // Check if we can exit Buffering (handles both normal buffering and pending seek)
-                if let Some(ref buf) = current_buffer {
-                    let current_status = state.get_info().status;
-
-                    if let PlaybackStatus::Buffering { .. } = current_status {
-                        let player_info = player.get_info();
-
-                        // Determine which position to check buffer for:
-                        // - If there's a pending seek, check buffer at target position
-                        // - Otherwise, check buffer at current position
-                        let check_position =
-                            state.pending_seek_target().unwrap_or(player_info.position);
-                        let byte_pos =
-                            estimate_byte_position(check_position, total, player_info.duration);
-                        let remaining_bytes = downloaded.saturating_sub(byte_pos);
-
-                        if buf.is_complete() || remaining_bytes > HIGH_WATER_MARK_BYTES {
-                            tracing::info!(
-                                "BufferDataAvailable: {} bytes buffered after position {:?} (need {}), exiting Buffering",
-                                remaining_bytes,
-                                check_position,
-                                HIGH_WATER_MARK_BYTES
-                            );
-                            exit_buffering(&mut player, &state, &event_tx);
-                        }
-                    }
+            AudioCommand::BufferDataAvailable => {
+                while let Some(update) = buffer_mailbox.take_latest() {
+                    handle_buffer_data_update(
+                        &mut player,
+                        &event_tx,
+                        &state,
+                        &generation,
+                        current_buffer.as_ref(),
+                        update,
+                    );
                 }
             }
         }
 
+        let (latest_volume, tick_pending, shutdown) = latest_controls.take();
+        if let Some(volume) = latest_volume {
+            player.set_volume(volume);
+            state.set_volume(volume);
+        }
+        if tick_pending {
+            process_tick(
+                &mut player,
+                &state,
+                &event_tx,
+                &generation,
+                current_buffer.as_ref(),
+                current_context.as_ref(),
+            );
+        }
+        if let Some(context) = shutdown {
+            cancel_scheduled_transition(
+                &mut scheduled_transition,
+                &mut transition_scheduler,
+                &mut preloaded_sinks,
+            );
+            handle_shutdown(
+                &mut player,
+                &event_tx,
+                &state,
+                &mut current_buffer,
+                &mut preloaded_sinks,
+                context,
+            );
+            break;
+        }
+
+        if let Some(action) = transition_scheduler.poll(player.get_info().position)
+            && scheduled_transition
+                .as_ref()
+                .is_some_and(|scheduled| scheduled.transition.group == action.group)
+        {
+            let scheduled = scheduled_transition
+                .take()
+                .expect("matching scheduled transition exists");
+            let owner_current = generation.accepts(&scheduled.owner);
+            if owner_current
+                && generation.accepts_preload(&scheduled.identity)
+                && preloaded_sinks
+                    .get(&scheduled.identity.request_id)
+                    .is_some_and(|preloaded| preloaded.identity == scheduled.identity)
+            {
+                if let Some(context) = generation.activate_preloaded_generation(&scheduled.identity)
+                {
+                    let mut transition = scheduled.transition;
+                    if action.underrun && transition.kind == super::automix::TransitionKind::Automix
+                    {
+                        transition =
+                            super::automix::TransitionDirective::baseline_natural(transition.group);
+                    }
+                    let _ = finished_guard
+                        .try_mark(context.generation, FinishReason::TransitionDisposed);
+                    finished_guard.reset();
+                    if let Some(ref old_buffer) = current_buffer {
+                        old_buffer.clear_buffer_callback();
+                    }
+                    current_buffer = preloaded_sinks
+                        .get(&scheduled.identity.request_id)
+                        .and_then(|preloaded| preloaded.shared_buffer.clone());
+                    current_context = Some(context.clone());
+                    handle_play_preloaded(
+                        &mut player,
+                        &buffer_mailbox,
+                        &event_tx,
+                        &state,
+                        &mut preloaded_sinks,
+                        context,
+                        scheduled.playback_request_id,
+                        scheduled.identity,
+                        scheduled.fade_in,
+                        transition,
+                    );
+                } else {
+                    release_preloaded_identity(&mut preloaded_sinks, &scheduled.identity);
+                }
+            } else {
+                release_preloaded_identity(&mut preloaded_sinks, &scheduled.identity);
+                if owner_current {
+                    let _ = event_tx.send(AudioEvent::Error {
+                        context: scheduled.owner,
+                        request_id: Some(scheduled.playback_request_id),
+                        message: "Scheduled preload became unavailable before its deadline"
+                            .to_string(),
+                        error_kind: None,
+                    });
+                }
+            }
+        }
+
+        let _ = player.poll_transition();
+
+        if player.poll_pending_pause()
+            && let Some(context) = current_context.as_ref()
+            && generation.accepts(context)
+        {
+            let _ = event_tx.send(AudioEvent::Paused {
+                context: context.clone(),
+                request_id: None,
+                position: player.get_info().position,
+            });
+        }
+
         // Check if playback finished after each command
-        check_playback_finished(&player, &event_tx, &state, current_buffer.as_ref());
+        check_playback_finished(
+            &player,
+            &event_tx,
+            &state,
+            current_buffer.as_ref(),
+            current_context.as_ref(),
+            &generation,
+            &mut finished_guard,
+        );
     }
 
     tracing::info!("Audio thread exiting (command channel closed)");
 }
 
+fn release_preloaded_identity(
+    preloaded_sinks: &mut HashMap<u64, PreloadedSink>,
+    identity: &super::identity::PreloadIdentity,
+) {
+    if preloaded_sinks
+        .get(&identity.request_id)
+        .is_some_and(|preloaded| preloaded.identity == *identity)
+        && let Some(preloaded) = preloaded_sinks.remove(&identity.request_id)
+        && let Some(shared_buffer) = preloaded.shared_buffer
+    {
+        shared_buffer.clear_buffer_callback();
+    }
+}
+
+fn cancel_scheduled_transition(
+    scheduled: &mut Option<ScheduledPreloadedTransition>,
+    scheduler: &mut super::automix::AudioClockScheduler,
+    preloaded_sinks: &mut HashMap<u64, PreloadedSink>,
+) {
+    if let Some(cancelled) = scheduled.take() {
+        scheduler.cancel(cancelled.transition.group);
+        release_preloaded_identity(preloaded_sinks, &cancelled.identity);
+    }
+}
+
+fn process_tick(
+    player: &mut AudioPlayer,
+    state: &SharedPlaybackState,
+    event_tx: &AudioEventSender,
+    generation: &super::identity::PlaybackGenerationController,
+    current_buffer: Option<&SharedBuffer>,
+    current_context: Option<&super::identity::PlaybackContext>,
+) {
+    if let Some(buf) = current_buffer
+        && let Some(context) = current_context.cloned()
+    {
+        check_buffer_status(player, state, event_tx, buf, generation, context);
+    }
+
+    let info = player.get_info();
+    state.set_position(info.position);
+    let current_status = state.get_info().status;
+    if !matches!(
+        current_status,
+        PlaybackStatus::Buffering { .. } | PlaybackStatus::Paused
+    ) {
+        state.set_status(info.status);
+    }
+}
+
+fn handle_shutdown(
+    player: &mut AudioPlayer,
+    event_tx: &AudioEventSender,
+    state: &SharedPlaybackState,
+    current_buffer: &mut Option<SharedBuffer>,
+    preloaded_sinks: &mut HashMap<u64, PreloadedSink>,
+    context: super::identity::PlaybackContext,
+) {
+    if let Some(old_buffer) = current_buffer.take() {
+        old_buffer.clear_buffer_callback();
+    }
+    for (_, preloaded) in preloaded_sinks.drain() {
+        if let Some(shared_buffer) = preloaded.shared_buffer {
+            shared_buffer.clear_buffer_callback();
+        }
+    }
+    player.stop();
+    update_state_from_player(player, state);
+    state.set_current_path(None);
+    let _ = event_tx.send(AudioEvent::Stopped { context });
+}
+
 // ============ Command Handlers ============
 
+#[allow(clippy::too_many_arguments)] // Command handler mirrors the protocol payload.
 fn handle_play(
     player: &mut AudioPlayer,
     event_tx: &AudioEventSender,
     state: &SharedPlaybackState,
+    context: super::identity::PlaybackContext,
     request_id: u64,
     path: PathBuf,
     fade_in: bool,
@@ -535,6 +915,7 @@ fn handle_play(
             update_state_from_player(player, state);
             state.set_current_path(Some(path.clone()));
             let _ = event_tx.send(AudioEvent::Started {
+                context: context.clone(),
                 request_id,
                 path: Some(path),
             });
@@ -542,6 +923,7 @@ fn handle_play(
         Err(e) => {
             let kind = super::player::classify_playback_error(&e);
             let _ = event_tx.send(AudioEvent::Error {
+                context: context.clone(),
                 request_id: Some(request_id),
                 message: e,
                 error_kind: Some(kind),
@@ -550,10 +932,12 @@ fn handle_play(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Command handler mirrors the protocol payload.
 fn handle_load_paused(
     player: &mut AudioPlayer,
     event_tx: &AudioEventSender,
     state: &SharedPlaybackState,
+    context: super::identity::PlaybackContext,
     request_id: u64,
     path: PathBuf,
     position: Duration,
@@ -567,6 +951,7 @@ fn handle_load_paused(
             update_state_from_player(player, state);
             state.set_current_path(Some(path));
             let _ = event_tx.send(AudioEvent::Paused {
+                context: context.clone(),
                 request_id: Some(request_id),
                 position: player.get_info().position,
             });
@@ -574,6 +959,7 @@ fn handle_load_paused(
         Err(e) => {
             let kind = super::player::classify_playback_error(&e);
             let _ = event_tx.send(AudioEvent::Error {
+                context: context.clone(),
                 request_id: Some(request_id),
                 message: e,
                 error_kind: Some(kind),
@@ -582,10 +968,12 @@ fn handle_load_paused(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Command handler mirrors the protocol payload.
 fn handle_play_at(
     player: &mut AudioPlayer,
     event_tx: &AudioEventSender,
     state: &SharedPlaybackState,
+    context: super::identity::PlaybackContext,
     request_id: u64,
     path: PathBuf,
     position: Duration,
@@ -600,16 +988,24 @@ fn handle_play_at(
             update_state_from_player(player, state);
             state.set_current_path(Some(path.clone()));
             let _ = event_tx.send(AudioEvent::Started {
+                context: context.clone(),
                 request_id,
                 path: Some(path),
             });
             if let Some(error) = seek_error {
-                let _ = event_tx.send(AudioEvent::SeekFailed { error });
+                let kind = super::player::classify_playback_error(&error);
+                let _ = event_tx.send(AudioEvent::Error {
+                    context: context.clone(),
+                    request_id: Some(request_id),
+                    message: error,
+                    error_kind: Some(kind),
+                });
             }
         }
         Err(e) => {
             let kind = super::player::classify_playback_error(&e);
             let _ = event_tx.send(AudioEvent::Error {
+                context: context.clone(),
                 request_id: Some(request_id),
                 message: e,
                 error_kind: Some(kind),
@@ -618,11 +1014,13 @@ fn handle_play_at(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Command handler mirrors the protocol payload.
 fn handle_play_streaming(
     player: &mut AudioPlayer,
-    command_tx: &super::events::AudioCommandSender,
+    buffer_mailbox: &BufferDataMailbox,
     event_tx: &AudioEventSender,
     state: &SharedPlaybackState,
+    context: super::identity::PlaybackContext,
     request_id: u64,
     buffer: super::streaming::StreamingBuffer,
     duration: Duration,
@@ -641,7 +1039,7 @@ fn handle_play_streaming(
     let shared_buffer = buffer.shared().clone();
 
     // Set up buffer callback to send BufferDataAvailable command
-    setup_buffer_callback(&shared_buffer, command_tx);
+    setup_buffer_callback(&shared_buffer, buffer_mailbox, &context);
 
     // Initialize buffer progress (may be 0 if HTTP response not yet received)
     let downloaded = shared_buffer.downloaded();
@@ -652,6 +1050,7 @@ fn handle_play_streaming(
     if total > 0 {
         let progress = downloaded as f32 / total as f32;
         let _ = event_tx.send(AudioEvent::BufferProgress {
+            context: context.clone(),
             downloaded,
             total,
             progress,
@@ -663,6 +1062,7 @@ fn handle_play_streaming(
             update_state_from_player(player, state);
             state.set_current_path(cache_path);
             let _ = event_tx.send(AudioEvent::Started {
+                context: context.clone(),
                 request_id,
                 path: None,
             });
@@ -670,6 +1070,7 @@ fn handle_play_streaming(
         Err(e) => {
             let kind = super::player::classify_playback_error(&e);
             let _ = event_tx.send(AudioEvent::Error {
+                context: context.clone(),
                 request_id: Some(request_id),
                 message: e,
                 error_kind: Some(kind),
@@ -678,11 +1079,13 @@ fn handle_play_streaming(
     }
 }
 
+#[allow(clippy::too_many_arguments)] // Command handler mirrors the protocol payload.
 fn handle_load_paused_streaming(
     player: &mut AudioPlayer,
-    command_tx: &super::events::AudioCommandSender,
+    buffer_mailbox: &BufferDataMailbox,
     event_tx: &AudioEventSender,
     state: &SharedPlaybackState,
+    context: super::identity::PlaybackContext,
     request_id: u64,
     buffer: super::streaming::StreamingBuffer,
     duration: Duration,
@@ -694,7 +1097,7 @@ fn handle_load_paused_streaming(
     state.set_buffer_bytes(0, 0);
 
     let shared_buffer = buffer.shared().clone();
-    setup_buffer_callback(&shared_buffer, command_tx);
+    setup_buffer_callback(&shared_buffer, buffer_mailbox, &context);
 
     let downloaded = shared_buffer.downloaded();
     let total = shared_buffer.total_size();
@@ -703,6 +1106,7 @@ fn handle_load_paused_streaming(
     if total > 0 {
         let progress = downloaded as f32 / total as f32;
         let _ = event_tx.send(AudioEvent::BufferProgress {
+            context: context.clone(),
             downloaded,
             total,
             progress,
@@ -714,16 +1118,24 @@ fn handle_load_paused_streaming(
             update_state_from_player(player, state);
             state.set_current_path(cache_path);
             let _ = event_tx.send(AudioEvent::Paused {
+                context: context.clone(),
                 request_id: Some(request_id),
                 position: player.get_info().position,
             });
             if let Some(error) = seek_error {
-                let _ = event_tx.send(AudioEvent::SeekFailed { error });
+                let kind = super::player::classify_playback_error(&error);
+                let _ = event_tx.send(AudioEvent::Error {
+                    context: context.clone(),
+                    request_id: Some(request_id),
+                    message: error,
+                    error_kind: Some(kind),
+                });
             }
         }
         Err(e) => {
             let kind = super::player::classify_playback_error(&e);
             let _ = event_tx.send(AudioEvent::Error {
+                context: context.clone(),
                 request_id: Some(request_id),
                 message: e,
                 error_kind: Some(kind),
@@ -736,98 +1148,42 @@ fn handle_seek(
     player: &mut AudioPlayer,
     event_tx: &AudioEventSender,
     state: &SharedPlaybackState,
+    generation: &super::identity::PlaybackGenerationController,
+    context: super::identity::PlaybackContext,
+    nonce: super::identity::SeekNonce,
     position: Duration,
-    current_buffer: Option<&SharedBuffer>,
 ) {
-    // For streaming playback, check if target position has enough buffered data
-    let is_streaming = player.is_streaming();
-
-    if is_streaming && let Some(buffer) = current_buffer {
-        let current_info = player.get_info();
-        let target_byte_pos =
-            estimate_byte_position(position, buffer.total_size(), current_info.duration);
-        let downloaded = buffer.downloaded();
-        let buffered_after_target = downloaded.saturating_sub(target_byte_pos);
-
-        // Use HIGH_WATER_MARK to ensure smooth playback after seek
-        let has_enough_buffer =
-            buffered_after_target >= HIGH_WATER_MARK_BYTES || buffer.is_complete();
-
-        if has_enough_buffer {
-            // Enough data buffered
-            tracing::debug!(
-                "Seek to position {:?} (byte {}): buffered {} bytes after target, executing immediately",
-                position,
-                target_byte_pos,
-                buffered_after_target
-            );
-
-            let _ = event_tx.send(AudioEvent::SeekStarted {
-                target_position: position,
-            });
-
-            // Data is in memory, this will complete instantly (no blocking)
-            match player.seek(position) {
-                Ok(_) => {
-                    state.set_position(position);
-
-                    // If we were in Buffering state with a pending seek, clear it and exit Buffering
-                    let current_status = state.get_info().status;
-                    if matches!(current_status, PlaybackStatus::Buffering { .. }) {
-                        state.set_pending_seek(None);
-                        // Resume playback since we successfully seeked to buffered position
-                        player.play_sink();
-                        state.set_status(PlaybackStatus::Playing);
-                        let _ = event_tx.send(AudioEvent::BufferingEnded);
-                        tracing::info!(
-                            "Seek during Buffering to buffered position, exiting Buffering"
-                        );
-                    }
-
-                    let _ = event_tx.send(AudioEvent::SeekComplete { position });
-                }
-                Err(e) => {
-                    let _ = event_tx.send(AudioEvent::SeekFailed { error: e });
-                }
-            }
-            return;
-        }
-
-        tracing::info!(
-            "Seek to position {:?} (byte {}): only {} bytes buffered after target (need {}), entering Buffering with pending seek",
-            position,
-            target_byte_pos,
-            buffered_after_target,
-            HIGH_WATER_MARK_BYTES
-        );
-
-        // Store pending seek target
-        state.set_pending_seek(Some(position));
-
-        // Emit seek started event
-        let _ = event_tx.send(AudioEvent::SeekStarted {
-            target_position: position,
-        });
-
-        // Enter Buffering state (reuse existing mechanism)
-        // Use current position as the buffering position (we haven't seeked yet)
-        enter_buffering(player, state, event_tx, current_info.position);
-
+    if !generation.accepts_seek(&context, nonce) {
         return;
     }
-
-    // Local file playback
     let _ = event_tx.send(AudioEvent::SeekStarted {
+        context: context.clone(),
+        nonce,
         target_position: position,
     });
 
     match player.seek(position) {
         Ok(_) => {
+            if !generation.accepts_seek(&context, nonce) {
+                return;
+            }
             state.set_position(position);
-            let _ = event_tx.send(AudioEvent::SeekComplete { position });
+            state.set_pending_seek(None);
+            let _ = event_tx.send(AudioEvent::SeekComplete {
+                context: context.clone(),
+                nonce,
+                position,
+            });
         }
         Err(e) => {
-            let _ = event_tx.send(AudioEvent::SeekFailed { error: e });
+            if !generation.accepts_seek(&context, nonce) {
+                return;
+            }
+            let _ = event_tx.send(AudioEvent::SeekFailed {
+                context: context.clone(),
+                nonce,
+                error: e,
+            });
         }
     }
 }
@@ -836,16 +1192,18 @@ fn handle_create_preload_sink(
     player: &AudioPlayer,
     event_tx: &AudioEventSender,
     preloaded_sinks: &mut HashMap<u64, PreloadedSink>,
+    identity: super::identity::PreloadIdentity,
     path: PathBuf,
-    request_id: u64,
     track_gain: f32,
 ) {
+    let request_id = identity.request_id;
     match player.create_preload_sink(&path, track_gain) {
         Ok((sink, duration, runtime)) => {
             // Store the sink for later playback
             preloaded_sinks.insert(
                 request_id,
                 PreloadedSink {
+                    identity: identity.clone(),
                     sink,
                     duration,
                     path: path.clone(),
@@ -861,16 +1219,13 @@ fn handle_create_preload_sink(
                 path
             );
             let _ = event_tx.send(AudioEvent::PreloadReady {
-                request_id,
+                identity,
                 duration,
                 path,
             });
         }
         Err(e) => {
-            let _ = event_tx.send(AudioEvent::PreloadFailed {
-                request_id,
-                error: e,
-            });
+            let _ = event_tx.send(AudioEvent::PreloadFailed { identity, error: e });
         }
     }
 }
@@ -879,11 +1234,12 @@ fn handle_create_preload_sink_streaming(
     player: &AudioPlayer,
     event_tx: &AudioEventSender,
     preloaded_sinks: &mut HashMap<u64, PreloadedSink>,
+    identity: super::identity::PreloadIdentity,
     buffer: super::streaming::StreamingBuffer,
     duration: Duration,
-    request_id: u64,
     track_gain: f32,
 ) {
+    let request_id = identity.request_id;
     // Clone shared buffer before passing to decoder (for later callback setup)
     let shared_buffer = buffer.shared().clone();
 
@@ -895,6 +1251,7 @@ fn handle_create_preload_sink_streaming(
             preloaded_sinks.insert(
                 request_id,
                 PreloadedSink {
+                    identity: identity.clone(),
                     sink,
                     duration: actual_duration,
                     path: path.clone(),
@@ -906,32 +1263,51 @@ fn handle_create_preload_sink_streaming(
             );
             tracing::debug!("Preload streaming sink created: request_id={}", request_id);
             let _ = event_tx.send(AudioEvent::PreloadReady {
-                request_id,
+                identity,
                 duration: actual_duration,
                 path,
             });
         }
         Err(e) => {
-            let _ = event_tx.send(AudioEvent::PreloadFailed {
-                request_id,
-                error: e,
-            });
+            let _ = event_tx.send(AudioEvent::PreloadFailed { identity, error: e });
         }
     }
 }
 
-fn handle_play_preloaded_by_id(
+#[allow(clippy::too_many_arguments)] // Command handler mirrors the protocol payload.
+fn handle_play_preloaded(
     player: &mut AudioPlayer,
-    command_tx: &super::events::AudioCommandSender,
+    buffer_mailbox: &BufferDataMailbox,
     event_tx: &AudioEventSender,
     state: &SharedPlaybackState,
     preloaded_sinks: &mut HashMap<u64, PreloadedSink>,
+    context: super::identity::PlaybackContext,
     playback_request_id: u64,
-    request_id: u64,
+    identity: super::identity::PreloadIdentity,
     fade_in: bool,
+    transition: super::automix::TransitionDirective,
 ) {
+    let request_id = identity.request_id;
     if let Some(preloaded) = preloaded_sinks.remove(&request_id) {
+        if preloaded.identity != identity {
+            if let Some(shared_buffer) = preloaded.shared_buffer {
+                shared_buffer.clear_buffer_callback();
+            }
+            tracing::warn!(
+                "PlayPreloaded: identity mismatch for request_id {}",
+                request_id
+            );
+            let _ = event_tx.send(AudioEvent::Error {
+                context,
+                request_id: Some(playback_request_id),
+                message: format!("Preloaded sink identity mismatch: {}", request_id),
+                error_kind: None,
+            });
+            return;
+        }
+
         let PreloadedSink {
+            identity: _,
             sink,
             duration,
             path,
@@ -952,7 +1328,7 @@ fn handle_play_preloaded_by_id(
             state.set_buffer_bytes(downloaded, total);
 
             // Set up callback to send BufferDataAvailable command (DRY: single callback setup point)
-            setup_buffer_callback(shared_buffer, command_tx);
+            setup_buffer_callback(shared_buffer, buffer_mailbox, &context);
 
             tracing::info!(
                 "Preload streaming: set up buffer callback, downloaded={}/{}",
@@ -971,11 +1347,13 @@ fn handle_play_preloaded_by_id(
             fade_in,
             track_gain,
             runtime,
+            transition,
         ) {
             Ok(_) => {
                 update_state_from_player(player, state);
                 state.set_current_path(Some(path.clone()));
                 let _ = event_tx.send(AudioEvent::Started {
+                    context: context.clone(),
                     request_id: playback_request_id,
                     path: Some(path),
                 });
@@ -983,6 +1361,7 @@ fn handle_play_preloaded_by_id(
             Err(e) => {
                 let kind = super::player::classify_playback_error(&e);
                 let _ = event_tx.send(AudioEvent::Error {
+                    context: context.clone(),
                     request_id: Some(playback_request_id),
                     message: e,
                     error_kind: Some(kind),
@@ -992,6 +1371,7 @@ fn handle_play_preloaded_by_id(
     } else {
         tracing::warn!("PlayPreloaded: request_id {} not found", request_id);
         let _ = event_tx.send(AudioEvent::Error {
+            context: context.clone(),
             request_id: Some(playback_request_id),
             message: format!("Preloaded sink not found: {}", request_id),
             error_kind: None,
@@ -1024,25 +1404,65 @@ fn handle_switch_device(
 /// The callback only sends commands to Audio Thread, it does not modify state directly.
 fn setup_buffer_callback(
     shared_buffer: &SharedBuffer,
-    command_tx: &super::events::AudioCommandSender,
+    buffer_mailbox: &BufferDataMailbox,
+    context: &super::identity::PlaybackContext,
 ) {
-    let command_tx = command_tx.clone();
+    let mailbox = buffer_mailbox.clone();
+    let context = context.clone();
     shared_buffer.set_buffer_callback(move |event| {
         use super::streaming::BufferEvent;
-        match event {
-            BufferEvent::DataAppended { downloaded, total } => {
-                // Send command to Audio Thread for state update
-                let _ = command_tx.send(AudioCommand::BufferDataAvailable { downloaded, total });
-            }
-            BufferEvent::Complete => {
-                // Completion is detected via buffer.is_complete() in check_buffer_status()
-            }
+        if let BufferEvent::DataAppended { downloaded, total } = event {
+            mailbox.publish(BufferDataUpdate {
+                context: context.clone(),
+                downloaded,
+                total,
+            });
         }
     });
 }
 
-/// Estimate byte position from time position
-///
+fn handle_buffer_data_update(
+    player: &mut AudioPlayer,
+    event_tx: &AudioEventSender,
+    state: &SharedPlaybackState,
+    generation: &super::identity::PlaybackGenerationController,
+    current_buffer: Option<&SharedBuffer>,
+    update: BufferDataUpdate,
+) {
+    let context = update.context;
+    if context.cancellation.is_cancelled() || !generation.accepts(&context) {
+        return;
+    }
+
+    let downloaded = update.downloaded;
+    let total = update.total;
+    state.set_buffer_bytes(downloaded, total);
+
+    let progress = if total > 0 {
+        downloaded as f32 / total as f32
+    } else {
+        0.0
+    };
+    let _ = event_tx.send(AudioEvent::BufferProgress {
+        context: context.clone(),
+        downloaded,
+        total,
+        progress,
+    });
+
+    if let Some(buf) = current_buffer
+        && let PlaybackStatus::Buffering { .. } = state.get_info().status
+    {
+        let player_info = player.get_info();
+        let check_position = state.pending_seek_target().unwrap_or(player_info.position);
+        let byte_pos = estimate_byte_position(check_position, total, player_info.duration);
+        let remaining_bytes = downloaded.saturating_sub(byte_pos);
+        if buf.is_complete() || remaining_bytes > HIGH_WATER_MARK_BYTES {
+            exit_buffering(player, state, event_tx, generation, context);
+        }
+    }
+}
+
 /// This is an approximation assuming constant bitrate.
 /// For VBR files, this may not be accurate, but it's good enough for buffering decisions.
 fn estimate_byte_position(time_pos: Duration, total_bytes: u64, duration: Duration) -> u64 {
@@ -1070,6 +1490,8 @@ fn check_buffer_status(
     state: &SharedPlaybackState,
     event_tx: &AudioEventSender,
     buffer: &SharedBuffer,
+    generation: &super::identity::PlaybackGenerationController,
+    context: super::identity::PlaybackContext,
 ) {
     // Use SharedPlaybackState for status check (single source of truth)
     let current_status = state.get_info().status;
@@ -1100,7 +1522,7 @@ fn check_buffer_status(
                     remaining_bytes,
                     LOW_WATER_MARK_BYTES
                 );
-                enter_buffering(player, state, event_tx, player_info.position);
+                enter_buffering(player, state, event_tx, player_info.position, context.clone());
             }
         PlaybackStatus::Buffering { .. } => {
             // Check if we can exit Buffering (HIGH water mark)
@@ -1109,14 +1531,14 @@ fn check_buffer_status(
             // 2. Download is complete (no more data coming)
             if buffer.is_complete() {
                 tracing::info!("Download complete, exiting Buffering");
-                exit_buffering(player, state, event_tx);
+                exit_buffering(player, state, event_tx, generation, context.clone());
             } else if remaining_bytes > HIGH_WATER_MARK_BYTES {
                 tracing::info!(
                     "Buffer sufficient: remaining {} bytes > {} (high water mark), exiting Buffering",
                     remaining_bytes,
                     HIGH_WATER_MARK_BYTES
                 );
-                exit_buffering(player, state, event_tx);
+                exit_buffering(player, state, event_tx, generation, context.clone());
             }
             // Otherwise, stay in Buffering state and wait for more data
         }
@@ -1132,6 +1554,7 @@ fn enter_buffering(
     state: &SharedPlaybackState,
     event_tx: &AudioEventSender,
     position: Duration,
+    context: super::identity::PlaybackContext,
 ) {
     // Pause sink without changing player's internal status
     player.pause_sink();
@@ -1140,8 +1563,12 @@ fn enter_buffering(
     let new_status = PlaybackStatus::Buffering { position };
     state.set_status(new_status.clone());
 
-    let _ = event_tx.send(AudioEvent::BufferingStarted { position });
+    let _ = event_tx.send(AudioEvent::BufferingStarted {
+        context: context.clone(),
+        position,
+    });
     let _ = event_tx.send(AudioEvent::StateChanged {
+        context: context.clone(),
         old_status,
         new_status,
     });
@@ -1157,31 +1584,42 @@ fn exit_buffering(
     player: &mut AudioPlayer,
     state: &SharedPlaybackState,
     event_tx: &AudioEventSender,
+    generation: &super::identity::PlaybackGenerationController,
+    context: super::identity::PlaybackContext,
 ) {
     let old_status = state.get_info().status;
 
-    // Check for pending seek
-    if let Some(target_position) = state.pending_seek_target() {
-        tracing::info!(
-            "exit_buffering: executing pending seek to {:?}",
-            target_position
-        );
-
-        // Clear pending seek first (before attempting seek)
-        state.set_pending_seek(None);
-
-        // Execute the seek
-        match player.seek(target_position) {
-            Ok(_) => {
-                state.set_position(target_position);
-                let _ = event_tx.send(AudioEvent::SeekComplete {
-                    position: target_position,
-                });
-            }
-            Err(e) => {
-                tracing::error!("exit_buffering: seek failed: {}", e);
-                let _ = event_tx.send(AudioEvent::SeekFailed { error: e });
-                // Continue to resume playback even if seek failed
+    if let Some(pending) = state.pending_seek() {
+        if pending.context.generation != context.generation
+            || pending.context.cancellation.is_cancelled()
+            || !generation.accepts_seek(&pending.context, pending.nonce)
+        {
+            state.set_pending_seek(None);
+        } else {
+            let target_position = pending.target;
+            tracing::info!(
+                "exit_buffering: executing pending seek to {:?} (nonce {:?})",
+                target_position,
+                pending.nonce
+            );
+            state.set_pending_seek(None);
+            match player.seek(target_position) {
+                Ok(_) => {
+                    state.set_position(target_position);
+                    let _ = event_tx.send(AudioEvent::SeekComplete {
+                        context: pending.context.clone(),
+                        nonce: pending.nonce,
+                        position: target_position,
+                    });
+                }
+                Err(e) => {
+                    tracing::error!("exit_buffering: seek failed: {}", e);
+                    let _ = event_tx.send(AudioEvent::SeekFailed {
+                        context: pending.context.clone(),
+                        nonce: pending.nonce,
+                        error: e,
+                    });
+                }
             }
         }
     }
@@ -1191,8 +1629,11 @@ fn exit_buffering(
 
     state.set_status(PlaybackStatus::Playing);
 
-    let _ = event_tx.send(AudioEvent::BufferingEnded);
+    let _ = event_tx.send(AudioEvent::BufferingEnded {
+        context: context.clone(),
+    });
     let _ = event_tx.send(AudioEvent::StateChanged {
+        context: context.clone(),
         old_status,
         new_status: PlaybackStatus::Playing,
     });
@@ -1215,6 +1656,9 @@ fn check_playback_finished(
     event_tx: &AudioEventSender,
     state: &SharedPlaybackState,
     current_buffer: Option<&SharedBuffer>,
+    context: Option<&super::identity::PlaybackContext>,
+    generation: &super::identity::PlaybackGenerationController,
+    finished_guard: &mut FinishedGuard,
 ) {
     // For streaming playback, check if we should enter Buffering instead of finishing
     if let Some(buffer) = current_buffer
@@ -1223,8 +1667,57 @@ fn check_playback_finished(
         return;
     }
 
-    if player.is_finished() {
+    if player.is_finished()
+        && let Some(context) = context
+        && generation.accepts(context)
+        && finished_guard.try_mark(context.generation, FinishReason::Natural)
+    {
         state.set_status(PlaybackStatus::Stopped);
-        let _ = event_tx.send(AudioEvent::Finished);
+        let _ = event_tx.send(AudioEvent::Finished {
+            context: context.clone(),
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finished_guard_is_exactly_once_per_generation() {
+        let mut guard = FinishedGuard::default();
+        assert!(!guard.try_mark(
+            crate::audio::identity::PlaybackGeneration(1),
+            FinishReason::Stop
+        ));
+        assert!(!guard.try_mark(
+            crate::audio::identity::PlaybackGeneration(1),
+            FinishReason::SeekRebuild
+        ));
+        assert!(!guard.try_mark(
+            crate::audio::identity::PlaybackGeneration(1),
+            FinishReason::TransitionDisposed
+        ));
+        assert!(!guard.try_mark(
+            crate::audio::identity::PlaybackGeneration(1),
+            FinishReason::Stale
+        ));
+        assert!(guard.try_mark(
+            crate::audio::identity::PlaybackGeneration(1),
+            FinishReason::Natural
+        ));
+        assert!(!guard.try_mark(
+            crate::audio::identity::PlaybackGeneration(1),
+            FinishReason::Natural
+        ));
+        assert!(guard.try_mark(
+            crate::audio::identity::PlaybackGeneration(2),
+            FinishReason::Natural
+        ));
+        guard.reset();
+        assert!(guard.try_mark(
+            crate::audio::identity::PlaybackGeneration(2),
+            FinishReason::Natural
+        ));
     }
 }

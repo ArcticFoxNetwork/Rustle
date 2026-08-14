@@ -122,6 +122,8 @@ pub enum Key {
     SettingsMusicQualityDesc,
     SettingsFadeInOut,
     SettingsFadeInOutDesc,
+    SettingsAutomix,
+    SettingsAutomixDesc,
     SettingsVolumeNormalization,
     SettingsVolumeNormalizationDesc,
     SettingsEqualizer,

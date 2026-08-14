@@ -10,12 +10,12 @@ use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
-use std::thread;
 use std::time::Duration;
 
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
 use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
 
+use super::automix::{TransitionDirective, TransitionKind};
 use super::chain::{AudioProcessingChain, PlaybackProcessingRuntime};
 use super::streaming::StreamingBuffer;
 
@@ -78,6 +78,13 @@ impl Default for PlayerState {
     }
 }
 
+struct OutgoingTransition {
+    sink: Sink,
+    runtime: PlaybackProcessingRuntime,
+    _group: super::automix::ScheduleGroup,
+    advanced: bool,
+}
+
 /// Audio player - simplified, focused on playback control
 /// Preloading is managed externally by PreloadManager
 pub struct AudioPlayer {
@@ -88,11 +95,13 @@ pub struct AudioPlayer {
     chain: AudioProcessingChain,
     current_runtime: Option<PlaybackProcessingRuntime>,
     is_streaming: bool,
+    pending_pause_fade: bool,
+    outgoing_transition: Option<OutgoingTransition>,
+    last_transition_group: Option<super::automix::ScheduleGroup>,
 }
 
 impl AudioPlayer {
     const FADE_DURATION: Duration = Duration::from_millis(300);
-    const FADE_STEPS: u32 = 12;
 
     /// Create a new audio player with default output device
     pub fn new(chain: AudioProcessingChain) -> Result<Self, String> {
@@ -111,8 +120,10 @@ impl AudioPlayer {
                 .map_err(|e| format!("Failed to create audio output: {}", e))?
         };
 
-        let mut state = PlayerState::default();
-        state.device_name = device_name.map(|s| s.to_string());
+        let state = PlayerState {
+            device_name: device_name.map(str::to_string),
+            ..PlayerState::default()
+        };
 
         Ok(Self {
             _stream: stream,
@@ -122,6 +133,9 @@ impl AudioPlayer {
             chain,
             current_runtime: None,
             is_streaming: false,
+            pending_pause_fade: false,
+            outgoing_transition: None,
+            last_transition_group: None,
         })
     }
 
@@ -200,26 +214,6 @@ impl AudioPlayer {
         let runtime = self.chain.create_runtime();
         runtime.set_fade_volume(if fade_in { 0.0 } else { 1.0 });
         runtime
-    }
-
-    fn fade_sink_volume_blocking(sink: &Sink, from: f32, to: f32, duration: Duration) {
-        if duration.is_zero() || (from - to).abs() < 0.001 {
-            sink.set_volume(to);
-            return;
-        }
-
-        let step_duration =
-            Duration::from_secs_f32(duration.as_secs_f32() / Self::FADE_STEPS as f32);
-
-        for step in 1..=Self::FADE_STEPS {
-            let progress = step as f32 / Self::FADE_STEPS as f32;
-            let eased = 1.0 - (1.0 - progress).powi(3);
-            sink.set_volume(from + (to - from) * eased);
-
-            if step < Self::FADE_STEPS {
-                thread::sleep(step_duration);
-            }
-        }
     }
 
     fn try_seek_on_start(sink: &Sink, position: Duration, path: &Path) -> Option<String> {
@@ -575,6 +569,7 @@ impl AudioPlayer {
 
     /// Play a preloaded sink (from PreloadManager)
     ///
+    #[allow(clippy::too_many_arguments)] // Mirrors the immutable preload + transition contract.
     pub fn play_preloaded_sink(
         &mut self,
         sink: Sink,
@@ -584,19 +579,86 @@ impl AudioPlayer {
         fade_in: bool,
         track_gain: f32,
         runtime: PlaybackProcessingRuntime,
+        mut transition: TransitionDirective,
     ) -> Result<(), String> {
-        self.stop();
-        self.chain.activate_runtime(Some(&runtime));
-
-        sink.set_volume(self.get_sink_volume());
-        if fade_in {
-            runtime.set_fade_volume(0.0);
-            sink.play();
-            runtime.fade_to(1.0, Self::FADE_DURATION);
-        } else {
-            runtime.set_fade_volume(1.0);
-            sink.play();
+        self.pending_pause_fade = false;
+        if self.last_transition_group == Some(transition.group) {
+            return Err(format!(
+                "stale Automix transition group {}",
+                transition.group.0
+            ));
         }
+        let can_overlap = self.current_sink.is_some()
+            && self
+                .state
+                .lock()
+                .map(|state| state.status == PlaybackStatus::Playing)
+                .unwrap_or(false);
+
+        if can_overlap {
+            self.last_transition_group = Some(transition.group);
+            if let Some(previous) = self.outgoing_transition.take() {
+                previous.sink.stop();
+            }
+            let old_sink = self.current_sink.take().expect("current sink exists");
+            let old_runtime = self
+                .current_runtime
+                .take()
+                .unwrap_or_else(|| self.prepare_runtime(false));
+            if transition.kind == TransitionKind::Automix {
+                let current_position = old_sink.get_pos();
+                let scheduler_late = transition.expected_exit.is_some_and(|expected| {
+                    current_position
+                        > expected.saturating_add(Duration::from_millis(
+                            super::automix::SCHEDULER_HORIZON_MS,
+                        ))
+                });
+                let entry_seek_failed =
+                    transition.entry > Duration::ZERO && sink.try_seek(transition.entry).is_err();
+                if scheduler_late || entry_seek_failed {
+                    transition = TransitionDirective::baseline_natural(transition.group);
+                }
+            }
+            let crossfade = transition.duration;
+            let advanced = transition.kind == TransitionKind::Automix;
+            old_runtime.reset_automix();
+            runtime.reset_automix();
+            if advanced {
+                sink.set_speed(transition.automation.rate);
+                runtime.set_automix_gain_db(transition.automation.gain_db);
+                if transition.automation.bass_swap {
+                    let midpoint = crossfade.mul_f32(0.5);
+                    let release = Duration::from_millis(600).min(crossfade.mul_f32(0.25));
+                    old_runtime.set_bass_mix(1.0);
+                    old_runtime.automate_bass_mix(0.0, midpoint);
+                    runtime.set_bass_mix(0.0);
+                    runtime.automate_bass_mix_after(1.0, midpoint, release);
+                }
+            }
+            old_runtime.crossfade_to(0.0, crossfade);
+            runtime.set_fade_volume(0.0);
+            sink.set_volume(self.get_sink_volume());
+            sink.play();
+            runtime.crossfade_to(1.0, crossfade);
+            self.outgoing_transition = Some(OutgoingTransition {
+                sink: old_sink,
+                runtime: old_runtime,
+                _group: transition.group,
+                advanced,
+            });
+        } else {
+            self.stop();
+            sink.set_volume(self.get_sink_volume());
+            if fade_in {
+                runtime.set_fade_volume(0.0);
+                sink.play();
+                runtime.fade_to(1.0, Self::FADE_DURATION);
+            } else {
+                runtime.set_fade_volume(1.0);
+                sink.play();
+            }
+        }
+        self.chain.activate_runtime(Some(&runtime));
 
         {
             let mut state = self.state.lock().unwrap();
@@ -718,9 +780,10 @@ impl AudioPlayer {
     /// Pause playback with optional fade out
     pub fn pause_with_fade(&mut self, fade_out: bool) {
         if let Some(sink) = self.current_sink.as_ref() {
-            if fade_out {
-                let current_volume = sink.volume();
-                Self::fade_sink_volume_blocking(sink, current_volume, 0.0, Self::FADE_DURATION);
+            if fade_out && let Some(runtime) = self.current_runtime.as_ref() {
+                runtime.fade_to(0.0, Self::FADE_DURATION);
+                self.pending_pause_fade = true;
+                return;
             }
 
             let current_pos = sink.get_pos();
@@ -730,7 +793,54 @@ impl AudioPlayer {
             let mut state = self.state.lock().unwrap();
             state.status = PlaybackStatus::Paused;
             state.paused_position = Some(current_pos);
+            self.pending_pause_fade = false;
         }
+    }
+
+    /// Complete a requested fade-out once the sample-driven envelope reaches
+    /// zero. The audio thread polls this without sleeping.
+    pub fn poll_pending_pause(&mut self) -> bool {
+        if !self.pending_pause_fade {
+            return false;
+        }
+        let Some(runtime) = self.current_runtime.as_ref() else {
+            self.pending_pause_fade = false;
+            return false;
+        };
+        if !runtime.fade_complete() {
+            return false;
+        }
+        if let Some(sink) = self.current_sink.as_ref() {
+            let current_pos = sink.get_pos();
+            sink.pause();
+            sink.set_volume(self.get_sink_volume());
+            if let Ok(mut state) = self.state.lock() {
+                state.status = PlaybackStatus::Paused;
+                state.paused_position = Some(current_pos);
+            }
+        }
+        self.pending_pause_fade = false;
+        true
+    }
+
+    pub fn poll_transition(&mut self) -> bool {
+        let complete = self.outgoing_transition.as_ref().is_some_and(|transition| {
+            transition.runtime.fade_complete()
+                || transition.runtime.natural_end_reached()
+                || transition.sink.empty()
+        });
+        if complete && let Some(transition) = self.outgoing_transition.take() {
+            transition.sink.stop();
+            if transition.advanced {
+                if let Some(sink) = self.current_sink.as_ref() {
+                    sink.set_speed(1.0);
+                }
+                if let Some(runtime) = self.current_runtime.as_ref() {
+                    runtime.reset_automix();
+                }
+            }
+        }
+        complete
     }
 
     /// Resume playback
@@ -741,12 +851,15 @@ impl AudioPlayer {
     /// Resume playback with optional fade in
     pub fn resume_with_fade(&mut self, fade_in: bool) {
         if let Some(sink) = &self.current_sink {
+            self.pending_pause_fade = false;
             let target_volume = self.get_sink_volume();
 
             if fade_in {
                 sink.set_volume(0.0);
                 sink.play();
-                Self::fade_sink_volume_blocking(sink, 0.0, target_volume, Self::FADE_DURATION);
+                if let Some(runtime) = self.current_runtime.as_ref() {
+                    runtime.fade_to(1.0, Self::FADE_DURATION);
+                }
             } else {
                 sink.set_volume(target_volume);
                 sink.play();
@@ -774,7 +887,13 @@ impl AudioPlayer {
 
     /// Stop playback
     pub fn stop(&mut self) {
+        self.pending_pause_fade = false;
+        self.last_transition_group = None;
+        if let Some(transition) = self.outgoing_transition.take() {
+            transition.sink.stop();
+        }
         if let Some(sink) = self.current_sink.take() {
+            sink.set_speed(1.0);
             sink.stop();
         }
         self.current_runtime = None;
@@ -799,7 +918,18 @@ impl AudioPlayer {
 
     /// Seek to position
     pub fn seek(&mut self, position: Duration) -> Result<(), String> {
+        self.pending_pause_fade = false;
+        self.last_transition_group = None;
+        if let Some(transition) = self.outgoing_transition.take() {
+            transition.sink.stop();
+        }
+        if let Some(runtime) = self.current_runtime.as_ref() {
+            runtime.set_fade_volume(1.0);
+            runtime.reset_automix();
+            runtime.reset_natural_end();
+        }
         if let Some(sink) = &mut self.current_sink {
+            sink.set_speed(1.0);
             match sink.try_seek(position) {
                 Ok(_) => {
                     let new_position = sink.get_pos();
@@ -921,6 +1051,13 @@ impl AudioPlayer {
 
     /// Check if playback finished
     pub fn is_finished(&self) -> bool {
+        if self
+            .current_runtime
+            .as_ref()
+            .is_some_and(PlaybackProcessingRuntime::natural_end_reached)
+        {
+            return true;
+        }
         if let Some(sink) = &self.current_sink {
             let state = self.state.lock().unwrap();
             let position = sink.get_pos();
@@ -967,11 +1104,6 @@ impl AudioPlayer {
         } else {
             false
         }
-    }
-
-    /// Check if current playback is streaming
-    pub fn is_streaming(&self) -> bool {
-        self.is_streaming
     }
 }
 
@@ -1115,7 +1247,9 @@ fn get_cpal_devices() -> Vec<AudioDevice> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PlaybackError {
     FileNotFound(String),
+    UnsupportedStreaming(String),
     UnsupportedFormat(String),
+    NetworkError(String),
     IoError(String),
     DecodeError(String),
 }
@@ -1124,7 +1258,9 @@ impl std::fmt::Display for PlaybackError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             PlaybackError::FileNotFound(m) => write!(f, "File not found: {}", m),
+            PlaybackError::UnsupportedStreaming(m) => write!(f, "Unsupported streaming: {}", m),
             PlaybackError::UnsupportedFormat(m) => write!(f, "Unsupported format: {}", m),
+            PlaybackError::NetworkError(m) => write!(f, "Network error: {}", m),
             PlaybackError::IoError(m) => write!(f, "IO error: {}", m),
             PlaybackError::DecodeError(m) => write!(f, "Decode error: {}", m),
         }
@@ -1136,15 +1272,61 @@ pub fn classify_playback_error(error_msg: &str) -> PlaybackError {
     let lower = error_msg.to_lowercase();
     if lower.contains("not found") || lower.contains("no such file") {
         PlaybackError::FileNotFound(error_msg.to_string())
-    } else if lower.contains("format")
-        || lower.contains("codec")
-        || lower.contains("unsupported")
-        || lower.contains("decode")
+    } else if lower.contains("unsupportedstreaming")
+        || lower.contains("unsupported streaming")
+        || lower.contains("content-range")
+        || lower.contains("expected http 206")
+    {
+        PlaybackError::UnsupportedStreaming(error_msg.to_string())
+    } else if lower.contains("network:")
+        || lower.contains("http request")
+        || lower.contains("connection")
+        || lower.contains("timed out")
+    {
+        PlaybackError::NetworkError(error_msg.to_string())
+    } else if lower.contains("unsupportedformat")
+        || lower.contains("unsupported format")
+        || lower.contains("unsupported codec")
+        || lower.contains("unrecognized format")
     {
         PlaybackError::UnsupportedFormat(error_msg.to_string())
-    } else if lower.contains("permission") || lower.contains("denied") || lower.contains("io") {
+    } else if lower.contains("permission")
+        || lower.contains("denied")
+        || lower.contains("i/o")
+        || lower.contains("io error")
+        || lower.contains("cache write")
+    {
         PlaybackError::IoError(error_msg.to_string())
     } else {
         PlaybackError::DecodeError(error_msg.to_string())
+    }
+}
+
+#[cfg(test)]
+mod error_tests {
+    use super::*;
+
+    #[test]
+    fn playback_errors_keep_streaming_network_format_decode_and_io_distinct() {
+        assert!(matches!(
+            classify_playback_error("UnsupportedStreaming: expected HTTP 206"),
+            PlaybackError::UnsupportedStreaming(_)
+        ));
+        assert!(matches!(
+            classify_playback_error("Network: Range request timed out"),
+            PlaybackError::NetworkError(_)
+        ));
+        assert!(matches!(
+            classify_playback_error("UnsupportedFormat: unknown audio prefix"),
+            PlaybackError::UnsupportedFormat(_)
+        ));
+        assert!(matches!(
+            classify_playback_error("Failed to decode packet"),
+            PlaybackError::DecodeError(_)
+        ));
+        assert!(matches!(
+            classify_playback_error("I/O: cache write failed"),
+            PlaybackError::IoError(_)
+        ));
     }
 }

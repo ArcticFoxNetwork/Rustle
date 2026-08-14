@@ -287,6 +287,49 @@ impl PlaybackRuntimeState {
 }
 
 impl App {
+    pub(crate) fn current_audio_context(&self) -> Option<crate::audio::identity::PlaybackContext> {
+        self.audio_handle()
+            .and_then(|audio| audio.current_context())
+    }
+
+    pub(crate) fn accepts_audio_preload_identity(
+        &self,
+        identity: &crate::audio::identity::PreloadIdentity,
+    ) -> bool {
+        self.core.audio.as_ref().is_some_and(|audio| {
+            audio.current_context().is_some_and(|context| {
+                context.generation == identity.generation
+                    && context.cancellation == identity.cancellation
+                    && !identity.cancellation.is_cancelled()
+                    && audio.accepts_context(&context)
+                    && self
+                        .playback
+                        .audio_preload_manager
+                        .accepts_identity(identity)
+            })
+        })
+    }
+    pub(crate) fn accepts_audio_context(
+        &self,
+        context: &crate::audio::identity::PlaybackContext,
+    ) -> bool {
+        self.core
+            .audio
+            .as_ref()
+            .is_some_and(|audio| audio.accepts_context(context))
+    }
+
+    pub(crate) fn accepts_audio_seek(
+        &self,
+        context: &crate::audio::identity::PlaybackContext,
+        nonce: crate::audio::identity::SeekNonce,
+    ) -> bool {
+        self.core
+            .audio
+            .as_ref()
+            .is_some_and(|audio| audio.accepts_seek(context, nonce))
+    }
+
     fn audio_handle(&self) -> Option<&crate::audio::AudioHandle> {
         self.core.audio.as_ref()
     }
@@ -363,7 +406,7 @@ impl App {
         track_gain: f32,
     ) -> Result<u64, String> {
         let audio = self.require_audio_handle()?;
-        Ok(audio.play_with_fade(path, fade_in, track_gain))
+        audio.play_with_fade(path, fade_in, track_gain)
     }
 
     pub(crate) fn play_audio_file_at_position(
@@ -374,7 +417,7 @@ impl App {
         track_gain: f32,
     ) -> Result<u64, String> {
         let audio = self.require_audio_handle()?;
-        Ok(audio.play_from_position_with_fade(path, position, fade_in, track_gain))
+        audio.play_from_position_with_fade(path, position, fade_in, track_gain)
     }
 
     pub(crate) fn play_streaming_audio(
@@ -387,16 +430,57 @@ impl App {
     ) -> Result<u64, String> {
         let audio = self.require_audio_handle()?;
         let streaming_buffer = crate::audio::StreamingBuffer::new(buffer);
-        Ok(audio.play_streaming(streaming_buffer, duration, cache_path, fade_in, track_gain))
+        audio.play_streaming(streaming_buffer, duration, cache_path, fade_in, track_gain)
     }
 
     pub(crate) fn play_preloaded_audio(
         &self,
-        request_id: u64,
+        identity: crate::audio::identity::PreloadIdentity,
         fade_in: bool,
+        transition: Option<crate::audio::automix::TransitionDirective>,
     ) -> Result<u64, String> {
         let audio = self.require_audio_handle()?;
-        Ok(audio.play_preloaded(request_id, fade_in))
+        audio.play_preloaded(identity, fade_in, transition)
+    }
+
+    pub(crate) fn schedule_preloaded_audio_transition(
+        &self,
+        identity: crate::audio::identity::PreloadIdentity,
+        trigger_at: Duration,
+        fade_in: bool,
+        transition: crate::audio::automix::TransitionDirective,
+    ) -> Result<u64, String> {
+        self.require_audio_handle()?
+            .schedule_preloaded_transition(identity, trigger_at, fade_in, transition)
+    }
+
+    pub(crate) fn cancel_scheduled_audio_transition(&self) {
+        if let Some(audio) = self.audio_handle()
+            && let Err(error) = audio.cancel_scheduled_transition()
+        {
+            tracing::warn!("Failed to cancel scheduled audio transition: {error}");
+        }
+    }
+
+    pub(crate) fn clear_scheduled_transition_state(&mut self) {
+        if self.playback.scheduled_transition_request_id.is_some() {
+            self.cancel_scheduled_audio_transition();
+        }
+        if let Some(buffer) = self.playback.scheduled_transition_buffer.take() {
+            buffer.cancel();
+        }
+        if let Some(request_id) = self.playback.scheduled_transition_request_id.take()
+            && self
+                .playback
+                .pending_playback_request
+                .as_ref()
+                .is_some_and(|pending| pending.request_id == request_id)
+        {
+            self.playback.pending_playback_request = None;
+        }
+        self.playback.pending_transition = None;
+        self.playback.pending_transition_trigger = None;
+        self.playback.crossfade_triggered = false;
     }
 
     pub(crate) fn load_audio_file_paused(
@@ -406,7 +490,7 @@ impl App {
         track_gain: f32,
     ) -> Result<u64, String> {
         let audio = self.require_audio_handle()?;
-        Ok(audio.load_paused(path, position, track_gain))
+        audio.load_paused(path, position, track_gain)
     }
 
     pub(crate) fn load_streaming_audio_paused(
@@ -419,73 +503,100 @@ impl App {
     ) -> Result<u64, String> {
         let audio = self.require_audio_handle()?;
         let streaming_buffer = crate::audio::StreamingBuffer::new(buffer);
-        Ok(audio.load_streaming_paused(
-            streaming_buffer,
-            duration,
-            cache_path,
-            position,
-            track_gain,
-        ))
+        audio.load_streaming_paused(streaming_buffer, duration, cache_path, position, track_gain)
+    }
+
+    pub(crate) fn reserve_preload_identity(
+        &self,
+    ) -> Result<crate::audio::identity::PreloadIdentity, String> {
+        self.require_audio_handle()?
+            .reserve_preload_identity()
+            .ok_or_else(|| "Preload requires active playback generation".to_string())
+    }
+
+    pub(crate) fn reserve_preload_handoff(
+        &self,
+        parent: &crate::audio::identity::PreloadIdentity,
+    ) -> Result<crate::audio::identity::PreloadIdentity, String> {
+        self.require_audio_handle()?
+            .reserve_preload_handoff(parent)
+            .ok_or_else(|| "Preload handoff identity is stale or cancelled".to_string())
     }
 
     pub(crate) fn create_preload_sink_for_file(
         &self,
+        identity: crate::audio::identity::PreloadIdentity,
         path: PathBuf,
         track_gain: f32,
-    ) -> Result<u64, String> {
+    ) -> Result<(), String> {
         let audio = self.require_audio_handle()?;
-        Ok(audio.create_preload_sink(path, track_gain))
+        audio.create_preload_sink(identity, path, track_gain)
     }
 
     pub(crate) fn create_preload_sink_for_stream(
         &self,
+        identity: crate::audio::identity::PreloadIdentity,
         buffer: crate::audio::SharedBuffer,
         duration: Duration,
         track_gain: f32,
-    ) -> Result<u64, String> {
+    ) -> Result<(), String> {
         let audio = self.require_audio_handle()?;
         let streaming_buffer = crate::audio::StreamingBuffer::new(buffer);
-        Ok(audio.create_preload_sink_streaming(streaming_buffer, duration, track_gain))
+        audio.create_preload_sink_streaming(identity, streaming_buffer, duration, track_gain)
     }
 
-    pub(crate) fn release_preload_request(&self, request_id: u64) {
-        if let Some(audio) = self.audio_handle() {
-            audio.release_preload(request_id);
+    pub(crate) fn release_preload_request(
+        &self,
+        identity: crate::audio::identity::PreloadIdentity,
+    ) {
+        if let Some(audio) = self.audio_handle()
+            && let Err(error) = audio.release_preload(identity)
+        {
+            tracing::warn!("Failed to release audio preload: {error}");
         }
     }
 
     pub(crate) fn release_preload_requests<I>(&self, request_ids: I)
     where
-        I: IntoIterator<Item = u64>,
+        I: IntoIterator<Item = crate::audio::identity::PreloadIdentity>,
     {
         if let Some(audio) = self.audio_handle() {
-            for request_id in request_ids {
-                audio.release_preload(request_id);
+            for identity in request_ids {
+                if let Err(error) = audio.release_preload(identity) {
+                    tracing::warn!("Failed to release audio preload: {error}");
+                }
             }
         }
     }
 
     pub(crate) fn pause_audio_output_with_fade(&self, fade_out: bool) {
-        if let Some(audio) = self.audio_handle() {
-            audio.pause_with_fade(fade_out);
+        if let Some(audio) = self.audio_handle()
+            && let Err(error) = audio.pause_with_fade(fade_out)
+        {
+            tracing::warn!("Failed to enqueue pause: {error}");
         }
     }
 
     pub(crate) fn resume_audio_output_with_fade(&self, fade_in: bool) {
-        if let Some(audio) = self.audio_handle() {
-            audio.resume_with_fade(fade_in);
+        if let Some(audio) = self.audio_handle()
+            && let Err(error) = audio.resume_with_fade(fade_in)
+        {
+            tracing::warn!("Failed to enqueue resume: {error}");
         }
     }
 
     pub(crate) fn stop_audio_backend(&self) {
-        if let Some(audio) = self.audio_handle() {
-            audio.stop();
+        if let Some(audio) = self.audio_handle()
+            && let Err(error) = audio.stop()
+        {
+            tracing::warn!("Failed to enqueue stop: {error}");
         }
     }
 
     pub(crate) fn seek_audio_output(&mut self, position: Duration) {
-        if let Some(audio) = self.audio_handle() {
-            audio.seek(position);
+        if let Some(audio) = self.audio_handle()
+            && audio.seek(position).is_ok()
+        {
             self.refresh_playback_runtime();
         }
     }
@@ -532,9 +643,12 @@ impl App {
         }
     }
 
-    pub(crate) fn switch_audio_output_device(&self, device_name: Option<String>) {
-        if let Some(audio) = self.audio_handle() {
-            audio.switch_device(device_name);
+    pub(crate) fn switch_audio_output_device(&mut self, device_name: Option<String>) {
+        self.clear_scheduled_transition_state();
+        if let Some(audio) = self.audio_handle()
+            && let Err(error) = audio.switch_device(device_name)
+        {
+            tracing::warn!("Failed to enqueue audio device switch: {error}");
         }
     }
 
@@ -653,6 +767,19 @@ pub struct PlaybackSessionState {
     pub runtime: PlaybackRuntimeState,
     /// Consecutive playback failure counter.
     pub consecutive_failures: u8,
+    /// Prevents repeated natural Crossfade triggers while the next generation
+    /// is being promoted.
+    pub crossfade_triggered: bool,
+    /// One-shot transition intent consumed only by the next preloaded handoff.
+    pub pending_transition: Option<crate::audio::automix::TransitionDirective>,
+    /// Audio-clock deadline paired with `pending_transition` for natural handoff.
+    pub pending_transition_trigger: Option<Duration>,
+    /// Request whose UI commit is deferred until the scheduled handoff starts.
+    pub scheduled_transition_request_id: Option<u64>,
+    /// Incoming streaming buffer retained without cancelling the outgoing source.
+    pub scheduled_transition_buffer: Option<crate::audio::SharedBuffer>,
+    /// Throttles finalized-cache discovery for streaming Automix analysis.
+    pub automix_analysis_poll_at: Option<std::time::Instant>,
     /// Startup restore coordination state.
     pub startup_restore: StartupRestoreState,
 }

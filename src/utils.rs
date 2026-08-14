@@ -277,6 +277,10 @@ pub fn avatars_cache_dir() -> PathBuf {
     cache_dir().join("avatars")
 }
 
+pub fn automix_cache_dir() -> PathBuf {
+    cache_dir().join("automix")
+}
+
 // ============================================================================
 // Audio Format Detection
 // ============================================================================
@@ -303,49 +307,46 @@ pub fn find_cached_audio(dir: &Path, stem: &str) -> Option<PathBuf> {
 
 /// Detect audio format from magic bytes
 /// Returns the correct file extension (without dot)
-pub fn detect_audio_format(bytes: &[u8]) -> &'static str {
-    if bytes.len() < 12 {
-        return "mp3"; // Default fallback
+pub fn detect_audio_format(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() < 4 {
+        return None;
     }
 
-    // FLAC: 66 4C 61 43 (fLaC)
-    if bytes.starts_with(&[0x66, 0x4C, 0x61, 0x43]) {
-        return "flac";
+    // FLAC: fLaC
+    if bytes.starts_with(b"fLaC") {
+        return Some("flac");
     }
 
-    // MP3: FF FB, FF FA, FF F3, FF F2 (MPEG audio frame sync)
-    // or ID3 tag: 49 44 33 (ID3)
+    // MP3: MPEG audio frame sync or ID3 tag
     if bytes.starts_with(&[0xFF, 0xFB])
         || bytes.starts_with(&[0xFF, 0xFA])
         || bytes.starts_with(&[0xFF, 0xF3])
         || bytes.starts_with(&[0xFF, 0xF2])
-        || bytes.starts_with(&[0x49, 0x44, 0x33])
+        || bytes.starts_with(b"ID3")
     {
-        return "mp3";
+        return Some("mp3");
     }
 
-    // M4A/AAC: 00 00 00 xx 66 74 79 70 (ftyp)
+    // M4A/AAC: ISO-BMFF ftyp box
     if bytes.len() >= 8 && &bytes[4..8] == b"ftyp" {
-        return "m4a";
+        return Some("m4a");
     }
 
-    // OGG: 4F 67 67 53 (OggS)
-    if bytes.starts_with(&[0x4F, 0x67, 0x67, 0x53]) {
-        // Check for Opus codec inside the Ogg container
-        // OpusHead magic: first page contains "OpusHead" after the Ogg page header
-        if bytes.windows(8).any(|w| w == b"OpusHead") {
-            return "opus";
-        }
-        return "ogg";
+    // OGG: OggS; identify Opus when the codec marker is present.
+    if bytes.starts_with(b"OggS") {
+        return Some(if bytes.windows(8).any(|w| w == b"OpusHead") {
+            "opus"
+        } else {
+            "ogg"
+        });
     }
 
-    // WAV: 52 49 46 46 ... 57 41 56 45 (RIFF...WAVE)
-    if bytes.len() >= 12 && bytes.starts_with(&[0x52, 0x49, 0x46, 0x46]) && &bytes[8..12] == b"WAVE"
-    {
-        return "wav";
+    // WAV: RIFF....WAVE
+    if bytes.len() >= 12 && bytes.starts_with(b"RIFF") && &bytes[8..12] == b"WAVE" {
+        return Some("wav");
     }
 
-    "mp3" // Default fallback
+    None
 }
 
 // ============================================================================

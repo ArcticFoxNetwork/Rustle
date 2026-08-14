@@ -83,6 +83,12 @@ pub struct PlaybackSettings {
     /// Music quality setting (0=128k, 1=192k, 2=320k, 3=SQ, 4=Hi-Res)
     #[serde(default = "default_music_quality")]
     pub music_quality: MusicQuality,
+    /// Enable native Automix planning and scheduling. Disabled by default.
+    #[serde(default)]
+    pub automix_enabled: bool,
+    /// Maximum seconds of audio inspected by the offline Automix analyzer.
+    #[serde(default = "default_automix_analysis_max_seconds")]
+    pub automix_analysis_max_seconds: u32,
 }
 
 fn default_music_quality() -> MusicQuality {
@@ -95,6 +101,10 @@ fn default_spectrum_decay() -> f32 {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_automix_analysis_max_seconds() -> u32 {
+    crate::audio::automix::DEFAULT_ANALYSIS_MAX_SECONDS
 }
 
 /// Music quality options for streaming
@@ -459,6 +469,8 @@ impl Default for PlaybackSettings {
             spectrum_decay: 0.85,
             spectrum_bars_mode: true,
             music_quality: MusicQuality::High, // 320k default
+            automix_enabled: false,
+            automix_analysis_max_seconds: default_automix_analysis_max_seconds(),
         }
     }
 }

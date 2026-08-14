@@ -16,11 +16,13 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 
 use super::PlaybackStatus;
+use super::identity::{PlaybackContext, PreloadIdentity, SeekNonce};
 use super::player::PlaybackError;
 use super::streaming::StreamingBuffer;
 
@@ -33,6 +35,7 @@ use super::streaming::StreamingBuffer;
 pub enum AudioCommand {
     /// Play a local file
     Play {
+        context: PlaybackContext,
         request_id: u64,
         path: PathBuf,
         fade_in: bool,
@@ -40,6 +43,7 @@ pub enum AudioCommand {
     },
     /// Load a local file into paused state at a target position
     LoadPaused {
+        context: PlaybackContext,
         request_id: u64,
         path: PathBuf,
         position: Duration,
@@ -47,6 +51,7 @@ pub enum AudioCommand {
     },
     /// Load a streaming source into paused state at a target position
     LoadPausedStreaming {
+        context: PlaybackContext,
         request_id: u64,
         buffer: StreamingBuffer,
         duration: Duration,
@@ -56,6 +61,7 @@ pub enum AudioCommand {
     },
     /// Play a local file from a target position
     PlayAt {
+        context: PlaybackContext,
         request_id: u64,
         path: PathBuf,
         position: Duration,
@@ -64,6 +70,7 @@ pub enum AudioCommand {
     },
     /// Play from streaming buffer (for NCM songs)
     PlayStreaming {
+        context: PlaybackContext,
         request_id: u64,
         buffer: StreamingBuffer,
         duration: Duration,
@@ -71,75 +78,74 @@ pub enum AudioCommand {
         fade_in: bool,
         track_gain: f32,
     },
-    /// Pause playback
-    Pause { fade_out: bool },
-    /// Resume playback  
-    Resume { fade_in: bool },
+    Pause {
+        context: PlaybackContext,
+        fade_out: bool,
+    },
+    /// Resume playback
+    Resume {
+        context: PlaybackContext,
+        fade_in: bool,
+    },
     /// Stop playback
-    Stop,
+    Stop { context: PlaybackContext },
     /// Seek to position
-    Seek { position: Duration },
-    /// Set volume (0.0 - 1.0)
-    SetVolume { volume: f32 },
+    Seek {
+        context: PlaybackContext,
+        nonce: SeekNonce,
+        position: Duration,
+    },
     /// Create preload sink for a local file (async, returns via PreloadReady event)
     CreatePreloadSink {
+        identity: PreloadIdentity,
         path: PathBuf,
-        request_id: u64,
         track_gain: f32,
     },
     /// Create preload sink for streaming (async, returns via PreloadReady event)
     CreatePreloadSinkStreaming {
+        identity: PreloadIdentity,
         buffer: StreamingBuffer,
         duration: Duration,
-        request_id: u64,
         track_gain: f32,
     },
-    /// Play a preloaded sink by request_id
+    /// Play a preloaded sink by immutable identity.
     PlayPreloaded {
-        request_id: u64,
+        context: PlaybackContext,
+        identity: PreloadIdentity,
         playback_request_id: u64,
         fade_in: bool,
+        transition: super::automix::TransitionDirective,
     },
-    /// Stop playback and exit the audio thread.
-    Shutdown,
-    /// Release a preloaded sink by request_id without playing it
-    ReleasePreload { request_id: u64 },
+    /// Schedule an already-ready preload against the outgoing sink's audio clock.
+    /// The playback generation is promoted only when the deadline is reached.
+    SchedulePreloadedTransition {
+        owner: PlaybackContext,
+        identity: PreloadIdentity,
+        playback_request_id: u64,
+        trigger_at: Duration,
+        fade_in: bool,
+        transition: super::automix::TransitionDirective,
+    },
+    /// Cancel the scheduled transition owned by this outgoing playback context.
+    CancelScheduledTransition { owner: PlaybackContext },
+    /// Release a preloaded sink by immutable identity without playing it
+    ReleasePreload { identity: PreloadIdentity },
     /// Switch audio output device
     SwitchDevice { device_name: Option<String> },
-    /// Periodic tick for buffer status checks and position sync
-    Tick,
-    /// Buffer data available notification (from download callback)
-    /// Used by Audio Thread to update buffer progress and check if buffering can end
-    BufferDataAvailable { downloaded: u64, total: u64 },
+    /// Wake the audio thread to drain latest-value control mailboxes.
+    LatestMailboxWake,
+    /// Buffer data available wake-up marker. The latest payload is held in
+    /// `BufferDataMailbox`, keeping high-frequency progress out of payload FIFO.
+    BufferDataAvailable,
+    /// Low-frequency wake used only as a watchdog when UI commands are sparse.
+    WatchdogWake,
 }
 
 impl std::fmt::Debug for AudioCommand {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Play {
-                request_id,
-                path,
-                fade_in,
-                track_gain,
-            } => f
-                .debug_struct("Play")
-                .field("request_id", request_id)
-                .field("path", path)
-                .field("fade_in", fade_in)
-                .field("track_gain", track_gain)
-                .finish(),
-            Self::LoadPaused {
-                request_id,
-                path,
-                position,
-                track_gain,
-            } => f
-                .debug_struct("LoadPaused")
-                .field("request_id", request_id)
-                .field("path", path)
-                .field("position", position)
-                .field("track_gain", track_gain)
-                .finish(),
+            Self::Play { .. } => f.debug_struct("Play").finish_non_exhaustive(),
+            Self::LoadPaused { .. } => f.debug_struct("LoadPaused").finish_non_exhaustive(),
             Self::LoadPausedStreaming {
                 request_id,
                 duration,
@@ -161,6 +167,7 @@ impl std::fmt::Debug for AudioCommand {
                 position,
                 fade_in,
                 track_gain,
+                ..
             } => f
                 .debug_struct("PlayAt")
                 .field("request_id", request_id)
@@ -184,61 +191,63 @@ impl std::fmt::Debug for AudioCommand {
                 .field("fade_in", fade_in)
                 .field("track_gain", track_gain)
                 .finish_non_exhaustive(),
-            Self::Pause { fade_out } => {
+            Self::Pause { fade_out, .. } => {
                 f.debug_struct("Pause").field("fade_out", fade_out).finish()
             }
-            Self::Resume { fade_in } => f.debug_struct("Resume").field("fade_in", fade_in).finish(),
-            Self::Stop => write!(f, "Stop"),
-            Self::Seek { position } => f.debug_struct("Seek").field("position", position).finish(),
-            Self::SetVolume { volume } => {
-                f.debug_struct("SetVolume").field("volume", volume).finish()
+            Self::Resume { fade_in, .. } => {
+                f.debug_struct("Resume").field("fade_in", fade_in).finish()
+            }
+            Self::Stop { .. } => write!(f, "Stop"),
+            Self::Seek { position, .. } => {
+                f.debug_struct("Seek").field("position", position).finish()
             }
             Self::CreatePreloadSink {
+                identity,
                 path,
-                request_id,
                 track_gain,
             } => f
                 .debug_struct("CreatePreloadSink")
+                .field("identity", identity)
                 .field("path", path)
-                .field("request_id", request_id)
                 .field("track_gain", track_gain)
                 .finish(),
             Self::CreatePreloadSinkStreaming {
+                identity,
                 duration,
-                request_id,
                 track_gain,
                 ..
             } => f
                 .debug_struct("CreatePreloadSinkStreaming")
+                .field("identity", identity)
                 .field("duration", duration)
-                .field("request_id", request_id)
                 .field("track_gain", track_gain)
                 .finish_non_exhaustive(),
-            Self::PlayPreloaded {
-                request_id,
-                playback_request_id,
-                fade_in,
+            Self::PlayPreloaded { .. } => f.debug_struct("PlayPreloaded").finish_non_exhaustive(),
+            Self::SchedulePreloadedTransition {
+                identity,
+                trigger_at,
+                transition,
+                ..
             } => f
-                .debug_struct("PlayPreloaded")
-                .field("request_id", request_id)
-                .field("playback_request_id", playback_request_id)
-                .field("fade_in", fade_in)
-                .finish(),
-            Self::Shutdown => write!(f, "Shutdown"),
-            Self::ReleasePreload { request_id } => f
+                .debug_struct("SchedulePreloadedTransition")
+                .field("identity", identity)
+                .field("trigger_at", trigger_at)
+                .field("group", &transition.group)
+                .finish_non_exhaustive(),
+            Self::CancelScheduledTransition { .. } => f
+                .debug_struct("CancelScheduledTransition")
+                .finish_non_exhaustive(),
+            Self::ReleasePreload { identity } => f
                 .debug_struct("ReleasePreload")
-                .field("request_id", request_id)
+                .field("identity", identity)
                 .finish(),
             Self::SwitchDevice { device_name } => f
                 .debug_struct("SwitchDevice")
                 .field("device_name", device_name)
                 .finish(),
-            Self::Tick => write!(f, "Tick"),
-            Self::BufferDataAvailable { downloaded, total } => f
-                .debug_struct("BufferDataAvailable")
-                .field("downloaded", downloaded)
-                .field("total", total)
-                .finish(),
+            Self::LatestMailboxWake => write!(f, "LatestMailboxWake"),
+            Self::BufferDataAvailable => f.debug_struct("BufferDataAvailable").finish(),
+            Self::WatchdogWake => write!(f, "WatchdogWake"),
         }
     }
 }
@@ -253,65 +262,102 @@ impl std::fmt::Debug for AudioCommand {
 pub enum AudioEvent {
     /// Playback started for a track
     Started {
+        context: PlaybackContext,
         request_id: u64,
         path: Option<PathBuf>,
     },
     /// Playback paused
     Paused {
+        context: PlaybackContext,
         request_id: Option<u64>,
         position: Duration,
     },
     /// Playback resumed
-    Resumed,
+    Resumed {
+        context: PlaybackContext,
+    },
     /// Playback stopped
-    Stopped,
+    Stopped {
+        context: PlaybackContext,
+    },
     /// Seek completed successfully
-    SeekComplete { position: Duration },
+    SeekComplete {
+        context: PlaybackContext,
+        nonce: SeekNonce,
+        position: Duration,
+    },
     /// Seek failed
-    SeekFailed { error: String },
+    SeekFailed {
+        context: PlaybackContext,
+        nonce: SeekNonce,
+        error: String,
+    },
     /// Seek started
-    SeekStarted { target_position: Duration },
+    SeekStarted {
+        context: PlaybackContext,
+        nonce: SeekNonce,
+        target_position: Duration,
+    },
     /// State changed
     StateChanged {
+        context: PlaybackContext,
         old_status: PlaybackStatus,
         new_status: PlaybackStatus,
     },
     /// Buffer progress update
     BufferProgress {
+        context: PlaybackContext,
         downloaded: u64,
         total: u64,
         progress: f32,
     },
     /// Entered buffering state
-    BufferingStarted { position: Duration },
+    BufferingStarted {
+        context: PlaybackContext,
+        position: Duration,
+    },
     /// Buffering ended, playback resumed
-    BufferingEnded,
+    BufferingEnded {
+        context: PlaybackContext,
+    },
     /// Preload sink ready
     PreloadReady {
-        request_id: u64,
+        identity: PreloadIdentity,
         duration: Duration,
         path: PathBuf,
     },
     /// Preload failed
-    PreloadFailed { request_id: u64, error: String },
+    PreloadFailed {
+        identity: PreloadIdentity,
+        error: String,
+    },
     /// Device switched successfully
     DeviceSwitched {
         /// State to restore: (path, position, was_playing)
         restore_state: Option<(PathBuf, Duration, bool)>,
     },
     /// Device switch failed
-    DeviceSwitchFailed { error: String },
-    /// Playback finished (track ended)
-    Finished,
+    DeviceSwitchFailed {
+        error: String,
+    },
+    Finished {
+        context: PlaybackContext,
+    },
     /// Error occurred
     Error {
+        context: PlaybackContext,
         request_id: Option<u64>,
         message: String,
         error_kind: Option<PlaybackError>,
     },
 }
 
-// ============ Shared State ============
+#[derive(Debug, Clone)]
+pub struct PendingSeek {
+    pub target: Duration,
+    pub context: PlaybackContext,
+    pub nonce: SeekNonce,
+}
 
 /// Inner state protected by RwLock
 #[derive(Debug, Clone)]
@@ -338,7 +384,7 @@ struct PlaybackStateInner {
     /// When seeking to an unbuffered position, we store the target here
     /// and enter Buffering state. When buffer is ready, exit_buffering()
     /// checks this field and executes the seek before resuming playback.
-    pub pending_seek_target: Option<Duration>,
+    pub pending_seek: Option<PendingSeek>,
 }
 
 impl Default for PlaybackStateInner {
@@ -352,7 +398,7 @@ impl Default for PlaybackStateInner {
             buffer_progress: None,
             buffered_bytes: 0,
             total_bytes: 0,
-            pending_seek_target: None,
+            pending_seek: None,
         }
     }
 }
@@ -413,8 +459,8 @@ impl SharedPlaybackState {
     pub fn display_position(&self) -> Duration {
         let inner = self.inner.read();
         // If there's a pending seek, show the target position
-        if let Some(target) = inner.pending_seek_target {
-            return target;
+        if let Some(pending) = &inner.pending_seek {
+            return pending.target;
         }
         inner.position
     }
@@ -469,13 +515,22 @@ impl SharedPlaybackState {
     ///
     /// Called when seeking to unbuffered position. The target is stored
     /// and will be executed when buffer is ready.
-    pub fn set_pending_seek(&self, target: Option<Duration>) {
-        self.inner.write().pending_seek_target = target;
+    pub fn set_pending_seek(&self, pending: Option<PendingSeek>) {
+        self.inner.write().pending_seek = pending;
     }
 
-    /// Get pending seek target
+    /// Get pending seek context.
+    pub fn pending_seek(&self) -> Option<PendingSeek> {
+        self.inner.read().pending_seek.clone()
+    }
+
+    /// Get pending seek target.
     pub fn pending_seek_target(&self) -> Option<Duration> {
-        self.inner.read().pending_seek_target
+        self.inner
+            .read()
+            .pending_seek
+            .as_ref()
+            .map(|pending| pending.target)
     }
 
     /// Update from PlaybackInfo
@@ -488,13 +543,141 @@ impl SharedPlaybackState {
     }
 }
 
-// ============ Channel Types ============
+/// Latest retained buffer progress payload.
+#[derive(Debug, Clone)]
+pub struct BufferDataUpdate {
+    pub context: PlaybackContext,
+    pub downloaded: u64,
+    pub total: u64,
+}
+
+#[derive(Debug)]
+struct BufferDataMailboxInner {
+    latest: Mutex<Option<BufferDataUpdate>>,
+    dirty: AtomicBool,
+    wake_tx: AudioCommandSender,
+}
+
+/// Race-safe latest-value mailbox for high-frequency buffer progress.
+#[derive(Clone, Debug)]
+pub struct BufferDataMailbox {
+    inner: Arc<BufferDataMailboxInner>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LatestControlMailbox {
+    inner: Arc<LatestControlMailboxInner>,
+}
+
+#[derive(Debug)]
+struct LatestControlMailboxInner {
+    latest_volume: Mutex<Option<f32>>,
+    tick_pending: AtomicBool,
+    shutdown: Mutex<Option<PlaybackContext>>,
+    wake_enqueued: AtomicBool,
+    wake_tx: AudioCommandSender,
+}
+
+impl LatestControlMailbox {
+    pub fn new(wake_tx: AudioCommandSender) -> Self {
+        Self {
+            inner: Arc::new(LatestControlMailboxInner {
+                latest_volume: Mutex::new(None),
+                tick_pending: AtomicBool::new(false),
+                shutdown: Mutex::new(None),
+                wake_enqueued: AtomicBool::new(false),
+                wake_tx,
+            }),
+        }
+    }
+
+    fn wake(&self) {
+        if !self.inner.wake_enqueued.swap(true, Ordering::AcqRel)
+            && self
+                .inner
+                .wake_tx
+                .try_send(AudioCommand::LatestMailboxWake)
+                .is_err()
+        {
+            // A full FIFO is recoverable: the audio thread drains the
+            // mailbox after every critical command. Clear the marker so a
+            // later producer can retry when capacity becomes available.
+            self.inner.wake_enqueued.store(false, Ordering::Release);
+        }
+    }
+
+    pub fn publish_volume(&self, volume: f32) {
+        *self.inner.latest_volume.lock() = Some(volume);
+        self.wake();
+    }
+
+    pub fn publish_tick(&self) {
+        self.inner.tick_pending.store(true, Ordering::Release);
+        self.wake();
+    }
+
+    pub fn publish_shutdown(&self, context: PlaybackContext) {
+        *self.inner.shutdown.lock() = Some(context);
+        self.wake();
+    }
+
+    pub fn take(&self) -> (Option<f32>, bool, Option<PlaybackContext>) {
+        let volume = self.inner.latest_volume.lock().take();
+        let tick = self.inner.tick_pending.swap(false, Ordering::AcqRel);
+        let shutdown = self.inner.shutdown.lock().take();
+        self.inner.wake_enqueued.store(false, Ordering::Release);
+        (volume, tick, shutdown)
+    }
+}
+
+impl BufferDataMailbox {
+    pub fn new(wake_tx: AudioCommandSender) -> Self {
+        Self {
+            inner: Arc::new(BufferDataMailboxInner {
+                latest: Mutex::new(None),
+                dirty: AtomicBool::new(false),
+                wake_tx,
+            }),
+        }
+    }
+
+    pub fn publish(&self, update: BufferDataUpdate) {
+        {
+            let mut latest = self.inner.latest.lock();
+            let replace = latest.as_ref().is_none_or(|current| {
+                update.context.generation.0 > current.context.generation.0
+                    || (update.context.generation == current.context.generation
+                        && update.downloaded >= current.downloaded)
+            });
+            if replace {
+                *latest = Some(update);
+            }
+        }
+
+        if !self.inner.dirty.swap(true, Ordering::AcqRel) {
+            let _ = self
+                .inner
+                .wake_tx
+                .try_send(AudioCommand::BufferDataAvailable);
+        }
+    }
+
+    pub fn take_latest(&self) -> Option<BufferDataUpdate> {
+        // Keep the payload lock while clearing the dirty flag. A producer can
+        // therefore either publish before this take and be consumed here, or
+        // publish after it and observe the cleared flag to enqueue a wake-up.
+        let mut latest = self.inner.latest.lock();
+        let update = latest.take();
+        self.inner.dirty.store(false, Ordering::Release);
+        update
+    }
+}
 
 /// Sender for audio commands (held by AudioHandle)
-pub type AudioCommandSender = tokio::sync::mpsc::UnboundedSender<AudioCommand>;
+pub type AudioCommandSender = tokio::sync::mpsc::Sender<AudioCommand>;
 
 /// Receiver for audio commands (held by audio thread)
-pub type AudioCommandReceiver = tokio::sync::mpsc::UnboundedReceiver<AudioCommand>;
+pub type AudioCommandReceiver = tokio::sync::mpsc::Receiver<AudioCommand>;
 
 /// Sender for audio events (held by audio thread)
 pub type AudioEventSender = tokio::sync::mpsc::UnboundedSender<AudioEvent>;
@@ -504,10 +687,41 @@ pub type AudioEventReceiver = tokio::sync::mpsc::UnboundedReceiver<AudioEvent>;
 
 /// Create a new audio command channel
 pub fn audio_command_channel() -> (AudioCommandSender, AudioCommandReceiver) {
-    tokio::sync::mpsc::unbounded_channel()
+    tokio::sync::mpsc::channel(64)
 }
 
 /// Create a new audio event channel
 pub fn audio_event_channel() -> (AudioEventSender, AudioEventReceiver) {
     tokio::sync::mpsc::unbounded_channel()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn latest_controls_overwrite_volume_and_coalesce_ticks() {
+        let (tx, mut rx) = audio_command_channel();
+        let mailbox = LatestControlMailbox::new(tx);
+        mailbox.publish_volume(0.1);
+        mailbox.publish_volume(0.9);
+        mailbox.publish_tick();
+        mailbox.publish_tick();
+
+        let (volume, tick, shutdown) = mailbox.take();
+        assert_eq!(volume, Some(0.9));
+        assert!(tick);
+        assert!(shutdown.is_none());
+        assert!(rx.try_recv().is_ok());
+        assert!(rx.try_recv().is_err());
+    }
+
+    #[test]
+    fn critical_command_fifo_is_bounded() {
+        let (tx, _rx) = audio_command_channel();
+        for _ in 0..64 {
+            tx.try_send(AudioCommand::LatestMailboxWake).unwrap();
+        }
+        assert!(tx.try_send(AudioCommand::LatestMailboxWake).is_err());
+    }
 }

@@ -185,10 +185,11 @@ impl Default for AudioAnalysisData {
 
 impl AudioAnalysisProcessor {
     fn new(sample_rate: u32, channels: u16) -> Self {
-        let mut processor = Self::default();
-        processor.sample_rate = sample_rate;
-        processor.channels = channels;
-        processor
+        Self {
+            sample_rate,
+            channels,
+            ..Self::default()
+        }
     }
 
     fn reset(&mut self) {

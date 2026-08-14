@@ -11,6 +11,7 @@ use crate::api::{
 };
 use crate::app::state::UserInfo;
 use crate::app::update::audio_preload_manager::PreloadDirection;
+use crate::audio::identity::{PlaybackContext, PreloadIdentity};
 use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong, DbWatchedFolder};
 use crate::features::Action;
 use crate::features::import::{CoverCache, ScanProgress, WatchEvent};
@@ -129,6 +130,7 @@ pub enum Message {
     SaveSettings,
     /// Update playback settings
     UpdateFadeInOut(bool),
+    UpdateAutomixEnabled(bool),
     UpdateVolumeNormalization(bool),
     UpdateMusicQuality(crate::features::MusicQuality),
     UpdateEqualizerEnabled(bool),
@@ -201,11 +203,12 @@ pub enum Message {
     /// Download history loaded from database
     DownloadsLoaded(Vec<crate::database::DownloadRow>),
     /// NCM song resolved during app startup restore
-    /// (queue_index, resolved_result, saved_position_secs)
+    /// (queue_index, resolved_result, saved_position_secs, playback_context)
     SongResolvedForRestore(
         usize,
         Option<crate::app::update::song_resolver::ResolvedSong>,
         f64,
+        PlaybackContext,
     ),
     /// Songs validated - invalid entries removed
     SongsValidated(u32),
@@ -366,34 +369,37 @@ pub enum Message {
     /// Cycle to next play mode
     CyclePlayMode,
     /// Audio preload ready (local file cached) - (queue_index, file_path, direction)
-    PreloadReady(usize, String, PreloadDirection),
+    PreloadReady(usize, String, PreloadDirection, PreloadIdentity),
     /// Audio preload ready with SharedBuffer for streaming playback
-    /// (queue_index, file_path, direction, shared_buffer, duration_secs)
+    /// (queue_index, finalized_cache_path, direction, shared_buffer, duration_secs, identity)
+    /// `None` means the track is still ring-buffer backed.
     PreloadBufferReady(
         usize,
-        String,
+        Option<String>,
         PreloadDirection,
         crate::audio::SharedBuffer,
         u64,
+        PreloadIdentity,
     ),
-    /// Audio preload failed - (queue_index, direction)
-    PreloadAudioFailed(usize, PreloadDirection),
+    /// Audio preload failed - (queue_index, direction, identity)
+    PreloadAudioFailed(usize, PreloadDirection, PreloadIdentity),
 
     // ============ Queue management ============
     /// Play entire playlist (replace queue with playlist songs)
     PlayPlaylist(i64),
     /// Play a song from queue by index
     PlayQueueIndex(usize),
-    /// Song resolved with streaming support (index, file_path, cover_path, shared_buffer, duration_secs)
+    /// Song resolved with streaming support (index, finalized_cache_path, cover_path, shared_buffer, duration_secs)
     SongResolvedStreaming(
         usize,
-        String,
+        Option<String>,
         Option<String>,
         Option<crate::audio::SharedBuffer>,
         Option<u64>,
+        PlaybackContext,
     ),
     /// Song resolution failed
-    SongResolveFailed,
+    SongResolveFailed(PlaybackContext),
     /// Remove song from queue by index
     RemoveFromQueue(usize),
     /// Clear the entire queue
@@ -622,7 +628,7 @@ pub enum Message {
     SidebarResizeEnd,
     // ============ Player Events (Event-Driven Architecture) ============
     /// Streaming download event (song_id, event)
-    StreamingEvent(i64, crate::audio::streaming::StreamingEvent),
+    StreamingEvent(crate::audio::streaming::StreamingEvent),
     /// Audio thread event
     AudioEvent(crate::audio::AudioEvent),
 
@@ -761,13 +767,14 @@ impl std::fmt::Debug for Message {
             Self::SongsLoaded(v) => simple!("SongsLoaded", "{} songs", v.len()),
             Self::PlaylistsLoaded(v) => simple!("PlaylistsLoaded", "{} playlists", v.len()),
             Self::QueueRestored(v) => simple!("QueueRestored", "{} songs", v.len()),
-            Self::SongResolvedForRestore(idx, result, pos) => {
+            Self::SongResolvedForRestore(idx, result, pos, context) => {
                 simple!(
                     "SongResolvedForRestore",
-                    "idx={}, resolved={}, pos={:.1}s",
+                    "idx={}, resolved={}, pos={:.1}s, generation={}",
                     idx,
                     result.is_some(),
-                    pos
+                    pos,
+                    context.generation.0
                 )
             }
             Self::QueueLoaded(v) => simple!("QueueLoaded", "{} songs", v.len()),
@@ -891,6 +898,7 @@ impl std::fmt::Debug for Message {
             Self::UpdateCloseBehavior(b) => simple!("UpdateCloseBehavior", "{:?}", b),
             Self::SaveSettings => simple!("SaveSettings"),
             Self::UpdateFadeInOut(b) => simple!("UpdateFadeInOut", "{}", b),
+            Self::UpdateAutomixEnabled(b) => simple!("UpdateAutomixEnabled", "{}", b),
             Self::UpdateVolumeNormalization(b) => simple!("UpdateVolumeNormalization", "{}", b),
             Self::UpdateMusicQuality(q) => simple!("UpdateMusicQuality", "{:?}", q),
             Self::UpdateEqualizerEnabled(b) => simple!("UpdateEqualizerEnabled", "{}", b),
@@ -1030,10 +1038,10 @@ impl std::fmt::Debug for Message {
             Self::SetVolume(v) => simple!("SetVolume", "{:.2}", v),
             Self::ToggleQueue => simple!("ToggleQueue"),
             Self::CyclePlayMode => simple!("CyclePlayMode"),
-            Self::PreloadReady(idx, _, direction) => {
+            Self::PreloadReady(idx, _, direction, _) => {
                 simple!("PreloadReady", "idx={}, direction={}", idx, direction)
             }
-            Self::PreloadBufferReady(idx, _, direction, buffer, duration) => {
+            Self::PreloadBufferReady(idx, _, direction, buffer, duration, _) => {
                 simple!(
                     "PreloadBufferReady",
                     "idx={}, direction={}, downloaded={}, duration={}s",
@@ -1043,14 +1051,14 @@ impl std::fmt::Debug for Message {
                     duration
                 )
             }
-            Self::PreloadAudioFailed(idx, direction) => {
+            Self::PreloadAudioFailed(idx, direction, _) => {
                 simple!("PreloadAudioFailed", "idx={}, direction={}", idx, direction)
             }
 
             // Queue management
             Self::PlayPlaylist(id) => simple!("PlayPlaylist", "{}", id),
             Self::PlayQueueIndex(i) => simple!("PlayQueueIndex", "{}", i),
-            Self::SongResolvedStreaming(i, _, _, buffer, _) => {
+            Self::SongResolvedStreaming(i, _, _, buffer, _, _) => {
                 simple!(
                     "SongResolvedStreaming",
                     "idx={}, buffer={}",
@@ -1058,7 +1066,7 @@ impl std::fmt::Debug for Message {
                     buffer.is_some()
                 )
             }
-            Self::SongResolveFailed => simple!("SongResolveFailed"),
+            Self::SongResolveFailed(_) => simple!("SongResolveFailed"),
             Self::RemoveFromQueue(i) => simple!("RemoveFromQueue", "{}", i),
             Self::ClearQueue => simple!("ClearQueue"),
 
@@ -1172,7 +1180,7 @@ impl std::fmt::Debug for Message {
             Self::SidebarResizeEnd => simple!("SidebarResizeEnd"),
 
             // Streaming
-            Self::StreamingEvent(id, _) => simple!("StreamingEvent", "id={}", id),
+            Self::StreamingEvent(_) => simple!("StreamingEvent"),
 
             // Audio events
             Self::AudioEvent(event) => simple!("AudioEvent", "{:?}", event),

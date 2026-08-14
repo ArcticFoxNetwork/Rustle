@@ -17,11 +17,13 @@
 //! ```
 
 pub mod analyzer;
+pub mod automix;
 pub mod chain;
 mod equalizer;
 pub mod events;
 mod fade;
 mod handle;
+pub mod identity;
 mod player;
 pub mod streaming;
 pub mod thread;

@@ -89,19 +89,29 @@ impl App {
 
             Message::SongResolvedStreaming(
                 idx,
-                file_path,
+                finalized_cache_path,
                 cover_path,
                 shared_buffer,
                 duration_secs,
+                context,
             ) => Some(self.handle_song_resolved_streaming(
                 *idx,
-                file_path.clone(),
+                finalized_cache_path.clone(),
                 cover_path.clone(),
                 shared_buffer.clone(),
                 *duration_secs,
+                context.clone(),
             )),
 
-            Message::SongResolveFailed => {
+            Message::SongResolveFailed(context) => {
+                if !self.accepts_audio_context(context) {
+                    tracing::debug!(
+                        generation = context.generation.0,
+                        "Ignoring stale song resolution failure"
+                    );
+                    return Some(Task::none());
+                }
+
                 tracing::error!("Failed to resolve song");
                 // Use handle_playback_failure for consistent failure tracking
                 if let Some(idx) = self.playback.current_index {

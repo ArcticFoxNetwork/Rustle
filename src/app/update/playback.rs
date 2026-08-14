@@ -102,9 +102,7 @@ impl App {
             }
 
             // Streaming playback messages
-            Message::StreamingEvent(song_id, event) => {
-                Some(self.handle_streaming_event(*song_id, event.clone()))
-            }
+            Message::StreamingEvent(event) => Some(self.handle_streaming_event(event.clone())),
 
             Message::AudioEvent(event) => {
                 let task = self.handle_audio_event(event.clone());
@@ -186,6 +184,21 @@ impl App {
 
     fn handle_playback_tick(&mut self) -> Task<Message> {
         self.update_audio_tick();
+        let analysis_now = std::time::Instant::now();
+        if self.core.settings.playback.automix_enabled
+            && self
+                .playback
+                .automix_analysis_poll_at
+                .is_none_or(|last| analysis_now.duration_since(last) >= Duration::from_secs(2))
+        {
+            self.playback.automix_analysis_poll_at = Some(analysis_now);
+            if let Some(song) = self.playback.current_song.clone() {
+                self.schedule_automix_analysis_window(&song);
+            }
+        }
+        let crossfade_task = self
+            .try_start_natural_crossfade()
+            .unwrap_or_else(Task::none);
         let now = iced::time::Instant::now();
         let should_sync_mpris = self
             .ui
@@ -225,10 +238,22 @@ impl App {
             }
         }
 
-        Task::batch([lyrics_scroll_task, lyrics_viewport_task])
+        Task::batch([lyrics_scroll_task, lyrics_viewport_task, crossfade_task])
     }
 
     pub fn handle_audio_event(&mut self, event: AudioEvent) -> Task<Message> {
+        if let AudioEvent::PreloadFailed { identity, error } = &event {
+            tracing::warn!("Preload failed: identity={:?}, error={}", identity, error);
+            self.playback
+                .audio_preload_manager
+                .mark_failed_by_identity(identity);
+            self.release_preload_request(identity.clone());
+            return Task::none();
+        }
+
+        if !self.audio_event_is_current(&event) {
+            return Task::none();
+        }
         self.refresh_playback_runtime();
 
         let should_sync_mpris = matches!(
@@ -237,25 +262,28 @@ impl App {
                 | AudioEvent::SeekStarted { .. }
                 | AudioEvent::StateChanged { .. }
                 | AudioEvent::BufferingStarted { .. }
-                | AudioEvent::BufferingEnded
+                | AudioEvent::BufferingEnded { .. }
         );
 
         match event {
-            AudioEvent::Started { request_id, path } => {
+            AudioEvent::Started {
+                request_id, path, ..
+            } => {
                 return self.handle_audio_started_event(request_id, path);
             }
             AudioEvent::Paused {
                 request_id,
                 position,
+                ..
             } => {
                 return self.handle_audio_paused_event(request_id, position);
             }
-            AudioEvent::Resumed => return self.handle_audio_resumed_event(),
-            AudioEvent::Stopped => return self.handle_audio_stopped_event(),
-            AudioEvent::SeekComplete { position } => {
+            AudioEvent::Resumed { .. } => return self.handle_audio_resumed_event(),
+            AudioEvent::Stopped { .. } => return self.handle_audio_stopped_event(),
+            AudioEvent::SeekComplete { position, .. } => {
                 tracing::debug!("AudioEvent::SeekComplete at {:?}", position);
             }
-            AudioEvent::SeekFailed { error } => {
+            AudioEvent::SeekFailed { error, .. } => {
                 tracing::warn!("Seek failed: {}", error);
                 if error.contains("not supported") {
                     return Self::toast_warning("该格式不支持拖动进度条".to_string());
@@ -273,12 +301,15 @@ impl App {
                     ));
                 }
             }
-            AudioEvent::SeekStarted { target_position } => {
+            AudioEvent::SeekStarted {
+                target_position, ..
+            } => {
                 tracing::debug!("AudioEvent::SeekStarted: target={:?}", target_position);
             }
             AudioEvent::StateChanged {
                 old_status,
                 new_status,
+                ..
             } => {
                 tracing::debug!(
                     "AudioEvent::StateChanged: {:?} -> {:?}",
@@ -290,6 +321,7 @@ impl App {
                 downloaded,
                 total,
                 progress,
+                ..
             } => {
                 tracing::trace!(
                     "AudioEvent::BufferProgress: {}/{} ({:.1}%)",
@@ -298,26 +330,26 @@ impl App {
                     progress * 100.0
                 );
             }
-            AudioEvent::BufferingStarted { position } => {
+            AudioEvent::BufferingStarted { position, .. } => {
                 tracing::info!("AudioEvent::BufferingStarted at {:?}", position);
             }
-            AudioEvent::BufferingEnded => {
+            AudioEvent::BufferingEnded { .. } => {
                 tracing::info!("AudioEvent::BufferingEnded");
             }
             AudioEvent::PreloadReady {
-                request_id,
+                identity,
                 duration,
                 path,
             } => {
                 tracing::debug!(
-                    "AudioEvent::PreloadReady: request_id={}, path={:?}",
-                    request_id,
+                    "AudioEvent::PreloadReady: identity={:?}, path={:?}",
+                    identity,
                     path
                 );
-                self.handle_audio_preload_ready(request_id, duration, path);
+                self.handle_audio_preload_ready(identity, duration, path);
             }
-            AudioEvent::PreloadFailed { request_id, error } => {
-                tracing::warn!("Preload failed: request_id={}, error={}", request_id, error);
+            AudioEvent::PreloadFailed { .. } => {
+                unreachable!("preload failures are handled before current-event filtering")
             }
             AudioEvent::DeviceSwitched { restore_state } => {
                 tracing::info!("Audio device switched: {:?}", restore_state);
@@ -326,7 +358,7 @@ impl App {
                 tracing::error!("Device switch failed: {}", error);
                 return Self::toast_error(format!("切换音频设备失败: {}", error));
             }
-            AudioEvent::Finished => {
+            AudioEvent::Finished { .. } => {
                 tracing::info!("Song finished (AudioEvent::Finished)");
                 if self.playback.pending_resolution_index.is_none()
                     && self.playback.current_song.is_some()
@@ -338,6 +370,7 @@ impl App {
                 request_id,
                 message,
                 error_kind,
+                ..
             } => return self.handle_audio_error_event(request_id, message, error_kind),
         }
 
@@ -349,38 +382,66 @@ impl App {
         Task::none()
     }
 
+    fn accepts_preload_identity(&self, identity: &crate::audio::identity::PreloadIdentity) -> bool {
+        self.accepts_audio_preload_identity(identity)
+    }
+    pub(super) fn audio_event_is_current(&self, event: &AudioEvent) -> bool {
+        match event {
+            AudioEvent::DeviceSwitched { .. } | AudioEvent::DeviceSwitchFailed { .. } => true,
+            AudioEvent::PreloadReady { identity, .. }
+            | AudioEvent::PreloadFailed { identity, .. } => self.accepts_preload_identity(identity),
+            AudioEvent::SeekComplete { context, nonce, .. }
+            | AudioEvent::SeekFailed { context, nonce, .. }
+            | AudioEvent::SeekStarted { context, nonce, .. } => {
+                self.accepts_audio_seek(context, *nonce)
+            }
+            AudioEvent::Started { context, .. }
+            | AudioEvent::Paused { context, .. }
+            | AudioEvent::Resumed { context }
+            | AudioEvent::Stopped { context }
+            | AudioEvent::StateChanged { context, .. }
+            | AudioEvent::BufferProgress { context, .. }
+            | AudioEvent::BufferingStarted { context, .. }
+            | AudioEvent::BufferingEnded { context }
+            | AudioEvent::Finished { context }
+            | AudioEvent::Error { context, .. } => self.accepts_audio_context(context),
+        }
+    }
     fn handle_streaming_event(
         &mut self,
-        song_id: i64,
         event: crate::audio::streaming::StreamingEvent,
     ) -> Task<Message> {
-        use crate::audio::streaming::StreamingEvent;
+        use crate::audio::streaming::{StreamingEventKind, StreamingIdentity};
 
-        let is_current = self
-            .playback
-            .current_song
-            .as_ref()
-            .map(|s| s.id == song_id)
-            .unwrap_or(false);
-
+        let is_current = match &event.identity {
+            StreamingIdentity::Playback(context) => self.accepts_audio_context(context),
+            StreamingIdentity::Preload(identity) => self.accepts_preload_identity(identity),
+        };
         if !is_current {
             return Task::none();
         }
 
-        match event {
-            StreamingEvent::Playable => {
-                tracing::info!("Streaming: song {} is now playable", song_id);
+        match event.kind {
+            StreamingEventKind::Playable => tracing::info!("Streaming track is now playable"),
+            StreamingEventKind::Progress(downloaded, total) => {
+                tracing::trace!("Streaming progress: {}/{} bytes", downloaded, total)
             }
-            StreamingEvent::Progress(downloaded, total) => {
-                tracing::trace!("Streaming progress: {}/{} bytes", downloaded, total);
+            StreamingEventKind::Complete => tracing::info!("Streaming download complete"),
+            StreamingEventKind::CacheFinalized(path) => {
+                tracing::info!("Streaming cache finalized at {:?}", path)
             }
-            StreamingEvent::Complete => {
-                tracing::info!("Streaming: song {} download complete", song_id);
+            StreamingEventKind::CacheFinalizationFailed(err) => {
+                tracing::warn!(
+                    "Streaming cache finalization failed; continuing with ring: {}",
+                    err
+                )
             }
-            StreamingEvent::Error(err) => {
-                tracing::error!("Streaming error for song {}: {}", song_id, err);
-                self.replace_active_streaming_buffer(None);
-                return Self::toast_error(format!("下载失败: {}", err));
+            StreamingEventKind::Error(err) => {
+                tracing::error!("Streaming error: {}", err);
+                if matches!(event.identity, StreamingIdentity::Playback(_)) {
+                    self.replace_active_streaming_buffer(None);
+                    return Self::toast_error(format!("下载失败: {}", err));
+                }
             }
         }
         Task::none()

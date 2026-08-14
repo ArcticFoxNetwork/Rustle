@@ -5,17 +5,12 @@
 //! State is read from `SharedPlaybackState` without blocking.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use super::PlaybackInfo;
-use super::events::{AudioCommand, AudioCommandSender, SharedPlaybackState};
+use super::events::{AudioCommand, AudioCommandSender, LatestControlMailbox, SharedPlaybackState};
+use super::identity::{PlaybackGenerationController, PreloadIdentity};
 use super::streaming::StreamingBuffer;
-
-/// Counter for generating unique preload request IDs
-static PRELOAD_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
-/// Counter for generating unique playback request IDs
-static PLAYBACK_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Handle for controlling audio from UI thread
 ///
@@ -27,7 +22,9 @@ static PLAYBACK_REQUEST_COUNTER: AtomicU64 = AtomicU64::new(0);
 #[derive(Clone)]
 pub struct AudioHandle {
     command_tx: AudioCommandSender,
+    latest_controls: LatestControlMailbox,
     state: SharedPlaybackState,
+    generation: PlaybackGenerationController,
 }
 
 impl std::fmt::Debug for AudioHandle {
@@ -39,42 +36,96 @@ impl std::fmt::Debug for AudioHandle {
 }
 
 impl AudioHandle {
-    fn next_playback_request_id() -> u64 {
-        PLAYBACK_REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+    fn send_critical<F>(&self, build: F) -> Result<(), String>
+    where
+        F: FnOnce() -> AudioCommand,
+    {
+        let permit = self.command_tx.try_reserve().map_err(|error| match error {
+            tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                "audio command queue is full".to_string()
+            }
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                "audio command queue is closed".to_string()
+            }
+        })?;
+        permit.send(build());
+        Ok(())
+    }
+
+    fn next_playback_request_id(&self) -> u64 {
+        self.generation.next_request_id()
+    }
+    pub fn current_context(&self) -> Option<super::identity::PlaybackContext> {
+        self.generation.active_context()
+    }
+
+    pub fn accepts_context(&self, context: &super::identity::PlaybackContext) -> bool {
+        self.generation.accepts(context)
+    }
+
+    pub(crate) fn generation_controller(&self) -> PlaybackGenerationController {
+        self.generation.clone()
+    }
+
+    pub fn accepts_seek(
+        &self,
+        context: &super::identity::PlaybackContext,
+        nonce: super::identity::SeekNonce,
+    ) -> bool {
+        self.generation.accepts_seek(context, nonce)
     }
 
     /// Create a new audio handle
-    pub fn new(command_tx: AudioCommandSender, state: SharedPlaybackState) -> Self {
-        Self { command_tx, state }
+    pub fn new(
+        command_tx: AudioCommandSender,
+        latest_controls: LatestControlMailbox,
+        state: SharedPlaybackState,
+    ) -> Self {
+        Self {
+            command_tx,
+            latest_controls,
+            state,
+            generation: PlaybackGenerationController::new(),
+        }
     }
 
     // ============ Playback Control ============
 
-    /// Play a local file with optional fade in
-    pub fn play_with_fade(&self, path: PathBuf, fade_in: bool, track_gain: f32) -> u64 {
-        let request_id = Self::next_playback_request_id();
-        let _ = self.command_tx.send(AudioCommand::Play {
+    /// Play a local file with optional fade in.
+    pub fn play_with_fade(
+        &self,
+        path: PathBuf,
+        fade_in: bool,
+        track_gain: f32,
+    ) -> Result<u64, String> {
+        let request_id = self.next_playback_request_id();
+        self.send_critical(|| AudioCommand::Play {
+            context: self.generation.activate_generation(),
             request_id,
             path,
             fade_in,
             track_gain,
-        });
-        request_id
+        })?;
+        Ok(request_id)
     }
 
-    /// Load a local file in paused state at a target position
-    pub fn load_paused(&self, path: PathBuf, position: Duration, track_gain: f32) -> u64 {
-        let request_id = Self::next_playback_request_id();
-        let _ = self.command_tx.send(AudioCommand::LoadPaused {
+    pub fn load_paused(
+        &self,
+        path: PathBuf,
+        position: Duration,
+        track_gain: f32,
+    ) -> Result<u64, String> {
+        let request_id = self.next_playback_request_id();
+        self.send_critical(|| AudioCommand::LoadPaused {
+            context: self.generation.activate_generation(),
             request_id,
             path,
             position,
             track_gain,
-        });
-        request_id
+        })?;
+        Ok(request_id)
     }
 
-    /// Load a streaming source in paused state at a target position
     pub fn load_streaming_paused(
         &self,
         buffer: StreamingBuffer,
@@ -82,41 +133,39 @@ impl AudioHandle {
         cache_path: Option<PathBuf>,
         position: Duration,
         track_gain: f32,
-    ) -> u64 {
-        let request_id = Self::next_playback_request_id();
-        let _ = self.command_tx.send(AudioCommand::LoadPausedStreaming {
+    ) -> Result<u64, String> {
+        let request_id = self.next_playback_request_id();
+        self.send_critical(|| AudioCommand::LoadPausedStreaming {
+            context: self.generation.activate_generation(),
             request_id,
             buffer,
             duration,
             cache_path,
             position,
             track_gain,
-        });
-        request_id
+        })?;
+        Ok(request_id)
     }
 
-    /// Play a local file from a target position
     pub fn play_from_position_with_fade(
         &self,
         path: PathBuf,
         position: Duration,
         fade_in: bool,
         track_gain: f32,
-    ) -> u64 {
-        let request_id = Self::next_playback_request_id();
-        let _ = self.command_tx.send(AudioCommand::PlayAt {
+    ) -> Result<u64, String> {
+        let request_id = self.next_playback_request_id();
+        self.send_critical(|| AudioCommand::PlayAt {
+            context: self.generation.activate_generation(),
             request_id,
             path,
             position,
             fade_in,
             track_gain,
-        });
-        request_id
+        })?;
+        Ok(request_id)
     }
 
-    /// Play from streaming buffer
-    ///
-    /// For NCM songs that stream from network.
     pub fn play_streaming(
         &self,
         buffer: StreamingBuffer,
@@ -124,37 +173,48 @@ impl AudioHandle {
         cache_path: Option<PathBuf>,
         fade_in: bool,
         track_gain: f32,
-    ) -> u64 {
-        let request_id = Self::next_playback_request_id();
-        let _ = self.command_tx.send(AudioCommand::PlayStreaming {
+    ) -> Result<u64, String> {
+        let request_id = self.next_playback_request_id();
+        self.send_critical(|| AudioCommand::PlayStreaming {
+            context: self.generation.activate_generation(),
             request_id,
             buffer,
             duration,
             cache_path,
             fade_in,
             track_gain,
-        });
-        request_id
+        })?;
+        Ok(request_id)
     }
 
     /// Pause playback with optional fade out
     ///
     /// Sends Pause command to audio thread.
     /// Note: Audio Thread will pause Sink before data runs out, so no interrupt needed.
-    pub fn pause_with_fade(&self, fade_out: bool) {
-        let _ = self.command_tx.send(AudioCommand::Pause { fade_out });
+    pub fn pause_with_fade(&self, fade_out: bool) -> Result<(), String> {
+        let context = self
+            .generation
+            .active_context()
+            .ok_or_else(|| "pause requires active playback generation".to_string())?;
+        self.send_critical(|| AudioCommand::Pause { context, fade_out })
     }
 
     /// Resume playback with optional fade in
-    pub fn resume_with_fade(&self, fade_in: bool) {
-        let _ = self.command_tx.send(AudioCommand::Resume { fade_in });
+    pub fn resume_with_fade(&self, fade_in: bool) -> Result<(), String> {
+        let context = self
+            .generation
+            .active_context()
+            .ok_or_else(|| "resume requires active playback generation".to_string())?;
+        self.send_critical(|| AudioCommand::Resume { context, fade_in })
     }
 
     /// Stop playback
     ///
     /// Sends Stop command to audio thread.
-    pub fn stop(&self) {
-        let _ = self.command_tx.send(AudioCommand::Stop);
+    pub fn stop(&self) -> Result<(), String> {
+        self.send_critical(|| AudioCommand::Stop {
+            context: self.generation.activate_generation(),
+        })
     }
 
     /// Seek to position
@@ -165,84 +225,176 @@ impl AudioHandle {
     /// The shared state position is updated immediately to the target position,
     /// so UI shows the target position while seek is in progress (prevents
     /// "bounce back" effect during buffering).
-    pub fn seek(&self, position: Duration) {
-        // Update position immediately so UI shows target position during seek
-        // This prevents the progress bar from "bouncing back" while audio thread
-        // is blocked waiting for streaming data
+    pub fn seek(&self, position: Duration) -> Result<(), String> {
+        let permit = self.command_tx.try_reserve().map_err(|error| match error {
+            tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                "audio command queue is full".to_string()
+            }
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                "audio command queue is closed".to_string()
+            }
+        })?;
+        let (context, nonce) = self
+            .generation
+            .seek_context()
+            .ok_or_else(|| "seek requires active playback generation".to_string())?;
+        // Update position immediately so UI shows target position during seek.
+        // This happens only after capacity and identity have both been secured.
         self.state.set_position(position);
-        let _ = self.command_tx.send(AudioCommand::Seek { position });
+        permit.send(AudioCommand::Seek {
+            context,
+            nonce,
+            position,
+        });
+        Ok(())
     }
 
     /// Set volume
     pub fn set_volume(&self, volume: f32) {
-        let _ = self.command_tx.send(AudioCommand::SetVolume { volume });
+        self.latest_controls.publish_volume(volume);
     }
 
     /// Tick handler - checks buffer status and syncs position
     pub fn tick(&self) {
-        let _ = self.command_tx.send(AudioCommand::Tick);
+        self.latest_controls.publish_tick();
     }
     // ============ Preloading ============
 
-    /// Request creation of a preload sink for a local file
-    ///
-    /// Returns a request ID. Listen for `AudioEvent::PreloadReady` or
-    /// `AudioEvent::PreloadFailed` with matching request_id.
-    pub fn create_preload_sink(&self, path: PathBuf, track_gain: f32) -> u64 {
-        let request_id = PRELOAD_REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let _ = self.command_tx.send(AudioCommand::CreatePreloadSink {
-            path,
-            request_id,
-            track_gain,
-        });
-        request_id
+    /// Reserve an immutable identity before starting a preload operation.
+    pub fn reserve_preload_identity(&self) -> Option<PreloadIdentity> {
+        self.generation.reserve_preload_identity()
     }
 
-    /// Request creation of a preload sink for streaming
-    ///
-    /// Returns a request ID. Listen for `AudioEvent::PreloadReady` or
-    /// `AudioEvent::PreloadFailed` with matching request_id.
+    /// Reserve a new immutable sink identity from an accepted preload identity.
+    pub fn reserve_preload_handoff(&self, parent: &PreloadIdentity) -> Option<PreloadIdentity> {
+        self.generation.reserve_preload_handoff(parent)
+    }
+
+    /// Request creation of a preload sink for a local file using its origin identity.
+    pub fn create_preload_sink(
+        &self,
+        identity: PreloadIdentity,
+        path: PathBuf,
+        track_gain: f32,
+    ) -> Result<(), String> {
+        self.send_critical(|| AudioCommand::CreatePreloadSink {
+            identity,
+            path,
+            track_gain,
+        })
+    }
+
+    /// Request creation of a preload sink for streaming using its origin identity.
     pub fn create_preload_sink_streaming(
         &self,
+        identity: PreloadIdentity,
         buffer: StreamingBuffer,
         duration: Duration,
         track_gain: f32,
-    ) -> u64 {
-        let request_id = PRELOAD_REQUEST_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let _ = self
-            .command_tx
-            .send(AudioCommand::CreatePreloadSinkStreaming {
-                buffer,
-                duration,
-                request_id,
-                track_gain,
-            });
-        request_id
+    ) -> Result<(), String> {
+        self.send_critical(|| AudioCommand::CreatePreloadSinkStreaming {
+            identity,
+            buffer,
+            duration,
+            track_gain,
+        })
     }
 
-    /// Play a preloaded sink by request_id
+    /// Play a preloaded sink by immutable identity.
     ///
     /// The sink must have been created via `create_preload_sink` or
     /// `create_preload_sink_streaming` and received `AudioEvent::PreloadReady`.
-    pub fn play_preloaded(&self, request_id: u64, fade_in: bool) -> u64 {
-        let playback_request_id = Self::next_playback_request_id();
-        let _ = self.command_tx.send(AudioCommand::PlayPreloaded {
-            request_id,
+    pub fn play_preloaded(
+        &self,
+        identity: PreloadIdentity,
+        fade_in: bool,
+        transition: Option<super::automix::TransitionDirective>,
+    ) -> Result<u64, String> {
+        let permit = self.command_tx.try_reserve().map_err(|error| match error {
+            tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                "audio command queue is full".to_string()
+            }
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                "audio command queue is closed".to_string()
+            }
+        })?;
+        let playback_request_id = self.next_playback_request_id();
+        let transition = transition.unwrap_or_else(|| {
+            super::automix::TransitionDirective::manual(super::automix::ScheduleGroup(
+                playback_request_id,
+            ))
+        });
+        let context = self
+            .generation
+            .activate_preloaded_generation(&identity)
+            .ok_or_else(|| "preloaded audio identity is stale or cancelled".to_string())?;
+        permit.send(AudioCommand::PlayPreloaded {
+            context,
+            identity,
             playback_request_id,
             fade_in,
+            transition,
         });
-        playback_request_id
+        Ok(playback_request_id)
+    }
+
+    /// Schedule a ready preload against the current sink's audio clock.
+    ///
+    /// Unlike immediate promotion, this deliberately keeps the outgoing
+    /// playback generation active until the audio thread reaches `trigger_at`.
+    pub fn schedule_preloaded_transition(
+        &self,
+        identity: PreloadIdentity,
+        trigger_at: Duration,
+        fade_in: bool,
+        transition: super::automix::TransitionDirective,
+    ) -> Result<u64, String> {
+        let permit = self.command_tx.try_reserve().map_err(|error| match error {
+            tokio::sync::mpsc::error::TrySendError::Full(_) => {
+                "audio command queue is full".to_string()
+            }
+            tokio::sync::mpsc::error::TrySendError::Closed(_) => {
+                "audio command queue is closed".to_string()
+            }
+        })?;
+        let owner = self
+            .generation
+            .active_context()
+            .ok_or_else(|| "scheduled transition requires active playback".to_string())?;
+        if !self.generation.accepts_preload(&identity) {
+            return Err("preloaded audio identity is stale or cancelled".to_string());
+        }
+        let playback_request_id = self.next_playback_request_id();
+        permit.send(AudioCommand::SchedulePreloadedTransition {
+            owner,
+            identity,
+            playback_request_id,
+            trigger_at,
+            fade_in,
+            transition,
+        });
+        Ok(playback_request_id)
+    }
+
+    pub fn cancel_scheduled_transition(&self) -> Result<(), String> {
+        let owner = self.generation.active_context().ok_or_else(|| {
+            "scheduled transition cancellation requires active playback".to_string()
+        })?;
+        self.send_critical(|| AudioCommand::CancelScheduledTransition { owner })
     }
 
     /// Release a preloaded sink by request_id without playing it
-    pub fn release_preload(&self, request_id: u64) {
-        let _ = self
-            .command_tx
-            .send(AudioCommand::ReleasePreload { request_id });
+    pub fn release_preload(&self, identity: PreloadIdentity) -> Result<(), String> {
+        self.send_critical(|| AudioCommand::ReleasePreload { identity })
     }
 
     pub(crate) fn shutdown(&self) {
-        let _ = self.command_tx.send(AudioCommand::Shutdown);
+        self.generation.cancel_active();
+        let context = self
+            .generation
+            .active_context()
+            .unwrap_or_else(|| self.generation.activate_generation());
+        self.latest_controls.publish_shutdown(context);
     }
 
     // ============ Device Control ============
@@ -250,10 +402,8 @@ impl AudioHandle {
     /// Switch audio output device
     ///
     /// Listen for `AudioEvent::DeviceSwitched` or `AudioEvent::DeviceSwitchFailed`.
-    pub fn switch_device(&self, device_name: Option<String>) {
-        let _ = self
-            .command_tx
-            .send(AudioCommand::SwitchDevice { device_name });
+    pub fn switch_device(&self, device_name: Option<String>) -> Result<(), String> {
+        self.send_critical(|| AudioCommand::SwitchDevice { device_name })
     }
 
     // ============ State Queries (non-blocking reads) ============
@@ -284,5 +434,102 @@ impl AudioHandle {
     /// This is the single source of truth for buffer progress in UI.
     pub fn buffer_progress(&self) -> Option<f32> {
         self.state.buffer_progress()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn critical_capacity_error_does_not_activate_a_generation() {
+        let (tx, _rx) = super::super::events::audio_command_channel();
+        let latest = LatestControlMailbox::new(tx.clone());
+        let handle = AudioHandle::new(tx.clone(), latest, SharedPlaybackState::new());
+        while tx.try_send(AudioCommand::WatchdogWake).is_ok() {}
+
+        let result = handle.play_with_fade(PathBuf::from("missing.mp3"), false, 1.0);
+        assert_eq!(result.unwrap_err(), "audio command queue is full");
+        assert!(handle.current_context().is_none());
+    }
+
+    #[test]
+    fn controls_without_active_playback_return_errors_instead_of_panicking() {
+        let (tx, _rx) = super::super::events::audio_command_channel();
+        let latest = LatestControlMailbox::new(tx.clone());
+        let handle = AudioHandle::new(tx, latest, SharedPlaybackState::new());
+
+        assert_eq!(
+            handle.pause_with_fade(false).unwrap_err(),
+            "pause requires active playback generation"
+        );
+        assert_eq!(
+            handle.resume_with_fade(false).unwrap_err(),
+            "resume requires active playback generation"
+        );
+        assert_eq!(
+            handle.seek(Duration::ZERO).unwrap_err(),
+            "seek requires active playback generation"
+        );
+    }
+
+    #[test]
+    fn stale_preload_promotion_does_not_replace_the_active_generation() {
+        let (tx, _rx) = super::super::events::audio_command_channel();
+        let latest = LatestControlMailbox::new(tx.clone());
+        let handle = AudioHandle::new(tx, latest, SharedPlaybackState::new());
+        handle.generation.activate_generation();
+        let stale = handle.generation.reserve_preload_identity().unwrap();
+        let current = handle.generation.activate_generation();
+
+        let error = handle.play_preloaded(stale, false, None).unwrap_err();
+
+        assert_eq!(error, "preloaded audio identity is stale or cancelled");
+        assert_eq!(handle.current_context(), Some(current));
+    }
+
+    #[test]
+    fn full_queue_does_not_advance_seek_nonce_or_position() {
+        let (tx, mut rx) = super::super::events::audio_command_channel();
+        let latest = LatestControlMailbox::new(tx.clone());
+        let state = SharedPlaybackState::new();
+        let handle = AudioHandle::new(tx.clone(), latest, state.clone());
+        handle.generation.activate_generation();
+        while tx.try_send(AudioCommand::WatchdogWake).is_ok() {}
+
+        assert_eq!(
+            handle.seek(Duration::from_secs(12)).unwrap_err(),
+            "audio command queue is full"
+        );
+        assert_eq!(state.get_info().position, Duration::ZERO);
+        rx.try_recv().unwrap();
+        let (_, nonce) = handle.generation.seek_context().unwrap();
+        assert_eq!(nonce, super::super::identity::SeekNonce(1));
+    }
+
+    #[test]
+    fn scheduling_preload_keeps_outgoing_generation_active() {
+        let (tx, mut rx) = super::super::events::audio_command_channel();
+        let latest = LatestControlMailbox::new(tx.clone());
+        let handle = AudioHandle::new(tx, latest, SharedPlaybackState::new());
+        let outgoing = handle.generation.activate_generation();
+        let identity = handle.generation.reserve_preload_identity().unwrap();
+
+        handle
+            .schedule_preloaded_transition(
+                identity,
+                Duration::from_secs(20),
+                false,
+                super::super::automix::TransitionDirective::baseline_natural(
+                    super::super::automix::ScheduleGroup(9),
+                ),
+            )
+            .unwrap();
+
+        assert_eq!(handle.current_context(), Some(outgoing));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            AudioCommand::SchedulePreloadedTransition { .. }
+        ));
     }
 }

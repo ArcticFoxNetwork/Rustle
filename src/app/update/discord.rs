@@ -76,17 +76,20 @@ impl App {
 
     /// Trigger a Discord presence update from an AudioEvent.
     pub fn maybe_update_discord(&mut self, event: &AudioEvent) -> Option<Task<Message>> {
+        if !self.audio_event_is_current(event) {
+            return None;
+        }
         if !self.core.settings.system.discord_enabled {
             return None;
         }
 
         match event {
-            AudioEvent::Started { .. } | AudioEvent::Resumed => {
+            AudioEvent::Started { .. } | AudioEvent::Resumed { .. } => {
                 Some(Task::done(Message::DiscordUpdatePresence))
             }
-            AudioEvent::Paused { .. } | AudioEvent::Stopped | AudioEvent::Finished => {
-                Some(Task::done(Message::DiscordClearPresence))
-            }
+            AudioEvent::Paused { .. }
+            | AudioEvent::Stopped { .. }
+            | AudioEvent::Finished { .. } => Some(Task::done(Message::DiscordClearPresence)),
             AudioEvent::SeekComplete { .. } => Some(Task::done(Message::DiscordUpdatePresence)),
             _ => None,
         }

@@ -84,6 +84,11 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
         Key::SettingsFadeInOutDesc,
         "Smooth volume transition when playing/pausing",
     );
+    m.insert(Key::SettingsAutomix, "Automix");
+    m.insert(
+        Key::SettingsAutomixDesc,
+        "Analyze adjacent tracks for beat, loudness, and bass-aware transitions",
+    );
     m.insert(Key::SettingsVolumeNormalization, "Volume Normalization");
     m.insert(
         Key::SettingsVolumeNormalizationDesc,

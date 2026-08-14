@@ -503,6 +503,15 @@ fn playback_section(settings: &Settings, locale: Locale) -> Element<'static, Mes
         ),
         divider(),
         setting_row(
+            locale.get(Key::SettingsAutomix),
+            Some(locale.get(Key::SettingsAutomixDesc)),
+            toggler(settings.playback.automix_enabled)
+                .on_toggle(Message::UpdateAutomixEnabled)
+                .size(theme::TEXT_SIZE_TITLE)
+                .into()
+        ),
+        divider(),
+        setting_row(
             locale.get(Key::SettingsVolumeNormalization),
             Some(locale.get(Key::SettingsVolumeNormalizationDesc)),
             toggler(settings.playback.volume_normalization)

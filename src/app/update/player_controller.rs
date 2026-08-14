@@ -6,6 +6,7 @@
 use std::collections::HashSet;
 use std::path::Path;
 use std::path::PathBuf;
+use std::time::Duration;
 
 use iced::Task;
 
@@ -35,10 +36,10 @@ pub(super) enum PlaybackSource {
     StreamingBuffer {
         buffer: crate::audio::SharedBuffer,
         duration_secs: Option<u64>,
-        file_path: String,
+        finalized_cache_path: Option<String>,
     },
     Preloaded {
-        request_id: u64,
+        identity: crate::audio::identity::PreloadIdentity,
         buffer: Option<crate::audio::SharedBuffer>,
     },
 }
@@ -152,10 +153,6 @@ impl App {
         song: DbSong,
         kind: PendingPlaybackKind,
     ) {
-        if let Some(idx) = queue_index {
-            self.playback.current_index = Some(idx);
-        }
-
         self.playback.pending_playback_request = Some(PendingPlaybackRequest {
             request_id,
             queue_index,
@@ -177,6 +174,16 @@ impl App {
         }
     }
 
+    fn promote_scheduled_transition_buffer(&mut self, request_id: u64) {
+        if self.playback.scheduled_transition_request_id == Some(request_id) {
+            let incoming = self.playback.scheduled_transition_buffer.take();
+            self.playback.scheduled_transition_request_id = None;
+            self.playback.pending_transition = None;
+            self.playback.pending_transition_trigger = None;
+            self.replace_active_streaming_buffer(incoming);
+        }
+    }
+
     fn restore_current_playback_position(&mut self, position_secs: f64) {
         let seek_pos = std::time::Duration::from_secs_f64(position_secs);
         if self.playback_output_available() {
@@ -194,7 +201,9 @@ impl App {
         resolved: &ResolvedSong,
     ) -> Option<DbSong> {
         let song = self.playback.queue.get_mut(idx)?;
-        song.file_path = resolved.file_path.clone();
+        if let Some(path) = &resolved.finalized_cache_path {
+            song.file_path = path.clone();
+        }
         if let Some(cover_path) = &resolved.cover_path {
             song.cover_path = Some(cover_path.clone());
         }
@@ -219,7 +228,7 @@ impl App {
             return Ok(PlaybackSource::StreamingBuffer {
                 buffer,
                 duration_secs: resolved.duration_secs,
-                file_path: resolved.file_path.clone(),
+                finalized_cache_path: resolved.finalized_cache_path.clone(),
             });
         }
 
@@ -325,18 +334,48 @@ impl App {
         song: &DbSong,
         buffer: crate::audio::SharedBuffer,
         duration_secs: Option<u64>,
-        file_path: &str,
+        finalized_cache_path: Option<String>,
     ) -> Result<u64, String> {
         let track_gain = self.resolve_track_gain_for_song(song, TrackGainMode::MetadataOnly);
         let fade_in = self.fade_in_enabled();
         let duration =
             std::time::Duration::from_secs(duration_secs.unwrap_or(song.duration_secs as u64));
-        let cache_path = (!file_path.is_empty()).then(|| PathBuf::from(file_path));
+        let cache_path = finalized_cache_path.map(PathBuf::from);
         self.play_streaming_audio(buffer, duration, cache_path, fade_in, track_gain)
     }
 
-    pub(super) fn play_preloaded_request(&self, request_id: u64) -> Result<u64, String> {
-        self.play_preloaded_audio(request_id, self.fade_in_enabled())
+    pub(super) fn play_preloaded_request(
+        &mut self,
+        identity: crate::audio::identity::PreloadIdentity,
+        buffer: Option<crate::audio::SharedBuffer>,
+    ) -> Result<u64, String> {
+        let transition = self.playback.pending_transition.take();
+        let trigger_at = self.playback.pending_transition_trigger.take();
+        match (trigger_at, transition) {
+            (Some(trigger_at), Some(transition)) => {
+                self.playback.scheduled_transition_buffer = buffer;
+                match self.schedule_preloaded_audio_transition(
+                    identity,
+                    trigger_at,
+                    self.fade_in_enabled(),
+                    transition,
+                ) {
+                    Ok(request_id) => {
+                        self.playback.scheduled_transition_request_id = Some(request_id);
+                        Ok(request_id)
+                    }
+                    Err(error) => {
+                        self.clear_scheduled_transition_state();
+                        Err(error)
+                    }
+                }
+            }
+            (_, transition) => {
+                self.clear_scheduled_transition_state();
+                self.replace_active_streaming_buffer(buffer);
+                self.play_preloaded_audio(identity, self.fade_in_enabled(), transition)
+            }
+        }
     }
 
     pub(super) fn audio_path_source_for_song(song: &DbSong) -> Result<PlaybackSource, String> {
@@ -379,6 +418,7 @@ impl App {
                 gain_mode,
                 start_position,
             } => {
+                self.clear_scheduled_transition_state();
                 self.replace_active_streaming_buffer(None);
                 if let Some(position) = start_position {
                     self.play_audio_path_at_position_for_song(song, path, gain_mode, position)
@@ -389,15 +429,20 @@ impl App {
             PlaybackSource::StreamingBuffer {
                 buffer,
                 duration_secs,
-                file_path,
+                finalized_cache_path,
             } => {
+                self.clear_scheduled_transition_state();
                 let active_buffer = buffer.clone();
                 self.replace_active_streaming_buffer(Some(active_buffer));
-                self.play_streaming_buffer_for_song(song, buffer, duration_secs, &file_path)
+                self.play_streaming_buffer_for_song(
+                    song,
+                    buffer,
+                    duration_secs,
+                    finalized_cache_path,
+                )
             }
-            PlaybackSource::Preloaded { request_id, buffer } => {
-                self.replace_active_streaming_buffer(buffer);
-                self.play_preloaded_request(request_id)
+            PlaybackSource::Preloaded { identity, buffer } => {
+                self.play_preloaded_request(identity, buffer)
             }
         }
     }
@@ -426,13 +471,13 @@ impl App {
         song: &DbSong,
         buffer: crate::audio::SharedBuffer,
         duration_secs: Option<u64>,
-        file_path: &str,
+        finalized_cache_path: Option<String>,
         position: std::time::Duration,
     ) -> Result<(), String> {
         let track_gain = self.resolve_track_gain_for_song(song, TrackGainMode::MetadataOnly);
         let duration =
             std::time::Duration::from_secs(duration_secs.unwrap_or(song.duration_secs as u64));
-        let cache_path = (!file_path.is_empty()).then(|| PathBuf::from(file_path));
+        let cache_path = finalized_cache_path.map(PathBuf::from);
         let request_id = self.load_streaming_audio_paused(
             buffer.clone(),
             duration,
@@ -579,6 +624,7 @@ impl App {
         self.playback.current_artist_id = self.resolve_artist_id_for_song(&song);
         self.playback.current_song = Some(song.clone());
         self.playback.consecutive_failures = 0;
+        self.playback.crossfade_triggered = false;
         self.update_tray_and_mpris_current(is_playing);
         Task::none()
     }
@@ -603,6 +649,7 @@ impl App {
             path
         );
 
+        self.promote_scheduled_transition_buffer(request_id);
         let Some(pending) = self.take_pending_playback_request(request_id) else {
             tracing::debug!(
                 "Ignoring Started for stale/unknown request_id={}",
@@ -713,16 +760,24 @@ impl App {
             Some(crate::audio::PlaybackError::UnsupportedFormat(_)) => {
                 "不支持的音频格式".to_string()
             }
+            Some(crate::audio::PlaybackError::UnsupportedStreaming(_)) => {
+                "音频源不支持 Range 流式播放".to_string()
+            }
+            Some(crate::audio::PlaybackError::NetworkError(_)) => "网络读取出错".to_string(),
             Some(crate::audio::PlaybackError::FileNotFound(_)) => "文件不存在".to_string(),
             Some(crate::audio::PlaybackError::IoError(_)) => "文件读取出错".to_string(),
             _ => format!("播放错误: {}", message),
         };
 
         if let Some(request_id) = request_id {
+            let was_scheduled = self.playback.scheduled_transition_request_id == Some(request_id);
             let Some(pending) = self.take_pending_playback_request(request_id) else {
                 tracing::debug!("Ignoring Error for stale/unknown request_id={}", request_id);
                 return Task::none();
             };
+            if was_scheduled {
+                self.clear_scheduled_transition_state();
+            }
 
             return match pending.kind {
                 PendingPlaybackKind::StartPlayingTrack => {
@@ -759,6 +814,7 @@ impl App {
     }
 
     pub fn stop_audio_output(&mut self) {
+        self.clear_scheduled_transition_state();
         self.playback.pending_playback_request = None;
         self.stop_audio_backend();
     }
@@ -773,6 +829,7 @@ impl App {
     }
 
     pub fn seek_to_position(&mut self, position: std::time::Duration) {
+        self.clear_scheduled_transition_state();
         self.seek_audio_output(position);
     }
 
@@ -791,6 +848,7 @@ impl App {
         } else {
             info.position.saturating_sub(offset)
         };
+        self.clear_scheduled_transition_state();
         self.seek_audio_output(new_pos);
     }
 
@@ -949,11 +1007,153 @@ impl App {
 
     /// Playback-side prefetch coordinator after a track switch completes.
     fn schedule_post_switch_side_effects(&mut self, song: &DbSong) -> Task<Message> {
+        self.schedule_automix_analysis_window(song);
         let audio_task = self.preload_adjacent_tracks_with_ncm();
         let lyrics_task = self.schedule_lyrics_prefetches(song);
         let bg_task = self.schedule_background_prep();
 
         Task::batch([audio_task, lyrics_task, bg_task])
+    }
+
+    fn automix_config(&self) -> crate::audio::automix::AnalysisConfig {
+        crate::audio::automix::AnalysisConfig {
+            max_seconds: self
+                .core
+                .settings
+                .playback
+                .automix_analysis_max_seconds
+                .max(1),
+            ..crate::audio::automix::AnalysisConfig::default()
+        }
+    }
+
+    pub(super) fn schedule_automix_analysis_window(&self, current_song: &DbSong) {
+        if !self.core.settings.playback.automix_enabled {
+            return;
+        }
+        let Some(context) = self.current_audio_context() else {
+            return;
+        };
+        let mut candidates = Vec::new();
+        let current_path = self
+            .playback
+            .active_streaming_buffer
+            .as_ref()
+            .and_then(crate::audio::SharedBuffer::finalized_cache_path)
+            .unwrap_or_else(|| PathBuf::from(&current_song.file_path));
+        candidates.push((current_song.clone(), current_path));
+        let window = self.playback.preload_coordinator.window();
+        for (index, direction) in [
+            (window.next_index, PreloadDirection::Next),
+            (window.prev_index, PreloadDirection::Previous),
+        ]
+        .into_iter()
+        .filter_map(|(index, direction)| index.map(|index| (index, direction)))
+        {
+            if let Some(song) = self.playback.queue.get(index) {
+                let path = self
+                    .playback
+                    .audio_preload_manager
+                    .slot(direction)
+                    .filter(|slot| slot.idx == index)
+                    .and_then(|slot| slot.buffer.as_ref())
+                    .and_then(crate::audio::SharedBuffer::finalized_cache_path)
+                    .unwrap_or_else(|| PathBuf::from(&song.file_path));
+                candidates.push((song.clone(), path));
+            }
+        }
+        let config = self.automix_config();
+        for (song, path) in candidates {
+            if !path.is_file() {
+                continue;
+            }
+            let content_id = crate::audio::automix::content_identity(&path, &song.id.to_string());
+            let cache = crate::audio::automix::AnalysisCache::app_default();
+            let cancellation = context.cancellation.clone();
+            tokio::task::spawn_blocking(move || {
+                if cancellation.is_cancelled() {
+                    return;
+                }
+                let _ = cache.analyze_file_if_missing(&path, &content_id, config, || {
+                    cancellation.is_cancelled()
+                });
+            });
+        }
+    }
+
+    fn natural_transition_for(
+        &self,
+        current: &DbSong,
+        next: &DbSong,
+        next_index: usize,
+    ) -> (Duration, crate::audio::automix::TransitionDirective) {
+        let generation = self
+            .current_audio_context()
+            .map(|context| context.generation.0)
+            .unwrap_or(0);
+        let group = crate::audio::automix::ScheduleGroup(
+            generation.rotate_left(32) ^ next.id.unsigned_abs(),
+        );
+        let baseline = crate::audio::automix::TransitionDirective::baseline_natural(group);
+        if !self.core.settings.playback.automix_enabled {
+            return (
+                self.playback_info()
+                    .duration
+                    .saturating_sub(baseline.duration),
+                baseline,
+            );
+        }
+        let current_path = self
+            .playback
+            .active_streaming_buffer
+            .as_ref()
+            .and_then(crate::audio::SharedBuffer::finalized_cache_path)
+            .unwrap_or_else(|| PathBuf::from(&current.file_path));
+        let next_path = self
+            .playback
+            .audio_preload_manager
+            .slot(PreloadDirection::Next)
+            .filter(|slot| slot.idx == next_index)
+            .and_then(|slot| slot.buffer.as_ref())
+            .and_then(crate::audio::SharedBuffer::finalized_cache_path)
+            .unwrap_or_else(|| PathBuf::from(&next.file_path));
+        let current_id =
+            crate::audio::automix::content_identity(&current_path, &current.id.to_string());
+        let next_id = crate::audio::automix::content_identity(&next_path, &next.id.to_string());
+        let config = self.automix_config();
+        let cache = crate::audio::automix::AnalysisCache::app_default();
+        let analyses = cache
+            .load(&current_id, config)
+            .ok()
+            .flatten()
+            .zip(cache.load(&next_id, config).ok().flatten());
+        let Some((current_analysis, next_analysis)) = analyses else {
+            return (
+                self.playback_info()
+                    .duration
+                    .saturating_sub(baseline.duration),
+                baseline,
+            );
+        };
+        let Ok(plan) = crate::audio::automix::plan_transition(
+            &current_analysis,
+            &next_analysis,
+            Duration::from_millis(crate::audio::automix::BASELINE_CROSSFADE_MS.into()),
+        ) else {
+            return (
+                self.playback_info()
+                    .duration
+                    .saturating_sub(baseline.duration),
+                baseline,
+            );
+        };
+        let automation =
+            crate::audio::automix::automation_for_transition(&current_analysis, &next_analysis);
+        let trigger = plan.exit.min(self.playback_info().duration);
+        (
+            trigger,
+            crate::audio::automix::TransitionDirective::automix(group, &plan, automation),
+        )
     }
 
     /// Schedule current-song lyrics display loading plus background cache warmup.
@@ -1037,15 +1237,20 @@ impl App {
 
         if let Some(client) = &self.core.ncm_client {
             let client = std::sync::Arc::new(client.clone());
-            let song_id = song.id;
-
-            // Create channel for streaming events
+            let context = match self.current_audio_context() {
+                Some(context) => context,
+                None => {
+                    self.playback.pending_resolution_index = None;
+                    return Self::toast_warning("没有可用的播放上下文".to_string());
+                }
+            };
             let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(32);
+            let resolve_context = context.clone();
+            let message_context = context.clone();
 
-            // Spawn the resolution task
             let resolve_task = Task::perform(
                 async move {
-                    super::song_resolver::resolve_song(client, &song, event_tx)
+                    super::song_resolver::resolve_song(client, &song, resolve_context, event_tx)
                         .await
                         .map(|resolved| (idx, resolved))
                 },
@@ -1053,35 +1258,25 @@ impl App {
                     if let Some((idx, resolved)) = result {
                         Message::SongResolvedStreaming(
                             idx,
-                            resolved.file_path,
+                            resolved.finalized_cache_path,
                             resolved.cover_path,
                             resolved.shared_buffer,
                             resolved.duration_secs,
+                            message_context.clone(),
                         )
                     } else {
-                        Message::SongResolveFailed
+                        Message::SongResolveFailed(message_context.clone())
                     }
                 },
             );
 
-            // Spawn task to forward streaming events to app messages
-            let event_task = Task::perform(
-                async move {
-                    let mut events = Vec::new();
+            let event_task = Task::run(
+                async_stream::stream! {
                     while let Some(event) = event_rx.recv().await {
-                        events.push((song_id, event));
+                        yield Message::StreamingEvent(event);
                     }
-                    events
                 },
-                |events| {
-                    // Return first playable event if any
-                    for (song_id, event) in events {
-                        if matches!(event, crate::audio::streaming::StreamingEvent::Playable) {
-                            return Message::StreamingEvent(song_id, event);
-                        }
-                    }
-                    Message::NoOp
-                },
+                |message| message,
             );
 
             Task::batch([resolve_task, event_task])
@@ -1095,20 +1290,25 @@ impl App {
     pub fn handle_song_resolved_streaming(
         &mut self,
         idx: usize,
-        file_path: String,
+        finalized_cache_path: Option<String>,
         cover_path: Option<String>,
         shared_buffer: Option<crate::audio::SharedBuffer>,
         duration_secs: Option<u64>,
+        context: crate::audio::identity::PlaybackContext,
     ) -> Task<Message> {
+        if !self.accepts_audio_context(&context) {
+            tracing::debug!("Ignoring stale song resolution at index {}", idx);
+            return Task::none();
+        }
         tracing::info!(
-            "Song at index {} resolved to {} (buffer: {})",
+            "Song at index {} resolved to {:?} (buffer: {})",
             idx,
-            file_path,
+            finalized_cache_path,
             shared_buffer.is_some()
         );
 
         let resolved = ResolvedSong {
-            file_path,
+            finalized_cache_path,
             cover_path,
             shared_buffer,
             duration_secs,
@@ -1217,6 +1417,39 @@ impl App {
 
         let play_task = self.play_song_at_index(next_idx);
         Task::batch([fetch_task, play_task])
+    }
+
+    pub(super) fn try_start_natural_crossfade(&mut self) -> Option<Task<Message>> {
+        if self.playback.crossfade_triggered
+            || self.playback.pending_playback_request.is_some()
+            || !self.playback_is_playing()
+        {
+            return None;
+        }
+        let info = self.playback_info().clone();
+        if info.duration.is_zero() {
+            return None;
+        }
+        let next_idx = self.calculate_next_index()?;
+        let current = self.playback.current_song.as_ref()?;
+        let next = self.playback.queue.get(next_idx)?;
+        let (trigger_at, transition) = self.natural_transition_for(current, next, next_idx);
+        let planning_window =
+            Duration::from_secs(crate::audio::automix::AUTOMIX_PLANNING_WINDOW_SECS);
+        if info.position < trigger_at.saturating_sub(planning_window) {
+            return None;
+        }
+        if !self
+            .playback
+            .audio_preload_manager
+            .is_ready(next_idx, PreloadDirection::Next)
+        {
+            return None;
+        }
+        self.playback.crossfade_triggered = true;
+        self.playback.pending_transition = Some(transition);
+        self.playback.pending_transition_trigger = Some(trigger_at);
+        Some(self.play_next_song())
     }
 
     pub fn play_prev_song(&mut self) -> Task<Message> {

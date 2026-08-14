@@ -149,7 +149,9 @@ pub async fn download_song(
         let mut f = fs::File::open(&tmp)
             .map_err(|e| format!("Failed to open temp for format detection: {}", e))?;
         let n = f.read(&mut buf).unwrap_or(0);
-        detect_audio_format(&buf[..n]).to_string()
+        detect_audio_format(&buf[..n])
+            .ok_or_else(|| "Downloaded file has an unknown or damaged audio format".to_string())?
+            .to_string()
     };
     let dest = download_dir.join(format!("{}.{}", stem, ext));
     fs::rename(&tmp, &dest).map_err(|e| format!("Failed to rename temp file: {}", e))?;

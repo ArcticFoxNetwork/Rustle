@@ -7,14 +7,18 @@
 use std::sync::Arc;
 
 use crate::api::NcmClient;
-use crate::audio::streaming::{SharedBuffer, StreamingEvent, start_buffer_download};
+use crate::audio::identity::PlaybackContext;
+use crate::audio::streaming::{
+    SharedBuffer, StreamingEvent, StreamingEventKind, StreamingIdentity, start_buffer_download,
+};
 use crate::database::DbSong;
 
 /// Result of resolving a song with streaming support
 #[derive(Debug, Clone)]
 pub struct ResolvedSong {
-    /// Local file path (for caching reference)
-    pub file_path: String,
+    /// Finalized cache file path with the detected audio extension.
+    /// `None` means playback remains ring-buffer backed.
+    pub finalized_cache_path: Option<String>,
     /// Local cover path (if available)
     pub cover_path: Option<String>,
     /// Shared buffer for direct memory playback (None if using cached file)
@@ -64,9 +68,11 @@ pub fn get_ncm_id(song: &DbSong) -> u64 {
 pub async fn resolve_song(
     client: Arc<NcmClient>,
     song: &DbSong,
+    context: PlaybackContext,
     event_tx: tokio::sync::mpsc::Sender<StreamingEvent>,
 ) -> Option<ResolvedSong> {
     let ncm_id = get_ncm_id(song);
+    let identity = StreamingIdentity::Playback(context.clone());
 
     let song_cache_dir = crate::utils::songs_cache_dir();
 
@@ -95,10 +101,20 @@ pub async fn resolve_song(
                 cached_path,
                 file_size
             );
-            let _ = event_tx.send(StreamingEvent::Playable).await;
-            let _ = event_tx.send(StreamingEvent::Complete).await;
+            let _ = event_tx
+                .send(StreamingEvent::new(
+                    identity.clone(),
+                    StreamingEventKind::Playable,
+                ))
+                .await;
+            let _ = event_tx
+                .send(StreamingEvent::new(
+                    identity.clone(),
+                    StreamingEventKind::Complete,
+                ))
+                .await;
             return Some(ResolvedSong {
-                file_path: cached_path.to_string_lossy().to_string(),
+                finalized_cache_path: Some(cached_path.to_string_lossy().to_string()),
                 cover_path,
                 shared_buffer: None,
                 duration_secs: None,
@@ -120,7 +136,12 @@ pub async fn resolve_song(
         Ok(urls) => urls,
         Err(e) => {
             tracing::error!("Failed to get song URL for {}: {}", ncm_id, e);
-            let _ = event_tx.send(StreamingEvent::Error(e.to_string())).await;
+            let _ = event_tx
+                .send(StreamingEvent::new(
+                    identity.clone(),
+                    StreamingEventKind::Error(e.to_string()),
+                ))
+                .await;
             return None;
         }
     };
@@ -130,7 +151,10 @@ pub async fn resolve_song(
         _ => {
             tracing::error!("No valid URL returned for song {}", ncm_id);
             let _ = event_tx
-                .send(StreamingEvent::Error("No URL available".to_string()))
+                .send(StreamingEvent::new(
+                    identity.clone(),
+                    StreamingEventKind::Error("No URL available".to_string()),
+                ))
                 .await;
             return None;
         }
@@ -141,12 +165,14 @@ pub async fn resolve_song(
     let cache_path = song_cache_dir.join(&song_stem);
 
     // Use unified download function - content_length will be obtained from GET response
-    let shared_buffer = start_buffer_download(song_url, cache_path.clone(), Some(event_tx));
+    let shared_buffer =
+        start_buffer_download(song_url, cache_path.clone(), identity, Some(event_tx));
 
     // Return immediately with the buffer
-    // Note: file_path uses stem only - actual cached file will have correct extension
+    // The downloader uses a temporary stem path internally and finalizes it with
+    // the detected extension after the download completes.
     Some(ResolvedSong {
-        file_path: cache_path.to_string_lossy().to_string(),
+        finalized_cache_path: None,
         cover_path,
         shared_buffer: Some(shared_buffer),
         duration_secs: Some(song.duration_secs as u64),

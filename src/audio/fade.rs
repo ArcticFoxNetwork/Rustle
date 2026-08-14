@@ -27,6 +27,10 @@ struct FadeControlInner {
     /// Generation counter - incremented on each fade_to() call
     /// Used to detect new fade requests
     generation: AtomicU32,
+    /// Generation whose ramp has reached its target.
+    completed_generation: AtomicU32,
+    /// 0 = cubic UI fade, 1 = equal-power transition fade.
+    curve: AtomicU32,
 }
 
 impl FadeControl {
@@ -37,6 +41,8 @@ impl FadeControl {
                 target_volume: AtomicU32::new(initial_volume.to_bits()),
                 fade_duration_ms: AtomicU32::new(0),
                 generation: AtomicU32::new(0),
+                completed_generation: AtomicU32::new(0),
+                curve: AtomicU32::new(0),
             }),
         }
     }
@@ -48,6 +54,14 @@ impl FadeControl {
     /// - Fade out: `fade_to(0.0, Duration::from_millis(300))`
     /// - Instant: `fade_to(0.5, Duration::ZERO)`
     pub fn fade_to(&self, volume: f32, duration: Duration) {
+        self.fade_to_with_curve(volume, duration, 0);
+    }
+
+    pub(crate) fn fade_to_equal_power(&self, volume: f32, duration: Duration) {
+        self.fade_to_with_curve(volume, duration, 1);
+    }
+
+    fn fade_to_with_curve(&self, volume: f32, duration: Duration, curve: u32) {
         let volume = volume.clamp(0.0, 1.0);
         self.inner
             .target_volume
@@ -55,6 +69,7 @@ impl FadeControl {
         self.inner
             .fade_duration_ms
             .store(duration.as_millis() as u32, Ordering::Release);
+        self.inner.curve.store(curve, Ordering::Release);
         self.inner.generation.fetch_add(1, Ordering::Release);
     }
 
@@ -74,6 +89,11 @@ impl FadeControl {
 
     fn fade_duration_ms(&self) -> u32 {
         self.inner.fade_duration_ms.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn is_complete(&self) -> bool {
+        self.inner.completed_generation.load(Ordering::Acquire)
+            == self.inner.generation.load(Ordering::Acquire)
     }
 }
 
@@ -105,6 +125,7 @@ where
     last_generation: u32,
     /// Cached sample rate
     sample_rate: u32,
+    equal_power: bool,
 }
 
 impl<S> FadeEnvelope<S>
@@ -126,6 +147,7 @@ where
             fade_samples_total: 0,
             last_generation: generation,
             sample_rate,
+            equal_power: false,
         }
     }
 
@@ -137,11 +159,16 @@ where
 
             let duration_ms = self.control.fade_duration_ms();
             let target = self.control.target_volume();
+            self.equal_power = self.control.inner.curve.load(Ordering::Acquire) == 1;
 
             if duration_ms == 0 {
                 // Instant change
                 self.current_volume = target;
                 self.fade_samples_remaining = 0;
+                self.control
+                    .inner
+                    .completed_generation
+                    .store(current_gen, Ordering::Release);
             } else {
                 // Start new fade
                 self.fade_start_volume = self.current_volume;
@@ -161,14 +188,26 @@ where
             let progress =
                 1.0 - (self.fade_samples_remaining as f32 / self.fade_samples_total as f32);
 
-            // Smooth easing (ease-out cubic)
-            let eased = 1.0 - (1.0 - progress).powi(3);
-            self.current_volume =
-                self.fade_start_volume + (target - self.fade_start_volume) * eased;
+            if self.equal_power {
+                let angle = progress * std::f32::consts::FRAC_PI_2;
+                self.current_volume = if target >= self.fade_start_volume {
+                    self.fade_start_volume + (target - self.fade_start_volume) * angle.sin()
+                } else {
+                    target + (self.fade_start_volume - target) * angle.cos()
+                };
+            } else {
+                let eased = 1.0 - (1.0 - progress).powi(3);
+                self.current_volume =
+                    self.fade_start_volume + (target - self.fade_start_volume) * eased;
+            }
 
             // Snap to target when done
             if self.fade_samples_remaining == 0 {
                 self.current_volume = target;
+                self.control
+                    .inner
+                    .completed_generation
+                    .store(self.last_generation, Ordering::Release);
             }
         }
     }
@@ -220,5 +259,99 @@ where
 
     fn try_seek(&mut self, pos: Duration) -> Result<(), rodio::source::SeekError> {
         self.source.try_seek(pos)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TestSource {
+        samples: std::vec::IntoIter<f32>,
+        sample_rate: u32,
+    }
+
+    impl Iterator for TestSource {
+        type Item = f32;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.samples.next()
+        }
+    }
+
+    impl Source for TestSource {
+        fn current_span_len(&self) -> Option<usize> {
+            Some(self.samples.len())
+        }
+
+        fn channels(&self) -> u16 {
+            1
+        }
+
+        fn sample_rate(&self) -> u32 {
+            self.sample_rate
+        }
+
+        fn total_duration(&self) -> Option<Duration> {
+            None
+        }
+
+        fn try_seek(&mut self, _pos: Duration) -> Result<(), rodio::source::SeekError> {
+            Err(rodio::source::SeekError::NotSupported {
+                underlying_source: "test source is not seekable",
+            })
+        }
+    }
+
+    #[test]
+    fn fade_progresses_in_samples_and_reports_completion() {
+        let control = FadeControl::new(1.0);
+        let source = TestSource {
+            samples: vec![1.0; 8].into_iter(),
+            sample_rate: 1_000,
+        };
+        let mut envelope = FadeEnvelope::new(source, control.clone());
+        control.fade_to(0.0, Duration::from_millis(4));
+
+        let values: Vec<_> = (&mut envelope).collect();
+        assert!(values[0] < 1.0);
+        assert_eq!(values[3], 0.0);
+        assert!(control.is_complete());
+    }
+
+    #[test]
+    fn a_new_fade_interrupts_an_old_ramp_without_sleeping() {
+        let control = FadeControl::new(1.0);
+        let source = TestSource {
+            samples: vec![1.0; 4].into_iter(),
+            sample_rate: 1_000,
+        };
+        let mut envelope = FadeEnvelope::new(source, control.clone());
+        control.fade_to(0.0, Duration::from_millis(10));
+        let first = envelope.next().unwrap();
+        control.set_volume(1.0);
+        let second = envelope.next().unwrap();
+
+        assert!(first < 1.0);
+        assert_eq!(second, 1.0);
+        assert!(control.is_complete());
+    }
+
+    #[test]
+    fn equal_power_pair_preserves_unit_power() {
+        let outgoing_control = FadeControl::new(1.0);
+        let incoming_control = FadeControl::new(0.0);
+        let source = || TestSource {
+            samples: vec![1.0; 4].into_iter(),
+            sample_rate: 1_000,
+        };
+        let mut outgoing = FadeEnvelope::new(source(), outgoing_control.clone());
+        let mut incoming = FadeEnvelope::new(source(), incoming_control.clone());
+        outgoing_control.fade_to_equal_power(0.0, Duration::from_millis(4));
+        incoming_control.fade_to_equal_power(1.0, Duration::from_millis(4));
+
+        for (out, input) in (&mut outgoing).zip(&mut incoming) {
+            assert!((out * out + input * input - 1.0).abs() < 1e-5);
+        }
     }
 }

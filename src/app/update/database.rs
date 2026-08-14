@@ -186,8 +186,14 @@ impl App {
                 let song_clone = song.clone();
                 let saved_position = state.position_secs;
                 let client = std::sync::Arc::new(client);
+                let Some(context) = self.current_audio_context() else {
+                    self.finish_startup_restore();
+                    return Task::none();
+                };
 
                 self.playback.pending_resolution_index = Some(idx);
+
+                let context_for_task = context.clone();
 
                 return Task::perform(
                     async move {
@@ -195,11 +201,14 @@ impl App {
                         crate::app::update::song_resolver::resolve_song(
                             client,
                             &song_clone,
+                            context_for_task,
                             event_tx,
                         )
                         .await
                     },
-                    move |result| Message::SongResolvedForRestore(idx, result, saved_position),
+                    move |result| {
+                        Message::SongResolvedForRestore(idx, result, saved_position, context)
+                    },
                 );
             }
 
@@ -317,13 +326,25 @@ impl App {
                 Some(self.try_restore_startup_playback())
             }
 
-            Message::SongResolvedForRestore(idx, result, saved_position) => {
+            Message::SongResolvedForRestore(idx, result, saved_position, context) => {
+                if !self.accepts_audio_context(context) {
+                    tracing::debug!(
+                        generation = context.generation.0,
+                        index = idx,
+                        "Ignoring stale startup restore resolution"
+                    );
+                    return Some(Task::none());
+                }
+
                 // Handle NCM song resolution result during app startup
                 self.playback.pending_resolution_index = None;
                 self.playback.startup_restore.in_progress = false;
 
                 if let Some(resolved) = result {
-                    tracing::info!("NCM song resolved for restore: {:?}", resolved.file_path);
+                    tracing::info!(
+                        "NCM song resolved for restore: finalized_cache_path={:?}",
+                        resolved.finalized_cache_path
+                    );
 
                     let _ = self.apply_resolved_song_to_queue(*idx, resolved);
 
@@ -331,22 +352,27 @@ impl App {
                     if self.playback.current_index == Some(*idx) {
                         if let Some(song) = self.playback.queue.get(*idx).cloned() {
                             let position = std::time::Duration::from_secs_f64(*saved_position);
-                            let restore_result =
-                                if let Some(buffer) = resolved.shared_buffer.clone() {
-                                    self.load_streaming_buffer_paused_for_song(
-                                        &song,
-                                        buffer,
-                                        resolved.duration_secs,
-                                        &resolved.file_path,
-                                        position,
-                                    )
-                                } else {
-                                    self.load_audio_path_paused_for_song(
-                                        &song,
-                                        std::path::PathBuf::from(&resolved.file_path),
-                                        position,
-                                    )
-                                };
+                            let restore_result = if let Some(buffer) =
+                                resolved.shared_buffer.clone()
+                            {
+                                self.load_streaming_buffer_paused_for_song(
+                                    &song,
+                                    buffer,
+                                    resolved.duration_secs,
+                                    resolved.finalized_cache_path.clone(),
+                                    position,
+                                )
+                            } else if let Some(finalized_cache_path) =
+                                resolved.finalized_cache_path.clone()
+                            {
+                                self.load_audio_path_paused_for_song(
+                                    &song,
+                                    std::path::PathBuf::from(finalized_cache_path),
+                                    position,
+                                )
+                            } else {
+                                Err("Resolved NCM song has neither a streaming buffer nor a finalized cache path".to_string())
+                            };
 
                             if let Err(err) = restore_result {
                                 tracing::warn!(

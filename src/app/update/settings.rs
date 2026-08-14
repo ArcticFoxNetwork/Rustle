@@ -213,6 +213,17 @@ impl App {
                 self.core.settings.playback.fade_in_out = *enabled;
                 Some(Task::perform(async { Message::SaveSettings }, |m| m))
             }
+            Message::UpdateAutomixEnabled(enabled) => {
+                self.core.settings.playback.automix_enabled = *enabled;
+                if *enabled {
+                    if let Some(song) = self.playback.current_song.clone() {
+                        self.schedule_automix_analysis_window(&song);
+                    }
+                } else {
+                    self.clear_scheduled_transition_state();
+                }
+                Some(Task::perform(async { Message::SaveSettings }, |m| m))
+            }
             Message::UpdateVolumeNormalization(enabled) => {
                 self.core.settings.playback.volume_normalization = *enabled;
                 Some(Task::perform(async { Message::SaveSettings }, |m| m))

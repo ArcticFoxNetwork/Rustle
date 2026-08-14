@@ -13,7 +13,7 @@ pub const EQ_FREQUENCIES: [f32; 10] = [
 ];
 
 /// Biquad filter coefficients
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct BiquadCoeffs {
     b0: f32,
     b1: f32,
@@ -59,15 +59,16 @@ impl BiquadState {
 /// sample_rate: audio sample rate
 /// q: quality factor (bandwidth), typically 1.0-2.0 for EQ
 fn calc_peaking_eq(freq: f32, gain_db: f32, sample_rate: f32, q: f32) -> BiquadCoeffs {
-    if gain_db.abs() < 0.01 {
-        // Unity gain - bypass filter
-        return BiquadCoeffs {
-            b0: 1.0,
-            b1: 0.0,
-            b2: 0.0,
-            a1: 0.0,
-            a2: 0.0,
-        };
+    // A peaking filter at or above Nyquist is undefined for the current
+    // sample rate. Keep the band at unity instead of silently moving it to a
+    // different frequency or producing unstable coefficients.
+    if gain_db.abs() < 0.01
+        || !sample_rate.is_finite()
+        || sample_rate <= 0.0
+        || !freq.is_finite()
+        || freq >= 0.95 * (sample_rate * 0.5)
+    {
+        return unity_coeffs();
     }
 
     let a = 10.0_f32.powf(gain_db / 40.0);
@@ -90,6 +91,16 @@ fn calc_peaking_eq(freq: f32, gain_db: f32, sample_rate: f32, q: f32) -> BiquadC
         b2: b2 / a0,
         a1: a1 / a0,
         a2: a2 / a0,
+    }
+}
+
+fn unity_coeffs() -> BiquadCoeffs {
+    BiquadCoeffs {
+        b0: 1.0,
+        b1: 0.0,
+        b2: 0.0,
+        a1: 0.0,
+        a2: 0.0,
     }
 }
 
@@ -164,8 +175,8 @@ where
     params: EqualizerParams,
     // Filter coefficients for each band
     coeffs: [BiquadCoeffs; 10],
-    // Filter state for each band, per channel (stereo = 2 channels)
-    states: [[BiquadState; 10]; 2],
+    // Filter state for each band, per actual source channel.
+    states: Vec<[BiquadState; 10]>,
     // Current channel being processed (for interleaved stereo)
     current_channel: usize,
     channels: u16,
@@ -191,7 +202,7 @@ where
             source,
             params,
             coeffs: [BiquadCoeffs::default(); 10],
-            states: [[BiquadState::default(); 10]; 2],
+            states: vec![[BiquadState::default(); 10]; usize::from(channels.max(1))],
             current_channel: 0,
             channels,
             enabled: false,
@@ -216,15 +227,7 @@ where
 
         if !enabled {
             // Set all filters to unity gain (bypass)
-            for coeff in &mut self.coeffs {
-                *coeff = BiquadCoeffs {
-                    b0: 1.0,
-                    b1: 0.0,
-                    b2: 0.0,
-                    a1: 0.0,
-                    a2: 0.0,
-                };
-            }
+            self.coeffs.fill(unity_coeffs());
             return;
         }
 
@@ -254,12 +257,14 @@ where
         // Check if EQ is enabled
         if !self.enabled {
             // Bypass - return original sample
-            self.current_channel = (self.current_channel + 1) % self.channels as usize;
+            self.current_channel = (self.current_channel + 1) % usize::from(self.channels.max(1));
             return Some(sample);
         }
 
         // Process through all 10 bands in series
-        let channel = self.current_channel.min(1); // Clamp to stereo
+        let channel = self
+            .current_channel
+            .min(self.states.len().saturating_sub(1));
         let mut output = sample;
 
         for (i, coeff) in self.coeffs.iter().enumerate() {
@@ -269,7 +274,7 @@ where
         // Soft clip to prevent harsh distortion
         output = soft_clip(output);
 
-        self.current_channel = (self.current_channel + 1) % self.channels as usize;
+        self.current_channel = (self.current_channel + 1) % usize::from(self.channels.max(1));
         Some(output)
     }
 
@@ -317,5 +322,106 @@ fn soft_clip(x: f32) -> f32 {
         0.9 + 0.1 * ((x - 0.9) / 0.1).tanh()
     } else {
         -0.9 - 0.1 * ((-x - 0.9) / 0.1).tanh()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+
+    struct TestSource {
+        samples: std::vec::IntoIter<f32>,
+        channels: u16,
+        sample_rate: u32,
+    }
+
+    impl Iterator for TestSource {
+        type Item = f32;
+
+        fn next(&mut self) -> Option<Self::Item> {
+            self.samples.next()
+        }
+    }
+
+    impl Source for TestSource {
+        fn current_span_len(&self) -> Option<usize> {
+            Some(self.samples.len())
+        }
+
+        fn channels(&self) -> u16 {
+            self.channels
+        }
+
+        fn sample_rate(&self) -> u32 {
+            self.sample_rate
+        }
+
+        fn total_duration(&self) -> Option<Duration> {
+            None
+        }
+
+        fn try_seek(&mut self, _pos: Duration) -> Result<(), rodio::source::SeekError> {
+            Err(rodio::source::SeekError::NotSupported {
+                underlying_source: "test source is not seekable",
+            })
+        }
+    }
+
+    #[test]
+    fn allocates_filter_history_for_every_source_channel() {
+        let params = EqualizerParams::new(48_000);
+        let mono = Equalizer::new(
+            TestSource {
+                samples: vec![0.0].into_iter(),
+                channels: 1,
+                sample_rate: 48_000,
+            },
+            params.clone(),
+        );
+        assert_eq!(mono.states.len(), 1);
+
+        let surround = Equalizer::new(
+            TestSource {
+                samples: vec![0.0; 6].into_iter(),
+                channels: 6,
+                sample_rate: 48_000,
+            },
+            params,
+        );
+        assert_eq!(surround.states.len(), 6);
+    }
+
+    #[test]
+    fn bands_at_nyquist_boundary_are_unity_and_finite() {
+        let coeffs = calc_peaking_eq(16_000.0, 12.0, 32_000.0, 0.8);
+        assert_eq!(coeffs, unity_coeffs());
+        assert!(
+            [coeffs.b0, coeffs.b1, coeffs.b2, coeffs.a1, coeffs.a2]
+                .into_iter()
+                .all(f32::is_finite)
+        );
+
+        let active = calc_peaking_eq(8_000.0, 12.0, 48_000.0, 0.8);
+        assert_ne!(active, unity_coeffs());
+    }
+
+    #[test]
+    fn multichannel_filter_history_does_not_bleed_between_channels() {
+        let params = EqualizerParams::new(48_000);
+        params.set_enabled(true);
+        params.set_gains([0.0, 0.0, 12.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+        let source = TestSource {
+            // Two frames of 5.1 audio. Only channel 1 receives an impulse.
+            samples: vec![0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0].into_iter(),
+            channels: 6,
+            sample_rate: 48_000,
+        };
+        let mut eq = Equalizer::new(source, params);
+        let output: Vec<_> = (&mut eq).collect();
+
+        // Channel 2's second-frame sample must remain exactly silent; sharing
+        // a stereo right-channel state would leak channel 1's impulse here.
+        assert_eq!(output[8], 0.0);
     }
 }

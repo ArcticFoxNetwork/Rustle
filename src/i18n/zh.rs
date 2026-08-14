@@ -75,6 +75,11 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::SettingsMusicQualityDesc, "选择在线播放的音频质量");
     m.insert(Key::SettingsFadeInOut, "淡入淡出");
     m.insert(Key::SettingsFadeInOutDesc, "播放和暂停时平滑过渡音量");
+    m.insert(Key::SettingsAutomix, "Automix");
+    m.insert(
+        Key::SettingsAutomixDesc,
+        "智能分析相邻歌曲并进行节拍、响度与低频衔接",
+    );
     m.insert(Key::SettingsVolumeNormalization, "音量标准化");
     m.insert(
         Key::SettingsVolumeNormalizationDesc,

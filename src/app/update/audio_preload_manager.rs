@@ -19,8 +19,10 @@ use iced::Task;
 
 use crate::api::NcmClient;
 use crate::app::message::Message;
+use crate::audio::identity::PreloadIdentity;
 use crate::audio::streaming::{
-    SharedBuffer, estimate_size_from_duration, start_buffer_download, wait_for_playable,
+    SharedBuffer, StreamingIdentity, estimate_size_from_duration, start_buffer_download,
+    wait_for_playable,
 };
 use crate::database::DbSong;
 
@@ -72,8 +74,8 @@ pub struct AudioPreloadSlot {
     pub idx: usize,
     pub path: PathBuf,
     pub state: SlotState,
-    pub request_id: Option<u64>,
-    pub pending_request_id: Option<u64>,
+    pub request_id: Option<PreloadIdentity>,
+    pub pending_request_id: Option<PreloadIdentity>,
     pub duration: Duration,
     pub buffer: Option<SharedBuffer>,
 }
@@ -105,18 +107,6 @@ impl AudioPreloadSlot {
         }
     }
 
-    pub fn failed(idx: usize, retry_count: u8) -> Self {
-        Self {
-            idx,
-            path: PathBuf::new(),
-            state: SlotState::Failed { retry_count },
-            request_id: None,
-            pending_request_id: None,
-            duration: Duration::ZERO,
-            buffer: None,
-        }
-    }
-
     pub fn is_for_index(&self, target_idx: usize) -> bool {
         self.idx == target_idx
     }
@@ -125,15 +115,15 @@ impl AudioPreloadSlot {
         matches!(self.state, SlotState::Ready) && self.request_id.is_some()
     }
 
-    pub fn has_pending_request(&self, request_id: u64) -> bool {
-        self.pending_request_id == Some(request_id)
+    pub fn has_pending_request(&self, identity: &PreloadIdentity) -> bool {
+        self.pending_request_id.as_ref() == Some(identity)
     }
 
-    pub fn set_pending_request_id(&mut self, request_id: u64) {
-        self.pending_request_id = Some(request_id);
+    pub fn set_pending_request_id(&mut self, identity: PreloadIdentity) {
+        self.pending_request_id = Some(identity);
     }
 
-    pub fn take_request_id(&mut self) -> Option<u64> {
+    pub fn take_request_id(&mut self) -> Option<PreloadIdentity> {
         self.request_id.take()
     }
 
@@ -180,23 +170,24 @@ impl AudioPreloadManager {
         }
     }
 
-    fn clear_slot(slot: &mut Option<AudioPreloadSlot>) -> Option<u64> {
-        slot.take().and_then(|slot| {
-            if let Some(buffer) = slot.buffer {
-                buffer.cancel();
-            }
-            slot.request_id
-        })
+    fn clear_slot(slot: &mut Option<AudioPreloadSlot>) -> Vec<PreloadIdentity> {
+        let Some(slot) = slot.take() else {
+            return Vec::new();
+        };
+
+        if let Some(buffer) = slot.buffer {
+            buffer.cancel();
+        }
+
+        [slot.request_id, slot.pending_request_id]
+            .into_iter()
+            .flatten()
+            .collect()
     }
 
-    pub fn reset(&mut self) -> Vec<u64> {
-        let mut released = Vec::new();
-        if let Some(request_id) = Self::clear_slot(&mut self.next) {
-            released.push(request_id);
-        }
-        if let Some(request_id) = Self::clear_slot(&mut self.prev) {
-            released.push(request_id);
-        }
+    pub fn reset(&mut self) -> Vec<PreloadIdentity> {
+        let mut released = Self::clear_slot(&mut self.next);
+        released.extend(Self::clear_slot(&mut self.prev));
         released
     }
 
@@ -214,32 +205,68 @@ impl AudioPreloadManager {
         }
     }
 
-    pub fn mark_pending(&mut self, idx: usize, direction: PreloadDirection) -> Option<u64> {
-        let existing_slot = self.slot_ref(direction);
-        let release_request_id = existing_slot
+    pub fn is_ready(&self, idx: usize, direction: PreloadDirection) -> bool {
+        self.slot_ref(direction)
             .as_ref()
-            .filter(|slot| !slot.is_for_index(idx))
-            .and_then(|slot| slot.request_id);
-
-        if release_request_id.is_some() {
-            let _ = Self::clear_slot(self.slot_entry_mut(direction));
-        }
-
-        let slot = AudioPreloadSlot::pending(idx);
-        *self.slot_entry_mut(direction) = Some(slot);
-        release_request_id
+            .is_some_and(|slot| slot.is_for_index(idx) && slot.is_ready())
     }
 
-    pub fn mark_failed(&mut self, idx: usize, direction: PreloadDirection) {
-        let retry_count = self
+    pub fn mark_pending(
+        &mut self,
+        idx: usize,
+        direction: PreloadDirection,
+    ) -> Vec<PreloadIdentity> {
+        let should_replace = self
             .slot_ref(direction)
             .as_ref()
-            .map(|s| s.retry_count())
-            .unwrap_or(0)
-            + 1;
+            .is_some_and(|slot| !slot.is_for_index(idx));
 
-        let slot = AudioPreloadSlot::failed(idx, retry_count);
-        *self.slot_entry_mut(direction) = Some(slot);
+        let released = if should_replace {
+            Self::clear_slot(self.slot_entry_mut(direction))
+        } else {
+            Vec::new()
+        };
+
+        *self.slot_entry_mut(direction) = Some(AudioPreloadSlot::pending(idx));
+        released
+    }
+
+    pub fn mark_failed_if_pending(
+        &mut self,
+        idx: usize,
+        direction: PreloadDirection,
+        identity: &PreloadIdentity,
+    ) -> bool {
+        let Some(slot) = self.slot_mut(direction) else {
+            return false;
+        };
+        if slot.idx != idx || slot.pending_request_id.as_ref() != Some(identity) {
+            return false;
+        }
+
+        let retry_count = slot.retry_count().saturating_add(1);
+        slot.pending_request_id = None;
+        slot.buffer.take().inspect(|buffer| buffer.cancel());
+        slot.state = SlotState::Failed { retry_count };
+        true
+    }
+
+    pub fn mark_failed_by_identity(&mut self, identity: &PreloadIdentity) -> bool {
+        for direction in PreloadDirection::ALL {
+            let Some(slot) = self.slot_mut(direction) else {
+                continue;
+            };
+            if slot.pending_request_id.as_ref() != Some(identity) {
+                continue;
+            }
+
+            let retry_count = slot.retry_count().saturating_add(1);
+            slot.pending_request_id = None;
+            slot.buffer.take().inspect(|buffer| buffer.cancel());
+            slot.state = SlotState::Failed { retry_count };
+            return true;
+        }
+        false
     }
 
     pub fn take_ready(
@@ -258,15 +285,13 @@ impl AudioPreloadManager {
         &mut self,
         next_idx: Option<usize>,
         prev_idx: Option<usize>,
-    ) -> Vec<u64> {
+    ) -> Vec<PreloadIdentity> {
         let mut released = Vec::new();
         for (direction, expected_idx) in [
             (PreloadDirection::Next, next_idx),
             (PreloadDirection::Previous, prev_idx),
         ] {
-            if let Some(request_id) = self.invalidate_direction(direction, expected_idx) {
-                released.push(request_id);
-            }
+            released.extend(self.invalidate_direction(direction, expected_idx));
         }
         released
     }
@@ -275,7 +300,7 @@ impl AudioPreloadManager {
         &mut self,
         direction: PreloadDirection,
         expected_idx: Option<usize>,
-    ) -> Option<u64> {
+    ) -> Vec<PreloadIdentity> {
         let should_clear = match expected_idx {
             Some(expected_idx) => self
                 .slot(direction)
@@ -287,8 +312,43 @@ impl AudioPreloadManager {
         if should_clear {
             Self::clear_slot(self.slot_entry_mut(direction))
         } else {
-            None
+            Vec::new()
         }
+    }
+
+    pub fn has_pending_request(
+        &self,
+        idx: usize,
+        direction: PreloadDirection,
+        identity: &PreloadIdentity,
+    ) -> bool {
+        self.slot(direction)
+            .is_some_and(|slot| slot.idx == idx && slot.has_pending_request(identity))
+    }
+
+    pub fn replace_pending_request(
+        &mut self,
+        direction: PreloadDirection,
+        parent: &PreloadIdentity,
+        handoff: PreloadIdentity,
+    ) -> bool {
+        let Some(slot) = self.slot_mut(direction) else {
+            return false;
+        };
+        if slot.pending_request_id.as_ref() != Some(parent) {
+            return false;
+        }
+        slot.pending_request_id = Some(handoff);
+        true
+    }
+
+    pub fn accepts_identity(&self, identity: &PreloadIdentity) -> bool {
+        PreloadDirection::ALL.iter().any(|&direction| {
+            self.slot(direction).is_some_and(|slot| {
+                slot.request_id.as_ref() == Some(identity)
+                    || slot.pending_request_id.as_ref() == Some(identity)
+            })
+        })
     }
 
     pub fn slot(&self, direction: PreloadDirection) -> Option<&AudioPreloadSlot> {
@@ -297,6 +357,11 @@ impl AudioPreloadManager {
 
     pub fn slot_mut(&mut self, direction: PreloadDirection) -> Option<&mut AudioPreloadSlot> {
         self.slot_entry_mut(direction).as_mut()
+    }
+
+    #[cfg(test)]
+    fn set_slot_for_test(&mut self, direction: PreloadDirection, slot: AudioPreloadSlot) {
+        *self.slot_entry_mut(direction) = Some(slot);
     }
 }
 
@@ -308,9 +373,10 @@ pub fn create_preload_task(
     idx: usize,
     song: DbSong,
     direction: PreloadDirection,
+    identity: PreloadIdentity,
 ) -> Task<Message> {
     Task::perform(
-        async move { download_audio_streaming(client, idx, song, direction).await },
+        async move { download_audio_streaming(client, idx, song, direction, identity).await },
         |result| result,
     )
 }
@@ -320,6 +386,7 @@ async fn download_audio_streaming(
     idx: usize,
     song: DbSong,
     direction: PreloadDirection,
+    identity: PreloadIdentity,
 ) -> Message {
     let ncm_id = if song.id < 0 {
         (-song.id) as u64
@@ -334,7 +401,7 @@ async fn download_audio_streaming(
 
     let song_cache_dir = crate::utils::songs_cache_dir();
     if std::fs::create_dir_all(&song_cache_dir).is_err() {
-        return Message::PreloadAudioFailed(idx, direction);
+        return Message::PreloadAudioFailed(idx, direction, identity);
     }
 
     let song_stem = ncm_id.to_string();
@@ -356,6 +423,7 @@ async fn download_audio_streaming(
                 idx,
                 cached_path.to_string_lossy().to_string(),
                 direction,
+                identity,
             );
         }
         tracing::info!(
@@ -370,7 +438,7 @@ async fn download_audio_streaming(
         Ok(urls) => urls,
         Err(e) => {
             tracing::error!("Preload: failed to get song URL for {}: {}", ncm_id, e);
-            return Message::PreloadAudioFailed(idx, direction);
+            return Message::PreloadAudioFailed(idx, direction, identity);
         }
     };
 
@@ -378,14 +446,20 @@ async fn download_audio_streaming(
         Some(u) if !u.url.is_empty() => u.url.clone(),
         _ => {
             tracing::error!("Preload: no valid URL for song {}", ncm_id);
-            return Message::PreloadAudioFailed(idx, direction);
+            return Message::PreloadAudioFailed(idx, direction, identity);
         }
     };
 
     let cache_path = song_cache_dir.join(&song_stem);
 
     let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(32);
-    let shared_buffer = start_buffer_download(song_url, cache_path.clone(), Some(event_tx));
+    let streaming_identity = StreamingIdentity::Preload(identity.clone());
+    let shared_buffer = start_buffer_download(
+        song_url,
+        cache_path.clone(),
+        streaming_identity,
+        Some(event_tx),
+    );
 
     if wait_for_playable(&mut event_rx, 30).await {
         tracing::info!(
@@ -395,13 +469,107 @@ async fn download_audio_streaming(
         );
         Message::PreloadBufferReady(
             idx,
-            cache_path.to_string_lossy().to_string(),
+            None,
             direction,
             shared_buffer,
             song.duration_secs as u64,
+            identity,
         )
     } else {
         tracing::error!("Preload: download failed for song {}", ncm_id);
-        Message::PreloadAudioFailed(idx, direction)
+        Message::PreloadAudioFailed(idx, direction, identity)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::audio::identity::PlaybackGenerationController;
+
+    fn identities() -> (
+        PreloadIdentity,
+        PreloadIdentity,
+        PreloadIdentity,
+        PreloadIdentity,
+    ) {
+        let controller = PlaybackGenerationController::new();
+        controller.activate_generation();
+        (
+            controller.reserve_preload_identity().unwrap(),
+            controller.reserve_preload_identity().unwrap(),
+            controller.reserve_preload_identity().unwrap(),
+            controller.reserve_preload_identity().unwrap(),
+        )
+    }
+
+    #[test]
+    fn reset_releases_ready_and_pending_identities_from_both_directions() {
+        let (next_ready, next_pending, prev_ready, prev_pending) = identities();
+        let mut manager = AudioPreloadManager::default();
+
+        let mut next = AudioPreloadSlot::pending(1);
+        next.state = SlotState::Ready;
+        next.request_id = Some(next_ready.clone());
+        next.pending_request_id = Some(next_pending.clone());
+        let mut prev = AudioPreloadSlot::pending(2);
+        prev.state = SlotState::Ready;
+        prev.request_id = Some(prev_ready.clone());
+        prev.pending_request_id = Some(prev_pending.clone());
+        manager.set_slot_for_test(PreloadDirection::Next, next);
+        manager.set_slot_for_test(PreloadDirection::Previous, prev);
+
+        let released = manager.reset();
+
+        assert_eq!(released.len(), 4);
+        assert!(released.contains(&next_ready));
+        assert!(released.contains(&next_pending));
+        assert!(released.contains(&prev_ready));
+        assert!(released.contains(&prev_pending));
+        assert!(manager.slot(PreloadDirection::Next).is_none());
+        assert!(manager.slot(PreloadDirection::Previous).is_none());
+    }
+
+    #[test]
+    fn stale_failure_does_not_modify_newer_pending_identity() {
+        let (stale, current, _, _) = identities();
+        let mut manager = AudioPreloadManager::default();
+        let mut slot = AudioPreloadSlot::pending(7);
+        slot.pending_request_id = Some(current.clone());
+        manager.set_slot_for_test(PreloadDirection::Next, slot);
+
+        assert!(!manager.mark_failed_by_identity(&stale));
+        assert!(manager.has_pending_request(7, PreloadDirection::Next, &current));
+        assert_eq!(
+            manager.slot(PreloadDirection::Next).unwrap().state,
+            SlotState::Pending
+        );
+    }
+
+    #[test]
+    fn exact_failure_transitions_pending_slot_and_clears_identity() {
+        let (identity, _, _, _) = identities();
+        let mut manager = AudioPreloadManager::default();
+        let mut slot = AudioPreloadSlot::pending(9);
+        slot.pending_request_id = Some(identity.clone());
+        manager.set_slot_for_test(PreloadDirection::Previous, slot);
+
+        assert!(manager.mark_failed_if_pending(9, PreloadDirection::Previous, &identity));
+        let slot = manager.slot(PreloadDirection::Previous).unwrap();
+        assert_eq!(slot.state, SlotState::Failed { retry_count: 1 });
+        assert!(slot.pending_request_id.is_none());
+    }
+
+    #[test]
+    fn replacement_requires_exact_parent_identity() {
+        let (parent, other, handoff, _) = identities();
+        let mut manager = AudioPreloadManager::default();
+        let mut slot = AudioPreloadSlot::pending(3);
+        slot.pending_request_id = Some(parent.clone());
+        manager.set_slot_for_test(PreloadDirection::Next, slot);
+
+        assert!(!manager.replace_pending_request(PreloadDirection::Next, &other, handoff.clone()));
+        assert!(manager.has_pending_request(3, PreloadDirection::Next, &parent));
+        assert!(manager.replace_pending_request(PreloadDirection::Next, &parent, handoff.clone()));
+        assert!(manager.has_pending_request(3, PreloadDirection::Next, &handoff));
     }
 }
