@@ -19,6 +19,39 @@ use super::automix::{TransitionDirective, TransitionKind};
 use super::chain::{AudioProcessingChain, PlaybackProcessingRuntime};
 use super::streaming::StreamingBuffer;
 
+pub(crate) type PreparedStreamingSource = Decoder<StreamingBuffer>;
+
+/// Build the decoder outside the audio control actor.
+///
+/// Streaming producers must complete the strict Range probe and startup
+/// high-watermark contract before submitting preparation. Decoder probing can
+/// still call `Read + Seek`, so callers run this function on a preparation
+/// worker rather than blocking lifecycle commands.
+pub(crate) fn prepare_streaming_source(
+    buffer: StreamingBuffer,
+) -> Result<PreparedStreamingSource, String> {
+    let shared = buffer.shared();
+    let byte_len = shared.total_size();
+    if byte_len == 0 {
+        return Err(
+            "UnsupportedStreaming: source preparation requires a validated total size".to_string(),
+        );
+    }
+    if shared.is_cancelled() {
+        return Err("Cancelled: streaming source preparation was cancelled".to_string());
+    }
+    if let Some(error) = shared.error_message() {
+        return Err(error);
+    }
+
+    Decoder::builder()
+        .with_data(buffer)
+        .with_byte_len(byte_len)
+        .with_seekable(true)
+        .build()
+        .map_err(|e| format!("Failed to decode streaming audio: {}", e))
+}
+
 /// Cached audio devices to avoid repeated enumeration (which triggers Jack/ALSA warnings)
 static AUDIO_DEVICES_CACHE: OnceLock<Vec<AudioDevice>> = OnceLock::new();
 
@@ -370,9 +403,9 @@ impl AudioPlayer {
     }
 
     /// Load a streaming source into paused state at a target position.
-    pub fn load_streaming_paused(
+    pub(crate) fn load_prepared_streaming_paused(
         &mut self,
-        buffer: StreamingBuffer,
+        source: PreparedStreamingSource,
         duration: Duration,
         cache_path: Option<PathBuf>,
         position: Duration,
@@ -383,44 +416,10 @@ impl AudioPlayer {
         let runtime = self.prepare_runtime(false);
         self.chain.activate_runtime(Some(&runtime));
 
-        let start = std::time::Instant::now();
-        let byte_len = loop {
-            let size = buffer.shared().total_size();
-            if size > 0 {
-                break size;
-            }
-            if buffer.shared().is_complete() {
-                let downloaded = buffer.shared().downloaded();
-                tracing::info!(
-                    "LoadPausedStreaming: download complete before total_size set, using downloaded: {}",
-                    downloaded
-                );
-                break downloaded;
-            }
-            if start.elapsed() > Duration::from_secs(5) {
-                tracing::warn!(
-                    "LoadPausedStreaming: timeout waiting for content-length, seek may not work properly"
-                );
-                break 0;
-            }
-            std::thread::sleep(Duration::from_millis(50));
-        };
-
         tracing::info!(
-            "load_streaming_paused: byte_len={} (waited {:?}), downloaded={}, complete={}, cache_path={:?}",
-            byte_len,
-            start.elapsed(),
-            buffer.shared().downloaded(),
-            buffer.shared().is_complete(),
+            "load_prepared_streaming_paused: cache_path={:?}",
             cache_path
         );
-
-        let source = Decoder::builder()
-            .with_data(buffer)
-            .with_byte_len(byte_len)
-            .with_seekable(byte_len > 0)
-            .build()
-            .map_err(|e| format!("Failed to decode streaming audio: {}", e))?;
 
         let processed = self.chain.apply(source, track_gain, runtime.clone());
 
@@ -521,62 +520,15 @@ impl AudioPlayer {
         Ok(seek_error)
     }
 
-    /// Create a preload sink from StreamingBuffer for NCM songs
-    ///
-    /// This allows streaming playback where the buffer continues downloading
-    /// in the background while playback proceeds. The StreamingBuffer's read()
-    /// method blocks when data is not yet available.
+    /// Create a preload sink from a decoder prepared off the control actor.
     ///
     /// Returns (Sink, Duration) - sink is paused and ready for playback
-    pub fn create_preload_sink_streaming(
+    pub(crate) fn create_preload_sink_prepared_streaming(
         &self,
-        buffer: StreamingBuffer,
+        source: PreparedStreamingSource,
         duration: Duration,
         track_gain: f32,
     ) -> Result<(Sink, Duration, PlaybackProcessingRuntime), String> {
-        // Wait for total_size to be set (from Content-Length header)
-        // This is critical for FLAC and other formats that need byte_len for seeking
-        let start = std::time::Instant::now();
-        let byte_len = loop {
-            let size = buffer.shared().total_size();
-            if size > 0 {
-                break size;
-            }
-            // If download is already complete, use downloaded size
-            if buffer.shared().is_complete() {
-                let downloaded = buffer.shared().downloaded();
-                tracing::info!(
-                    "Preload: download complete before total_size set, using downloaded: {}",
-                    downloaded
-                );
-                break downloaded;
-            }
-            // Timeout after 5 seconds
-            if start.elapsed() > Duration::from_secs(5) {
-                tracing::warn!(
-                    "Preload: timeout waiting for content-length, seek may not work properly"
-                );
-                break 0;
-            }
-            // Wait a bit before checking again
-            std::thread::sleep(Duration::from_millis(50));
-        };
-
-        tracing::debug!(
-            "create_preload_sink_streaming: byte_len={} (waited {:?})",
-            byte_len,
-            start.elapsed()
-        );
-
-        // Use Decoder::builder() to properly set byte_len and seekable
-        // This is required for FLAC and other formats that need byte_len for seeking
-        let source = Decoder::builder()
-            .with_data(buffer)
-            .with_byte_len(byte_len)
-            .with_seekable(byte_len > 0)
-            .build()
-            .map_err(|e| format!("Failed to decode streaming audio: {}", e))?;
-
         // Use provided duration since streaming buffer may not know total duration
         let actual_duration = source.total_duration().unwrap_or(duration);
 
@@ -706,13 +658,10 @@ impl AudioPlayer {
         Ok(())
     }
 
-    /// Play from a streaming buffer (for network streaming without file I/O)
-    ///
-    /// The StreamingBuffer blocks on read() when data is not yet available,
-    /// allowing seamless playback while downloading continues in background.
-    pub fn play_streaming(
+    /// Play a streaming source whose decoder was prepared off the control actor.
+    pub(crate) fn play_prepared_streaming(
         &mut self,
-        buffer: StreamingBuffer,
+        source: PreparedStreamingSource,
         duration: Duration,
         cache_path: Option<PathBuf>,
         fade_in: bool,
@@ -723,49 +672,7 @@ impl AudioPlayer {
         let runtime = self.prepare_runtime(fade_in);
         self.chain.activate_runtime(Some(&runtime));
 
-        // Wait for total_size to be set (from Content-Length header)
-        // This is critical for FLAC and other formats that need byte_len for seeking
-        let start = std::time::Instant::now();
-        let byte_len = loop {
-            let size = buffer.shared().total_size();
-            if size > 0 {
-                break size;
-            }
-            // If download is already complete, use downloaded size
-            if buffer.shared().is_complete() {
-                let downloaded = buffer.shared().downloaded();
-                tracing::info!(
-                    "Download complete before total_size set, using downloaded: {}",
-                    downloaded
-                );
-                break downloaded;
-            }
-            // Timeout after 5 seconds
-            if start.elapsed() > Duration::from_secs(5) {
-                tracing::warn!("Timeout waiting for content-length, seek may not work properly");
-                break 0;
-            }
-            // Wait a bit before checking again
-            std::thread::sleep(Duration::from_millis(50));
-        };
-
-        tracing::info!(
-            "play_streaming: byte_len={} (waited {:?}), downloaded={}, complete={}, cache_path={:?}",
-            byte_len,
-            start.elapsed(),
-            buffer.shared().downloaded(),
-            buffer.shared().is_complete(),
-            cache_path
-        );
-
-        // Use Decoder::builder() to properly set byte_len and seekable
-        // This is required for FLAC and other formats that need byte_len for seeking
-        let source = Decoder::builder()
-            .with_data(buffer)
-            .with_byte_len(byte_len)
-            .with_seekable(byte_len > 0)
-            .build()
-            .map_err(|e| format!("Failed to decode streaming audio: {}", e))?;
+        tracing::info!("play_prepared_streaming: cache_path={:?}", cache_path);
 
         let processed = self.chain.apply(source, track_gain, runtime.clone());
 
@@ -1151,6 +1058,19 @@ impl AudioPlayer {
 mod tests {
     use super::*;
     use crate::audio::automix::{AdvancedAutomation, ScheduleGroup};
+
+    #[test]
+    fn streaming_preparation_rejects_missing_validated_length_without_waiting() {
+        let shared = crate::audio::streaming::SharedBuffer::new(0);
+        let started = std::time::Instant::now();
+        let error = match prepare_streaming_source(StreamingBuffer::new(shared)) {
+            Ok(_) => panic!("source without validated length must be rejected"),
+            Err(error) => error,
+        };
+
+        assert!(error.starts_with("UnsupportedStreaming:"));
+        assert!(started.elapsed() < Duration::from_millis(100));
+    }
 
     #[test]
     fn scheduler_late_fallback_does_not_seek_the_automix_entry() {

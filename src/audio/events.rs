@@ -137,8 +137,6 @@ pub enum AudioCommand {
     /// Buffer data available wake-up marker. The latest payload is held in
     /// `BufferDataMailbox`, keeping high-frequency progress out of payload FIFO.
     BufferDataAvailable,
-    /// Low-frequency wake used only as a watchdog when UI commands are sparse.
-    WatchdogWake,
 }
 
 impl std::fmt::Debug for AudioCommand {
@@ -247,7 +245,6 @@ impl std::fmt::Debug for AudioCommand {
                 .finish(),
             Self::LatestMailboxWake => write!(f, "LatestMailboxWake"),
             Self::BufferDataAvailable => f.debug_struct("BufferDataAvailable").finish(),
-            Self::WatchdogWake => write!(f, "WatchdogWake"),
         }
     }
 }
@@ -714,5 +711,27 @@ mod tests {
             tx.try_send(AudioCommand::LatestMailboxWake).unwrap();
         }
         assert!(tx.try_send(AudioCommand::LatestMailboxWake).is_err());
+    }
+
+    #[test]
+    fn buffer_mailbox_retains_latest_update_when_wake_queue_is_full() {
+        let (tx, _rx) = audio_command_channel();
+        let mailbox = BufferDataMailbox::new(tx.clone());
+        for _ in 0..64 {
+            tx.try_send(AudioCommand::LatestMailboxWake).unwrap();
+        }
+        let controller = super::super::identity::PlaybackGenerationController::new();
+        let context = controller.activate_generation();
+
+        mailbox.publish(BufferDataUpdate {
+            context: context.clone(),
+            downloaded: 3,
+            total: 10,
+        });
+
+        let update = mailbox.take_latest().expect("latest update must survive");
+        assert_eq!(update.context, context);
+        assert_eq!(update.downloaded, 3);
+        assert_eq!(update.total, 10);
     }
 }

@@ -558,7 +558,7 @@ mod tests {
         let (tx, _rx) = super::super::events::audio_command_channel();
         let latest = LatestControlMailbox::new(tx.clone());
         let handle = AudioHandle::new(tx.clone(), latest, SharedPlaybackState::new());
-        while tx.try_send(AudioCommand::WatchdogWake).is_ok() {}
+        while tx.try_send(AudioCommand::LatestMailboxWake).is_ok() {}
 
         let result = handle.play_with_fade(PathBuf::from("missing.mp3"), false, 1.0);
         assert_eq!(result.unwrap_err(), "audio command queue is full");
@@ -616,7 +616,7 @@ mod tests {
         let latest = LatestControlMailbox::new(tx.clone());
         let handle = AudioHandle::new(tx.clone(), latest, SharedPlaybackState::new());
         let active = handle.begin_playback_resolution().unwrap();
-        while tx.try_send(AudioCommand::WatchdogWake).is_ok() {}
+        while tx.try_send(AudioCommand::LatestMailboxWake).is_ok() {}
 
         assert_eq!(
             handle.begin_playback_resolution().unwrap_err(),
@@ -668,7 +668,7 @@ mod tests {
         let state = SharedPlaybackState::new();
         let handle = AudioHandle::new(tx.clone(), latest, state.clone());
         handle.generation.activate_generation();
-        while tx.try_send(AudioCommand::WatchdogWake).is_ok() {}
+        while tx.try_send(AudioCommand::LatestMailboxWake).is_ok() {}
 
         assert_eq!(
             handle.seek(Duration::from_secs(12)).unwrap_err(),

@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rodio::Sink;
 
@@ -21,8 +21,15 @@ use super::events::{
     audio_event_channel,
 };
 use super::handle::AudioHandle;
-use super::player::AudioPlayer;
-use super::streaming::{HIGH_WATER_MARK_BYTES, LOW_WATER_MARK_BYTES, SharedBuffer};
+use super::player::{AudioPlayer, PreparedStreamingSource, prepare_streaming_source};
+use super::streaming::{
+    HIGH_WATER_MARK_BYTES, LOW_WATER_MARK_BYTES, SharedBuffer, StreamingBuffer,
+};
+
+const STREAMING_PREPARATION_QUEUE_CAPACITY: usize = 4;
+const STREAMING_PREPARATION_RESULT_CAPACITY: usize = 8;
+const CONTROL_MAINTENANCE_INTERVAL: Duration =
+    Duration::from_millis(super::automix::SCHEDULER_POLL_MS);
 
 #[derive(Default)]
 struct FinishedGuard {
@@ -86,6 +93,199 @@ struct ScheduledPreloadedTransition {
     transition: super::automix::TransitionDirective,
 }
 
+enum PlaybackPreparationMode {
+    Play { fade_in: bool },
+    LoadPaused { position: Duration },
+}
+
+struct PlaybackPreparationRequest {
+    context: super::identity::PlaybackContext,
+    request_id: u64,
+    buffer: StreamingBuffer,
+    duration: Duration,
+    cache_path: Option<PathBuf>,
+    track_gain: f32,
+    mode: PlaybackPreparationMode,
+}
+
+struct PreparedPlayback {
+    context: super::identity::PlaybackContext,
+    request_id: u64,
+    shared_buffer: SharedBuffer,
+    source: Result<PreparedStreamingSource, String>,
+    duration: Duration,
+    cache_path: Option<PathBuf>,
+    track_gain: f32,
+    mode: PlaybackPreparationMode,
+}
+
+struct PreloadPreparationRequest {
+    identity: super::identity::PreloadIdentity,
+    buffer: StreamingBuffer,
+    duration: Duration,
+    track_gain: f32,
+}
+
+struct PreparedPreload {
+    identity: super::identity::PreloadIdentity,
+    shared_buffer: SharedBuffer,
+    source: Result<PreparedStreamingSource, String>,
+    duration: Duration,
+    track_gain: f32,
+}
+
+enum StreamingPreparationResult {
+    Playback(PreparedPlayback),
+    Preload(PreparedPreload),
+}
+
+enum ControlEvent {
+    Command(AudioCommand),
+    Prepared(StreamingPreparationResult),
+    Maintenance,
+    Closed,
+}
+
+async fn next_control_event(
+    command_rx: &mut AudioCommandReceiver,
+    preparation_result_rx: &mut tokio::sync::mpsc::Receiver<StreamingPreparationResult>,
+    maintenance_deadline: tokio::time::Instant,
+) -> ControlEvent {
+    tokio::select! {
+        command = command_rx.recv() => match command {
+            Some(command) => ControlEvent::Command(command),
+            None => ControlEvent::Closed,
+        },
+        Some(prepared) = preparation_result_rx.recv() => ControlEvent::Prepared(prepared),
+        _ = tokio::time::sleep_until(maintenance_deadline) => ControlEvent::Maintenance,
+    }
+}
+
+struct StreamingPreparationPool {
+    playback_tx: std::sync::mpsc::SyncSender<PlaybackPreparationRequest>,
+    preload_tx: std::sync::mpsc::SyncSender<PreloadPreparationRequest>,
+}
+
+impl StreamingPreparationPool {
+    fn new(
+        result_tx: tokio::sync::mpsc::Sender<StreamingPreparationResult>,
+    ) -> Result<Self, String> {
+        let (playback_tx, playback_rx) =
+            std::sync::mpsc::sync_channel(STREAMING_PREPARATION_QUEUE_CAPACITY);
+        let playback_result_tx = result_tx.clone();
+        thread::Builder::new()
+            .name("audio-playback-prepare".to_string())
+            .spawn(move || {
+                while let Ok(request) = playback_rx.recv() {
+                    let PlaybackPreparationRequest {
+                        context,
+                        request_id,
+                        buffer,
+                        duration,
+                        cache_path,
+                        track_gain,
+                        mode,
+                    } = request;
+                    let shared_buffer = buffer.shared().clone();
+                    let started = Instant::now();
+                    let source = prepare_streaming_source(buffer);
+                    tracing::debug!(
+                        request_id,
+                        generation = context.generation.0,
+                        elapsed_ms = started.elapsed().as_millis(),
+                        success = source.is_ok(),
+                        "Streaming playback preparation completed"
+                    );
+                    if playback_result_tx
+                        .blocking_send(StreamingPreparationResult::Playback(PreparedPlayback {
+                            context,
+                            request_id,
+                            shared_buffer,
+                            source,
+                            duration,
+                            cache_path,
+                            track_gain,
+                            mode,
+                        }))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .map_err(|error| format!("Failed to spawn playback preparation worker: {error}"))?;
+
+        let (preload_tx, preload_rx) =
+            std::sync::mpsc::sync_channel(STREAMING_PREPARATION_QUEUE_CAPACITY);
+        thread::Builder::new()
+            .name("audio-preload-prepare".to_string())
+            .spawn(move || {
+                while let Ok(request) = preload_rx.recv() {
+                    let PreloadPreparationRequest {
+                        identity,
+                        buffer,
+                        duration,
+                        track_gain,
+                    } = request;
+                    let shared_buffer = buffer.shared().clone();
+                    let started = Instant::now();
+                    let source = prepare_streaming_source(buffer);
+                    tracing::debug!(
+                        request_id = identity.request_id,
+                        generation = identity.generation.0,
+                        elapsed_ms = started.elapsed().as_millis(),
+                        success = source.is_ok(),
+                        "Streaming preload preparation completed"
+                    );
+                    if result_tx
+                        .blocking_send(StreamingPreparationResult::Preload(PreparedPreload {
+                            identity,
+                            shared_buffer,
+                            source,
+                            duration,
+                            track_gain,
+                        }))
+                        .is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .map_err(|error| format!("Failed to spawn preload preparation worker: {error}"))?;
+
+        Ok(Self {
+            playback_tx,
+            preload_tx,
+        })
+    }
+
+    fn prepare_playback(&self, request: PlaybackPreparationRequest) -> Result<(), String> {
+        self.playback_tx
+            .try_send(request)
+            .map_err(|error| match error {
+                std::sync::mpsc::TrySendError::Full(_) => {
+                    "streaming playback preparation queue is full".to_string()
+                }
+                std::sync::mpsc::TrySendError::Disconnected(_) => {
+                    "streaming playback preparation worker is unavailable".to_string()
+                }
+            })
+    }
+
+    fn prepare_preload(&self, request: PreloadPreparationRequest) -> Result<(), String> {
+        self.preload_tx
+            .try_send(request)
+            .map_err(|error| match error {
+                std::sync::mpsc::TrySendError::Full(_) => {
+                    "streaming preload preparation queue is full".to_string()
+                }
+                std::sync::mpsc::TrySendError::Disconnected(_) => {
+                    "streaming preload preparation worker is unavailable".to_string()
+                }
+            })
+    }
+}
+
 pub struct AudioThreadHandle {
     pub handle: AudioHandle,
     pub event_rx: Option<super::events::AudioEventReceiver>,
@@ -126,18 +326,9 @@ pub fn spawn_audio_thread(
     let (command_tx, command_rx) = audio_command_channel();
     let (event_tx, event_rx) = audio_event_channel();
     let latest_controls = LatestControlMailbox::new(command_tx.clone());
-    let watchdog_tx = command_tx.clone();
-    let _ = thread::Builder::new()
-        .name("audio-watchdog".to_string())
-        .spawn(move || {
-            loop {
-                std::thread::sleep(Duration::from_millis(super::automix::SCHEDULER_POLL_MS));
-                if watchdog_tx.is_closed() {
-                    break;
-                }
-                let _ = watchdog_tx.try_send(AudioCommand::WatchdogWake);
-            }
-        });
+    let (preparation_result_tx, preparation_result_rx) =
+        tokio::sync::mpsc::channel(STREAMING_PREPARATION_RESULT_CAPACITY);
+    let preparation_pool = StreamingPreparationPool::new(preparation_result_tx)?;
 
     // Create shared state
     let state = SharedPlaybackState::new();
@@ -167,15 +358,25 @@ pub fn spawn_audio_thread(
 
             match player_result {
                 Ok(player) => {
-                    audio_thread_main(
-                        player,
-                        command_rx,
-                        buffer_mailbox,
-                        latest_controls,
-                        event_tx,
-                        state_clone,
-                        generation_controller,
-                    );
+                    let runtime = tokio::runtime::Builder::new_current_thread()
+                        .enable_time()
+                        .build();
+                    match runtime {
+                        Ok(runtime) => runtime.block_on(audio_thread_main(
+                            player,
+                            command_rx,
+                            buffer_mailbox,
+                            latest_controls,
+                            event_tx,
+                            state_clone,
+                            generation_controller,
+                            preparation_pool,
+                            preparation_result_rx,
+                        )),
+                        Err(error) => {
+                            tracing::error!("Failed to create audio control runtime: {}", error);
+                        }
+                    }
                 }
                 Err(e) => {
                     tracing::error!("Failed to create audio player: {}", e);
@@ -194,9 +395,11 @@ pub fn spawn_audio_thread(
 /// Main loop for the audio thread
 ///
 /// Processes commands from the UI thread and updates shared state.
-/// This function blocks on `command_rx.blocking_recv()` and may also
-/// block on audio operations (e.g., streaming seek).
-fn audio_thread_main(
+/// The control actor waits on ordered lifecycle commands, immutable streaming
+/// preparation results, or a coalesced maintenance deadline. Periodic work is
+/// never represented as a critical command.
+#[allow(clippy::too_many_arguments)]
+async fn audio_thread_main(
     mut player: AudioPlayer,
     mut command_rx: AudioCommandReceiver,
     buffer_mailbox: BufferDataMailbox,
@@ -204,6 +407,8 @@ fn audio_thread_main(
     event_tx: AudioEventSender,
     state: SharedPlaybackState,
     generation: super::identity::PlaybackGenerationController,
+    preparation_pool: StreamingPreparationPool,
+    mut preparation_result_rx: tokio::sync::mpsc::Receiver<StreamingPreparationResult>,
 ) {
     tracing::info!("Audio thread started");
 
@@ -215,14 +420,97 @@ fn audio_thread_main(
     let mut current_buffer: Option<SharedBuffer> = None;
 
     let mut current_context: Option<super::identity::PlaybackContext> = None;
+    let mut pause_after_preparation: Option<super::identity::PlaybackContext> = None;
     let mut finished_guard = FinishedGuard::default();
     let mut scheduled_transition: Option<ScheduledPreloadedTransition> = None;
     let mut transition_scheduler = super::automix::AudioClockScheduler::new(Duration::from_millis(
         super::automix::SCHEDULER_HORIZON_MS,
     ));
 
-    // Process commands
-    while let Some(cmd) = command_rx.blocking_recv() {
+    let mut next_maintenance = tokio::time::Instant::now() + CONTROL_MAINTENANCE_INTERVAL;
+
+    loop {
+        let event = next_control_event(
+            &mut command_rx,
+            &mut preparation_result_rx,
+            next_maintenance,
+        )
+        .await;
+        let now = tokio::time::Instant::now();
+        let maintenance_due = now >= next_maintenance;
+        if maintenance_due {
+            // Missed timer wake-ups are intentionally coalesced. Never replay a
+            // backlog of periodic ticks after the actor was busy.
+            let lateness = now.saturating_duration_since(next_maintenance);
+            if lateness > CONTROL_MAINTENANCE_INTERVAL {
+                tracing::warn!(
+                    lateness_ms = lateness.as_millis(),
+                    "Audio control maintenance deadline was delayed"
+                );
+            }
+            next_maintenance = now + CONTROL_MAINTENANCE_INTERVAL;
+        }
+
+        let cmd = match event {
+            ControlEvent::Closed => break,
+            ControlEvent::Maintenance => {
+                if run_control_maintenance(
+                    &mut player,
+                    &buffer_mailbox,
+                    &latest_controls,
+                    &event_tx,
+                    &state,
+                    &generation,
+                    &mut current_buffer,
+                    &mut current_context,
+                    &mut finished_guard,
+                    &mut preloaded_sinks,
+                    &mut scheduled_transition,
+                    &mut transition_scheduler,
+                    maintenance_due,
+                ) {
+                    break;
+                }
+                continue;
+            }
+            ControlEvent::Prepared(prepared) => {
+                handle_streaming_preparation_result(
+                    prepared,
+                    &mut player,
+                    &buffer_mailbox,
+                    &event_tx,
+                    &state,
+                    &generation,
+                    &mut current_buffer,
+                    &mut current_context,
+                    &mut pause_after_preparation,
+                    &mut finished_guard,
+                    &mut preloaded_sinks,
+                    &mut scheduled_transition,
+                    &mut transition_scheduler,
+                );
+                if run_control_maintenance(
+                    &mut player,
+                    &buffer_mailbox,
+                    &latest_controls,
+                    &event_tx,
+                    &state,
+                    &generation,
+                    &mut current_buffer,
+                    &mut current_context,
+                    &mut finished_guard,
+                    &mut preloaded_sinks,
+                    &mut scheduled_transition,
+                    &mut transition_scheduler,
+                    maintenance_due,
+                ) {
+                    break;
+                }
+                continue;
+            }
+            ControlEvent::Command(cmd) => cmd,
+        };
+
         if matches!(
             &cmd,
             AudioCommand::Play { .. }
@@ -312,26 +600,25 @@ fn audio_thread_main(
                 if !generation.accepts(&context) {
                     continue;
                 }
-                finished_guard.reset();
-                if let Some(ref old_buffer) = current_buffer {
-                    old_buffer.clear_buffer_callback();
-                }
-                let shared_buffer = buffer.shared().clone();
-                handle_load_paused_streaming(
-                    &mut player,
-                    &buffer_mailbox,
-                    &event_tx,
-                    &state,
-                    context.clone(),
+                let error_context = context.clone();
+                pause_after_preparation = None;
+                if let Err(error) = preparation_pool.prepare_playback(PlaybackPreparationRequest {
+                    context,
                     request_id,
                     buffer,
                     duration,
                     cache_path,
-                    position,
                     track_gain,
-                );
-                current_buffer = Some(shared_buffer);
-                current_context = Some(context.clone());
+                    mode: PlaybackPreparationMode::LoadPaused { position },
+                }) {
+                    tracing::warn!(request_id, %error, "Streaming playback preparation rejected");
+                    let _ = event_tx.send(AudioEvent::Error {
+                        context: error_context,
+                        request_id: Some(request_id),
+                        message: error,
+                        error_kind: None,
+                    });
+                }
             }
 
             AudioCommand::PlayAt {
@@ -376,32 +663,33 @@ fn audio_thread_main(
                 if !generation.accepts(&context) {
                     continue;
                 }
-                finished_guard.reset();
-                if let Some(ref old_buffer) = current_buffer {
-                    old_buffer.clear_buffer_callback();
-                }
-                // Store buffer reference for data availability checks
-                let shared_buffer = buffer.shared().clone();
-                handle_play_streaming(
-                    &mut player,
-                    &buffer_mailbox,
-                    &event_tx,
-                    &state,
-                    context.clone(),
+                let error_context = context.clone();
+                pause_after_preparation = None;
+                if let Err(error) = preparation_pool.prepare_playback(PlaybackPreparationRequest {
+                    context,
                     request_id,
                     buffer,
                     duration,
                     cache_path,
-                    fade_in,
                     track_gain,
-                );
-                current_buffer = Some(shared_buffer);
-                current_context = Some(context.clone());
+                    mode: PlaybackPreparationMode::Play { fade_in },
+                }) {
+                    tracing::warn!(request_id, %error, "Streaming playback preparation rejected");
+                    let _ = event_tx.send(AudioEvent::Error {
+                        context: error_context,
+                        request_id: Some(request_id),
+                        message: error,
+                        error_kind: None,
+                    });
+                }
             }
 
             AudioCommand::Pause { context, fade_out } => {
                 if !generation.accepts(&context) {
                     continue;
+                }
+                if current_context.as_ref() != Some(&context) {
+                    pause_after_preparation = Some(context.clone());
                 }
                 if fade_out {
                     player.pause_with_fade(true);
@@ -420,6 +708,9 @@ fn audio_thread_main(
             AudioCommand::Resume { context, fade_in } => {
                 if !generation.accepts(&context) {
                     continue;
+                }
+                if pause_after_preparation.as_ref() == Some(&context) {
+                    pause_after_preparation = None;
                 }
                 if let Some(ref buf) = current_buffer {
                     let remaining_bytes = buf.buffered_ahead();
@@ -454,6 +745,7 @@ fn audio_thread_main(
                     old_buffer.clear_buffer_callback();
                 }
                 current_buffer = None;
+                pause_after_preparation = None;
                 let _ = finished_guard.try_mark(context.generation, FinishReason::Stop);
                 player.stop();
                 update_state_from_player(&player, &state);
@@ -511,15 +803,23 @@ fn audio_thread_main(
                 if !generation.accepts_preload(&identity) {
                     continue;
                 }
-                handle_create_preload_sink_streaming(
-                    &player,
-                    &event_tx,
-                    &mut preloaded_sinks,
+                let error_identity = identity.clone();
+                if let Err(error) = preparation_pool.prepare_preload(PreloadPreparationRequest {
                     identity,
                     buffer,
                     duration,
                     track_gain,
-                );
+                }) {
+                    tracing::warn!(
+                        request_id = error_identity.request_id,
+                        %error,
+                        "Streaming preload preparation rejected"
+                    );
+                    let _ = event_tx.send(AudioEvent::PreloadFailed {
+                        identity: error_identity,
+                        error,
+                    });
+                }
             }
 
             AudioCommand::PlayPreloaded {
@@ -671,7 +971,6 @@ fn audio_thread_main(
             }
 
             AudioCommand::LatestMailboxWake => {}
-            AudioCommand::WatchdogWake => {}
 
             AudioCommand::BufferDataAvailable => {
                 while let Some(update) = buffer_mailbox.take_latest() {
@@ -687,128 +986,166 @@ fn audio_thread_main(
             }
         }
 
-        let (latest_volume, tick_pending, shutdown) = latest_controls.take();
-        if let Some(volume) = latest_volume {
-            player.set_volume(volume);
-            state.set_volume(volume);
-        }
-        if tick_pending {
-            process_tick(
-                &mut player,
-                &state,
-                &event_tx,
-                &generation,
-                current_buffer.as_ref(),
-                current_context.as_ref(),
-            );
-        }
-        if let Some(context) = shutdown {
-            cancel_scheduled_transition(
-                &mut scheduled_transition,
-                &mut transition_scheduler,
-                &mut preloaded_sinks,
-            );
-            handle_shutdown(
-                &mut player,
-                &event_tx,
-                &state,
-                &mut current_buffer,
-                &mut preloaded_sinks,
-                context,
-            );
-            break;
-        }
-
-        if let Some(action) = transition_scheduler.poll(player.get_info().position)
-            && scheduled_transition
-                .as_ref()
-                .is_some_and(|scheduled| scheduled.transition.group == action.group)
-        {
-            let scheduled = scheduled_transition
-                .take()
-                .expect("matching scheduled transition exists");
-            let owner_current = generation.accepts(&scheduled.owner);
-            if owner_current
-                && generation.accepts_preload(&scheduled.identity)
-                && preloaded_sinks
-                    .get(&scheduled.identity.request_id)
-                    .is_some_and(|preloaded| preloaded.identity == scheduled.identity)
-            {
-                if let Some(context) = generation.activate_preloaded_generation(&scheduled.identity)
-                {
-                    let mut transition = scheduled.transition;
-                    if action.underrun && transition.kind == super::automix::TransitionKind::Automix
-                    {
-                        transition =
-                            super::automix::TransitionDirective::baseline_natural(transition.group);
-                    }
-                    let _ = finished_guard
-                        .try_mark(context.generation, FinishReason::TransitionDisposed);
-                    finished_guard.reset();
-                    if let Some(ref old_buffer) = current_buffer {
-                        old_buffer.clear_buffer_callback();
-                    }
-                    current_buffer = preloaded_sinks
-                        .get(&scheduled.identity.request_id)
-                        .and_then(|preloaded| preloaded.shared_buffer.clone());
-                    current_context = Some(context.clone());
-                    handle_play_preloaded(
-                        &mut player,
-                        &buffer_mailbox,
-                        &event_tx,
-                        &state,
-                        &mut preloaded_sinks,
-                        context,
-                        scheduled.playback_request_id,
-                        scheduled.identity,
-                        scheduled.fade_in,
-                        transition,
-                    );
-                } else {
-                    release_preloaded_identity(&mut preloaded_sinks, &scheduled.identity);
-                }
-            } else {
-                release_preloaded_identity(&mut preloaded_sinks, &scheduled.identity);
-                if owner_current {
-                    let _ = event_tx.send(AudioEvent::Error {
-                        context: scheduled.owner,
-                        request_id: Some(scheduled.playback_request_id),
-                        message: "Scheduled preload became unavailable before its deadline"
-                            .to_string(),
-                        error_kind: None,
-                    });
-                }
-            }
-        }
-
-        let _ = player.poll_transition();
-
-        if player.poll_pending_pause() {
-            update_state_from_player(&player, &state);
-            if let Some(context) = current_context.as_ref()
-                && generation.accepts(context)
-            {
-                let _ = event_tx.send(AudioEvent::Paused {
-                    context: context.clone(),
-                    request_id: None,
-                    position: player.get_info().position,
-                });
-            }
-        }
-
-        // Check if playback finished after each command
-        check_playback_finished(
-            &player,
+        if run_control_maintenance(
+            &mut player,
+            &buffer_mailbox,
+            &latest_controls,
             &event_tx,
             &state,
-            current_buffer.as_ref(),
-            current_context.as_ref(),
             &generation,
+            &mut current_buffer,
+            &mut current_context,
             &mut finished_guard,
-        );
+            &mut preloaded_sinks,
+            &mut scheduled_transition,
+            &mut transition_scheduler,
+            maintenance_due,
+        ) {
+            break;
+        }
     }
 
     tracing::info!("Audio thread exiting (command channel closed)");
+}
+
+#[allow(clippy::too_many_arguments)]
+fn run_control_maintenance(
+    player: &mut AudioPlayer,
+    buffer_mailbox: &BufferDataMailbox,
+    latest_controls: &LatestControlMailbox,
+    event_tx: &AudioEventSender,
+    state: &SharedPlaybackState,
+    generation: &super::identity::PlaybackGenerationController,
+    current_buffer: &mut Option<SharedBuffer>,
+    current_context: &mut Option<super::identity::PlaybackContext>,
+    finished_guard: &mut FinishedGuard,
+    preloaded_sinks: &mut HashMap<u64, PreloadedSink>,
+    scheduled_transition: &mut Option<ScheduledPreloadedTransition>,
+    transition_scheduler: &mut super::automix::AudioClockScheduler,
+    force_tick: bool,
+) -> bool {
+    let (latest_volume, tick_pending, shutdown) = latest_controls.take();
+    if let Some(volume) = latest_volume {
+        player.set_volume(volume);
+        state.set_volume(volume);
+    }
+    while let Some(update) = buffer_mailbox.take_latest() {
+        handle_buffer_data_update(
+            player,
+            event_tx,
+            state,
+            generation,
+            current_buffer.as_ref(),
+            update,
+        );
+    }
+    if tick_pending || force_tick {
+        process_tick(
+            player,
+            state,
+            event_tx,
+            generation,
+            current_buffer.as_ref(),
+            current_context.as_ref(),
+        );
+    }
+    if let Some(context) = shutdown {
+        cancel_scheduled_transition(scheduled_transition, transition_scheduler, preloaded_sinks);
+        handle_shutdown(
+            player,
+            event_tx,
+            state,
+            current_buffer,
+            preloaded_sinks,
+            context,
+        );
+        return true;
+    }
+
+    if let Some(action) = transition_scheduler.poll(player.get_info().position)
+        && scheduled_transition
+            .as_ref()
+            .is_some_and(|scheduled| scheduled.transition.group == action.group)
+    {
+        let scheduled = scheduled_transition
+            .take()
+            .expect("matching scheduled transition exists");
+        let owner_current = generation.accepts(&scheduled.owner);
+        if owner_current
+            && generation.accepts_preload(&scheduled.identity)
+            && preloaded_sinks
+                .get(&scheduled.identity.request_id)
+                .is_some_and(|preloaded| preloaded.identity == scheduled.identity)
+        {
+            if let Some(context) = generation.activate_preloaded_generation(&scheduled.identity) {
+                let mut transition = scheduled.transition;
+                if action.underrun && transition.kind == super::automix::TransitionKind::Automix {
+                    transition =
+                        super::automix::TransitionDirective::baseline_natural(transition.group);
+                }
+                let _ =
+                    finished_guard.try_mark(context.generation, FinishReason::TransitionDisposed);
+                finished_guard.reset();
+                if let Some(old_buffer) = current_buffer.as_ref() {
+                    old_buffer.clear_buffer_callback();
+                }
+                *current_buffer = preloaded_sinks
+                    .get(&scheduled.identity.request_id)
+                    .and_then(|preloaded| preloaded.shared_buffer.clone());
+                *current_context = Some(context.clone());
+                handle_play_preloaded(
+                    player,
+                    buffer_mailbox,
+                    event_tx,
+                    state,
+                    preloaded_sinks,
+                    context,
+                    scheduled.playback_request_id,
+                    scheduled.identity,
+                    scheduled.fade_in,
+                    transition,
+                );
+            } else {
+                release_preloaded_identity(preloaded_sinks, &scheduled.identity);
+            }
+        } else {
+            release_preloaded_identity(preloaded_sinks, &scheduled.identity);
+            if owner_current {
+                let _ = event_tx.send(AudioEvent::Error {
+                    context: scheduled.owner,
+                    request_id: Some(scheduled.playback_request_id),
+                    message: "Scheduled preload became unavailable before its deadline".to_string(),
+                    error_kind: None,
+                });
+            }
+        }
+    }
+
+    let _ = player.poll_transition();
+
+    if player.poll_pending_pause() {
+        update_state_from_player(player, state);
+        if let Some(context) = current_context.as_ref()
+            && generation.accepts(context)
+        {
+            let _ = event_tx.send(AudioEvent::Paused {
+                context: context.clone(),
+                request_id: None,
+                position: player.get_info().position,
+            });
+        }
+    }
+
+    check_playback_finished(
+        player,
+        event_tx,
+        state,
+        current_buffer.as_ref(),
+        current_context.as_ref(),
+        generation,
+        finished_guard,
+    );
+    false
 }
 
 fn release_preloaded_identity(
@@ -1003,6 +1340,174 @@ fn handle_play_at(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn handle_streaming_preparation_result(
+    prepared: StreamingPreparationResult,
+    player: &mut AudioPlayer,
+    buffer_mailbox: &BufferDataMailbox,
+    event_tx: &AudioEventSender,
+    state: &SharedPlaybackState,
+    generation: &super::identity::PlaybackGenerationController,
+    current_buffer: &mut Option<SharedBuffer>,
+    current_context: &mut Option<super::identity::PlaybackContext>,
+    pause_after_preparation: &mut Option<super::identity::PlaybackContext>,
+    finished_guard: &mut FinishedGuard,
+    preloaded_sinks: &mut HashMap<u64, PreloadedSink>,
+    scheduled_transition: &mut Option<ScheduledPreloadedTransition>,
+    transition_scheduler: &mut super::automix::AudioClockScheduler,
+) {
+    match prepared {
+        StreamingPreparationResult::Playback(prepared) => {
+            let PreparedPlayback {
+                context,
+                request_id,
+                shared_buffer,
+                source,
+                duration,
+                cache_path,
+                track_gain,
+                mode,
+            } = prepared;
+            if !generation.accepts(&context) || context.cancellation.is_cancelled() {
+                tracing::debug!(
+                    request_id,
+                    generation = context.generation.0,
+                    "Discarded stale streaming playback preparation"
+                );
+                take_pending_preparation_pause(pause_after_preparation, &context);
+                return;
+            }
+
+            let pause_requested = take_pending_preparation_pause(pause_after_preparation, &context);
+
+            let source = match source {
+                Ok(source) => source,
+                Err(error) => {
+                    let kind = super::player::classify_playback_error(&error);
+                    let _ = event_tx.send(AudioEvent::Error {
+                        context,
+                        request_id: Some(request_id),
+                        message: error,
+                        error_kind: Some(kind),
+                    });
+                    return;
+                }
+            };
+
+            cancel_scheduled_transition(
+                scheduled_transition,
+                transition_scheduler,
+                preloaded_sinks,
+            );
+            finished_guard.reset();
+            if let Some(old_buffer) = current_buffer.take() {
+                old_buffer.clear_buffer_callback();
+            }
+
+            let loaded = match mode {
+                PlaybackPreparationMode::Play { fade_in } => {
+                    if pause_requested {
+                        handle_load_paused_streaming(
+                            player,
+                            buffer_mailbox,
+                            event_tx,
+                            state,
+                            context.clone(),
+                            request_id,
+                            source,
+                            shared_buffer.clone(),
+                            duration,
+                            cache_path,
+                            Duration::ZERO,
+                            track_gain,
+                        )
+                    } else {
+                        handle_play_streaming(
+                            player,
+                            buffer_mailbox,
+                            event_tx,
+                            state,
+                            context.clone(),
+                            request_id,
+                            source,
+                            shared_buffer.clone(),
+                            duration,
+                            cache_path,
+                            fade_in,
+                            track_gain,
+                        )
+                    }
+                }
+                PlaybackPreparationMode::LoadPaused { position } => handle_load_paused_streaming(
+                    player,
+                    buffer_mailbox,
+                    event_tx,
+                    state,
+                    context.clone(),
+                    request_id,
+                    source,
+                    shared_buffer.clone(),
+                    duration,
+                    cache_path,
+                    position,
+                    track_gain,
+                ),
+            };
+
+            if loaded {
+                *current_buffer = Some(shared_buffer);
+                *current_context = Some(context);
+            } else {
+                *current_context = None;
+            }
+        }
+        StreamingPreparationResult::Preload(prepared) => {
+            let PreparedPreload {
+                identity,
+                shared_buffer,
+                source,
+                duration,
+                track_gain,
+            } = prepared;
+            if !generation.accepts_preload(&identity) || identity.cancellation.is_cancelled() {
+                tracing::debug!(
+                    request_id = identity.request_id,
+                    generation = identity.generation.0,
+                    "Discarded stale streaming preload preparation"
+                );
+                return;
+            }
+            match source {
+                Ok(source) => handle_create_preload_sink_streaming(
+                    player,
+                    event_tx,
+                    preloaded_sinks,
+                    identity,
+                    source,
+                    shared_buffer,
+                    duration,
+                    track_gain,
+                ),
+                Err(error) => {
+                    let _ = event_tx.send(AudioEvent::PreloadFailed { identity, error });
+                }
+            }
+        }
+    }
+}
+
+fn take_pending_preparation_pause(
+    pending: &mut Option<super::identity::PlaybackContext>,
+    context: &super::identity::PlaybackContext,
+) -> bool {
+    if pending.as_ref() == Some(context) {
+        *pending = None;
+        true
+    } else {
+        false
+    }
+}
+
 #[allow(clippy::too_many_arguments)] // Command handler mirrors the protocol payload.
 fn handle_play_streaming(
     player: &mut AudioPlayer,
@@ -1011,21 +1516,19 @@ fn handle_play_streaming(
     state: &SharedPlaybackState,
     context: super::identity::PlaybackContext,
     request_id: u64,
-    buffer: super::streaming::StreamingBuffer,
+    source: PreparedStreamingSource,
+    shared_buffer: SharedBuffer,
     duration: Duration,
     cache_path: Option<PathBuf>,
     fade_in: bool,
     track_gain: f32,
-) {
+) -> bool {
     // Clear pending seek from previous track (important for correct display_position)
     state.set_pending_seek(None);
 
     // Reset buffer state from previous track before setting up new callback
     // This ensures UI shows fresh progress for the new track
     state.set_buffer_bytes(0, 0);
-
-    // Get shared buffer reference for progress tracking
-    let shared_buffer = buffer.shared().clone();
 
     // Set up buffer callback to send BufferDataAvailable command
     setup_buffer_callback(&shared_buffer, buffer_mailbox, &context);
@@ -1046,7 +1549,8 @@ fn handle_play_streaming(
         });
     }
 
-    match player.play_streaming(buffer, duration, cache_path.clone(), fade_in, track_gain) {
+    match player.play_prepared_streaming(source, duration, cache_path.clone(), fade_in, track_gain)
+    {
         Ok(_) => {
             update_state_from_player(player, state);
             state.set_current_path(cache_path);
@@ -1055,8 +1559,10 @@ fn handle_play_streaming(
                 request_id,
                 path: None,
             });
+            true
         }
         Err(e) => {
+            shared_buffer.clear_buffer_callback();
             let kind = super::player::classify_playback_error(&e);
             let _ = event_tx.send(AudioEvent::Error {
                 context: context.clone(),
@@ -1064,6 +1570,7 @@ fn handle_play_streaming(
                 message: e,
                 error_kind: Some(kind),
             });
+            false
         }
     }
 }
@@ -1076,16 +1583,16 @@ fn handle_load_paused_streaming(
     state: &SharedPlaybackState,
     context: super::identity::PlaybackContext,
     request_id: u64,
-    buffer: super::streaming::StreamingBuffer,
+    source: PreparedStreamingSource,
+    shared_buffer: SharedBuffer,
     duration: Duration,
     cache_path: Option<PathBuf>,
     position: Duration,
     track_gain: f32,
-) {
+) -> bool {
     state.set_pending_seek(None);
     state.set_buffer_bytes(0, 0);
 
-    let shared_buffer = buffer.shared().clone();
     setup_buffer_callback(&shared_buffer, buffer_mailbox, &context);
 
     let downloaded = shared_buffer.cached_bytes();
@@ -1102,7 +1609,13 @@ fn handle_load_paused_streaming(
         });
     }
 
-    match player.load_streaming_paused(buffer, duration, cache_path.clone(), position, track_gain) {
+    match player.load_prepared_streaming_paused(
+        source,
+        duration,
+        cache_path.clone(),
+        position,
+        track_gain,
+    ) {
         Ok(seek_error) => {
             update_state_from_player(player, state);
             state.set_current_path(cache_path);
@@ -1120,8 +1633,10 @@ fn handle_load_paused_streaming(
                     error_kind: Some(kind),
                 });
             }
+            true
         }
         Err(e) => {
+            shared_buffer.clear_buffer_callback();
             let kind = super::player::classify_playback_error(&e);
             let _ = event_tx.send(AudioEvent::Error {
                 context: context.clone(),
@@ -1129,6 +1644,7 @@ fn handle_load_paused_streaming(
                 message: e,
                 error_kind: Some(kind),
             });
+            false
         }
     }
 }
@@ -1219,21 +1735,19 @@ fn handle_create_preload_sink(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_create_preload_sink_streaming(
     player: &AudioPlayer,
     event_tx: &AudioEventSender,
     preloaded_sinks: &mut HashMap<u64, PreloadedSink>,
     identity: super::identity::PreloadIdentity,
-    buffer: super::streaming::StreamingBuffer,
+    source: PreparedStreamingSource,
+    shared_buffer: SharedBuffer,
     duration: Duration,
     track_gain: f32,
 ) {
     let request_id = identity.request_id;
-    // Clone shared buffer before passing to decoder (for later callback setup)
-    let shared_buffer = buffer.shared().clone();
-
-    // This may block waiting for streaming data
-    match player.create_preload_sink_streaming(buffer, duration, track_gain) {
+    match player.create_preload_sink_prepared_streaming(source, duration, track_gain) {
         Ok((sink, actual_duration, runtime)) => {
             // For streaming, we don't have a real path, use a placeholder
             let path = PathBuf::from(format!("streaming://{}", request_id));
@@ -1657,6 +2171,79 @@ fn check_playback_finished(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maintenance_deadline_wakes_without_a_critical_command() {
+        let (critical_tx, mut critical_rx) = audio_command_channel();
+        let (result_tx, mut result_rx) =
+            tokio::sync::mpsc::channel(STREAMING_PREPARATION_RESULT_CAPACITY);
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+
+        let event = runtime.block_on(next_control_event(
+            &mut critical_rx,
+            &mut result_rx,
+            tokio::time::Instant::now() + Duration::from_millis(5),
+        ));
+
+        assert!(matches!(event, ControlEvent::Maintenance));
+        assert!(critical_rx.try_recv().is_err());
+        drop(critical_tx);
+        drop(result_tx);
+    }
+
+    #[test]
+    fn pause_intent_is_consumed_only_by_its_preparation_context() {
+        let generation = crate::audio::identity::PlaybackGenerationController::new();
+        let first = generation.activate_generation();
+        let second = generation.activate_generation();
+        let mut pending = Some(first.clone());
+
+        assert!(!take_pending_preparation_pause(&mut pending, &second));
+        assert_eq!(pending, Some(first.clone()));
+        assert!(take_pending_preparation_pause(&mut pending, &first));
+        assert!(pending.is_none());
+    }
+
+    #[test]
+    fn stalled_streaming_preparation_does_not_consume_critical_capacity() {
+        let (result_tx, _result_rx) =
+            tokio::sync::mpsc::channel(STREAMING_PREPARATION_RESULT_CAPACITY);
+        let pool = StreamingPreparationPool::new(result_tx).unwrap();
+        let generation = crate::audio::identity::PlaybackGenerationController::new();
+        let context = generation.activate_generation();
+        let shared = SharedBuffer::new(1024);
+
+        let started = std::time::Instant::now();
+        pool.prepare_playback(PlaybackPreparationRequest {
+            context: context.clone(),
+            request_id: 1,
+            buffer: StreamingBuffer::new(shared.clone()),
+            duration: Duration::from_secs(1),
+            cache_path: None,
+            track_gain: 1.0,
+            mode: PlaybackPreparationMode::Play { fade_in: false },
+        })
+        .unwrap();
+        assert!(started.elapsed() < Duration::from_millis(100));
+
+        let (critical_tx, mut critical_rx) = audio_command_channel();
+        critical_tx
+            .try_send(AudioCommand::Pause {
+                context,
+                fade_out: false,
+            })
+            .unwrap();
+        assert!(matches!(
+            critical_rx.try_recv().unwrap(),
+            AudioCommand::Pause { .. }
+        ));
+
+        shared.cancel();
+        drop(pool);
+    }
 
     #[test]
     fn finished_guard_is_exactly_once_per_generation() {

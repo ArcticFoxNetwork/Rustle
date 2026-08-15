@@ -684,6 +684,10 @@ impl SharedBuffer {
         self.inner.error.read().is_some()
     }
 
+    pub fn error_message(&self) -> Option<String> {
+        self.inner.error.read().clone()
+    }
+
     /// Cancel the download
     pub fn cancel(&self) {
         self.inner.cancelled.store(true, Ordering::Release);
