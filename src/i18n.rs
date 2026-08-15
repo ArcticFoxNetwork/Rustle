@@ -194,6 +194,11 @@ pub enum Key {
     SettingsShortcutsNavigation,
     SettingsShortcutsUI,
     SettingsShortcutsGeneral,
+    SettingsShortcutFunction,
+    SettingsShortcutLocal,
+    SettingsShortcutGlobal,
+    SettingsShortcutRecording,
+    SettingsGlobalShortcutError,
 
     // Settings - About Section
     SettingsAboutTitle,

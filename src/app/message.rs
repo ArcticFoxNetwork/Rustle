@@ -181,7 +181,7 @@ pub enum Message {
     /// Section positions measured from the widget tree
     SectionPositionsMeasured(Vec<(SettingsSection, f32)>),
     /// Start editing a keybinding for an action
-    StartEditingKeybinding(Action),
+    StartEditingKeybinding(Action, crate::features::ShortcutScope),
     /// Cancel keybinding edit
     CancelEditingKeybinding,
     /// Key pressed while editing keybinding
@@ -436,6 +436,8 @@ pub enum Message {
     KeyPressed(Key, Modifiers),
     /// Execute a keybinding action
     ExecuteAction(Action),
+    /// Operating-system global shortcut pressed
+    GlobalHotkeyPressed(u32),
 
     // ============ Exit dialog ============
     /// Request to close the window (triggers exit dialog if needed)
@@ -935,7 +937,9 @@ impl std::fmt::Debug for Message {
             Self::SectionPositionsMeasured(p) => {
                 simple!("SectionPositionsMeasured", "{} positions", p.len())
             }
-            Self::StartEditingKeybinding(a) => simple!("StartEditingKeybinding", "{:?}", a),
+            Self::StartEditingKeybinding(a, scope) => {
+                simple!("StartEditingKeybinding", "{:?} ({:?})", a, scope)
+            }
             Self::CancelEditingKeybinding => simple!("CancelEditingKeybinding"),
             Self::KeybindingKeyPressed(_, _) => simple!("KeybindingKeyPressed"),
 
@@ -1073,6 +1077,7 @@ impl std::fmt::Debug for Message {
             // Keyboard
             Self::KeyPressed(_, _) => simple!("KeyPressed"),
             Self::ExecuteAction(a) => simple!("ExecuteAction", "{:?}", a),
+            Self::GlobalHotkeyPressed(id) => simple!("GlobalHotkeyPressed", "{}", id),
 
             // Exit dialog
             Self::RequestClose => simple!("RequestClose"),

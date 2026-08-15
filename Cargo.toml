@@ -42,6 +42,7 @@ async-stream = "0.3.6"
 rand = "0.9"
 cosmic-text = "0.15.0"
 parking_lot = "0.12"
+global-hotkey = "0.8"
 
 # SDF text rendering
 ttf-parser = "0.25"
@@ -63,6 +64,7 @@ chrono = { version = "0.4.44", default-features = false, features = ["clock"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 mpris-server = "0.9.0"
 ksni = { version = "0.3.3", default-features = false, features = ["tokio"] }
+x11rb = "0.13.2"
 
 [patch.crates-io]
 iced = { git = "https://github.com/Fei-xiangShi/iced.git", branch = "master" }

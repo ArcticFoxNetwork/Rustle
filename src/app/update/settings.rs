@@ -4,8 +4,8 @@ use crate::app::SettingsSection;
 use crate::app::message::Message;
 use crate::app::state::{App, Route};
 use crate::cache;
-use crate::features::keybindings::{KeyBinding, KeyCode, ModifierSet};
-use crate::i18n::{Language, Locale};
+use crate::features::keybindings::{KeyBinding, KeyCode, ModifierSet, ShortcutScope};
+use crate::i18n::{Key as I18nKey, Language, Locale};
 use iced::Rectangle;
 use iced::Task;
 use iced::advanced::widget::operation::{self as widget_op, Operation, Outcome, Scrollable};
@@ -79,6 +79,111 @@ fn measure_section_positions() -> impl Operation<Vec<(SettingsSection, f32)>> {
 }
 
 impl App {
+    fn apply_recorded_keybinding(
+        &mut self,
+        action: crate::features::Action,
+        scope: ShortcutScope,
+        binding: KeyBinding,
+    ) -> Task<Message> {
+        self.finish_keybinding_recording(&binding);
+
+        let cleared = matches!(binding.key, KeyCode::Delete | KeyCode::Backspace);
+        let bindings = (!cleared).then_some(binding).into_iter().collect();
+
+        match scope {
+            ShortcutScope::Local => {
+                self.core.settings.keybindings.set(action, bindings);
+                Task::done(Message::SaveSettings)
+            }
+            ShortcutScope::Global => {
+                self.update_global_keybinding(action, bindings.into_iter().next())
+            }
+        }
+    }
+
+    fn finish_keybinding_recording(&mut self, binding: &KeyBinding) {
+        let already_seen = self.ui.global_hotkey_seen_while_recording.take();
+        self.ui.editing_keybinding = None;
+
+        let registered_id = crate::platform::global_hotkeys::hotkey_for_binding(binding)
+            .map(|hotkey| hotkey.id())
+            .filter(|id| {
+                self.core
+                    .global_hotkeys
+                    .as_ref()
+                    .is_some_and(|service| service.action_for_id(*id).is_some())
+            });
+
+        if let Some(id) = registered_id
+            && already_seen != Some(id)
+        {
+            self.ui.suppressed_recording_hotkey = Some((
+                id,
+                iced::time::Instant::now() + std::time::Duration::from_millis(500),
+            ));
+        }
+    }
+
+    fn update_global_keybinding(
+        &mut self,
+        action: crate::features::Action,
+        new_binding: Option<KeyBinding>,
+    ) -> Task<Message> {
+        let old_binding = self
+            .core
+            .settings
+            .keybindings
+            .global_binding(&action)
+            .cloned();
+
+        let registration_result = if let Some(service) = &mut self.core.global_hotkeys {
+            service
+                .replace(action, new_binding.as_ref())
+                .map_err(|error| error.to_string())
+        } else if new_binding.is_none() {
+            Ok(())
+        } else {
+            Err("global hotkeys are not supported in the current desktop session".to_string())
+        };
+
+        if let Err(error) = registration_result {
+            return Self::toast_error(format!(
+                "{}: {}",
+                self.core.locale.get(I18nKey::SettingsGlobalShortcutError),
+                error
+            ));
+        }
+
+        self.core
+            .settings
+            .keybindings
+            .set_global(action, new_binding.clone().into_iter().collect());
+
+        if let Err(error) = self.core.settings.save() {
+            self.core
+                .settings
+                .keybindings
+                .set_global(action, old_binding.clone().into_iter().collect());
+            let mut error_details = error.to_string();
+            if let Some(service) = &mut self.core.global_hotkeys
+                && let Err(rollback_error) = service.replace(action, old_binding.as_ref())
+            {
+                tracing::error!(%rollback_error, "Failed to restore global shortcut after settings save failure");
+                error_details.push_str(&format!(
+                    "; failed to restore previous shortcut: {rollback_error}"
+                ));
+            }
+
+            return Self::toast_error(format!(
+                "{}: {}",
+                self.core.locale.get(I18nKey::SettingsGlobalShortcutError),
+                error_details
+            ));
+        }
+
+        Task::none()
+    }
+
     /// Look up the scroll position of a section (from measured or seed positions)
     pub(super) fn section_scroll_position(&self, section: SettingsSection) -> f32 {
         self.ui
@@ -540,30 +645,19 @@ impl App {
                 measure_section_positions(),
                 Message::SectionPositionsMeasured,
             ))),
-            Message::StartEditingKeybinding(action) => {
-                self.ui.editing_keybinding = Some(*action);
+            Message::StartEditingKeybinding(action, scope) => {
+                self.ui.global_hotkey_seen_while_recording = None;
+                self.ui.suppressed_recording_hotkey = None;
+                self.ui.editing_keybinding = Some((*action, *scope));
                 Some(Task::none())
             }
             Message::CancelEditingKeybinding => {
+                self.ui.global_hotkey_seen_while_recording = None;
                 self.ui.editing_keybinding = None;
                 Some(Task::none())
             }
             Message::KeybindingKeyPressed(key, modifiers) => {
-                if let Some(action) = self.ui.editing_keybinding {
-                    // Check if Delete/Backspace was pressed to clear the keybinding
-                    if matches!(
-                        key,
-                        iced::keyboard::Key::Named(
-                            iced::keyboard::key::Named::Delete
-                                | iced::keyboard::key::Named::Backspace
-                        )
-                    ) {
-                        // Clear the keybinding (set to empty)
-                        self.core.settings.keybindings.set(action, vec![]);
-                        self.ui.editing_keybinding = None;
-                        return Some(Task::perform(async { Message::SaveSettings }, |m| m));
-                    }
-
+                if let Some((action, scope)) = self.ui.editing_keybinding {
                     // Convert iced key to our KeyCode
                     if let Some(key_code) = key_to_keycode(key) {
                         let binding = KeyBinding {
@@ -575,11 +669,40 @@ impl App {
                             },
                             key: key_code,
                         };
-                        self.core.settings.keybindings.set(action, vec![binding]);
-                        self.ui.editing_keybinding = None;
-                        return Some(Task::perform(async { Message::SaveSettings }, |m| m));
+                        return Some(self.apply_recorded_keybinding(action, scope, binding));
                     }
                 }
+                Some(Task::none())
+            }
+            Message::GlobalHotkeyPressed(id) => {
+                let Some((action, scope)) = self.ui.editing_keybinding else {
+                    return None;
+                };
+
+                let binding = self
+                    .core
+                    .global_hotkeys
+                    .as_ref()
+                    .and_then(|service| service.action_for_id(*id))
+                    .and_then(|registered_action| {
+                        self.core
+                            .settings
+                            .keybindings
+                            .global_binding(&registered_action)
+                            .cloned()
+                    })
+                    .filter(|binding| {
+                        crate::platform::global_hotkeys::hotkey_for_binding(binding)
+                            .is_some_and(|hotkey| hotkey.id() == *id)
+                    });
+
+                if let Some(binding) = binding {
+                    self.ui.global_hotkey_seen_while_recording = Some(*id);
+                    return Some(self.apply_recorded_keybinding(action, scope, binding));
+                }
+
+                // Never execute a native action while the recorder owns input,
+                // even if an inconsistent stale event cannot be reconstructed.
                 Some(Task::none())
             }
             Message::SaveSettings => {

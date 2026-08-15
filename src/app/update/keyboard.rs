@@ -37,10 +37,66 @@ impl App {
                 }
 
                 // Otherwise, check for keybinding actions
+                if let Some(action) = self
+                    .core
+                    .settings
+                    .keybindings
+                    .find_global_action(key, modifiers)
+                    && self
+                        .core
+                        .global_hotkeys
+                        .as_ref()
+                        .is_some_and(|service| service.is_registered(action))
+                {
+                    // The native global event owns this press. Skipping the local
+                    // path prevents one focused-window press from firing twice.
+                    return Some(Task::none());
+                }
+
                 if let Some(action) = self.core.settings.keybindings.find_action(key, modifiers) {
                     return Some(self.update(Message::ExecuteAction(action)));
                 }
                 Some(Task::none())
+            }
+
+            Message::GlobalHotkeyPressed(id) => {
+                if self.ui.editing_keybinding.is_some() {
+                    self.ui.global_hotkey_seen_while_recording = Some(*id);
+                    // Shortcut recording owns keyboard input and must not also
+                    // execute a previously registered global action.
+                    return Some(Task::none());
+                }
+
+                if let Some((suppressed_id, deadline)) = self.ui.suppressed_recording_hotkey {
+                    if iced::time::Instant::now() <= deadline && suppressed_id == *id {
+                        self.ui.suppressed_recording_hotkey = None;
+                        return Some(Task::none());
+                    }
+                    if iced::time::Instant::now() > deadline {
+                        self.ui.suppressed_recording_hotkey = None;
+                    }
+                }
+
+                let action = self
+                    .core
+                    .global_hotkeys
+                    .as_ref()
+                    .and_then(|service| service.action_for_id(*id))
+                    .filter(|registered_action| {
+                        self.core
+                            .settings
+                            .keybindings
+                            .global_binding(registered_action)
+                            .and_then(crate::platform::global_hotkeys::hotkey_for_binding)
+                            .is_some_and(|hotkey| hotkey.id() == *id)
+                    });
+
+                action
+                    .map(|action| self.execute_action(action))
+                    .or_else(|| {
+                        tracing::warn!(id, "Ignoring unknown global hotkey event");
+                        Some(Task::none())
+                    })
             }
 
             Message::ExecuteAction(action) => Some(self.execute_action(*action)),

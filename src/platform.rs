@@ -18,6 +18,7 @@ pub const APP_DISPLAY_NAME: &str = "Rustle";
 pub const APP_ID: &str = "life.fxs.rustle";
 
 pub mod discord;
+pub mod global_hotkeys;
 pub mod keybindings;
 pub mod media_controls;
 pub mod protocol;

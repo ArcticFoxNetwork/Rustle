@@ -177,6 +177,7 @@ pub struct CoreState {
     pub mpris_rx:
         Option<Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<MediaCommand>>>>,
     pub discord_presence: DiscordPresence,
+    pub global_hotkeys: Option<crate::platform::global_hotkeys::GlobalHotkeyService>,
     pub window_restore_mode: iced::window::Mode,
     pub window_visibility: WindowVisibilityState,
     pub window_focused: bool,
@@ -211,6 +212,7 @@ impl CoreState {
         audio_thread: Option<crate::audio::AudioThreadHandle>,
         audio: Option<crate::audio::AudioHandle>,
         audio_chain: AudioProcessingChain,
+        global_hotkeys: Option<crate::platform::global_hotkeys::GlobalHotkeyService>,
     ) -> Self {
         let discord_enabled = settings.system.discord_enabled;
         Self {
@@ -230,6 +232,7 @@ impl CoreState {
             mpris_handle: None,
             mpris_rx: None,
             discord_presence: DiscordPresence::new(discord_enabled),
+            global_hotkeys,
             window_restore_mode: iced::window::Mode::Windowed,
             window_visibility: WindowVisibilityState::Visible,
             window_focused: true,
@@ -1089,7 +1092,12 @@ pub struct UiState {
     pub positions_measured: bool,
     /// Whether the mouse is hovering over the volume slider area
     pub is_volume_slider_hovered: bool,
-    pub editing_keybinding: Option<crate::features::Action>,
+    pub editing_keybinding: Option<(crate::features::Action, crate::features::ShortcutScope)>,
+    /// Native event already observed for the key currently being recorded.
+    pub global_hotkey_seen_while_recording: Option<u32>,
+    /// A native event expected just after recording finishes. The deadline
+    /// prevents a missing event from suppressing a later real key press.
+    pub suppressed_recording_hotkey: Option<(u32, Instant)>,
     pub queue_visible: bool,
 
     // Playback Controls UI
@@ -1181,6 +1189,8 @@ impl UiState {
             positions_measured: false,
             is_volume_slider_hovered: false,
             editing_keybinding: None,
+            global_hotkey_seen_while_recording: None,
+            suppressed_recording_hotkey: None,
             queue_visible: false,
             seek_preview_position: None,
             save_position_counter: 0,

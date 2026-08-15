@@ -186,6 +186,14 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::SettingsShortcutsNavigation, "Navigation");
     m.insert(Key::SettingsShortcutsUI, "Interface");
     m.insert(Key::SettingsShortcutsGeneral, "General");
+    m.insert(Key::SettingsShortcutFunction, "Function");
+    m.insert(Key::SettingsShortcutLocal, "Shortcut");
+    m.insert(Key::SettingsShortcutGlobal, "Global Shortcut");
+    m.insert(Key::SettingsShortcutRecording, "Press key...");
+    m.insert(
+        Key::SettingsGlobalShortcutError,
+        "Unable to update global shortcut",
+    );
 
     // Settings - About Section
     m.insert(Key::SettingsAboutTitle, "About");

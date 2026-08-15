@@ -159,6 +159,11 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::SettingsShortcutsNavigation, "导航");
     m.insert(Key::SettingsShortcutsUI, "界面");
     m.insert(Key::SettingsShortcutsGeneral, "通用");
+    m.insert(Key::SettingsShortcutFunction, "功能");
+    m.insert(Key::SettingsShortcutLocal, "快捷键");
+    m.insert(Key::SettingsShortcutGlobal, "全局快捷键");
+    m.insert(Key::SettingsShortcutRecording, "请按快捷键...");
+    m.insert(Key::SettingsGlobalShortcutError, "无法更新全局快捷键");
 
     // Settings - About Section
     m.insert(Key::SettingsAboutTitle, "关于");

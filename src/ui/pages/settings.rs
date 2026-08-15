@@ -7,10 +7,10 @@
 use iced::widget::{
     Space, button, column, container, pick_list, row, scrollable, svg, text, text_input, toggler,
 };
-use iced::{Alignment, Background, Border, Color, Element, Fill, Padding};
+use iced::{Alignment, Background, Border, Color, Element, Fill, Length, Padding};
 
 use crate::app::{ImageState, Message, SettingsSection};
-use crate::features::{Action, KeyBindings, Settings};
+use crate::features::{Action, KeyBindings, Settings, ShortcutScope};
 use crate::i18n::{Key, Language, Locale};
 use crate::image::ImageKind;
 use crate::ui::theme;
@@ -22,7 +22,7 @@ pub fn view(
     font_families: Vec<String>,
     active_section: SettingsSection,
     locale: Locale,
-    editing_keybinding: Option<Action>,
+    editing_keybinding: Option<(Action, ShortcutScope)>,
     is_logged_in: bool,
     user_info: Option<&crate::app::UserInfo>,
     image_state: &ImageState,
@@ -194,7 +194,7 @@ fn all_sections_content(
     audio_devices: &[(String, String)],
     font_families: &[String],
     locale: Locale,
-    editing_keybinding: Option<Action>,
+    editing_keybinding: Option<(Action, ShortcutScope)>,
     is_logged_in: bool,
     user_info: Option<&crate::app::UserInfo>,
     image_state: &ImageState,
@@ -1117,9 +1117,8 @@ fn about_section(_locale: Locale) -> Element<'static, Message> {
 fn shortcuts_section(
     keybindings: &KeyBindings,
     locale: Locale,
-    editing_keybinding: Option<Action>,
+    editing_keybinding: Option<(Action, ShortcutScope)>,
 ) -> Element<'static, Message> {
-    // All actions split into two columns
     let left_actions = [
         (Action::PlayPause, Key::ActionPlayPause),
         (Action::NextTrack, Key::ActionNextTrack),
@@ -1138,31 +1137,48 @@ fn shortcuts_section(
         (Action::ToggleFullscreen, Key::ActionToggleFullscreen),
     ];
 
-    // Build left column
-    let left_rows: Vec<Element<'static, Message>> = left_actions
-        .iter()
-        .map(|(action, key)| {
-            let shortcut_text = keybindings.display_for_action(action);
-            let is_editing = editing_keybinding == Some(*action);
-            shortcut_row(*action, locale.get(*key), &shortcut_text, is_editing)
-        })
-        .collect();
-
-    // Build right column
-    let right_rows: Vec<Element<'static, Message>> = right_actions
-        .iter()
-        .map(|(action, key)| {
-            let shortcut_text = keybindings.display_for_action(action);
-            let is_editing = editing_keybinding == Some(*action);
-            shortcut_row(*action, locale.get(*key), &shortcut_text, is_editing)
-        })
-        .collect();
-
     row![
-        column(left_rows).spacing(4).width(Fill),
+        shortcut_table(&left_actions, keybindings, locale, editing_keybinding),
         Space::new().width(24),
-        column(right_rows).spacing(4).width(Fill),
+        shortcut_table(&right_actions, keybindings, locale, editing_keybinding),
     ]
+    .width(Fill)
+    .into()
+}
+
+fn shortcut_table(
+    actions: &[(Action, Key)],
+    keybindings: &KeyBindings,
+    locale: Locale,
+    editing_keybinding: Option<(Action, ShortcutScope)>,
+) -> Element<'static, Message> {
+    let rows: Vec<Element<'static, Message>> = actions
+        .iter()
+        .map(|(action, key)| {
+            shortcut_row(
+                *action,
+                locale.get(*key),
+                &keybindings.display_for_action(action),
+                &keybindings.display_global_for_action(action),
+                editing_keybinding,
+                locale,
+            )
+        })
+        .collect();
+
+    let header = row![
+        shortcut_header(locale.get(Key::SettingsShortcutFunction), 4),
+        shortcut_header(locale.get(Key::SettingsShortcutLocal), 3),
+        shortcut_header(locale.get(Key::SettingsShortcutGlobal), 4),
+    ]
+    .spacing(8)
+    .width(Fill);
+
+    container(
+        column![header, divider(), column(rows).spacing(4).width(Fill)]
+            .spacing(8)
+            .width(Fill),
+    )
     .width(Fill)
     .into()
 }
@@ -1170,15 +1186,74 @@ fn shortcuts_section(
 fn shortcut_row(
     action: Action,
     action_name: &str,
+    local_shortcut: &str,
+    global_shortcut: &str,
+    editing_keybinding: Option<(Action, ShortcutScope)>,
+    locale: Locale,
+) -> Element<'static, Message> {
+    container(
+        row![
+            container(
+                text(action_name.to_string())
+                    .size(theme::TEXT_SIZE_BODY)
+                    .style(|theme| text::Style {
+                        color: Some(theme::settings_label(theme))
+                    }),
+            )
+            .width(Length::FillPortion(4)),
+            shortcut_cell(
+                action,
+                ShortcutScope::Local,
+                local_shortcut,
+                editing_keybinding == Some((action, ShortcutScope::Local)),
+                locale,
+                3,
+            ),
+            shortcut_cell(
+                action,
+                ShortcutScope::Global,
+                global_shortcut,
+                editing_keybinding == Some((action, ShortcutScope::Global)),
+                locale,
+                4,
+            ),
+        ]
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .width(Fill),
+    )
+    .padding([8, 0])
+    .into()
+}
+
+fn shortcut_header(label: &str, width_portion: u16) -> Element<'static, Message> {
+    container(
+        text(label.to_string())
+            .size(theme::TEXT_SIZE_LABEL)
+            .style(|theme| text::Style {
+                color: Some(theme::settings_desc(theme)),
+            }),
+    )
+    .width(Length::FillPortion(width_portion))
+    .into()
+}
+
+fn shortcut_cell(
+    action: Action,
+    scope: ShortcutScope,
     shortcut: &str,
     is_editing: bool,
+    locale: Locale,
+    width_portion: u16,
 ) -> Element<'static, Message> {
     let shortcut_display: Element<'static, Message> = if is_editing {
         container(
-            text("Press key...".to_string())
+            text(locale.get(Key::SettingsShortcutRecording).to_string())
                 .size(theme::TEXT_SIZE_LABEL)
                 .color(theme::ACCENT_PINK),
         )
+        .width(Fill)
+        .center_x(Fill)
         .padding([4, 12])
         .style(|theme| container::Style {
             background: Some(Background::Color(theme::shortcut_key_bg(theme))),
@@ -1198,6 +1273,8 @@ fn shortcut_row(
                     color: Some(theme::settings_value(theme)),
                 }),
         )
+        .width(Fill)
+        .center_x(Fill)
         .padding([4, 12])
         .style(|theme| container::Style {
             background: Some(Background::Color(theme::shortcut_bg(theme))),
@@ -1211,6 +1288,7 @@ fn shortcut_row(
     };
 
     let edit_button = button(shortcut_display)
+        .width(Fill)
         .style(|_, _| button::Style {
             background: None,
             text_color: Color::WHITE,
@@ -1220,24 +1298,12 @@ fn shortcut_row(
         .on_press(if is_editing {
             Message::CancelEditingKeybinding
         } else {
-            Message::StartEditingKeybinding(action)
+            Message::StartEditingKeybinding(action, scope)
         });
 
-    container(
-        row![
-            text(action_name.to_string())
-                .size(theme::TEXT_SIZE_BODY)
-                .style(|theme| text::Style {
-                    color: Some(theme::settings_label(theme))
-                }),
-            Space::new().width(Fill),
-            edit_button,
-        ]
-        .align_y(Alignment::Center)
-        .width(Fill),
-    )
-    .padding([8, 0])
-    .into()
+    container(edit_button)
+        .width(Length::FillPortion(width_portion))
+        .into()
 }
 
 fn divider() -> Element<'static, Message> {

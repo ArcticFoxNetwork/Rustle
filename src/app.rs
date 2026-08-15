@@ -99,12 +99,29 @@ impl App {
             Locale::new(lang)
         };
 
+        let global_hotkeys = match crate::platform::global_hotkeys::GlobalHotkeyService::new(
+            &settings.keybindings,
+        ) {
+            Ok(service) => Some(service),
+            Err(error) => {
+                tracing::warn!(%error, "Global hotkeys are unavailable");
+                None
+            }
+        };
+
         // 2. Initialize audio system
         let (audio_thread, audio, audio_chain, audio_listener_task) =
             helpers::init_audio(&settings);
 
         // 3. Initialize sub-states
-        let core = CoreState::new(settings, locale, audio_thread, audio, audio_chain);
+        let core = CoreState::new(
+            settings,
+            locale,
+            audio_thread,
+            audio,
+            audio_chain,
+            global_hotkeys,
+        );
         let library = LibraryState::default();
         let playback = PlaybackSessionState::default();
         let ui = UiState::new();
@@ -314,7 +331,14 @@ impl App {
             iced::Subscription::none()
         };
 
-        // 12. Player events - handled via Task::run in initialization, not subscription
+        // 12. Native global hotkeys remain active while unfocused or hidden.
+        let global_hotkey_sub = if self.core.global_hotkeys.is_some() {
+            crate::platform::global_hotkeys::subscription().map(Message::GlobalHotkeyPressed)
+        } else {
+            iced::Subscription::none()
+        };
+
+        // 13. Player events - handled via Task::run in initialization, not subscription
         // (see handle_player_event_receiver_ready message)
 
         // Batch all subscriptions
@@ -328,6 +352,7 @@ impl App {
             shown_sub,
             focus_sub,
             mouse_sub,
+            global_hotkey_sub,
         ])
     }
 }

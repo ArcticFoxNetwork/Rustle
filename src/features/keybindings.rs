@@ -31,6 +31,30 @@ pub enum Action {
     ToggleFullscreen,
 }
 
+impl Action {
+    pub const ALL: [Self; 12] = [
+        Self::PlayPause,
+        Self::NextTrack,
+        Self::PrevTrack,
+        Self::VolumeUp,
+        Self::VolumeDown,
+        Self::VolumeMute,
+        Self::SeekForward,
+        Self::SeekBackward,
+        Self::GoHome,
+        Self::FocusSearch,
+        Self::ToggleQueue,
+        Self::ToggleFullscreen,
+    ];
+}
+
+/// Identifies whether the local or operating-system global shortcut is edited.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShortcutScope {
+    Local,
+    Global,
+}
+
 /// A keyboard shortcut consisting of modifiers and a key
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct KeyBinding {
@@ -99,6 +123,18 @@ impl ModifierSet {
         let cmd_match = crate::platform::keybindings::matches_cmd_modifier(self.cmd, modifiers);
 
         ctrl_match && cmd_match && self.alt == modifiers.alt() && self.shift == modifiers.shift()
+    }
+
+    /// Check every physical modifier for a global shortcut.
+    ///
+    /// Application-local shortcuts preserve the existing platform-specific
+    /// Command handling, while native global shortcuts allow Super/Win on all
+    /// supported desktops and therefore need an exact logo-key comparison.
+    fn matches_global(&self, modifiers: &Modifiers) -> bool {
+        self.ctrl == modifiers.control()
+            && self.cmd == modifiers.logo()
+            && self.alt == modifiers.alt()
+            && self.shift == modifiers.shift()
     }
 }
 
@@ -354,108 +390,199 @@ impl KeyCode {
 /// The keybindings configuration
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyBindings {
-    /// Map from action to keybinding
+    /// Map from action to application-local keybindings.
     bindings: HashMap<Action, Vec<KeyBinding>>,
+    /// Map from action to operating-system global keybindings.
+    #[serde(default = "default_global_bindings")]
+    global_bindings: HashMap<Action, Vec<KeyBinding>>,
 }
 
 impl Default for KeyBindings {
     fn default() -> Self {
-        let mut bindings = HashMap::new();
-
-        // Default keybindings
-        // Playback
-        bindings.insert(
-            Action::PlayPause,
-            vec![
-                KeyBinding::new(KeyCode::Space),
-                KeyBinding::new(KeyCode::MediaPlayPause),
-            ],
-        );
-        bindings.insert(
-            Action::NextTrack,
-            vec![
-                KeyBinding::new(KeyCode::N).primary(),
-                KeyBinding::new(KeyCode::MediaNext),
-            ],
-        );
-        bindings.insert(
-            Action::PrevTrack,
-            vec![
-                KeyBinding::new(KeyCode::P).primary(),
-                KeyBinding::new(KeyCode::MediaPrev),
-            ],
-        );
-        bindings.insert(
-            Action::VolumeUp,
-            vec![
-                KeyBinding::new(KeyCode::Up).primary(),
-                KeyBinding::new(KeyCode::VolumeUp),
-            ],
-        );
-        bindings.insert(
-            Action::VolumeDown,
-            vec![
-                KeyBinding::new(KeyCode::Down).primary(),
-                KeyBinding::new(KeyCode::VolumeDown),
-            ],
-        );
-        bindings.insert(
-            Action::VolumeMute,
-            vec![
-                KeyBinding::new(KeyCode::M).primary(),
-                KeyBinding::new(KeyCode::VolumeMute),
-            ],
-        );
-        bindings.insert(
-            Action::SeekForward,
-            vec![KeyBinding::new(KeyCode::Right).primary()],
-        );
-        bindings.insert(
-            Action::SeekBackward,
-            vec![KeyBinding::new(KeyCode::Left).primary()],
-        );
-
-        // Navigation
-        bindings.insert(Action::GoHome, vec![KeyBinding::new(KeyCode::H).primary()]);
-        bindings.insert(
-            Action::FocusSearch,
-            vec![KeyBinding::new(KeyCode::K).primary()],
-        );
-
-        // UI
-        bindings.insert(Action::ToggleQueue, vec![KeyBinding::new(KeyCode::Q)]);
-        bindings.insert(
-            Action::ToggleFullscreen,
-            vec![KeyBinding::new(KeyCode::F11)],
-        );
-
-        Self { bindings }
+        Self {
+            bindings: default_local_bindings(),
+            global_bindings: default_global_bindings(),
+        }
     }
 }
 
+fn default_local_bindings() -> HashMap<Action, Vec<KeyBinding>> {
+    let mut bindings = HashMap::new();
+
+    // Default keybindings
+    // Playback
+    bindings.insert(
+        Action::PlayPause,
+        vec![
+            KeyBinding::new(KeyCode::Space),
+            KeyBinding::new(KeyCode::MediaPlayPause),
+        ],
+    );
+    bindings.insert(
+        Action::NextTrack,
+        vec![
+            KeyBinding::new(KeyCode::N).primary(),
+            KeyBinding::new(KeyCode::MediaNext),
+        ],
+    );
+    bindings.insert(
+        Action::PrevTrack,
+        vec![
+            KeyBinding::new(KeyCode::P).primary(),
+            KeyBinding::new(KeyCode::MediaPrev),
+        ],
+    );
+    bindings.insert(
+        Action::VolumeUp,
+        vec![
+            KeyBinding::new(KeyCode::Up).primary(),
+            KeyBinding::new(KeyCode::VolumeUp),
+        ],
+    );
+    bindings.insert(
+        Action::VolumeDown,
+        vec![
+            KeyBinding::new(KeyCode::Down).primary(),
+            KeyBinding::new(KeyCode::VolumeDown),
+        ],
+    );
+    bindings.insert(
+        Action::VolumeMute,
+        vec![
+            KeyBinding::new(KeyCode::M).primary(),
+            KeyBinding::new(KeyCode::VolumeMute),
+        ],
+    );
+    bindings.insert(
+        Action::SeekForward,
+        vec![KeyBinding::new(KeyCode::Right).primary()],
+    );
+    bindings.insert(
+        Action::SeekBackward,
+        vec![KeyBinding::new(KeyCode::Left).primary()],
+    );
+
+    // Navigation
+    bindings.insert(Action::GoHome, vec![KeyBinding::new(KeyCode::H).primary()]);
+    bindings.insert(
+        Action::FocusSearch,
+        vec![KeyBinding::new(KeyCode::K).primary()],
+    );
+
+    // UI
+    bindings.insert(Action::ToggleQueue, vec![KeyBinding::new(KeyCode::Q)]);
+    bindings.insert(
+        Action::ToggleFullscreen,
+        vec![KeyBinding::new(KeyCode::F11)],
+    );
+
+    bindings
+}
+
+fn default_global_bindings() -> HashMap<Action, Vec<KeyBinding>> {
+    let local_bindings = default_local_bindings();
+
+    Action::ALL
+        .into_iter()
+        .filter_map(|action| {
+            local_bindings
+                .get(&action)
+                .and_then(|bindings| bindings.first())
+                .map(|binding| {
+                    (
+                        action,
+                        vec![KeyBinding {
+                            modifiers: ModifierSet {
+                                ctrl: true,
+                                alt: true,
+                                ..ModifierSet::default()
+                            },
+                            key: binding.key.clone(),
+                        }],
+                    )
+                })
+        })
+        .collect()
+}
+
 impl KeyBindings {
-    /// Set keybindings for an action
+    /// Set application-local keybindings for an action.
     pub fn set(&mut self, action: Action, bindings: Vec<KeyBinding>) {
         self.bindings.insert(action, bindings);
     }
 
+    /// Set operating-system global keybindings for an action.
+    pub fn set_global(&mut self, action: Action, bindings: Vec<KeyBinding>) {
+        self.global_bindings.insert(action, bindings);
+    }
+
     /// Find the action that matches the given key event
     pub fn find_action(&self, key: &Key, modifiers: &Modifiers) -> Option<Action> {
-        for (action, bindings) in &self.bindings {
-            for binding in bindings {
-                if binding.matches(key, modifiers) {
-                    return Some(*action);
-                }
-            }
-        }
-        None
+        Self::find_matching_action(&self.bindings, key, modifiers)
+    }
+
+    /// Find the global action that matches a focused-window keyboard event.
+    ///
+    /// This is used to avoid executing both the local and global paths when a
+    /// user intentionally configures the same combination for both scopes.
+    pub fn find_global_action(&self, key: &Key, modifiers: &Modifiers) -> Option<Action> {
+        Action::ALL.into_iter().find(|action| {
+            self.global_bindings.get(action).is_some_and(|bindings| {
+                bindings.iter().any(|binding| {
+                    binding.key.matches(key) && binding.modifiers.matches_global(modifiers)
+                })
+            })
+        })
     }
 
     /// Get display string for an action's keybinding
     pub fn display_for_action(&self, action: &Action) -> String {
+        Self::display_binding(self.local_binding(action))
+    }
+
+    /// Get the display string for an action's global keybinding.
+    pub fn display_global_for_action(&self, action: &Action) -> String {
+        Self::display_binding(self.global_binding(action))
+    }
+
+    /// Get the first application-local binding for an action.
+    pub fn local_binding(&self, action: &Action) -> Option<&KeyBinding> {
         self.bindings
             .get(action)
-            .and_then(|b| b.first())
+            .and_then(|bindings| bindings.first())
+    }
+
+    /// Get the first global binding for an action.
+    pub fn global_binding(&self, action: &Action) -> Option<&KeyBinding> {
+        self.global_bindings
+            .get(action)
+            .and_then(|bindings| bindings.first())
+    }
+
+    /// Iterate configured global bindings in a deterministic action order.
+    pub fn configured_global_bindings(&self) -> impl Iterator<Item = (Action, &KeyBinding)> {
+        Action::ALL.into_iter().filter_map(|action| {
+            self.global_binding(&action)
+                .map(|binding| (action, binding))
+        })
+    }
+
+    fn find_matching_action(
+        bindings_by_action: &HashMap<Action, Vec<KeyBinding>>,
+        key: &Key,
+        modifiers: &Modifiers,
+    ) -> Option<Action> {
+        Action::ALL.into_iter().find(|action| {
+            bindings_by_action.get(action).is_some_and(|bindings| {
+                bindings
+                    .iter()
+                    .any(|binding| binding.matches(key, modifiers))
+            })
+        })
+    }
+
+    fn display_binding(binding: Option<&KeyBinding>) -> String {
+        binding
             .map(|b| b.display())
             .unwrap_or_else(|| "None".to_string())
     }
@@ -491,5 +618,73 @@ mod tests {
             key: KeyCode::P,
         };
         assert_eq!(binding.display(), "Ctrl+Shift+P");
+    }
+
+    #[test]
+    fn default_global_bindings_use_ctrl_alt_and_local_primary_key() {
+        let bindings = KeyBindings::default();
+
+        for action in Action::ALL {
+            let local = bindings.local_binding(&action).unwrap();
+            let global = bindings.global_binding(&action).unwrap();
+            assert_eq!(global.key, local.key);
+            assert_eq!(
+                global.modifiers,
+                ModifierSet {
+                    ctrl: true,
+                    alt: true,
+                    ..ModifierSet::default()
+                }
+            );
+        }
+
+        assert_eq!(
+            bindings.display_global_for_action(&Action::PlayPause),
+            "Ctrl+Alt+Space"
+        );
+    }
+
+    #[test]
+    fn missing_global_bindings_migrate_to_defaults() {
+        let mut serialized = serde_json::to_value(KeyBindings::default()).unwrap();
+        serialized
+            .as_object_mut()
+            .unwrap()
+            .remove("global_bindings");
+
+        let migrated: KeyBindings = serde_json::from_value(serialized).unwrap();
+
+        assert_eq!(
+            migrated.display_global_for_action(&Action::PlayPause),
+            "Ctrl+Alt+Space"
+        );
+        assert_eq!(
+            migrated.global_binding(&Action::NextTrack).unwrap().key,
+            KeyCode::N
+        );
+    }
+
+    #[test]
+    fn global_matching_compares_the_logo_modifier_exactly() {
+        let mut bindings = KeyBindings::default();
+        bindings.set_global(
+            Action::ToggleQueue,
+            vec![KeyBinding {
+                modifiers: ModifierSet {
+                    cmd: true,
+                    ..ModifierSet::default()
+                },
+                key: KeyCode::Q,
+            }],
+        );
+
+        assert_eq!(
+            bindings.find_global_action(&Key::Character("q".into()), &Modifiers::LOGO),
+            Some(Action::ToggleQueue)
+        );
+        assert_eq!(
+            bindings.find_global_action(&Key::Character("q".into()), &Modifiers::default()),
+            None
+        );
     }
 }
