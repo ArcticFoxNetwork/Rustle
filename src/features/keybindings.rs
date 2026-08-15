@@ -231,6 +231,7 @@ impl KeyCode {
                         | (KeyCode::Key7, "7")
                         | (KeyCode::Key8, "8")
                         | (KeyCode::Key9, "9")
+                        | (KeyCode::Space, " ")
                 )
             }
             Key::Named(named) => {
@@ -465,15 +466,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_default_bindings() {
+    fn default_space_binding_matches_character_and_named_space() {
         let bindings = KeyBindings::default();
-        assert!(
-            bindings
-                .find_action(
-                    &Key::Named(iced::keyboard::key::Named::Space),
-                    &Modifiers::default()
-                )
-                .is_some()
+        let modifiers = Modifiers::default();
+
+        assert_eq!(
+            bindings.find_action(&Key::Character(" ".into()), &modifiers),
+            Some(Action::PlayPause)
+        );
+        assert_eq!(
+            bindings.find_action(&Key::Named(iced::keyboard::key::Named::Space), &modifiers),
+            Some(Action::PlayPause)
         );
     }
 

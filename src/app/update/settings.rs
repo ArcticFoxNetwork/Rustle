@@ -157,6 +157,7 @@ fn key_to_keycode(key: &Key) -> Option<KeyCode> {
                 "7" => Some(KeyCode::Key7),
                 "8" => Some(KeyCode::Key8),
                 "9" => Some(KeyCode::Key9),
+                " " => Some(KeyCode::Space),
                 _ => None,
             }
         }
@@ -193,6 +194,19 @@ fn key_to_keycode(key: &Key) -> Option<KeyCode> {
             }
         }
         Key::Unidentified => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converts_character_space_to_space_keycode() {
+        assert_eq!(
+            key_to_keycode(&Key::Character(" ".into())),
+            Some(KeyCode::Space)
+        );
     }
 }
 
