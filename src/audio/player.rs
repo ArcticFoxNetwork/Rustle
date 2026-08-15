@@ -629,16 +629,28 @@ impl AudioPlayer {
                 .current_runtime
                 .take()
                 .unwrap_or_else(|| self.prepare_runtime(false));
+            let outgoing_track_gain = self
+                .state
+                .lock()
+                .map(|state| state.current_track_gain)
+                .unwrap_or(1.0);
+            let outgoing_automix_gain_db = old_runtime.automix_gain_db();
             transition = prepare_transition_for_handoff(transition, old_sink.get_pos(), |entry| {
                 sink.try_seek(entry).is_ok()
             });
             let crossfade = transition.duration;
             let advanced = transition.kind == TransitionKind::Automix;
-            old_runtime.reset_automix();
+            old_sink.set_speed(1.0);
+            old_runtime.reset_automix_transition();
             runtime.reset_automix();
             if advanced {
                 sink.set_speed(transition.automation.rate);
-                runtime.set_automix_gain_db(transition.automation.gain_db);
+                runtime.set_automix_gain_db(super::automix::effective_automix_gain_db(
+                    transition.automation.gain_db,
+                    outgoing_track_gain,
+                    outgoing_automix_gain_db,
+                    track_gain,
+                ));
                 if transition.automation.bass_swap {
                     let midpoint = crossfade.mul_f32(0.5);
                     let release = Duration::from_millis(600).min(crossfade.mul_f32(0.25));
@@ -849,7 +861,7 @@ impl AudioPlayer {
                     sink.set_speed(1.0);
                 }
                 if let Some(runtime) = self.current_runtime.as_ref() {
-                    runtime.reset_automix();
+                    runtime.reset_automix_transition();
                 }
             }
         }
@@ -953,7 +965,7 @@ impl AudioPlayer {
         }
         if let Some(runtime) = self.current_runtime.as_ref() {
             runtime.set_fade_volume(1.0);
-            runtime.reset_automix();
+            runtime.reset_automix_transition();
             runtime.reset_natural_end();
         }
         if let Some(sink) = &mut self.current_sink {

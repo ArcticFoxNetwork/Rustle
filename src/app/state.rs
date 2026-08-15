@@ -257,6 +257,22 @@ pub struct PlaybackRuntimeState {
     pub analysis: AudioAnalysisData,
 }
 
+fn status_with_pause_intent(
+    backend_status: PlaybackStatus,
+    pause_requested: bool,
+) -> PlaybackStatus {
+    if pause_requested
+        && matches!(
+            backend_status,
+            PlaybackStatus::Playing | PlaybackStatus::Buffering { .. }
+        )
+    {
+        PlaybackStatus::Paused
+    } else {
+        backend_status
+    }
+}
+
 impl Default for PlaybackRuntimeState {
     fn default() -> Self {
         Self {
@@ -283,6 +299,57 @@ impl PlaybackRuntimeState {
 
     pub fn can_seek(&self) -> bool {
         self.has_loaded_audio || !self.info.duration.is_zero()
+    }
+}
+
+#[cfg(test)]
+mod playback_intent_tests {
+    use super::*;
+
+    #[test]
+    fn pause_intent_overrides_playing_and_buffering_until_backend_confirms() {
+        assert_eq!(
+            status_with_pause_intent(PlaybackStatus::Playing, true),
+            PlaybackStatus::Paused
+        );
+        assert_eq!(
+            status_with_pause_intent(
+                PlaybackStatus::Buffering {
+                    position: Duration::from_secs(3),
+                },
+                true,
+            ),
+            PlaybackStatus::Paused
+        );
+    }
+
+    #[test]
+    fn pause_intent_does_not_relabel_backend_terminal_states() {
+        assert_eq!(
+            status_with_pause_intent(PlaybackStatus::Paused, true),
+            PlaybackStatus::Paused
+        );
+        assert_eq!(
+            status_with_pause_intent(PlaybackStatus::Stopped, true),
+            PlaybackStatus::Stopped
+        );
+        assert_eq!(
+            status_with_pause_intent(PlaybackStatus::Playing, false),
+            PlaybackStatus::Playing
+        );
+    }
+
+    #[test]
+    fn pause_intent_can_be_reversed_before_the_backend_pauses() {
+        let backend_status = PlaybackStatus::Playing;
+        assert_eq!(
+            status_with_pause_intent(backend_status.clone(), true),
+            PlaybackStatus::Paused
+        );
+        assert_eq!(
+            status_with_pause_intent(backend_status, false),
+            PlaybackStatus::Playing
+        );
     }
 }
 
@@ -347,10 +414,13 @@ impl App {
 
     pub(crate) fn refresh_playback_runtime(&mut self) {
         let analysis = self.core.audio_chain.analysis();
+        let pause_requested = self.playback.pause_requested;
 
         if let Some(audio) = self.audio_handle() {
+            let mut info = audio.get_info();
+            info.status = status_with_pause_intent(info.status, pause_requested);
             self.playback.runtime = PlaybackRuntimeState {
-                info: audio.get_info(),
+                info,
                 display_position: audio.display_position(),
                 buffer_progress: audio.buffer_progress(),
                 has_loaded_audio: !audio.is_empty(),
@@ -637,20 +707,12 @@ impl App {
         }
     }
 
-    pub(crate) fn pause_audio_output_with_fade(&self, fade_out: bool) {
-        if let Some(audio) = self.audio_handle()
-            && let Err(error) = audio.pause_with_fade(fade_out)
-        {
-            tracing::warn!("Failed to enqueue pause: {error}");
-        }
+    pub(crate) fn pause_audio_output_with_fade(&self, fade_out: bool) -> Result<(), String> {
+        self.require_audio_handle()?.pause_with_fade(fade_out)
     }
 
-    pub(crate) fn resume_audio_output_with_fade(&self, fade_in: bool) {
-        if let Some(audio) = self.audio_handle()
-            && let Err(error) = audio.resume_with_fade(fade_in)
-        {
-            tracing::warn!("Failed to enqueue resume: {error}");
-        }
+    pub(crate) fn resume_audio_output_with_fade(&self, fade_in: bool) -> Result<(), String> {
+        self.require_audio_handle()?.resume_with_fade(fade_in)
     }
 
     pub(crate) fn stop_audio_backend(&self) {
@@ -833,6 +895,9 @@ pub struct PlaybackSessionState {
     pub active_streaming_buffer: Option<crate::audio::SharedBuffer>,
     /// Cached runtime snapshot consumed by UI/system integrations.
     pub runtime: PlaybackRuntimeState,
+    /// Logical pause intent exposed immediately while the backend finishes its
+    /// sample-driven Fade and physical Sink pause.
+    pub pause_requested: bool,
     /// Consecutive playback failure counter.
     pub consecutive_failures: u8,
     /// Prevents repeated natural Crossfade triggers while the next generation

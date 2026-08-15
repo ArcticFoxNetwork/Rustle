@@ -1214,9 +1214,39 @@ pub fn loudness_gain_db(delta_db: f32) -> f32 {
     }
 }
 
+fn linear_gain_db(gain: f32) -> f32 {
+    if gain.is_finite() && gain > 0.0 {
+        20.0 * gain.log10()
+    } else {
+        0.0
+    }
+}
+
+/// Resolve the incoming per-track Automix loudness anchor in the effective
+/// output domain, after both tracks' normalization gains are known.
+pub fn effective_automix_gain_db(
+    raw_lufs_delta_db: f32,
+    outgoing_track_gain: f32,
+    outgoing_automix_gain_db: f32,
+    incoming_track_gain: f32,
+) -> f32 {
+    let outgoing_automix_gain_db = if outgoing_automix_gain_db.is_finite() {
+        outgoing_automix_gain_db
+    } else {
+        0.0
+    };
+
+    loudness_gain_db(
+        raw_lufs_delta_db + linear_gain_db(outgoing_track_gain) + outgoing_automix_gain_db
+            - linear_gain_db(incoming_track_gain),
+    )
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct AdvancedAutomation {
     pub rate: f32,
+    /// Raw analysis-domain LUFS delta. The player resolves this against both
+    /// tracks' actual normalization gains and clamps the final DSP target.
     pub gain_db: f32,
     pub bass_swap: bool,
 }
@@ -1248,7 +1278,7 @@ pub fn automation_for_transition(
         _ => 1.0,
     };
     let gain_db = match (current.lufs, next.lufs) {
-        (Some(a), Some(b)) => loudness_gain_db(a - b),
+        (Some(a), Some(b)) if a.is_finite() && b.is_finite() => a - b,
         _ => 0.0,
     };
     AdvancedAutomation {
@@ -1450,7 +1480,7 @@ mod tests {
     }
 
     #[test]
-    fn equal_power_and_advanced_automation_are_clamped() {
+    fn equal_power_rate_and_final_loudness_gain_are_clamped() {
         let (outgoing, incoming) = equal_power_gains(0.5);
         assert!((outgoing * outgoing + incoming * incoming - 1.0).abs() < 1e-5);
         assert_eq!(clamp_rate_ratio(f32::NAN), 1.0);
@@ -1463,6 +1493,38 @@ mod tests {
         current.bpm_confidence = 0.9;
         next.bpm_confidence = 0.9;
         assert_eq!(automation_for_transition(&current, &next).rate, 1.0);
+        current.lufs = Some(-5.0);
+        next.lufs = Some(-25.0);
+        assert_eq!(automation_for_transition(&current, &next).gain_db, 20.0);
+    }
+
+    #[test]
+    fn effective_automix_gain_accounts_for_normalization_and_prior_automix() {
+        assert!((effective_automix_gain_db(6.0, 1.0, 0.0, 1.0) - 6.0).abs() < 1e-5);
+
+        let outgoing_gain = 10.0_f32.powf(-2.0 / 20.0);
+        let incoming_gain = 10.0_f32.powf(4.0 / 20.0);
+        assert!(effective_automix_gain_db(6.0, outgoing_gain, 0.0, incoming_gain).abs() < 1e-4);
+
+        let strongly_normalized_incoming = 10.0_f32.powf(12.0 / 20.0);
+        assert!(
+            (effective_automix_gain_db(20.0, 1.0, 0.0, strongly_normalized_incoming) - 8.0).abs()
+                < 1e-4
+        );
+
+        assert!((effective_automix_gain_db(2.0, 1.0, 3.0, 1.0) - 5.0).abs() < 1e-5);
+    }
+
+    #[test]
+    fn effective_automix_gain_treats_invalid_linear_gains_as_unity_and_clamps() {
+        assert_eq!(
+            effective_automix_gain_db(20.0, 0.0, f32::NAN, f32::NAN),
+            9.0
+        );
+        assert_eq!(
+            effective_automix_gain_db(-20.0, f32::INFINITY, 0.0, -1.0),
+            -9.0
+        );
     }
 
     #[test]

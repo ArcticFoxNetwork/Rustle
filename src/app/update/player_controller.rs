@@ -153,6 +153,7 @@ impl App {
         song: DbSong,
         kind: PendingPlaybackKind,
     ) {
+        self.playback.pause_requested = false;
         self.playback.pending_playback_request = Some(PendingPlaybackRequest {
             request_id,
             queue_index,
@@ -701,6 +702,7 @@ impl App {
         self.playback.current_song = Some(song.clone());
         self.playback.consecutive_failures = 0;
         self.playback.crossfade_triggered = false;
+        self.playback.pause_requested = false;
         self.update_tray_and_mpris_current(is_playing);
         Task::none()
     }
@@ -771,6 +773,7 @@ impl App {
                 );
                 return Task::none();
             };
+            self.playback.pause_requested = false;
 
             return match pending.kind {
                 PendingPlaybackKind::LoadPausedTrack => {
@@ -792,6 +795,7 @@ impl App {
             };
         }
 
+        self.playback.pause_requested = false;
         if let (Some(song), Some(queue_index)) =
             (&self.playback.current_song, self.playback.current_index)
         {
@@ -807,12 +811,14 @@ impl App {
 
     pub fn handle_audio_resumed_event(&mut self) -> Task<Message> {
         tracing::debug!("AudioEvent::Resumed");
+        self.playback.pause_requested = false;
         self.update_tray_and_mpris_current(true);
         Task::none()
     }
 
     pub fn handle_audio_stopped_event(&mut self) -> Task<Message> {
         tracing::debug!("AudioEvent::Stopped");
+        self.playback.pause_requested = false;
         if self.playback.pending_playback_request.is_none() {
             self.update_tray_and_mpris_current(false);
         }
@@ -854,6 +860,7 @@ impl App {
             if was_scheduled {
                 self.clear_scheduled_transition_state();
             }
+            self.playback.pause_requested = false;
 
             return match pending.kind {
                 PendingPlaybackKind::StartPlayingTrack => {
@@ -869,6 +876,7 @@ impl App {
             };
         }
 
+        self.playback.pause_requested = false;
         Self::toast_error(toast_message)
     }
 
@@ -882,16 +890,31 @@ impl App {
             self.save_playback_position_snapshot(song.id, queue_index as i64, position);
         }
 
-        self.pause_audio_output_with_fade(self.fade_in_enabled());
+        match self.pause_audio_output_with_fade(self.fade_in_enabled()) {
+            Ok(()) => {
+                self.playback.pause_requested = true;
+                self.playback.runtime.info.status = crate::audio::PlaybackStatus::Paused;
+                self.update_tray_and_mpris_current(false);
+            }
+            Err(error) => tracing::warn!("Failed to enqueue pause: {error}"),
+        }
     }
 
     pub fn resume_current_playback(&mut self) {
-        self.resume_audio_output_with_fade(self.fade_in_enabled());
+        match self.resume_audio_output_with_fade(self.fade_in_enabled()) {
+            Ok(()) => {
+                self.playback.pause_requested = false;
+                self.playback.runtime.info.status = crate::audio::PlaybackStatus::Playing;
+                self.update_tray_and_mpris_current(true);
+            }
+            Err(error) => tracing::warn!("Failed to enqueue resume: {error}"),
+        }
     }
 
     pub fn stop_audio_output(&mut self) {
         self.clear_scheduled_transition_state();
         self.playback.pending_playback_request = None;
+        self.playback.pause_requested = false;
         self.stop_audio_backend();
     }
 

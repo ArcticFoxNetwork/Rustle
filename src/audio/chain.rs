@@ -242,9 +242,19 @@ impl PlaybackProcessingRuntime {
     }
 
     pub(crate) fn set_automix_gain_db(&self, gain_db: f32) {
+        let gain_db = if gain_db.is_finite() { gain_db } else { 0.0 };
         let linear = 10.0_f32.powf(gain_db.clamp(-9.0, 9.0) / 20.0);
         self.automix_gain_bits
             .store(linear.to_bits(), Ordering::Release);
+    }
+
+    pub(crate) fn automix_gain_db(&self) -> f32 {
+        let linear = f32::from_bits(self.automix_gain_bits.load(Ordering::Acquire));
+        if linear.is_finite() && linear > 0.0 {
+            20.0 * linear.log10()
+        } else {
+            0.0
+        }
     }
 
     pub(crate) fn set_bass_mix(&self, mix: f32) {
@@ -266,6 +276,12 @@ impl PlaybackProcessingRuntime {
 
     pub(crate) fn reset_automix(&self) {
         self.set_automix_gain_db(0.0);
+        self.reset_automix_transition();
+    }
+
+    /// Clear transition-only Bass Swap state while retaining the per-track
+    /// Automix loudness anchor.
+    pub(crate) fn reset_automix_transition(&self) {
         self.set_bass_mix(1.0);
     }
 
@@ -416,7 +432,11 @@ where
     fn new(source: S, gain: f32) -> Self {
         Self {
             source,
-            gain: gain.max(0.0),
+            gain: if gain.is_finite() && gain > 0.0 {
+                gain
+            } else {
+                1.0
+            },
         }
     }
 }
@@ -868,6 +888,15 @@ mod tests {
     }
 
     #[test]
+    fn invalid_track_gain_is_treated_as_unity() {
+        for gain in [0.0, -1.0, f32::NAN, f32::INFINITY] {
+            let source = rodio::buffer::SamplesBuffer::new(1, 1_000, vec![0.25]);
+            let mut gained = TrackGainSource::new(source, gain);
+            assert_eq!(gained.next(), Some(0.25));
+        }
+    }
+
+    #[test]
     fn bass_swap_automation_is_per_runtime_and_resettable() {
         let chain = AudioProcessingChain::new();
         let runtime = chain.create_runtime();
@@ -878,11 +907,14 @@ mod tests {
         runtime.automate_bass_mix(1.0, std::time::Duration::from_millis(100));
         let output: Vec<_> = processed.by_ref().collect();
         assert!(output[0].abs() < output[100].abs());
-        runtime.reset_automix();
+        runtime.reset_automix_transition();
+        assert!((runtime.automix_gain_db() + 6.0).abs() < 1e-4);
         assert_eq!(
-            f32::from_bits(runtime.automix_gain_bits.load(Ordering::Acquire)),
+            f32::from_bits(runtime.bass_control.target_bits.load(Ordering::Acquire)),
             1.0
         );
+        runtime.reset_automix();
+        assert!(runtime.automix_gain_db().abs() < 1e-5);
         assert_eq!(
             f32::from_bits(runtime.bass_control.target_bits.load(Ordering::Acquire)),
             1.0
