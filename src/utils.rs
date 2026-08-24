@@ -536,6 +536,34 @@ pub fn compute_source(
     }
     Source::Online
 }
+
+/// Return the longest UTF-8-valid prefix that fits within `max_bytes`.
+///
+/// `str::len` and string slicing use byte offsets, while user-facing text is
+/// encoded as UTF-8. This helper makes the byte-oriented limit explicit and
+/// backs up to the previous character boundary when the limit falls inside a
+/// multi-byte character. The returned slice is always valid UTF-8 and never
+/// exceeds `max_bytes` bytes.
+#[must_use]
+pub fn truncate_utf8_to_bytes(input: &str, max_bytes: usize) -> &str {
+    if input.len() <= max_bytes {
+        return input;
+    }
+
+    let mut end = max_bytes;
+    while end > 0 && !input.is_char_boundary(end) {
+        end -= 1;
+    }
+    &input[..end]
+}
+
+const MAX_FILENAME_BYTES: usize = 200;
+
+/// Replace filename-unsafe characters and limit the result to 200 bytes.
+///
+/// The extension is kept intact when it can fit within the limit. Both the
+/// filename and extension may contain multi-byte UTF-8 characters, so all
+/// truncation goes through [`truncate_utf8_to_bytes`].
 pub fn sanitize_filename(input: &str) -> String {
     let mut result: String = input
         .chars()
@@ -547,15 +575,62 @@ pub fn sanitize_filename(input: &str) -> String {
         .collect();
     result.retain(|c| c != '\0');
     // Limit length, keeping extension intact
-    if result.len() > 200 {
-        if let Some(dot) = result.rfind('.') {
-            let ext = result[dot..].to_string();
-            let mut name = result[..dot].to_string();
-            name.truncate(200 - ext.len());
+    if result.len() > MAX_FILENAME_BYTES {
+        if let Some(dot) = result.rfind('.')
+            && dot > 0
+            && result.len() - dot <= MAX_FILENAME_BYTES
+        {
+            let ext = &result[dot..];
+            let name = truncate_utf8_to_bytes(&result[..dot], MAX_FILENAME_BYTES - ext.len());
             result = format!("{}{}", name, ext);
         } else {
-            result.truncate(200);
+            result = truncate_utf8_to_bytes(&result, MAX_FILENAME_BYTES).to_string();
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_utf8_to_bytes_never_splits_a_character() {
+        let input = "a中b";
+
+        assert_eq!(truncate_utf8_to_bytes(input, 0), "");
+        assert_eq!(truncate_utf8_to_bytes(input, 2), "a");
+        assert_eq!(truncate_utf8_to_bytes(input, 4), "a中");
+        assert_eq!(truncate_utf8_to_bytes(input, input.len()), input);
+        assert_eq!(truncate_utf8_to_bytes(input, input.len() + 1), input);
+    }
+
+    #[test]
+    fn sanitize_filename_handles_long_multibyte_input() {
+        let input = "中".repeat(100);
+        let output = sanitize_filename(&input);
+
+        assert!(output.len() <= MAX_FILENAME_BYTES);
+        assert!(output.is_char_boundary(output.len()));
+        assert_eq!(output.chars().count(), 66);
+    }
+
+    #[test]
+    fn sanitize_filename_preserves_extension_with_multibyte_name() {
+        let input = format!("{} .mp3", "中".repeat(100));
+        let output = sanitize_filename(&input);
+
+        assert!(output.len() <= MAX_FILENAME_BYTES);
+        assert!(output.ends_with(".mp3"));
+        assert!(output.is_char_boundary(output.len()));
+    }
+
+    #[test]
+    fn sanitize_filename_handles_extension_larger_than_limit() {
+        let input = format!("name.{}", "中".repeat(100));
+        let output = sanitize_filename(&input);
+
+        assert!(output.len() <= MAX_FILENAME_BYTES);
+        assert!(output.is_char_boundary(output.len()));
+    }
 }
