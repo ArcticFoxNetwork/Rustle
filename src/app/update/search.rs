@@ -4,7 +4,9 @@
 use iced::Task;
 
 use crate::api::SearchType;
-use crate::app::message::{Message, SearchResultsPayload};
+use crate::app::message::{
+    Message, SearchErrorPayload, SearchRequestContext, SearchResultsPayload,
+};
 use crate::app::state::{App, Route, SearchTab};
 
 /// Default number of results per page
@@ -40,10 +42,20 @@ impl App {
             }
 
             Message::SearchResultsLoaded(payload) => {
+                if !self.search_request_is_current(&payload.context) {
+                    tracing::debug!(
+                        "Ignoring stale search response: keyword={:?}, tab={:?}, page={}",
+                        payload.context.keyword,
+                        payload.context.tab,
+                        payload.context.page
+                    );
+                    return Some(Task::none());
+                }
+
                 self.ui.search.loading = false;
                 self.clear_search_cover_cache();
 
-                match payload.tab {
+                match payload.context.tab {
                     SearchTab::Songs => {
                         self.ui.search.tracks = payload.tracks.clone();
                         self.ui.search.total_count = payload.total_count;
@@ -66,9 +78,19 @@ impl App {
             }
 
             Message::SearchFailed(error) => {
+                if !self.search_request_is_current(&error.context) {
+                    tracing::debug!(
+                        "Ignoring stale search error: keyword={:?}, tab={:?}, page={}",
+                        error.context.keyword,
+                        error.context.tab,
+                        error.context.page
+                    );
+                    return Some(Task::none());
+                }
+
                 self.ui.search.loading = false;
-                tracing::error!("Search failed: {}", error);
-                Some(Self::toast_error(format!("搜索失败: {}", error)))
+                tracing::error!("Search failed: {}", error.error);
+                Some(Self::toast_error(format!("搜索失败: {}", error.error)))
             }
 
             Message::SearchPageChanged(page) => {
@@ -145,7 +167,10 @@ impl App {
         page: u32,
     ) -> Task<Message> {
         let Some(client) = &self.core.ncm_client else {
-            return Task::done(Message::SearchFailed("未登录".to_string()));
+            return Task::done(Message::SearchFailed(SearchErrorPayload {
+                context: SearchRequestContext { keyword, tab, page },
+                error: "未登录".to_string(),
+            }));
         };
 
         let client = client.clone();
@@ -191,7 +216,7 @@ impl App {
                         };
 
                         Message::SearchResultsLoaded(SearchResultsPayload {
-                            tab,
+                            context: SearchRequestContext { keyword, tab, page },
                             tracks,
                             albums,
                             artists,
@@ -199,10 +224,19 @@ impl App {
                             total_count,
                         })
                     }
-                    Err(e) => Message::SearchFailed(e.to_string()),
+                    Err(e) => Message::SearchFailed(SearchErrorPayload {
+                        context: SearchRequestContext { keyword, tab, page },
+                        error: e.to_string(),
+                    }),
                 }
             },
             |msg| msg,
         )
+    }
+
+    fn search_request_is_current(&self, context: &SearchRequestContext) -> bool {
+        self.ui.search.keyword == context.keyword
+            && self.ui.search.active_tab == context.tab
+            && self.ui.search.current_page == context.page
     }
 }

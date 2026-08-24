@@ -81,6 +81,11 @@ pub enum Key {
 
     // Search
     SearchPlaceholder,
+    SearchRelated,
+    SearchTabSongs,
+    SearchTabArtists,
+    SearchTabAlbums,
+    SearchTabPlaylists,
 
     // Hero Banner
     HeroTitle,

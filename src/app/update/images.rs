@@ -94,18 +94,24 @@ impl App {
                     song.cover_url(),
                 ));
             }
-            Message::SearchResultsLoaded(payload) => match payload.tab {
-                crate::app::state::SearchTab::Songs => {
-                    refs.extend(remote_track_covers(&payload.tracks))
-                }
-                crate::app::state::SearchTab::Albums => {
-                    refs.extend(remote_album_covers(&payload.albums));
-                }
-                crate::app::state::SearchTab::Artists => {
-                    refs.extend(remote_artist_covers(&payload.artists));
-                }
-                crate::app::state::SearchTab::Playlists => {
-                    refs.extend(remote_playlist_covers(&payload.playlists));
+            Message::SearchResultsLoaded(payload)
+                if self.ui.search.keyword == payload.context.keyword
+                    && self.ui.search.active_tab == payload.context.tab
+                    && self.ui.search.current_page == payload.context.page =>
+            {
+                match payload.context.tab {
+                    crate::app::state::SearchTab::Songs => {
+                        refs.extend(remote_track_covers(&payload.tracks))
+                    }
+                    crate::app::state::SearchTab::Albums => {
+                        refs.extend(remote_album_covers(&payload.albums));
+                    }
+                    crate::app::state::SearchTab::Artists => {
+                        refs.extend(remote_artist_covers(&payload.artists));
+                    }
+                    crate::app::state::SearchTab::Playlists => {
+                        refs.extend(remote_playlist_covers(&payload.playlists));
+                    }
                 }
             },
             Message::NcmPlaylistDetailLoaded(detail) => {

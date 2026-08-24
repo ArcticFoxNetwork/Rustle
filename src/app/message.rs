@@ -55,10 +55,29 @@ pub enum ContentWidthTarget {
     PlaylistDetail,
 }
 
+/// Request identity attached to every asynchronous search response.
+///
+/// Search requests can finish out of order when the user changes tabs or
+/// submits another keyword. Keeping the route context with the response lets
+/// the update layer discard stale work safely.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SearchRequestContext {
+    pub keyword: String,
+    pub tab: crate::app::state::SearchTab,
+    pub page: u32,
+}
+
+/// Search error payload for async loading
+#[derive(Debug, Clone)]
+pub struct SearchErrorPayload {
+    pub context: SearchRequestContext,
+    pub error: String,
+}
+
 /// Search results payload for async loading
 #[derive(Debug, Clone)]
 pub struct SearchResultsPayload {
-    pub tab: crate::app::state::SearchTab,
+    pub context: SearchRequestContext,
     pub tracks: Vec<Track>,
     pub albums: Vec<AlbumSummary>,
     pub artists: Vec<ArtistSummary>,
@@ -609,7 +628,7 @@ pub enum Message {
     /// Search results loaded
     SearchResultsLoaded(SearchResultsPayload),
     /// Search failed
-    SearchFailed(String),
+    SearchFailed(SearchErrorPayload),
     /// Change search page (pagination)
     SearchPageChanged(u32),
     /// Hover over search result song
@@ -1157,14 +1176,14 @@ impl std::fmt::Debug for Message {
                 simple!(
                     "SearchResultsLoaded",
                     "tab={:?}, tracks={}, artists={}, albums={}, playlists={}",
-                    payload.tab,
+                    payload.context.tab,
                     payload.tracks.len(),
                     payload.artists.len(),
                     payload.albums.len(),
                     payload.playlists.len()
                 )
             }
-            Self::SearchFailed(e) => simple!("SearchFailed", "{}", e),
+            Self::SearchFailed(e) => simple!("SearchFailed", "{}", e.error),
             Self::SearchPageChanged(page) => simple!("SearchPageChanged", "{}", page),
             Self::HoverSearchSong(id) => simple!("HoverSearchSong", "{:?}", id),
             Self::HoverSearchCard(id) => simple!("HoverSearchCard", "{:?}", id),

@@ -3,11 +3,11 @@
 //! Displays search results for songs, artists, albums, and playlists
 //! with tabbed navigation and pagination.
 
-use iced::widget::{Space, button, column, container, row, text};
-use iced::{Alignment, Element, Fill, Length, Padding};
+use iced::widget::{Space, button, column, container, row, scrollable, text};
+use iced::{Alignment, Background, Border, Element, Fill, Length, Padding};
 
 use crate::app::{ContentWidthTarget, ImageState, Message, SearchPageState, SearchTab};
-use crate::i18n::Locale;
+use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::components::cover_image;
 use crate::ui::theme::BOLD_WEIGHT;
@@ -29,17 +29,16 @@ pub fn view<'a>(
         return empty_search_state(locale);
     }
 
-    // Fixed header section (Title + Tabs)
-    let header_section = column![
-        // Header with keyword
+    // Fixed header section (Title + Tabs), matching the settings page header.
+    let header_section = container(column![
         row![
             text(&state.keyword)
-                .size(theme::TEXT_SIZE_TITLE_LARGE)
+                .size(theme::TEXT_SIZE_HERO)
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_primary(theme)),
                 })
                 .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
-            text(" 的相关搜索")
+            text(format!(" {}", locale.get(Key::SearchRelated)))
                 .size(theme::TEXT_SIZE_TITLE_LARGE)
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_muted(theme)),
@@ -47,11 +46,20 @@ pub fn view<'a>(
         ]
         .align_y(Alignment::Center),
         Space::new().height(24),
-        // Search tabs
-        search_tabs(state.active_tab),
-        Space::new().height(24),
-    ]
-    .padding(Padding::new(32.0).top(80.0).bottom(0.0));
+        search_tabs(state.active_tab, locale),
+    ])
+    .width(Fill)
+    .padding(
+        Padding::new(40.0)
+            .top(70.0)
+            .right(32.0)
+            .bottom(20.0)
+            .left(32.0),
+    )
+    .style(|theme| container::Style {
+        background: Some(Background::Color(theme::background(theme))),
+        ..Default::default()
+    });
 
     // Content area
     let content: Element<'a, Message> = if state.loading {
@@ -228,82 +236,78 @@ pub fn view<'a>(
 }
 
 /// Search tabs component
-fn search_tabs(active_tab: SearchTab) -> Element<'static, Message> {
+fn search_tabs(active_tab: SearchTab, locale: Locale) -> Element<'static, Message> {
     let tabs = [
-        (SearchTab::Songs, "单曲"),
-        (SearchTab::Artists, "歌手"),
-        (SearchTab::Albums, "专辑"),
-        (SearchTab::Playlists, "歌单"),
+        (SearchTab::Songs, Key::SearchTabSongs),
+        (SearchTab::Artists, Key::SearchTabArtists),
+        (SearchTab::Albums, Key::SearchTabAlbums),
+        (SearchTab::Playlists, Key::SearchTabPlaylists),
     ];
 
     let tab_buttons: Vec<Element<'static, Message>> = tabs
         .iter()
-        .map(|(tab, label)| {
+        .map(|(tab, label_key)| {
             let is_active = active_tab == *tab;
             let tab_clone = *tab;
 
-            button(
-                text(*label)
-                    .size(theme::TEXT_SIZE_BODY)
-                    .style(move |theme| iced::widget::text::Style {
-                        color: Some(if is_active {
-                            theme::text_primary(theme)
-                        } else {
-                            theme::text_muted(theme)
+            let tab_button = button(
+                container(
+                    text(locale.get(*label_key).to_string())
+                        .size(theme::TEXT_SIZE_BODY)
+                        .style(move |theme| iced::widget::text::Style {
+                            color: Some(if is_active {
+                                theme::ACCENT_PINK
+                            } else {
+                                theme::settings_inactive_tab(theme)
+                            }),
                         }),
-                    }),
+                )
+                .width(Fill)
+                .center_x(Fill),
             )
-            .padding(Padding::new(8.0).left(16.0).right(16.0))
-            .style(move |theme, status| tab_button_style(theme, status, is_active))
+            .style(move |theme, status| {
+                let hover_bg = match status {
+                    button::Status::Hovered => {
+                        Some(Background::Color(theme::hover_bg_alpha(theme, 0.05)))
+                    }
+                    _ => None,
+                };
+                button::Style {
+                    background: hover_bg,
+                    text_color: theme::text_primary(theme),
+                    border: Border::default(),
+                    ..Default::default()
+                }
+            })
             .on_press(Message::SearchTabChanged(tab_clone))
-            .into()
+            .padding([12, 0])
+            .width(Fill);
+
+            let underline = container(Space::new().height(2))
+                .width(Fill)
+                .style(move |theme| container::Style {
+                    background: Some(Background::Color(if is_active {
+                        theme::ACCENT_PINK
+                    } else {
+                        theme::settings_inactive_underline(theme)
+                    })),
+                    ..Default::default()
+                });
+
+            container(column![tab_button, underline].spacing(0).width(Fill))
+                .width(100)
+                .into()
         })
         .collect();
 
-    container(row(tab_buttons).spacing(4))
-        .padding(4)
-        .style(tabs_container_style)
+    scrollable(row(tab_buttons).spacing(0))
+        .direction(iced::widget::scrollable::Direction::Horizontal(
+            iced::widget::scrollable::Scrollbar::new()
+                .width(0)
+                .scroller_width(0),
+        ))
+        .width(Fill)
         .into()
-}
-
-/// Tab button style
-fn tab_button_style(theme: &iced::Theme, status: button::Status, is_active: bool) -> button::Style {
-    let bg = if is_active {
-        iced::Background::Color(theme::ACCENT_PINK)
-    } else {
-        match status {
-            button::Status::Hovered => iced::Background::Color(theme::surface_hover(theme)),
-            button::Status::Pressed => iced::Background::Color(theme::surface(theme)),
-            _ => iced::Background::Color(iced::Color::TRANSPARENT),
-        }
-    };
-
-    button::Style {
-        background: Some(bg),
-        text_color: if is_active {
-            iced::Color::WHITE
-        } else {
-            theme::text_muted(theme)
-        },
-        border: iced::Border {
-            radius: 8.0.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
-
-/// Tabs container style
-fn tabs_container_style(theme: &iced::Theme) -> container::Style {
-    container::Style {
-        background: Some(iced::Background::Color(theme::surface(theme))),
-        border: iced::Border {
-            radius: 12.0.into(),
-            width: 1.0,
-            color: theme::border_color(theme),
-        },
-        ..Default::default()
-    }
 }
 
 /// Search table header
