@@ -17,7 +17,7 @@ use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
 
 use super::automix::{TransitionDirective, TransitionKind};
 use super::chain::{AudioProcessingChain, PlaybackProcessingRuntime};
-use super::streaming::StreamingBuffer;
+use super::streaming::{SharedBuffer, StreamingBuffer, StreamingReaderCancellation};
 
 pub(crate) type PreparedStreamingSource = Decoder<StreamingBuffer>;
 
@@ -114,8 +114,18 @@ impl Default for PlayerState {
 struct OutgoingTransition {
     sink: Sink,
     runtime: PlaybackProcessingRuntime,
+    reader_cancellation: Option<StreamingReaderCancellation>,
+    shared_buffer: Option<SharedBuffer>,
     _group: super::automix::ScheduleGroup,
     advanced: bool,
+}
+
+pub(crate) struct DetachedStreamingPlayback {
+    pub sink: Sink,
+    pub duration: Duration,
+    pub cache_path: Option<PathBuf>,
+    pub track_gain: f32,
+    pub was_paused: bool,
 }
 
 fn prepare_transition_for_handoff<F>(
@@ -151,7 +161,10 @@ pub struct AudioPlayer {
     state: Arc<Mutex<PlayerState>>,
     chain: AudioProcessingChain,
     current_runtime: Option<PlaybackProcessingRuntime>,
+    current_reader_cancellation: Option<StreamingReaderCancellation>,
     is_streaming: bool,
+    detached_seek_position: Option<Duration>,
+    position_offset: Duration,
     pending_pause_fade: bool,
     outgoing_transition: Option<OutgoingTransition>,
     last_transition_group: Option<super::automix::ScheduleGroup>,
@@ -189,7 +202,10 @@ impl AudioPlayer {
             state: Arc::new(Mutex::new(state)),
             chain,
             current_runtime: None,
+            current_reader_cancellation: None,
             is_streaming: false,
+            detached_seek_position: None,
+            position_offset: Duration::ZERO,
             pending_pause_fade: false,
             outgoing_transition: None,
             last_transition_group: None,
@@ -330,6 +346,7 @@ impl AudioPlayer {
         self.current_path = Some(path.clone());
         self.current_runtime = Some(runtime);
         self.is_streaming = false;
+        self.position_offset = Duration::ZERO;
 
         tracing::info!("Playing audio, duration: {:?}", duration);
         Ok(())
@@ -393,6 +410,7 @@ impl AudioPlayer {
         self.current_path = Some(path.clone());
         self.current_runtime = Some(runtime);
         self.is_streaming = false;
+        self.position_offset = Duration::ZERO;
 
         tracing::info!(
             "Loaded paused audio at {:?}, duration: {:?}",
@@ -406,6 +424,7 @@ impl AudioPlayer {
     pub(crate) fn load_prepared_streaming_paused(
         &mut self,
         source: PreparedStreamingSource,
+        reader_cancellation: StreamingReaderCancellation,
         duration: Duration,
         cache_path: Option<PathBuf>,
         position: Duration,
@@ -428,25 +447,10 @@ impl AudioPlayer {
         sink.set_volume(self.get_sink_volume());
         sink.pause();
 
-        let seek_error = cache_path
-            .as_deref()
-            .map(|path| Self::try_seek_on_start(&sink, position, path))
-            .unwrap_or_else(|| {
-                if position.is_zero() {
-                    None
-                } else if let Err(err) = sink.try_seek(position) {
-                    tracing::warn!(
-                        "Failed to seek streaming source to {:?} while loading paused: {}",
-                        position,
-                        err
-                    );
-                    Some("Seek not supported for this format".to_string())
-                } else {
-                    None
-                }
-            });
-
-        let paused_position = sink.get_pos();
+        // The preparation worker already sought the decoder. Issuing a Rodio
+        // Sink seek here would synchronously wait for the mixer on the control
+        // actor and can deadlock behind a blocked streaming read.
+        let paused_position = position;
 
         {
             let mut state = self.state.lock().unwrap();
@@ -459,14 +463,16 @@ impl AudioPlayer {
         self.current_sink = Some(sink);
         self.current_path = cache_path;
         self.current_runtime = Some(runtime);
+        self.current_reader_cancellation = Some(reader_cancellation);
         self.is_streaming = true;
+        self.position_offset = position;
 
         tracing::info!(
             "Loaded paused streaming audio at {:?}, duration: {:?}",
             paused_position,
             duration
         );
-        Ok(seek_error)
+        Ok(None)
     }
 
     /// Play a local file from a target position.
@@ -511,6 +517,7 @@ impl AudioPlayer {
         self.current_path = Some(path.clone());
         self.current_runtime = Some(runtime);
         self.is_streaming = false;
+        self.position_offset = Duration::ZERO;
 
         tracing::info!(
             "Playing audio from position {:?}, duration: {:?}",
@@ -545,6 +552,24 @@ impl AudioPlayer {
 
     /// Play a preloaded sink (from PreloadManager)
     ///
+    pub(crate) fn preloaded_will_overlap(
+        &self,
+        transition: &TransitionDirective,
+    ) -> Result<bool, String> {
+        if self.last_transition_group == Some(transition.group) {
+            return Err(format!(
+                "stale Automix transition group {}",
+                transition.group.0
+            ));
+        }
+        Ok(self.current_sink.is_some()
+            && self
+                .state
+                .lock()
+                .map(|state| state.status == PlaybackStatus::Playing)
+                .unwrap_or(false))
+    }
+
     #[allow(clippy::too_many_arguments)] // Mirrors the immutable preload + transition contract.
     pub fn play_preloaded_sink(
         &mut self,
@@ -555,25 +580,23 @@ impl AudioPlayer {
         fade_in: bool,
         track_gain: f32,
         runtime: PlaybackProcessingRuntime,
+        reader_cancellation: Option<StreamingReaderCancellation>,
+        outgoing_shared_buffer: Option<SharedBuffer>,
         mut transition: TransitionDirective,
     ) -> Result<(), String> {
         self.pending_pause_fade = false;
-        if self.last_transition_group == Some(transition.group) {
-            return Err(format!(
-                "stale Automix transition group {}",
-                transition.group.0
-            ));
-        }
-        let can_overlap = self.current_sink.is_some()
-            && self
-                .state
-                .lock()
-                .map(|state| state.status == PlaybackStatus::Playing)
-                .unwrap_or(false);
+        let can_overlap = self.preloaded_will_overlap(&transition)?;
 
         if can_overlap {
             self.last_transition_group = Some(transition.group);
             if let Some(previous) = self.outgoing_transition.take() {
+                if let Some(buffer) = previous.shared_buffer {
+                    buffer.cancel();
+                    buffer.clear_buffer_callback();
+                }
+                if let Some(cancellation) = previous.reader_cancellation {
+                    cancellation.cancel();
+                }
                 previous.sink.stop();
             }
             let old_sink = self.current_sink.take().expect("current sink exists");
@@ -581,15 +604,18 @@ impl AudioPlayer {
                 .current_runtime
                 .take()
                 .unwrap_or_else(|| self.prepare_runtime(false));
+            let old_reader_cancellation = self.current_reader_cancellation.take();
             let outgoing_track_gain = self
                 .state
                 .lock()
                 .map(|state| state.current_track_gain)
                 .unwrap_or(1.0);
             let outgoing_automix_gain_db = old_runtime.automix_gain_db();
-            transition = prepare_transition_for_handoff(transition, old_sink.get_pos(), |entry| {
-                sink.try_seek(entry).is_ok()
-            });
+            transition = prepare_transition_for_handoff(
+                transition,
+                self.position_offset.saturating_add(old_sink.get_pos()),
+                |entry| !is_streaming && sink.try_seek(entry).is_ok(),
+            );
             let crossfade = transition.duration;
             let advanced = transition.kind == TransitionKind::Automix;
             old_sink.set_speed(1.0);
@@ -620,10 +646,16 @@ impl AudioPlayer {
             self.outgoing_transition = Some(OutgoingTransition {
                 sink: old_sink,
                 runtime: old_runtime,
+                reader_cancellation: old_reader_cancellation,
+                shared_buffer: outgoing_shared_buffer,
                 _group: transition.group,
                 advanced,
             });
         } else {
+            if let Some(buffer) = outgoing_shared_buffer {
+                buffer.cancel();
+                buffer.clear_buffer_callback();
+            }
             self.stop();
             sink.set_volume(self.get_sink_volume());
             if fade_in {
@@ -648,7 +680,9 @@ impl AudioPlayer {
         self.current_sink = Some(sink);
         self.current_path = Some(path.clone());
         self.current_runtime = Some(runtime);
+        self.current_reader_cancellation = reader_cancellation;
         self.is_streaming = is_streaming;
+        self.position_offset = Duration::ZERO;
 
         tracing::info!(
             "Playing preloaded audio, duration: {:?}, streaming: {}",
@@ -662,6 +696,7 @@ impl AudioPlayer {
     pub(crate) fn play_prepared_streaming(
         &mut self,
         source: PreparedStreamingSource,
+        reader_cancellation: StreamingReaderCancellation,
         duration: Duration,
         cache_path: Option<PathBuf>,
         fade_in: bool,
@@ -698,7 +733,9 @@ impl AudioPlayer {
         // Store cache path for seek fallback (when streaming seek fails, we can reload from file)
         self.current_path = cache_path;
         self.current_runtime = Some(runtime);
+        self.current_reader_cancellation = Some(reader_cancellation);
         self.is_streaming = true;
+        self.position_offset = Duration::ZERO;
 
         tracing::info!("Playing streaming audio, duration: {:?}", duration);
         Ok(())
@@ -718,7 +755,7 @@ impl AudioPlayer {
                 return;
             }
 
-            let current_pos = sink.get_pos();
+            let current_pos = self.position_offset.saturating_add(sink.get_pos());
             sink.pause();
             sink.set_volume(self.get_sink_volume());
 
@@ -743,7 +780,7 @@ impl AudioPlayer {
             return false;
         }
         if let Some(sink) = self.current_sink.as_ref() {
-            let current_pos = sink.get_pos();
+            let current_pos = self.position_offset.saturating_add(sink.get_pos());
             sink.pause();
             sink.set_volume(self.get_sink_volume());
             if let Ok(mut state) = self.state.lock() {
@@ -762,6 +799,13 @@ impl AudioPlayer {
                 || transition.sink.empty()
         });
         if complete && let Some(transition) = self.outgoing_transition.take() {
+            if let Some(buffer) = transition.shared_buffer {
+                buffer.cancel();
+                buffer.clear_buffer_callback();
+            }
+            if let Some(cancellation) = transition.reader_cancellation {
+                cancellation.cancel();
+            }
             transition.sink.stop();
             if transition.advanced {
                 if let Some(sink) = self.current_sink.as_ref() {
@@ -837,13 +881,27 @@ impl AudioPlayer {
         self.pending_pause_fade = false;
         self.last_transition_group = None;
         if let Some(transition) = self.outgoing_transition.take() {
+            if let Some(buffer) = transition.shared_buffer {
+                buffer.cancel();
+                buffer.clear_buffer_callback();
+            }
+            if let Some(cancellation) = transition.reader_cancellation {
+                cancellation.cancel();
+            }
             transition.sink.stop();
+        }
+        if let Some(cancellation) = self.current_reader_cancellation.take() {
+            cancellation.cancel();
         }
         if let Some(sink) = self.current_sink.take() {
             sink.set_speed(1.0);
             sink.stop();
         }
         self.current_runtime = None;
+        self.current_path = None;
+        self.is_streaming = false;
+        self.detached_seek_position = None;
+        self.position_offset = Duration::ZERO;
         self.chain.activate_runtime(None);
         let mut state = self.state.lock().unwrap();
         state.status = PlaybackStatus::Stopped;
@@ -868,6 +926,13 @@ impl AudioPlayer {
         self.pending_pause_fade = false;
         self.last_transition_group = None;
         if let Some(transition) = self.outgoing_transition.take() {
+            if let Some(buffer) = transition.shared_buffer {
+                buffer.cancel();
+                buffer.clear_buffer_callback();
+            }
+            if let Some(cancellation) = transition.reader_cancellation {
+                cancellation.cancel();
+            }
             transition.sink.stop();
         }
         if let Some(runtime) = self.current_runtime.as_ref() {
@@ -879,6 +944,7 @@ impl AudioPlayer {
             sink.set_speed(1.0);
             match sink.try_seek(position) {
                 Ok(_) => {
+                    self.position_offset = Duration::ZERO;
                     let new_position = sink.get_pos();
                     let mut state = self.state.lock().unwrap();
                     if matches!(state.status, PlaybackStatus::Paused) {
@@ -962,12 +1028,115 @@ impl AudioPlayer {
 
         self.current_sink = Some(new_sink);
         self.current_runtime = Some(runtime);
+        self.position_offset = Duration::ZERO;
 
         if seek_failed {
             Err("Seek not supported for this format".to_string())
         } else {
             Ok(())
         }
+    }
+
+    /// Transfer a streaming Sink to the bounded seek worker. No Rodio seek
+    /// order is issued on the control actor.
+    pub(crate) fn take_streaming_sink_for_seek(
+        &mut self,
+        position: Duration,
+    ) -> Result<DetachedStreamingPlayback, String> {
+        if !self.is_streaming {
+            return Err("current source is not streaming".to_string());
+        }
+        self.pending_pause_fade = false;
+        self.last_transition_group = None;
+        if let Some(transition) = self.outgoing_transition.take() {
+            if let Some(buffer) = transition.shared_buffer {
+                buffer.cancel();
+                buffer.clear_buffer_callback();
+            }
+            if let Some(cancellation) = transition.reader_cancellation {
+                cancellation.cancel();
+            }
+            transition.sink.stop();
+        }
+        if let Some(runtime) = self.current_runtime.as_ref() {
+            runtime.set_fade_volume(1.0);
+            runtime.reset_automix_transition();
+            runtime.reset_natural_end();
+        }
+        let sink = self
+            .current_sink
+            .take()
+            .ok_or_else(|| "streaming seek is already pending".to_string())?;
+        let (duration, track_gain, was_paused) = self
+            .state
+            .lock()
+            .map(|state| {
+                (
+                    state.duration,
+                    state.current_track_gain,
+                    matches!(state.status, PlaybackStatus::Paused),
+                )
+            })
+            .unwrap_or((Duration::ZERO, 1.0, false));
+        sink.set_speed(1.0);
+        self.detached_seek_position = Some(position);
+        Ok(DetachedStreamingPlayback {
+            sink,
+            duration,
+            cache_path: self.current_path.clone(),
+            track_gain,
+            was_paused,
+        })
+    }
+
+    /// Wake the currently installed streaming decoder before its detached
+    /// Sink is stopped or replaced.
+    pub(crate) fn cancel_current_streaming_reader(&mut self) {
+        if let Some(cancellation) = self.current_reader_cancellation.take() {
+            cancellation.cancel();
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn install_preseeked_streaming_source(
+        &mut self,
+        source: PreparedStreamingSource,
+        reader_cancellation: StreamingReaderCancellation,
+        duration: Duration,
+        cache_path: Option<PathBuf>,
+        position: Duration,
+        track_gain: f32,
+        paused: bool,
+    ) {
+        self.stop();
+        self.chain.refresh_eq_coefficients();
+        let runtime = self.prepare_runtime(false);
+        self.chain.activate_runtime(Some(&runtime));
+        let processed = self.chain.apply(source, track_gain, runtime.clone());
+        let sink = Sink::connect_new(self._stream.mixer());
+        sink.append(processed);
+        sink.set_volume(self.get_sink_volume());
+        if paused {
+            sink.pause();
+        }
+        {
+            let mut state = self.state.lock().unwrap();
+            state.status = if paused {
+                PlaybackStatus::Paused
+            } else {
+                PlaybackStatus::Playing
+            };
+            state.duration = duration;
+            state.paused_position = paused.then_some(position);
+            state.current_track_gain = track_gain;
+        }
+        self.current_sink = Some(sink);
+        self.current_path = cache_path;
+        self.current_runtime = Some(runtime);
+        self.current_reader_cancellation = Some(reader_cancellation);
+        self.is_streaming = true;
+        self.detached_seek_position = None;
+        self.position_offset = position;
     }
 
     /// Get current playback info
@@ -978,10 +1147,10 @@ impl AudioPlayer {
             if matches!(state.status, PlaybackStatus::Paused) {
                 state.paused_position.unwrap_or_else(|| sink.get_pos())
             } else {
-                sink.get_pos()
+                self.position_offset.saturating_add(sink.get_pos())
             }
         } else {
-            Duration::ZERO
+            self.detached_seek_position.unwrap_or(Duration::ZERO)
         };
 
         // Don't change status based on sink.empty() - it's unreliable
@@ -1007,7 +1176,7 @@ impl AudioPlayer {
         }
         if let Some(sink) = &self.current_sink {
             let state = self.state.lock().unwrap();
-            let position = sink.get_pos();
+            let position = self.position_offset.saturating_add(sink.get_pos());
             let duration = state.duration;
 
             // Don't consider finished if we just started or if paused/stopped
@@ -1261,6 +1430,7 @@ fn get_cpal_devices() -> Vec<AudioDevice> {
 pub enum PlaybackError {
     FileNotFound(String),
     UnsupportedStreaming(String),
+    UnhealthyPreload(String),
     UnsupportedFormat(String),
     NetworkError(String),
     IoError(String),
@@ -1272,6 +1442,7 @@ impl std::fmt::Display for PlaybackError {
         match self {
             PlaybackError::FileNotFound(m) => write!(f, "File not found: {}", m),
             PlaybackError::UnsupportedStreaming(m) => write!(f, "Unsupported streaming: {}", m),
+            PlaybackError::UnhealthyPreload(m) => write!(f, "Unhealthy preload: {}", m),
             PlaybackError::UnsupportedFormat(m) => write!(f, "Unsupported format: {}", m),
             PlaybackError::NetworkError(m) => write!(f, "Network error: {}", m),
             PlaybackError::IoError(m) => write!(f, "IO error: {}", m),

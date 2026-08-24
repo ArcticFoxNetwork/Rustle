@@ -47,6 +47,16 @@ pub(super) enum PlaybackSource {
 /// Maximum consecutive failures before stopping playback
 const MAX_CONSECUTIVE_FAILURES: u8 = 3;
 
+/// Transfer the app-side streaming reference after the audio thread has
+/// committed a preloaded handoff. The audio thread may still own the outgoing
+/// buffer for Crossfade/Automix, so dropping this clone must not cancel it.
+fn handoff_active_streaming_buffer(
+    active: &mut Option<crate::audio::SharedBuffer>,
+    incoming: Option<crate::audio::SharedBuffer>,
+) {
+    *active = incoming;
+}
+
 impl App {
     fn resolve_artist_id_for_song(&self, song: &DbSong) -> Option<u64> {
         let ncm_id = if song.id < 0 {
@@ -181,7 +191,7 @@ impl App {
             self.playback.scheduled_transition_request_id = None;
             self.playback.pending_transition = None;
             self.playback.pending_transition_trigger = None;
-            self.replace_active_streaming_buffer(incoming);
+            handoff_active_streaming_buffer(&mut self.playback.active_streaming_buffer, incoming);
         }
     }
 
@@ -354,8 +364,14 @@ impl App {
             }
             (_, transition) => {
                 self.clear_scheduled_transition_state();
-                self.replace_active_streaming_buffer(buffer);
-                self.play_preloaded_audio(identity, self.fade_in_enabled(), transition)
+                let request_id =
+                    self.play_preloaded_audio(identity, self.fade_in_enabled(), transition)?;
+                // Keep the outgoing stream owned until the audio thread has
+                // validated and actually started the preload. Started promotes
+                // this buffer; Error drops it and can resolve the same track.
+                self.playback.scheduled_transition_buffer = buffer;
+                self.playback.scheduled_transition_request_id = Some(request_id);
+                Ok(request_id)
             }
         }
     }
@@ -838,7 +854,11 @@ impl App {
             error_kind
         );
 
-        let toast_message = match error_kind {
+        let unhealthy_preload = matches!(
+            &error_kind,
+            Some(crate::audio::PlaybackError::UnhealthyPreload(_))
+        );
+        let toast_message = match &error_kind {
             Some(crate::audio::PlaybackError::UnsupportedFormat(_)) => {
                 "不支持的音频格式".to_string()
             }
@@ -848,6 +868,9 @@ impl App {
             Some(crate::audio::PlaybackError::NetworkError(_)) => "网络读取出错".to_string(),
             Some(crate::audio::PlaybackError::FileNotFound(_)) => "文件不存在".to_string(),
             Some(crate::audio::PlaybackError::IoError(_)) => "文件读取出错".to_string(),
+            Some(crate::audio::PlaybackError::UnhealthyPreload(_)) => {
+                "预加载已失效，正在重新加载".to_string()
+            }
             _ => format!("播放错误: {}", message),
         };
 
@@ -865,7 +888,18 @@ impl App {
             return match pending.kind {
                 PendingPlaybackKind::StartPlayingTrack => {
                     if let Some(idx) = pending.queue_index {
-                        self.handle_playback_failure(idx, &message)
+                        if unhealthy_preload {
+                            tracing::warn!(
+                                queue_index = idx,
+                                request_id,
+                                "Falling back once to normal resolution for unhealthy preload"
+                            );
+                            let fallback = self.play_song_at_index(idx);
+                            self.replace_active_streaming_buffer(None);
+                            fallback
+                        } else {
+                            self.handle_playback_failure(idx, &message)
+                        }
                     } else {
                         Self::toast_error(toast_message)
                     }
@@ -877,6 +911,7 @@ impl App {
         }
 
         self.playback.pause_requested = false;
+        self.replace_active_streaming_buffer(None);
         Self::toast_error(toast_message)
     }
 
@@ -1673,5 +1708,30 @@ impl App {
             .preload_coordinator
             .ensure_lyrics_slot(song.id);
         Task::done(Message::WarmLyricsCache(song.id, ncm_id))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::handoff_active_streaming_buffer;
+    use crate::audio::SharedBuffer;
+
+    #[test]
+    fn preloaded_handoff_does_not_cancel_the_outgoing_stream() {
+        let outgoing = SharedBuffer::new(16);
+        outgoing.set_coordinator_active_for_test(true);
+        let outgoing_observer = outgoing.clone();
+        let incoming = SharedBuffer::new(32);
+        let incoming_observer = incoming.clone();
+        let mut active = Some(outgoing);
+
+        handoff_active_streaming_buffer(&mut active, Some(incoming));
+
+        assert!(!outgoing_observer.is_cancelled());
+        assert!(
+            active
+                .as_ref()
+                .is_some_and(|buffer| buffer.total_size() == incoming_observer.total_size())
+        );
     }
 }

@@ -109,6 +109,8 @@ pub enum AudioCommand {
         track_gain: f32,
     },
     /// Play a preloaded sink by immutable identity.
+    /// `context` is the outgoing owner; the audio thread promotes a new
+    /// generation only after validating the preload's current health.
     PlayPreloaded {
         context: PlaybackContext,
         identity: PreloadIdentity,
@@ -349,13 +351,6 @@ pub enum AudioEvent {
     },
 }
 
-#[derive(Debug, Clone)]
-pub struct PendingSeek {
-    pub target: Duration,
-    pub context: PlaybackContext,
-    pub nonce: SeekNonce,
-}
-
 /// Inner state protected by RwLock
 #[derive(Debug, Clone)]
 struct PlaybackStateInner {
@@ -376,12 +371,6 @@ struct PlaybackStateInner {
     pub buffered_bytes: u64,
     /// Total bytes count
     pub total_bytes: u64,
-    /// Pending seek target position
-    ///
-    /// When seeking to an unbuffered position, we store the target here
-    /// and enter Buffering state. When buffer is ready, exit_buffering()
-    /// checks this field and executes the seek before resuming playback.
-    pub pending_seek: Option<PendingSeek>,
 }
 
 impl Default for PlaybackStateInner {
@@ -395,7 +384,6 @@ impl Default for PlaybackStateInner {
             buffer_progress: None,
             buffered_bytes: 0,
             total_bytes: 0,
-            pending_seek: None,
         }
     }
 }
@@ -455,10 +443,6 @@ impl SharedPlaybackState {
     /// Get display positio
     pub fn display_position(&self) -> Duration {
         let inner = self.inner.read();
-        // If there's a pending seek, show the target position
-        if let Some(pending) = &inner.pending_seek {
-            return pending.target;
-        }
         inner.position
     }
 
@@ -506,19 +490,6 @@ impl SharedPlaybackState {
         } else {
             inner.buffer_progress = None;
         }
-    }
-
-    /// Set pending seek target
-    ///
-    /// Called when seeking to unbuffered position. The target is stored
-    /// and will be executed when buffer is ready.
-    pub fn set_pending_seek(&self, pending: Option<PendingSeek>) {
-        self.inner.write().pending_seek = pending;
-    }
-
-    /// Get pending seek context.
-    pub fn pending_seek(&self) -> Option<PendingSeek> {
-        self.inner.read().pending_seek.clone()
     }
 
     /// Update from PlaybackInfo

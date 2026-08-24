@@ -437,11 +437,11 @@ impl App {
                 )
             }
             StreamingEventKind::Error(err) => {
-                tracing::error!("Streaming error: {}", err);
-                if matches!(event.identity, StreamingIdentity::Playback(_)) {
-                    self.replace_active_streaming_buffer(None);
-                    return Self::toast_error(format!("下载失败: {}", err));
-                }
+                tracing::error!(identity = ?event.identity, error = %err, "Streaming coordinator failed");
+                // SharedBuffer health is authoritative after startup. The audio
+                // thread stops a terminal current stream and emits the single
+                // user-visible AudioEvent::Error; removing the app reference
+                // here would duplicate the toast and leave the Sink unmanaged.
             }
         }
         Task::none()

@@ -22,7 +22,7 @@ use crate::app::message::Message;
 use crate::audio::identity::PreloadIdentity;
 use crate::audio::streaming::{
     SharedBuffer, StreamingIdentity, estimate_size_from_duration, start_buffer_download,
-    wait_for_playable,
+    wait_for_buffer_playable,
 };
 use crate::database::DbSong;
 
@@ -452,16 +452,13 @@ async fn download_audio_streaming(
 
     let cache_path = song_cache_dir.join(&song_stem);
 
-    let (event_tx, mut event_rx) = tokio::sync::mpsc::channel(32);
     let streaming_identity = StreamingIdentity::Preload(identity.clone());
-    let shared_buffer = start_buffer_download(
-        song_url,
-        cache_path.clone(),
-        streaming_identity,
-        Some(event_tx),
-    );
+    let shared_buffer = start_buffer_download(song_url, cache_path, streaming_identity, None);
 
-    if wait_for_playable(&mut event_rx, 30).await {
+    // Buffer health, not a short-lived event receiver, remains authoritative
+    // after the first startup watermark. The audio thread rechecks the same
+    // buffer before promotion and rejects Ready-then-failed preloads.
+    if wait_for_buffer_playable(&shared_buffer, 30).await {
         tracing::info!(
             "Preload: returning SharedBuffer for song {} (downloaded: {} bytes)",
             ncm_id,
@@ -477,6 +474,7 @@ async fn download_audio_streaming(
         )
     } else {
         tracing::error!("Preload: download failed for song {}", ncm_id);
+        shared_buffer.cancel();
         Message::PreloadAudioFailed(idx, direction, identity)
     }
 }

@@ -438,7 +438,8 @@ impl AudioHandle {
         });
         let context = self
             .generation
-            .activate_preloaded_generation(&identity)
+            .active_context()
+            .filter(|_| self.generation.accepts_preload(&identity))
             .ok_or_else(|| "preloaded audio identity is stale or cancelled".to_string())?;
         permit.send(AudioCommand::PlayPreloaded {
             context,
@@ -659,6 +660,29 @@ mod tests {
 
         assert_eq!(error, "preloaded audio identity is stale or cancelled");
         assert_eq!(handle.current_context(), Some(current));
+    }
+
+    #[test]
+    fn immediate_preload_command_defers_generation_promotion_to_audio_thread() {
+        let (tx, mut rx) = super::super::events::audio_command_channel();
+        let latest = LatestControlMailbox::new(tx.clone());
+        let handle = AudioHandle::new(tx, latest, SharedPlaybackState::new());
+        let outgoing = handle.generation.activate_generation();
+        let identity = handle.generation.reserve_preload_identity().unwrap();
+
+        handle
+            .play_preloaded(identity.clone(), false, None)
+            .unwrap();
+
+        assert_eq!(handle.current_context(), Some(outgoing.clone()));
+        assert!(matches!(
+            rx.try_recv().unwrap(),
+            AudioCommand::PlayPreloaded {
+                context,
+                identity: queued_identity,
+                ..
+            } if context == outgoing && queued_identity == identity
+        ));
     }
 
     #[test]

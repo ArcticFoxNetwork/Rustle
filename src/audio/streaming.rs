@@ -14,7 +14,7 @@ use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use crate::audio::identity::{PlaybackContext, PreloadIdentity};
 use parking_lot::{Condvar, Mutex, RwLock};
@@ -44,6 +44,24 @@ const FORMAT_DETECTION_PREFIX_BYTES: usize = 64 * 1024;
 
 /// Size of each strict HTTP Range window.
 const RANGE_CHUNK_BYTES: u64 = 512 * 1024;
+
+/// Network deadlines are explicit so CDN or socket stalls cannot become an
+/// unbounded decoder-liveness dependency.
+const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+const HTTP_REQUEST_TIMEOUT: Duration = Duration::from_secs(20);
+
+/// Maximum time a concrete decoder demand may observe no retained-window byte
+/// progress while the coordinator still claims to be refillable.
+const DECODER_DEMAND_STALL_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// Recoverable Range transport/body failures are retried at most this many
+/// times after the initial attempt.
+const MAX_RANGE_RETRIES: u8 = 3;
+
+fn range_retry_backoff(retries_completed: u8) -> Option<Duration> {
+    (retries_completed < MAX_RANGE_RETRIES)
+        .then(|| Duration::from_millis(100 * u64::from(retries_completed + 1)))
+}
 
 /// Valid audio extensions for URL parsing
 #[cfg(test)]
@@ -207,6 +225,38 @@ pub enum BufferEvent {
     Complete,
 }
 
+/// Authoritative health of a streaming coordinator and its retained data.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SharedBufferHealth {
+    /// The coordinator can still refill the decoder-visible window.
+    Refillable,
+    /// The remote object has reached a valid EOF or cache completion.
+    Complete,
+    /// The owning generation explicitly cancelled the stream.
+    Cancelled,
+    /// The coordinator stored a terminal failure.
+    Failed(String),
+    /// The coordinator exited without completion or a stored error.
+    CoordinatorStopped,
+}
+
+impl SharedBufferHealth {
+    pub fn promotion_error(&self) -> Option<String> {
+        Self::health_for_promotion(self).err()
+    }
+
+    fn health_for_promotion(&self) -> Result<(), String> {
+        match self {
+            Self::Refillable | Self::Complete => Ok(()),
+            Self::Cancelled => Err("streaming preload was cancelled".to_string()),
+            Self::Failed(error) => Err(format!("streaming preload failed: {error}")),
+            Self::CoordinatorStopped => {
+                Err("streaming preload coordinator stopped before completion".to_string())
+            }
+        }
+    }
+}
+
 type BufferCallback = Box<dyn Fn(BufferEvent) + Send + Sync>;
 
 /// Estimate content size from duration (40KB/s at 320kbps)
@@ -247,6 +297,7 @@ struct SharedBufferInner {
     complete: AtomicBool,
     cancelled: AtomicBool,
     error: RwLock<Option<String>>,
+    demand_stall_timeout: Duration,
     data_available: Condvar,
     wait_mutex: Mutex<()>,
     buffer_callback: RwLock<Option<BufferCallback>>,
@@ -273,6 +324,42 @@ pub struct SharedBuffer {
     inner: Arc<SharedBufferInner>,
 }
 
+/// Cancellation scoped to one `StreamingBuffer` reader.
+///
+/// A streaming seek may temporarily create a replacement decoder backed by
+/// the same `SharedBuffer` as the old decoder. Cancelling the shared buffer in
+/// that situation would also invalidate the replacement, so reader lifecycle
+/// cancellation is kept separate from download/coordinator cancellation.
+#[derive(Clone)]
+pub(crate) struct StreamingReaderCancellation {
+    cancelled: Arc<AtomicBool>,
+    shared: std::sync::Weak<SharedBufferInner>,
+}
+
+impl StreamingReaderCancellation {
+    fn new(shared: &SharedBuffer) -> Self {
+        Self {
+            cancelled: Arc::new(AtomicBool::new(false)),
+            shared: Arc::downgrade(&shared.inner),
+        }
+    }
+
+    pub(crate) fn cancel(&self) {
+        self.cancelled.store(true, Ordering::Release);
+        if let Some(shared) = self.shared.upgrade() {
+            shared.data_available.notify_all();
+        }
+    }
+
+    pub(crate) fn is_cancelled(&self) -> bool {
+        self.cancelled.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn same_reader(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.cancelled, &other.cancelled)
+    }
+}
+
 impl std::fmt::Debug for SharedBuffer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SharedBuffer")
@@ -290,6 +377,14 @@ impl SharedBuffer {
     }
 
     pub fn with_capacity(total_size: u64, capacity: usize) -> Self {
+        Self::with_capacity_and_stall_timeout(total_size, capacity, DECODER_DEMAND_STALL_TIMEOUT)
+    }
+
+    fn with_capacity_and_stall_timeout(
+        total_size: u64,
+        capacity: usize,
+        demand_stall_timeout: Duration,
+    ) -> Self {
         let capacity = capacity.max(1);
         Self {
             inner: Arc::new(SharedBufferInner {
@@ -308,6 +403,7 @@ impl SharedBuffer {
                 complete: AtomicBool::new(false),
                 cancelled: AtomicBool::new(false),
                 error: RwLock::new(None),
+                demand_stall_timeout,
                 data_available: Condvar::new(),
                 wait_mutex: Mutex::new(()),
                 buffer_callback: RwLock::new(None),
@@ -351,6 +447,14 @@ impl SharedBuffer {
     #[cfg(test)]
     pub fn retained_len(&self) -> usize {
         self.inner.data.read().len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_coordinator_active_for_test(&self, active: bool) {
+        self.inner
+            .coordinator_active
+            .store(active, Ordering::Release);
+        self.inner.data_available.notify_all();
     }
 
     /// Bytes retained ahead of the decoder's actual absolute read position.
@@ -514,13 +618,25 @@ impl SharedBuffer {
     ///
     /// Returns number of bytes read, or error if cancelled/failed.
     /// Blocks and waits for data when reading positions not yet downloaded.
+    #[cfg(test)]
     pub fn read_at(&self, position: u64, buf: &mut [u8]) -> io::Result<usize> {
+        self.read_at_with_reader_cancel(position, buf, None)
+    }
+
+    fn read_at_with_reader_cancel(
+        &self,
+        position: u64,
+        buf: &mut [u8],
+        reader_cancellation: Option<&StreamingReaderCancellation>,
+    ) -> io::Result<usize> {
         // Check for cancellation/error first
-        if self.inner.cancelled.load(Ordering::Acquire) {
+        if self.inner.cancelled.load(Ordering::Acquire)
+            || reader_cancellation.is_some_and(StreamingReaderCancellation::is_cancelled)
+        {
             tracing::debug!("read_at: cancelled at position {}", position);
             return Err(io::Error::new(
                 io::ErrorKind::Interrupted,
-                "Download cancelled",
+                "Streaming reader cancelled",
             ));
         }
 
@@ -531,10 +647,18 @@ impl SharedBuffer {
 
         // Wait for data if needed
         let mut wait_count = 0;
+        let mut last_progress = (self.base_offset(), self.downloaded());
+        let mut last_progress_at = Instant::now();
         loop {
             let downloaded = self.inner.downloaded.load(Ordering::Acquire);
+            let base = self.base_offset();
             let total = self.inner.total_size.load(Ordering::Acquire);
             let is_complete = self.inner.complete.load(Ordering::Acquire);
+            let progress = (base, downloaded);
+            if progress != last_progress {
+                last_progress = progress;
+                last_progress_at = Instant::now();
+            }
 
             // A validated total size defines remote EOF independently from
             // whether the sparse disk cache has finished backfilling holes.
@@ -552,7 +676,6 @@ impl SharedBuffer {
             }
 
             if position < downloaded {
-                let base = self.base_offset();
                 if position < base {
                     if let Some(result) = self.read_finalized_cache(position, buf) {
                         return result;
@@ -567,32 +690,34 @@ impl SharedBuffer {
                         ));
                     }
                     self.request_window(position);
-                    continue;
-                }
-                let data = self.inner.data.read();
-                let available = downloaded.saturating_sub(position) as usize;
-                let to_read = buf.len().min(available).min(data.len());
-                if to_read > 0 {
-                    let start = (position - base) as usize;
-                    if start + to_read > data.len() {
-                        return Err(io::Error::new(
-                            io::ErrorKind::UnexpectedEof,
-                            "retained window changed unexpectedly",
-                        ));
+                } else {
+                    let data = self.inner.data.read();
+                    let available = downloaded.saturating_sub(position) as usize;
+                    let to_read = buf.len().min(available).min(data.len());
+                    if to_read > 0 {
+                        let start = (position - base) as usize;
+                        if start + to_read > data.len() {
+                            return Err(io::Error::new(
+                                io::ErrorKind::UnexpectedEof,
+                                "retained window changed unexpectedly",
+                            ));
+                        }
+                        for (dst, src) in buf[..to_read].iter_mut().zip(data.iter().skip(start)) {
+                            *dst = *src;
+                        }
+                        return Ok(to_read);
                     }
-                    for (dst, src) in buf[..to_read].iter_mut().zip(data.iter().skip(start)) {
-                        *dst = *src;
-                    }
-                    return Ok(to_read);
                 }
             }
 
             // Check cancellation again before waiting
-            if self.inner.cancelled.load(Ordering::Acquire) {
+            if self.inner.cancelled.load(Ordering::Acquire)
+                || reader_cancellation.is_some_and(StreamingReaderCancellation::is_cancelled)
+            {
                 tracing::debug!("read_at: cancelled while waiting at position {}", position);
                 return Err(io::Error::new(
                     io::ErrorKind::Interrupted,
-                    "Download cancelled",
+                    "Streaming reader cancelled",
                 ));
             }
 
@@ -613,6 +738,36 @@ impl SharedBuffer {
                         position
                     ),
                 ));
+            }
+
+            let stalled_for = last_progress_at.elapsed();
+            if stalled_for >= self.inner.demand_stall_timeout {
+                let message = format!(
+                    "Network: decoder demand at byte {position} made no progress for {} ms",
+                    stalled_for.as_millis()
+                );
+                let stored_timeout = self.set_error_if_absent(message.clone());
+                if stored_timeout {
+                    tracing::warn!(
+                        position,
+                        base,
+                        downloaded,
+                        stalled_ms = stalled_for.as_millis(),
+                        "Streaming decoder demand timed out"
+                    );
+                }
+                if self.is_cancelled()
+                    || reader_cancellation.is_some_and(StreamingReaderCancellation::is_cancelled)
+                {
+                    return Err(io::Error::new(
+                        io::ErrorKind::Interrupted,
+                        "Streaming reader cancelled",
+                    ));
+                }
+                if !stored_timeout && let Some(error) = self.error_message() {
+                    return Err(io::Error::other(error));
+                }
+                return Err(io::Error::new(io::ErrorKind::TimedOut, message));
             }
 
             // Data not yet available, wait for download to progress
@@ -638,10 +793,9 @@ impl SharedBuffer {
                 );
             }
             let mut guard = self.inner.wait_mutex.lock();
-            let _ = self
-                .inner
-                .data_available
-                .wait_for(&mut guard, std::time::Duration::from_millis(100));
+            let wait_for = Duration::from_millis(100)
+                .min(self.inner.demand_stall_timeout.saturating_sub(stalled_for));
+            let _ = self.inner.data_available.wait_for(&mut guard, wait_for);
         }
     }
 
@@ -688,6 +842,26 @@ impl SharedBuffer {
         self.inner.error.read().clone()
     }
 
+    /// Return a composable health snapshot used by current playback and
+    /// preload promotion. Stored errors take precedence over coordinator
+    /// lifetime so a failed exit remains classifiable after its guard drops.
+    pub fn health(&self) -> SharedBufferHealth {
+        if let Some(error) = self.error_message() {
+            return SharedBufferHealth::Failed(error);
+        }
+        if self.is_cancelled() {
+            return SharedBufferHealth::Cancelled;
+        }
+        if self.is_complete() || self.remote_eof_reached() {
+            return SharedBufferHealth::Complete;
+        }
+        if self.inner.coordinator_active.load(Ordering::Acquire) {
+            SharedBufferHealth::Refillable
+        } else {
+            SharedBufferHealth::CoordinatorStopped
+        }
+    }
+
     /// Cancel the download
     pub fn cancel(&self) {
         self.inner.cancelled.store(true, Ordering::Release);
@@ -698,6 +872,17 @@ impl SharedBuffer {
     pub fn set_error(&self, error: String) {
         *self.inner.error.write() = Some(error);
         self.inner.data_available.notify_all();
+    }
+
+    fn set_error_if_absent(&self, error: String) -> bool {
+        let mut stored = self.inner.error.write();
+        if stored.is_some() || self.is_cancelled() {
+            return false;
+        }
+        *stored = Some(error);
+        drop(stored);
+        self.inner.data_available.notify_all();
+        true
     }
 
     /// Mark download as complete
@@ -730,14 +915,17 @@ impl SharedBuffer {
 pub struct StreamingBuffer {
     shared: SharedBuffer,
     position: u64,
+    reader_cancellation: StreamingReaderCancellation,
 }
 
 impl StreamingBuffer {
     /// Create a new streaming buffer
     pub fn new(shared: SharedBuffer) -> Self {
+        let reader_cancellation = StreamingReaderCancellation::new(&shared);
         Self {
             shared,
             position: 0,
+            reader_cancellation,
         }
     }
 
@@ -745,12 +933,20 @@ impl StreamingBuffer {
     pub fn shared(&self) -> &SharedBuffer {
         &self.shared
     }
+
+    pub(crate) fn reader_cancellation(&self) -> StreamingReaderCancellation {
+        self.reader_cancellation.clone()
+    }
 }
 
 impl Read for StreamingBuffer {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.shared.set_reader_position(self.position);
-        let bytes_read = self.shared.read_at(self.position, buf)?;
+        let bytes_read = self.shared.read_at_with_reader_cancel(
+            self.position,
+            buf,
+            Some(&self.reader_cancellation),
+        )?;
         self.position += bytes_read as u64;
         self.shared.set_reader_position(self.position);
         Ok(bytes_read)
@@ -827,6 +1023,139 @@ impl Seek for StreamingBuffer {
 
 // ============ Unified Download Function ============
 
+enum RangeFetchResult {
+    Data(Vec<u8>),
+    Superseded,
+    Cancelled,
+    Fatal(String),
+}
+
+async fn fetch_range_chunk(
+    client: &reqwest::Client,
+    url: &str,
+    start: u64,
+    end: u64,
+    identity: &StreamingIdentity,
+    buffer: &SharedBuffer,
+    epoch: u64,
+) -> RangeFetchResult {
+    let expected = end.saturating_sub(start).saturating_add(1) as usize;
+    let mut retries_completed = 0u8;
+
+    loop {
+        if identity.is_cancelled() || buffer.is_cancelled() {
+            return RangeFetchResult::Cancelled;
+        }
+        if let Some(error) = buffer.error_message() {
+            return RangeFetchResult::Fatal(error);
+        }
+        if buffer.window_epoch() != epoch {
+            return RangeFetchResult::Superseded;
+        }
+
+        let response = match client
+            .get(url)
+            .header(reqwest::header::RANGE, format!("bytes={start}-{end}"))
+            .send()
+            .await
+        {
+            Ok(response) => response,
+            Err(error) => {
+                if identity.is_cancelled() || buffer.is_cancelled() {
+                    return RangeFetchResult::Cancelled;
+                }
+                if buffer.window_epoch() != epoch {
+                    return RangeFetchResult::Superseded;
+                }
+                let Some(backoff) = range_retry_backoff(retries_completed) else {
+                    return RangeFetchResult::Fatal(format!(
+                        "Network: Range request failed after {} retries: {}",
+                        retries_completed,
+                        error.without_url()
+                    ));
+                };
+                retries_completed += 1;
+                tracing::warn!(
+                    retry = retries_completed,
+                    max_retries = MAX_RANGE_RETRIES,
+                    start,
+                    end,
+                    epoch,
+                    identity = ?identity,
+                    "Retrying failed Range request"
+                );
+                tokio::time::sleep(backoff).await;
+                continue;
+            }
+        };
+
+        if identity.is_cancelled() || buffer.is_cancelled() {
+            return RangeFetchResult::Cancelled;
+        }
+        if let Some(error) = buffer.error_message() {
+            return RangeFetchResult::Fatal(error);
+        }
+        if buffer.window_epoch() != epoch {
+            return RangeFetchResult::Superseded;
+        }
+
+        if let Err(message) = validate_range_response(&response, start, end) {
+            return RangeFetchResult::Fatal(message);
+        }
+
+        match response.bytes().await {
+            Ok(body) => {
+                if identity.is_cancelled() || buffer.is_cancelled() {
+                    return RangeFetchResult::Cancelled;
+                }
+                if let Some(error) = buffer.error_message() {
+                    return RangeFetchResult::Fatal(error);
+                }
+                if buffer.window_epoch() != epoch {
+                    return RangeFetchResult::Superseded;
+                }
+                if body.len() == expected {
+                    return RangeFetchResult::Data(body.to_vec());
+                }
+                return RangeFetchResult::Fatal(format!(
+                    "UnsupportedStreaming: Range body length {}, expected {}",
+                    body.len(),
+                    expected
+                ));
+            }
+            Err(error) => {
+                if identity.is_cancelled() || buffer.is_cancelled() {
+                    return RangeFetchResult::Cancelled;
+                }
+                if let Some(error) = buffer.error_message() {
+                    return RangeFetchResult::Fatal(error);
+                }
+                if buffer.window_epoch() != epoch {
+                    return RangeFetchResult::Superseded;
+                }
+                let Some(backoff) = range_retry_backoff(retries_completed) else {
+                    return RangeFetchResult::Fatal(format!(
+                        "Network: Range body failed after {} retries: {}",
+                        retries_completed,
+                        error.without_url()
+                    ));
+                };
+                retries_completed += 1;
+                tracing::warn!(
+                    retry = retries_completed,
+                    max_retries = MAX_RANGE_RETRIES,
+                    start,
+                    end,
+                    epoch,
+                    identity = ?identity,
+                    "Retrying failed Range response body"
+                );
+                tokio::time::sleep(backoff).await;
+            }
+        }
+    }
+}
+
 /// Start downloading audio to a SharedBuffer using strict byte ranges.
 ///
 /// The source must support `HEAD` and a validated `Range: bytes=0-0` probe.
@@ -847,7 +1176,26 @@ pub fn start_buffer_download(
     let identity_for_task = identity.clone();
     tokio::spawn(async move {
         let _coordinator_guard = CoordinatorGuard(buffer_clone.clone());
-        let client = reqwest::Client::new();
+        let client = match reqwest::Client::builder()
+            .connect_timeout(HTTP_CONNECT_TIMEOUT)
+            .timeout(HTTP_REQUEST_TIMEOUT)
+            .build()
+        {
+            Ok(client) => client,
+            Err(error) => {
+                let message = format!("Network: HTTP client setup failed: {error}");
+                buffer_clone.set_error(message.clone());
+                if let Some(tx) = &event_tx {
+                    let _ = tx
+                        .send(StreamingEvent::new(
+                            identity.clone(),
+                            StreamingEventKind::Error(message),
+                        ))
+                        .await;
+                }
+                return;
+            }
+        };
         let fail = |message: String, buffer: &SharedBuffer| {
             buffer.set_error(message);
         };
@@ -876,7 +1224,7 @@ pub fn start_buffer_download(
                 return;
             }
             Err(error) => {
-                let message = format!("Network: HEAD request failed: {}", error);
+                let message = format!("Network: HEAD request failed: {}", error.without_url());
                 fail(message.clone(), &buffer_clone);
                 if let Some(tx) = &event_tx {
                     let _ = tx
@@ -902,7 +1250,7 @@ pub fn start_buffer_download(
         {
             Ok(response) => response,
             Err(error) => {
-                let message = format!("Network: Range probe failed: {}", error);
+                let message = format!("Network: Range probe failed: {}", error.without_url());
                 fail(message.clone(), &buffer_clone);
                 if let Some(tx) = &event_tx {
                     let _ = tx
@@ -954,7 +1302,7 @@ pub fn start_buffer_download(
                 return;
             }
             Err(error) => {
-                let message = format!("Network: Range probe body failed: {}", error);
+                let message = format!("Network: Range probe body failed: {}", error.without_url());
                 fail(message.clone(), &buffer_clone);
                 if let Some(tx) = &event_tx {
                     let _ = tx
@@ -1044,6 +1392,11 @@ pub fn start_buffer_download(
                 let _ = std::fs::remove_file(&temp_path);
                 return;
             }
+            if buffer_clone.has_error() {
+                drop(file);
+                let _ = std::fs::remove_file(&temp_path);
+                return;
+            }
 
             if let Some((epoch, offset)) = buffer_clone.requested_window()
                 && epoch != active_epoch
@@ -1085,15 +1438,26 @@ pub fn start_buffer_download(
 
             let end = (start.saturating_add(RANGE_CHUNK_BYTES).saturating_sub(1))
                 .min(total_size.saturating_sub(1));
-            let response = match client
-                .get(&url)
-                .header(reqwest::header::RANGE, format!("bytes={start}-{end}"))
-                .send()
-                .await
+            let body = match fetch_range_chunk(
+                &client,
+                &url,
+                start,
+                end,
+                &identity_for_task,
+                &buffer_clone,
+                active_epoch,
+            )
+            .await
             {
-                Ok(response) => response,
-                Err(error) => {
-                    let message = format!("Network: Range request failed: {}", error);
+                RangeFetchResult::Data(body) => body,
+                RangeFetchResult::Superseded => continue 'download,
+                RangeFetchResult::Cancelled => {
+                    buffer_clone.cancel();
+                    drop(file);
+                    let _ = std::fs::remove_file(&temp_path);
+                    return;
+                }
+                RangeFetchResult::Fatal(message) => {
                     fail(message.clone(), &buffer_clone);
                     let _ = std::fs::remove_file(&temp_path);
                     if let Some(tx) = &event_tx {
@@ -1107,73 +1471,6 @@ pub fn start_buffer_download(
                     return;
                 }
             };
-            if identity_for_task.is_cancelled() {
-                buffer_clone.cancel();
-                drop(file);
-                let _ = std::fs::remove_file(&temp_path);
-                return;
-            }
-
-            if let Err(message) = validate_range_response(&response, start, end) {
-                fail(message.clone(), &buffer_clone);
-                let _ = std::fs::remove_file(&temp_path);
-                if let Some(tx) = &event_tx {
-                    let _ = tx
-                        .send(StreamingEvent::new(
-                            identity.clone(),
-                            StreamingEventKind::Error(message),
-                        ))
-                        .await;
-                }
-                return;
-            }
-
-            let expected = end.saturating_sub(start).saturating_add(1) as usize;
-            let body = match response.bytes().await {
-                Ok(body) if body.len() == expected => body,
-                Ok(body) => {
-                    let message = format!(
-                        "UnsupportedStreaming: Range body length {}, expected {}",
-                        body.len(),
-                        expected
-                    );
-                    fail(message.clone(), &buffer_clone);
-                    let _ = std::fs::remove_file(&temp_path);
-                    if let Some(tx) = &event_tx {
-                        let _ = tx
-                            .send(StreamingEvent::new(
-                                identity.clone(),
-                                StreamingEventKind::Error(message),
-                            ))
-                            .await;
-                    }
-                    return;
-                }
-                Err(error) => {
-                    let message = format!("Network: Range body failed: {}", error);
-                    fail(message.clone(), &buffer_clone);
-                    let _ = std::fs::remove_file(&temp_path);
-                    if let Some(tx) = &event_tx {
-                        let _ = tx
-                            .send(StreamingEvent::new(
-                                identity.clone(),
-                                StreamingEventKind::Error(message),
-                            ))
-                            .await;
-                    }
-                    return;
-                }
-            };
-            if identity_for_task.is_cancelled() {
-                buffer_clone.cancel();
-                drop(file);
-                let _ = std::fs::remove_file(&temp_path);
-                return;
-            }
-
-            if buffer_clone.window_epoch() != active_epoch {
-                continue 'download;
-            }
 
             if let Err(error) = file
                 .seek(SeekFrom::Start(start))
@@ -1340,31 +1637,6 @@ pub fn start_buffer_download(
     shared_buffer
 }
 
-/// Wait for buffer to become playable (with timeout)
-pub async fn wait_for_playable(
-    event_rx: &mut tokio::sync::mpsc::Receiver<StreamingEvent>,
-    timeout_secs: u64,
-) -> bool {
-    let timeout = tokio::time::Duration::from_secs(timeout_secs);
-    tokio::time::timeout(timeout, async {
-        while let Some(event) = event_rx.recv().await {
-            match event.kind {
-                StreamingEventKind::Playable | StreamingEventKind::Complete => return true,
-                StreamingEventKind::CacheFinalized(_)
-                | StreamingEventKind::CacheFinalizationFailed(_) => continue,
-                StreamingEventKind::Error(e) => {
-                    tracing::error!("Download error: {}", e);
-                    return false;
-                }
-                StreamingEventKind::Progress(_, _) => continue,
-            }
-        }
-        false
-    })
-    .await
-    .unwrap_or(false)
-}
-
 /// Wait until the retained decoder window itself reaches the startup high
 /// watermark. Unlike event-channel waiting, this remains safe for callers
 /// that intentionally discard progress events (for example startup restore).
@@ -1398,6 +1670,137 @@ mod tests {
         assert!(range_window_needs_refill(LOW_WATER_MARK_BYTES + 1));
         assert!(range_window_needs_refill(HIGH_WATER_MARK_BYTES - 1));
         assert!(!range_window_needs_refill(HIGH_WATER_MARK_BYTES));
+    }
+
+    #[test]
+    fn range_retry_budget_allows_three_retries_then_stops() {
+        assert_eq!(range_retry_backoff(0), Some(Duration::from_millis(100)));
+        assert_eq!(range_retry_backoff(1), Some(Duration::from_millis(200)));
+        assert_eq!(range_retry_backoff(2), Some(Duration::from_millis(300)));
+        assert_eq!(range_retry_backoff(3), None);
+    }
+
+    #[test]
+    fn shared_buffer_health_distinguishes_refillable_complete_and_terminal_states() {
+        let refillable = SharedBuffer::new(100);
+        refillable
+            .inner
+            .coordinator_active
+            .store(true, Ordering::Release);
+        assert_eq!(refillable.health(), SharedBufferHealth::Refillable);
+        assert!(refillable.health().promotion_error().is_none());
+
+        let complete = SharedBuffer::new(4);
+        complete.append(&[0; 4]);
+        complete.mark_complete();
+        assert_eq!(complete.health(), SharedBufferHealth::Complete);
+        assert!(complete.health().promotion_error().is_none());
+
+        let failed = SharedBuffer::new(100);
+        failed.set_error("Network: connection reset".to_string());
+        assert_eq!(
+            failed.health(),
+            SharedBufferHealth::Failed("Network: connection reset".to_string())
+        );
+        assert!(failed.health().promotion_error().is_some());
+
+        let cancelled = SharedBuffer::new(100);
+        cancelled.cancel();
+        assert_eq!(cancelled.health(), SharedBufferHealth::Cancelled);
+
+        let stopped = SharedBuffer::new(100);
+        assert_eq!(stopped.health(), SharedBufferHealth::CoordinatorStopped);
+    }
+
+    #[test]
+    fn stored_failure_remains_authoritative_after_coordinator_exit() {
+        let buffer = SharedBuffer::new(100);
+        buffer
+            .inner
+            .coordinator_active
+            .store(true, Ordering::Release);
+        buffer.set_error("Network: body failed".to_string());
+        drop(CoordinatorGuard(buffer.clone()));
+
+        assert_eq!(
+            buffer.health(),
+            SharedBufferHealth::Failed("Network: body failed".to_string())
+        );
+    }
+
+    #[test]
+    fn decoder_demand_without_progress_becomes_terminal_with_injected_deadline() {
+        let buffer =
+            SharedBuffer::with_capacity_and_stall_timeout(100, 16, Duration::from_millis(40));
+        buffer
+            .inner
+            .coordinator_active
+            .store(true, Ordering::Release);
+        let started = Instant::now();
+        let error = buffer.read_at(0, &mut [0; 1]).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(started.elapsed() < Duration::from_millis(500));
+        assert!(
+            matches!(buffer.health(), SharedBufferHealth::Failed(message) if message.contains("decoder demand"))
+        );
+    }
+
+    #[test]
+    fn decoder_demand_deadline_resets_when_the_retained_window_progresses() {
+        let buffer =
+            SharedBuffer::with_capacity_and_stall_timeout(100, 16, Duration::from_millis(200));
+        buffer
+            .inner
+            .coordinator_active
+            .store(true, Ordering::Release);
+        let reader = buffer.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut byte = [0; 1];
+            tx.send(reader.read_at(2, &mut byte).map(|count| (count, byte[0])))
+                .unwrap();
+        });
+
+        std::thread::sleep(Duration::from_millis(120));
+        buffer.append(&[1]);
+        std::thread::sleep(Duration::from_millis(120));
+        buffer.append(&[2, 3]);
+
+        assert_eq!(
+            rx.recv_timeout(Duration::from_millis(500))
+                .unwrap()
+                .unwrap(),
+            (1, 3)
+        );
+        assert_eq!(buffer.health(), SharedBufferHealth::Refillable);
+    }
+
+    #[test]
+    fn cancellation_wakes_a_blocked_decoder_before_the_stall_deadline() {
+        let buffer = SharedBuffer::with_capacity_and_stall_timeout(100, 16, Duration::from_secs(5));
+        buffer
+            .inner
+            .coordinator_active
+            .store(true, Ordering::Release);
+        let reader = buffer.clone();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            result_tx.send(reader.read_at(0, &mut [0; 1])).unwrap();
+        });
+        started_rx.recv_timeout(Duration::from_millis(100)).unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+
+        buffer.cancel();
+
+        let error = result_rx
+            .recv_timeout(Duration::from_millis(300))
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted);
+        assert_eq!(buffer.health(), SharedBufferHealth::Cancelled);
     }
 
     #[test]
@@ -1628,6 +2031,54 @@ mod tests {
         let mut buf = [0u8; 5];
         let result = buffer.read_at(0, &mut buf);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn reader_cancellation_wakes_only_that_reader_without_poisoning_shared_health() {
+        let shared = SharedBuffer::new(100);
+        shared.set_coordinator_active_for_test(true);
+        let mut reader = StreamingBuffer::new(shared.clone());
+        let cancellation = reader.reader_cancellation();
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+
+        std::thread::spawn(move || {
+            let result = reader.read(&mut [0; 1]).map_err(|error| error.kind());
+            let _ = result_tx.send(result);
+        });
+
+        cancellation.cancel();
+        assert_eq!(
+            result_rx.recv_timeout(Duration::from_millis(500)).unwrap(),
+            Err(io::ErrorKind::Interrupted)
+        );
+        assert_eq!(shared.health(), SharedBufferHealth::Refillable);
+        assert!(!shared.is_cancelled());
+    }
+
+    #[test]
+    fn shared_cancellation_wakes_all_reader_tokens() {
+        let shared = SharedBuffer::new(100);
+        shared.set_coordinator_active_for_test(true);
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+
+        for _ in 0..2 {
+            let mut reader = StreamingBuffer::new(shared.clone());
+            let result_tx = result_tx.clone();
+            std::thread::spawn(move || {
+                let result = reader.read(&mut [0; 1]).map_err(|error| error.kind());
+                let _ = result_tx.send(result);
+            });
+        }
+        drop(result_tx);
+
+        shared.cancel();
+        for _ in 0..2 {
+            assert_eq!(
+                result_rx.recv_timeout(Duration::from_millis(500)).unwrap(),
+                Err(io::ErrorKind::Interrupted)
+            );
+        }
+        assert_eq!(shared.health(), SharedBufferHealth::Cancelled);
     }
 
     #[test]
