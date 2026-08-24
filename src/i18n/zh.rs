@@ -39,6 +39,8 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::SearchTabArtists, "歌手");
     m.insert(Key::SearchTabAlbums, "专辑");
     m.insert(Key::SearchTabPlaylists, "歌单");
+    m.insert(Key::SearchTabVideos, "视频");
+    m.insert(Key::SearchTabRadios, "播客");
 
     // Hero Banner
     m.insert(Key::HeroTitle, "2024 全球热门");

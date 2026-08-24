@@ -25,6 +25,10 @@ pub enum ImageKind {
     ArtistCover,
     /// Album cover (identified by album id)
     AlbumCover,
+    /// NCM video / MV cover (identified by video id)
+    VideoCover,
+    /// NCM podcast / DJ radio cover (identified by radio id)
+    RadioCover,
     /// User avatar (identified by user id)
     UserAvatar,
     /// Homepage carousel banner (identified by banner index / target id)
@@ -40,7 +44,9 @@ impl ImageKind {
             | Self::PlaylistCover
             | Self::LocalPlaylistCover
             | Self::ArtistCover
-            | Self::AlbumCover => crate::utils::covers_cache_dir(),
+            | Self::AlbumCover
+            | Self::VideoCover
+            | Self::RadioCover => crate::utils::covers_cache_dir(),
             Self::UserAvatar => crate::utils::avatars_cache_dir(),
             Self::Banner => crate::utils::banners_cache_dir(),
         }
@@ -55,6 +61,8 @@ impl ImageKind {
             Self::LocalPlaylistCover => format!("local_playlist_{}", id),
             Self::ArtistCover => format!("artist_{}", id),
             Self::AlbumCover => format!("album_{}", id),
+            Self::VideoCover => format!("video_{}", id),
+            Self::RadioCover => format!("radio_{}", id),
             Self::UserAvatar => format!("avatar_{}", id),
             Self::Banner => format!("banner_{}", id),
         }

@@ -82,6 +82,8 @@ pub struct SearchResultsPayload {
     pub albums: Vec<AlbumSummary>,
     pub artists: Vec<ArtistSummary>,
     pub playlists: Vec<PlaylistSummary>,
+    pub videos: Vec<crate::api::VideoSummary>,
+    pub radios: Vec<crate::api::RadioSummary>,
     pub total_count: u32,
 }
 

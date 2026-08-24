@@ -10,5 +10,6 @@ mod models;
 pub use client::NcmClient;
 pub use models::{
     AlbumDetail, AlbumSummary, ArtistDetail, ArtistSummary, Banner, BannerTarget, LoginInfo,
-    PlaylistDetail, PlaylistSummary, SearchType, Track, TrackAvailability, UserDetail, UserSummary,
+    PlaylistDetail, PlaylistSummary, RadioSummary, SearchType, Track, TrackAvailability,
+    UserDetail, UserSummary, VideoSummary,
 };

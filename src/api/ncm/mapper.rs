@@ -531,6 +531,76 @@ pub fn artist_summaries(value: &Value) -> Result<Vec<ArtistSummary>> {
         .collect())
 }
 
+fn video_summary_from_value(value: &Value) -> Option<VideoSummary> {
+    let id = value.get("id").and_then(as_u64).unwrap_or_default();
+    let name = first_str(value, &["name", "title"]);
+    if id == 0 && name.is_empty() {
+        return None;
+    }
+
+    let artist_name = first_str(value, &["artistName", "artist"]);
+    let duration_ms = value
+        .get("duration")
+        .or_else(|| value.get("durationms"))
+        .and_then(as_u64)
+        .unwrap_or_default();
+
+    Some(VideoSummary {
+        id,
+        name,
+        cover_url: first_str(value, &["coverUrl", "cover", "picUrl"]),
+        artist_name,
+        duration_ms,
+        play_count: value
+            .get("playCount")
+            .or_else(|| value.get("playCountStr"))
+            .and_then(as_u64)
+            .unwrap_or_default(),
+    })
+}
+
+fn video_summaries(value: &Value) -> Vec<VideoSummary> {
+    value
+        .get("result")
+        .and_then(|result| result.get("mvs"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(video_summary_from_value)
+        .collect()
+}
+
+fn radio_summary_from_value(value: &Value) -> Option<RadioSummary> {
+    let id = value.get("id").and_then(as_u64).unwrap_or_default();
+    let name = str_value(value, "name");
+    if id == 0 && name.is_empty() {
+        return None;
+    }
+
+    Some(RadioSummary {
+        id,
+        name,
+        cover_url: first_str(value, &["picUrl", "coverUrl"]),
+        creator: user_summary_from_value(value.get("dj").or_else(|| value.get("creator"))),
+        category: first_str(value, &["category", "categoryName"]),
+        program_count: value
+            .get("programCount")
+            .and_then(as_u32)
+            .unwrap_or_default(),
+    })
+}
+
+fn radio_summaries(value: &Value) -> Vec<RadioSummary> {
+    value
+        .get("result")
+        .and_then(|result| result.get("djRadios"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(radio_summary_from_value)
+        .collect()
+}
+
 pub fn liked_song_ids(value: &Value) -> Result<Vec<u64>> {
     if !code_ok(value) {
         return Err(anyhow!("liked song ids request failed"));
@@ -644,7 +714,82 @@ pub fn search(value: &Value, search_type: SearchType) -> Result<SearchResponse> 
                 .unwrap_or_default();
             response.playlists = playlist_summaries(value, PlaylistSource::Search)?;
         }
+        SearchType::Videos => {
+            response.video_count = result.get("mvCount").and_then(as_u32).unwrap_or_default();
+            response.videos = video_summaries(value);
+        }
+        SearchType::Radios => {
+            response.radio_count = result
+                .get("djRadiosCount")
+                .and_then(as_u32)
+                .unwrap_or_default();
+            response.radios = radio_summaries(value);
+        }
     }
 
     Ok(response)
+}
+
+#[cfg(test)]
+mod search_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn maps_video_search_results() {
+        let value = json!({
+            "code": 200,
+            "result": {
+                "mvCount": "1",
+                "mvs": [{
+                    "id": 12,
+                    "name": "Test MV",
+                    "cover": "https://example.com/video.jpg",
+                    "artistName": "Test Artist",
+                    "duration": "1234",
+                    "playCount": 99
+                }]
+            }
+        });
+
+        let response = search(&value, SearchType::Videos).expect("video search should map");
+
+        assert_eq!(response.video_count, 1);
+        assert_eq!(response.videos[0].id, 12);
+        assert_eq!(
+            response.videos[0].cover_url,
+            "https://example.com/video.jpg"
+        );
+        assert_eq!(response.videos[0].duration_ms, 1234);
+    }
+
+    #[test]
+    fn maps_radio_search_results() {
+        let value = json!({
+            "code": 200,
+            "result": {
+                "djRadiosCount": 2,
+                "djRadios": [{
+                    "id": 8,
+                    "name": "Test Podcast",
+                    "picUrl": "https://example.com/radio.jpg",
+                    "category": "情感",
+                    "programCount": "24",
+                    "dj": {
+                        "userId": 7,
+                        "nickname": "Test Host",
+                        "avatarUrl": "https://example.com/avatar.jpg"
+                    }
+                }]
+            }
+        });
+
+        let response = search(&value, SearchType::Radios).expect("radio search should map");
+
+        assert_eq!(response.radio_count, 2);
+        assert_eq!(response.radios[0].id, 8);
+        assert_eq!(response.radios[0].creator.nickname, "Test Host");
+        assert_eq!(response.radios[0].program_count, 24);
+    }
 }

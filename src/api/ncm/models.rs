@@ -57,6 +57,26 @@ pub struct PlaylistSummary {
     pub subscribed: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct VideoSummary {
+    pub id: u64,
+    pub name: String,
+    pub cover_url: String,
+    pub artist_name: String,
+    pub duration_ms: u64,
+    pub play_count: u64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct RadioSummary {
+    pub id: u64,
+    pub name: String,
+    pub cover_url: String,
+    pub creator: UserSummary,
+    pub category: String,
+    pub program_count: u32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub enum TrackAvailability {
     Free,
@@ -253,6 +273,8 @@ pub enum SearchType {
     Albums,
     Artists,
     Playlists,
+    Videos,
+    Radios,
 }
 
 impl SearchType {
@@ -262,6 +284,8 @@ impl SearchType {
             SearchType::Albums => "10",
             SearchType::Artists => "100",
             SearchType::Playlists => "1000",
+            SearchType::Videos => "1004",
+            SearchType::Radios => "1009",
         }
     }
 }
@@ -272,10 +296,14 @@ pub struct SearchResponse {
     pub albums: Vec<AlbumSummary>,
     pub artists: Vec<ArtistSummary>,
     pub playlists: Vec<PlaylistSummary>,
+    pub videos: Vec<VideoSummary>,
+    pub radios: Vec<RadioSummary>,
     pub track_count: u32,
     pub album_count: u32,
     pub artist_count: u32,
     pub playlist_count: u32,
+    pub video_count: u32,
+    pub radio_count: u32,
 }
 
 fn joined_artist_names(artists: &[ArtistSummary]) -> String {

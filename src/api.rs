@@ -6,7 +6,8 @@ mod ncm;
 
 pub use ncm::{
     AlbumDetail, AlbumSummary, ArtistDetail, ArtistSummary, Banner, BannerTarget, LoginInfo,
-    NcmClient, PlaylistDetail, PlaylistSummary, SearchType, Track, UserDetail, UserSummary,
+    NcmClient, PlaylistDetail, PlaylistSummary, RadioSummary, SearchType, Track, UserDetail,
+    UserSummary, VideoSummary,
 };
 #[allow(unused_imports)]
 pub use ncm::TrackAvailability;

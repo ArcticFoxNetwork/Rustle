@@ -8,7 +8,10 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::api::{AlbumSummary, ArtistSummary, Banner, NcmClient, PlaylistSummary, Track};
+use crate::api::{
+    AlbumSummary, ArtistSummary, Banner, NcmClient, PlaylistSummary, RadioSummary, Track,
+    VideoSummary,
+};
 use crate::app::SettingsSection;
 use crate::audio::{AudioAnalysisData, AudioProcessingChain, PlaybackInfo, PlaybackStatus};
 use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong, DbWatchedFolder};
@@ -1452,6 +1455,8 @@ pub enum SearchTab {
     Artists,
     Albums,
     Playlists,
+    Videos,
+    Radios,
 }
 
 impl SearchTab {
@@ -1462,6 +1467,8 @@ impl SearchTab {
             SearchTab::Artists => crate::api::SearchType::Artists,
             SearchTab::Albums => crate::api::SearchType::Albums,
             SearchTab::Playlists => crate::api::SearchType::Playlists,
+            SearchTab::Videos => crate::api::SearchType::Videos,
+            SearchTab::Radios => crate::api::SearchType::Radios,
         }
     }
 }
@@ -1480,6 +1487,10 @@ pub struct SearchPageState {
     pub artists: Vec<ArtistSummary>,
     /// Playlist search results
     pub playlists: Vec<PlaylistSummary>,
+    /// Video / MV search results
+    pub videos: Vec<VideoSummary>,
+    /// Podcast / DJ radio search results
+    pub radios: Vec<RadioSummary>,
     /// Total count for pagination
     pub total_count: u32,
     /// Current page (0-indexed)
@@ -1505,6 +1516,8 @@ impl Default for SearchPageState {
             albums: Vec::new(),
             artists: Vec::new(),
             playlists: Vec::new(),
+            videos: Vec::new(),
+            radios: Vec::new(),
             total_count: 0,
             current_page: 0,
             loading: false,

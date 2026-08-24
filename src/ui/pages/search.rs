@@ -183,34 +183,23 @@ pub fn view<'a>(
                     }
                 }
             }
-            SearchTab::Albums | SearchTab::Artists => {
+            SearchTab::Albums
+            | SearchTab::Artists
+            | SearchTab::Playlists
+            | SearchTab::Videos
+            | SearchTab::Radios => {
                 let is_empty = match state.active_tab {
                     SearchTab::Artists => state.artists.is_empty(),
-                    _ => state.albums.is_empty(),
+                    SearchTab::Albums => state.albums.is_empty(),
+                    SearchTab::Playlists => state.playlists.is_empty(),
+                    SearchTab::Videos => state.videos.is_empty(),
+                    SearchTab::Radios => state.radios.is_empty(),
+                    SearchTab::Songs => true,
                 };
                 let content = if is_empty {
                     empty_results_state(&state.keyword)
                 } else {
                     let grid = grid_results(state, image_state, state.active_tab);
-                    let mut col = column![grid];
-
-                    if state.total_count > PAGE_SIZE {
-                        col = col.push(Space::new().height(24)).push(pagination(state));
-                    }
-                    col = col.push(Space::new().height(40));
-
-                    col.padding(Padding::new(32.0).top(0.0)).into()
-                };
-
-                widgets::measured_scrollable(content, "search_scroll", |size| {
-                    Message::ContentWidthResized(ContentWidthTarget::Search, size)
-                })
-            }
-            SearchTab::Playlists => {
-                let content = if state.playlists.is_empty() {
-                    empty_results_state(&state.keyword)
-                } else {
-                    let grid = grid_results(state, image_state, SearchTab::Playlists);
                     let mut col = column![grid];
 
                     if state.total_count > PAGE_SIZE {
@@ -242,6 +231,8 @@ fn search_tabs(active_tab: SearchTab, locale: Locale) -> Element<'static, Messag
         (SearchTab::Artists, Key::SearchTabArtists),
         (SearchTab::Albums, Key::SearchTabAlbums),
         (SearchTab::Playlists, Key::SearchTabPlaylists),
+        (SearchTab::Videos, Key::SearchTabVideos),
+        (SearchTab::Radios, Key::SearchTabRadios),
     ];
 
     let tab_buttons: Vec<Element<'static, Message>> = tabs
@@ -383,6 +374,8 @@ fn grid_results<'a>(
         SearchTab::Albums => state.albums.iter().map(GridItemRef::Album).collect(),
         SearchTab::Artists => state.artists.iter().map(GridItemRef::Artist).collect(),
         SearchTab::Playlists => state.playlists.iter().map(GridItemRef::Playlist).collect(),
+        SearchTab::Videos => state.videos.iter().map(GridItemRef::Video).collect(),
+        SearchTab::Radios => state.radios.iter().map(GridItemRef::Radio).collect(),
         _ => return Space::new().into(),
     };
     let kind = search_image_kind(tab);
@@ -490,6 +483,8 @@ enum GridItemRef<'a> {
     Album(&'a crate::api::AlbumSummary),
     Artist(&'a crate::api::ArtistSummary),
     Playlist(&'a crate::api::PlaylistSummary),
+    Video(&'a crate::api::VideoSummary),
+    Radio(&'a crate::api::RadioSummary),
 }
 
 impl<'a> GridItemRef<'a> {
@@ -498,6 +493,8 @@ impl<'a> GridItemRef<'a> {
             Self::Album(item) => item.id,
             Self::Artist(item) => item.id,
             Self::Playlist(item) => item.id,
+            Self::Video(item) => item.id,
+            Self::Radio(item) => item.id,
         }
     }
 
@@ -506,6 +503,8 @@ impl<'a> GridItemRef<'a> {
             Self::Album(item) => &item.name,
             Self::Artist(item) => &item.name,
             Self::Playlist(item) => &item.name,
+            Self::Video(item) => &item.name,
+            Self::Radio(item) => &item.name,
         }
     }
 
@@ -514,6 +513,14 @@ impl<'a> GridItemRef<'a> {
             Self::Album(item) => item.artist_names(),
             Self::Artist(_) => "歌手".to_string(),
             Self::Playlist(item) => item.creator.nickname.clone(),
+            Self::Video(item) => item.artist_name.clone(),
+            Self::Radio(item) => {
+                if item.category.is_empty() {
+                    item.creator.nickname.clone()
+                } else {
+                    item.category.clone()
+                }
+            }
         }
     }
 }
@@ -523,6 +530,8 @@ fn search_image_kind(tab: SearchTab) -> ImageKind {
         SearchTab::Artists => ImageKind::ArtistCover,
         SearchTab::Albums => ImageKind::AlbumCover,
         SearchTab::Playlists => ImageKind::PlaylistCover,
+        SearchTab::Videos => ImageKind::VideoCover,
+        SearchTab::Radios => ImageKind::RadioCover,
         SearchTab::Songs => ImageKind::SongCover,
     }
 }

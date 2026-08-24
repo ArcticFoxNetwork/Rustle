@@ -105,6 +105,8 @@ fn placeholder_svg(kind: ImageKind) -> &'static str {
         | ImageKind::PlaylistCover
         | ImageKind::LocalPlaylistCover
         | ImageKind::AlbumCover
+        | ImageKind::VideoCover
+        | ImageKind::RadioCover
         | ImageKind::Banner => crate::ui::icons::MUSIC,
         ImageKind::ArtistCover | ImageKind::UserAvatar => crate::ui::icons::USER,
     }

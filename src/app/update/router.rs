@@ -106,6 +106,8 @@ impl App {
                     self.ui.search.artists.clear();
                     self.ui.search.albums.clear();
                     self.ui.search.playlists.clear();
+                    self.ui.search.videos.clear();
+                    self.ui.search.radios.clear();
                     self.clear_search_cover_cache();
                 }
             }

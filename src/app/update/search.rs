@@ -72,6 +72,14 @@ impl App {
                         self.ui.search.playlists = payload.playlists.clone();
                         self.ui.search.total_count = payload.total_count;
                     }
+                    SearchTab::Videos => {
+                        self.ui.search.videos = payload.videos.clone();
+                        self.ui.search.total_count = payload.total_count;
+                    }
+                    SearchTab::Radios => {
+                        self.ui.search.radios = payload.radios.clone();
+                        self.ui.search.total_count = payload.total_count;
+                    }
                 };
 
                 Some(Task::none())
@@ -184,36 +192,63 @@ impl App {
                     .await
                 {
                     Ok(response) => {
-                        let (tracks, albums, artists, playlists, total_count) = match search_type {
-                            SearchType::Songs => (
-                                response.tracks,
-                                vec![],
-                                vec![],
-                                vec![],
-                                response.track_count,
-                            ),
-                            SearchType::Albums => (
-                                vec![],
-                                response.albums,
-                                vec![],
-                                vec![],
-                                response.album_count,
-                            ),
-                            SearchType::Artists => (
-                                vec![],
-                                vec![],
-                                response.artists,
-                                vec![],
-                                response.artist_count,
-                            ),
-                            SearchType::Playlists => (
-                                vec![],
-                                vec![],
-                                vec![],
-                                response.playlists,
-                                response.playlist_count,
-                            ),
-                        };
+                        let (tracks, albums, artists, playlists, videos, radios, total_count) =
+                            match search_type {
+                                SearchType::Songs => (
+                                    response.tracks,
+                                    vec![],
+                                    vec![],
+                                    vec![],
+                                    vec![],
+                                    vec![],
+                                    response.track_count,
+                                ),
+                                SearchType::Albums => (
+                                    vec![],
+                                    response.albums,
+                                    vec![],
+                                    vec![],
+                                    vec![],
+                                    vec![],
+                                    response.album_count,
+                                ),
+                                SearchType::Artists => (
+                                    vec![],
+                                    vec![],
+                                    response.artists,
+                                    vec![],
+                                    vec![],
+                                    vec![],
+                                    response.artist_count,
+                                ),
+                                SearchType::Playlists => (
+                                    vec![],
+                                    vec![],
+                                    vec![],
+                                    response.playlists,
+                                    vec![],
+                                    vec![],
+                                    response.playlist_count,
+                                ),
+                                SearchType::Videos => (
+                                    vec![],
+                                    vec![],
+                                    vec![],
+                                    vec![],
+                                    response.videos,
+                                    vec![],
+                                    response.video_count,
+                                ),
+                                SearchType::Radios => (
+                                    vec![],
+                                    vec![],
+                                    vec![],
+                                    vec![],
+                                    vec![],
+                                    response.radios,
+                                    response.radio_count,
+                                ),
+                            };
 
                         Message::SearchResultsLoaded(SearchResultsPayload {
                             context: SearchRequestContext { keyword, tab, page },
@@ -221,6 +256,8 @@ impl App {
                             albums,
                             artists,
                             playlists,
+                            videos,
+                            radios,
                             total_count,
                         })
                     }

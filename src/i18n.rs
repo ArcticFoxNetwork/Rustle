@@ -86,6 +86,8 @@ pub enum Key {
     SearchTabArtists,
     SearchTabAlbums,
     SearchTabPlaylists,
+    SearchTabVideos,
+    SearchTabRadios,
 
     // Hero Banner
     HeroTitle,

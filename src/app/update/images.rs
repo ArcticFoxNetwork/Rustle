@@ -112,8 +112,14 @@ impl App {
                     crate::app::state::SearchTab::Playlists => {
                         refs.extend(remote_playlist_covers(&payload.playlists));
                     }
+                    crate::app::state::SearchTab::Videos => {
+                        refs.extend(remote_video_covers(&payload.videos));
+                    }
+                    crate::app::state::SearchTab::Radios => {
+                        refs.extend(remote_radio_covers(&payload.radios));
+                    }
                 }
-            },
+            }
             Message::NcmPlaylistDetailLoaded(detail) => {
                 refs.push(RemoteImage::new(
                     ImageKind::PlaylistCover,
@@ -596,6 +602,22 @@ fn remote_artist_covers(
     artists
         .iter()
         .map(|item| RemoteImage::new(ImageKind::ArtistCover, item.id, &item.image_url))
+}
+
+fn remote_video_covers(
+    videos: &[crate::api::VideoSummary],
+) -> impl Iterator<Item = RemoteImage> + '_ {
+    videos
+        .iter()
+        .map(|item| RemoteImage::new(ImageKind::VideoCover, item.id, &item.cover_url))
+}
+
+fn remote_radio_covers(
+    radios: &[crate::api::RadioSummary],
+) -> impl Iterator<Item = RemoteImage> + '_ {
+    radios
+        .iter()
+        .map(|item| RemoteImage::new(ImageKind::RadioCover, item.id, &item.cover_url))
 }
 
 fn cover_path_matches(path_or_url: Option<&str>, local_path: &std::path::Path) -> bool {
