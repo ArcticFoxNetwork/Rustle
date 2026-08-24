@@ -252,8 +252,10 @@ impl WordData {
     /// - For last word: amount *= 1.6
     /// - amount = min(1.2, amount)
     pub fn emphasis_amount(&self) -> f32 {
-        // Uses original duration for amount calculation, not effective_duration
-        let du = self.duration_ms() as f32;
+        let mut du = self.duration_ms().max(1000) as f32;
+        if self.is_last_word {
+            du *= 1.2;
+        }
         let mut amount = du / 2000.0;
         amount = if amount > 1.0 {
             amount.sqrt()
@@ -261,7 +263,7 @@ impl WordData {
             amount.powi(3)
         };
         amount *= 0.6;
-        // default: Last word gets 1.6x emphasis boost
+        // AMLL applies the last-word amount boost after its duration boost.
         if self.is_last_word {
             amount *= 1.6;
         }
@@ -278,8 +280,10 @@ impl WordData {
     /// - For last word: blur *= 1.5
     /// - blur = min(0.8, blur)
     pub fn emphasis_blur(&self) -> f32 {
-        // Uses original duration for blur calculation, not effective_duration
-        let du = self.duration_ms() as f32;
+        let mut du = self.duration_ms().max(1000) as f32;
+        if self.is_last_word {
+            du *= 1.2;
+        }
         let mut blur = du / 3000.0;
         blur = if blur > 1.0 {
             blur.sqrt()
@@ -287,7 +291,7 @@ impl WordData {
             blur.powi(3)
         };
         blur *= 0.5;
-        // default: Last word gets 1.5x blur boost
+        // AMLL applies the last-word blur boost after its duration boost.
         if self.is_last_word {
             blur *= 1.5;
         }
@@ -417,6 +421,9 @@ pub struct ComputedLineStyle {
     pub glow: f32,
     /// Whether this line is currently active (being sung)
     pub is_active: bool,
+    /// AMLL independent bright/dark mask alpha values
+    pub bright_mask_alpha: f32,
+    pub dark_mask_alpha: f32,
 }
 
 impl Default for ComputedLineStyle {
@@ -428,6 +435,8 @@ impl Default for ComputedLineStyle {
             opacity: 1.0,
             glow: 0.0,
             is_active: false,
+            bright_mask_alpha: 0.2,
+            dark_mask_alpha: 0.2,
         }
     }
 }
@@ -614,12 +623,14 @@ mod tests {
 
     #[test]
     fn test_emphasis_amount_last_word_multiplier() {
-        // duration = 2000ms, amount = 1^3 * 0.6 * 1.6 = 0.96
+        // AMLL applies du *= 1.2 before the last-word amount multiplier.
         let word = create_word_data(0, 2000, true);
         let amount = word.emphasis_amount();
+        let expected = 1.2_f32.sqrt() * 0.6 * 1.6;
         assert!(
-            (amount - 0.96).abs() < 0.001,
-            "Expected 0.96, got {}",
+            (amount - expected).abs() < 0.001,
+            "Expected {}, got {}",
+            expected,
             amount
         );
     }
@@ -674,10 +685,10 @@ mod tests {
 
     #[test]
     fn test_emphasis_blur_last_word_multiplier() {
-        // duration = 3000ms, blur = 1^3 * 0.5 * 1.5 = 0.75
+        // AMLL applies du *= 1.2 before the last-word blur multiplier and cap.
         let word = create_word_data(0, 3000, true);
         let blur = word.emphasis_blur();
-        assert!((blur - 0.75).abs() < 0.001, "Expected 0.75, got {}", blur);
+        assert_eq!(blur, 0.8, "Expected capped blur 0.8, got {}", blur);
     }
 
     #[test]

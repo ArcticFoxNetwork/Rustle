@@ -27,6 +27,63 @@
 use super::spring::{Spring, SpringParams};
 use std::sync::Arc;
 
+const AMLL_TRANSITION_DURATION: f32 = 0.4;
+const AMLL_MASK_INACTIVE_DURATION: f32 = 0.45;
+const AMLL_MASK_ACTIVE_DURATION: f32 = 0.3;
+const AMLL_EASE_X1: f32 = 0.25;
+const AMLL_EASE_Y1: f32 = 0.1;
+const AMLL_EASE_X2: f32 = 0.25;
+const AMLL_EASE_Y2: f32 = 1.0;
+const AMLL_MAX_BLUR: f32 = 5.0;
+
+#[inline]
+fn cubic_bezier_axis(t: f32, p1: f32, p2: f32) -> f32 {
+    let one_minus_t = 1.0 - t;
+    3.0 * one_minus_t * one_minus_t * t * p1 + 3.0 * one_minus_t * t * t * p2 + t * t * t
+}
+
+#[inline]
+fn cubic_bezier_axis_derivative(t: f32, p1: f32, p2: f32) -> f32 {
+    let one_minus_t = 1.0 - t;
+    3.0 * one_minus_t * one_minus_t * p1
+        + 6.0 * one_minus_t * t * (p2 - p1)
+        + 3.0 * t * t * (1.0 - p2)
+}
+
+/// Evaluate AMLL's CSS `ease` curve (`cubic-bezier(0.25, 0.1, 0.25, 1)`).
+#[inline]
+fn amll_ease(progress: f32) -> f32 {
+    let x = progress.clamp(0.0, 1.0);
+    let mut t = x;
+
+    for _ in 0..8 {
+        let current_x = cubic_bezier_axis(t, AMLL_EASE_X1, AMLL_EASE_X2);
+        let derivative = cubic_bezier_axis_derivative(t, AMLL_EASE_X1, AMLL_EASE_X2);
+        if derivative.abs() < 1e-5 {
+            break;
+        }
+        t = (t - (current_x - x) / derivative).clamp(0.0, 1.0);
+    }
+
+    cubic_bezier_axis(t, AMLL_EASE_Y1, AMLL_EASE_Y2).clamp(0.0, 1.0)
+}
+
+/// Evaluate AMLL's mask transition `cubic-bezier(0, 0, 0.58, 1)`.
+#[inline]
+fn ease_out_progress(progress: f32) -> f32 {
+    let x = progress.clamp(0.0, 1.0);
+    let mut t = x;
+    for _ in 0..8 {
+        let current_x = cubic_bezier_axis(t, 0.0, 0.58);
+        let derivative = cubic_bezier_axis_derivative(t, 0.0, 0.58);
+        if derivative.abs() < 1e-5 {
+            break;
+        }
+        t = (t - (current_x - x) / derivative).clamp(0.0, 1.0);
+    }
+    cubic_bezier_axis(t, 0.0, 1.0).clamp(0.0, 1.0)
+}
+
 /// Manual scroll bounds for the lyrics viewport.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScrollBounds {
@@ -61,6 +118,11 @@ pub struct AnimationBuffers {
     blur_levels: Arc<Vec<f32>>,
     /// Opacity values (0.0 - 1.0)
     opacities: Arc<Vec<f32>>,
+    /// Background wrapper slide positions (-80..0, in percent)
+    bg_slide_y: Arc<Vec<f32>>,
+    /// Independent AMLL mask alpha values
+    bright_mask_alpha: Arc<Vec<f32>>,
+    dark_mask_alpha: Arc<Vec<f32>>,
 }
 
 impl AnimationBuffers {
@@ -78,6 +140,9 @@ impl AnimationBuffers {
         Self::ensure_buffer(&mut self.scales, line_count, 1.0);
         Self::ensure_buffer(&mut self.blur_levels, line_count, 0.0);
         Self::ensure_buffer(&mut self.opacities, line_count, 1.0);
+        Self::ensure_buffer(&mut self.bg_slide_y, line_count, 0.0);
+        Self::ensure_buffer(&mut self.bright_mask_alpha, line_count, 0.2);
+        Self::ensure_buffer(&mut self.dark_mask_alpha, line_count, 0.2);
     }
 
     fn ensure_buffer(buffer: &mut Arc<Vec<f32>>, line_count: usize, fill: f32) {
@@ -109,17 +174,27 @@ impl AnimationBuffers {
         Self::ensure_unique(&mut self.scales, len, 1.0);
         Self::ensure_unique(&mut self.blur_levels, len, 0.0);
         Self::ensure_unique(&mut self.opacities, len, 1.0);
+        Self::ensure_unique(&mut self.bg_slide_y, len, 0.0);
+        Self::ensure_unique(&mut self.bright_mask_alpha, len, 0.2);
+        Self::ensure_unique(&mut self.dark_mask_alpha, len, 0.2);
 
         let positions = Arc::get_mut(&mut self.positions).expect("buffer is unique");
         let scales = Arc::get_mut(&mut self.scales).expect("buffer is unique");
         let blur_levels = Arc::get_mut(&mut self.blur_levels).expect("buffer is unique");
         let opacities = Arc::get_mut(&mut self.opacities).expect("buffer is unique");
+        let bg_slide_y = Arc::get_mut(&mut self.bg_slide_y).expect("buffer is unique");
+        let bright_mask_alpha =
+            Arc::get_mut(&mut self.bright_mask_alpha).expect("buffer is unique");
+        let dark_mask_alpha = Arc::get_mut(&mut self.dark_mask_alpha).expect("buffer is unique");
 
         for (i, anim) in animations.iter().enumerate() {
             positions[i] = anim.current_y();
             scales[i] = anim.current_scale();
             blur_levels[i] = anim.blur;
             opacities[i] = anim.opacity;
+            bg_slide_y[i] = anim.current_bg_slide_y();
+            bright_mask_alpha[i] = anim.bright_mask_alpha;
+            dark_mask_alpha[i] = anim.dark_mask_alpha;
         }
     }
 
@@ -160,6 +235,21 @@ impl AnimationBuffers {
         Arc::clone(&self.opacities)
     }
 
+    #[inline]
+    pub fn bg_slide_y_arc(&self) -> Arc<Vec<f32>> {
+        Arc::clone(&self.bg_slide_y)
+    }
+
+    #[inline]
+    pub fn bright_mask_alpha_arc(&self) -> Arc<Vec<f32>> {
+        Arc::clone(&self.bright_mask_alpha)
+    }
+
+    #[inline]
+    pub fn dark_mask_alpha_arc(&self) -> Arc<Vec<f32>> {
+        Arc::clone(&self.dark_mask_alpha)
+    }
+
     /// Get positions slice (no allocation)
     #[inline]
     pub fn positions(&self) -> &[f32] {
@@ -184,12 +274,30 @@ impl AnimationBuffers {
         &self.opacities
     }
 
+    #[inline]
+    pub fn bg_slide_y(&self) -> &[f32] {
+        &self.bg_slide_y
+    }
+
+    #[inline]
+    pub fn bright_mask_alpha(&self) -> &[f32] {
+        &self.bright_mask_alpha
+    }
+
+    #[inline]
+    pub fn dark_mask_alpha(&self) -> &[f32] {
+        &self.dark_mask_alpha
+    }
+
     /// Clear all buffers
     pub fn clear(&mut self) {
         self.positions = Arc::new(Vec::new());
         self.scales = Arc::new(Vec::new());
         self.blur_levels = Arc::new(Vec::new());
         self.opacities = Arc::new(Vec::new());
+        self.bg_slide_y = Arc::new(Vec::new());
+        self.bright_mask_alpha = Arc::new(Vec::new());
+        self.dark_mask_alpha = Arc::new(Vec::new());
     }
 }
 
@@ -212,6 +320,21 @@ pub struct LineAnimation {
     pub target_blur: f32,
     /// Current animated blur level
     pub blur: f32,
+    /// Target/current mask alpha values (AMLL's independent CSS custom properties)
+    pub target_bright_mask_alpha: f32,
+    pub bright_mask_alpha: f32,
+    pub target_dark_mask_alpha: f32,
+    pub dark_mask_alpha: f32,
+    bright_mask_transition_from: f32,
+    dark_mask_transition_from: f32,
+    bright_mask_transition_elapsed: f32,
+    dark_mask_transition_elapsed: f32,
+    /// Background wrapper slide position in percent of the background line height.
+    pub bg_slide_y: Spring,
+    blur_transition_from: f32,
+    blur_transition_elapsed: f32,
+    opacity_transition_from: f32,
+    opacity_transition_elapsed: f32,
     /// Whether this line is currently active
     pub is_active: bool,
     /// Whether this is a background line
@@ -235,6 +358,8 @@ impl LineAnimation {
         };
         let mut scale = Spring::from_params(100.0, scale_params);
         scale.set_target(100.0);
+        let mut bg_slide_y = Spring::from_params(-80.0, SpringParams::POS_Y);
+        bg_slide_y.set_target(-80.0);
 
         Self {
             pos_y,
@@ -243,6 +368,19 @@ impl LineAnimation {
             opacity: 1.0,
             target_blur: 0.0,
             blur: 0.0,
+            target_bright_mask_alpha: 0.2,
+            bright_mask_alpha: 0.2,
+            target_dark_mask_alpha: 0.2,
+            dark_mask_alpha: 0.2,
+            bright_mask_transition_from: 0.2,
+            dark_mask_transition_from: 0.2,
+            bright_mask_transition_elapsed: AMLL_MASK_INACTIVE_DURATION,
+            dark_mask_transition_elapsed: AMLL_MASK_INACTIVE_DURATION,
+            bg_slide_y,
+            blur_transition_from: 0.0,
+            blur_transition_elapsed: AMLL_TRANSITION_DURATION,
+            opacity_transition_from: 1.0,
+            opacity_transition_elapsed: AMLL_TRANSITION_DURATION,
             is_active: false,
             is_bg,
             delay: 0.0,
@@ -258,6 +396,15 @@ impl LineAnimation {
                 .set_target_with_delay(target as f64, delay as f64);
         } else {
             self.pos_y.set_target(target as f64);
+        }
+    }
+
+    fn set_target_bg_slide_y(&mut self, target: f32, delay: f32) {
+        if delay > 0.0 {
+            self.bg_slide_y
+                .set_target_with_delay(target as f64, delay as f64);
+        } else {
+            self.bg_slide_y.set_target(target as f64);
         }
     }
 
@@ -278,6 +425,11 @@ impl LineAnimation {
         self.pos_y.set_target(pos as f64);
     }
 
+    fn set_bg_slide_y(&mut self, pos: f32) {
+        self.bg_slide_y.set_position(pos as f64);
+        self.bg_slide_y.set_target(pos as f64);
+    }
+
     /// Force set scale (no animation)
     pub fn set_scale(&mut self, scale: f32) {
         self.scale.set_position(scale as f64);
@@ -294,9 +446,45 @@ impl LineAnimation {
         self.scale.position() as f32 / 100.0
     }
 
+    #[inline]
+    pub fn current_bg_slide_y(&self) -> f32 {
+        self.bg_slide_y.position() as f32
+    }
+
     /// Update spring parameters (for runtime configuration)
     pub fn update_pos_y_params(&mut self, params: SpringParams) {
         self.pos_y.update_params(params);
+    }
+
+    /// Set a CSS-transition-style blur target in logical/CSS pixels.
+    pub fn set_target_blur(&mut self, target: f32) {
+        let target = target.clamp(0.0, AMLL_MAX_BLUR);
+        if (target - self.target_blur).abs() > 0.0001 {
+            self.blur_transition_from = self.blur;
+            self.blur_transition_elapsed = 0.0;
+            self.target_blur = target;
+        }
+    }
+
+    /// Set a CSS-transition-style opacity target.
+    pub fn set_target_opacity(&mut self, target: f32) {
+        let target = target.clamp(0.0, 1.0);
+        if (target - self.target_opacity).abs() > 0.0001 {
+            self.opacity_transition_from = self.opacity;
+            self.opacity_transition_elapsed = 0.0;
+            self.target_opacity = target;
+        }
+    }
+
+    /// Immediately apply both visual targets, matching AMLL's seek behavior.
+    pub fn snap_visual_targets(&mut self) {
+        self.blur = self.target_blur;
+        self.opacity = self.target_opacity;
+        self.blur_transition_from = self.blur;
+        self.blur_transition_elapsed = AMLL_TRANSITION_DURATION;
+        self.opacity_transition_from = self.opacity;
+        self.opacity_transition_elapsed = AMLL_TRANSITION_DURATION;
+        self.snap_mask_targets();
     }
 
     /// 更新弹簧和平滑过渡 - 每帧调用
@@ -305,23 +493,66 @@ impl LineAnimation {
     pub fn update(&mut self, delta: f32) {
         self.pos_y.update(delta as f64);
         self.scale.update(delta as f64);
+        self.bg_slide_y.update(delta as f64);
 
-        // Smooth interpolation for blur and opacity
-        // Use exponential decay for smooth CSS-like transitions
-        // CSS transitions are typically 0.3-0.5s
-        // Speed factor: lower = slower transition
-        // 3.0 means ~0.33s to reach 63% of target (similar to CSS 0.3s ease-out)
-        const BLUR_TRANSITION_SPEED: f32 = 3.0;
-        const OPACITY_TRANSITION_SPEED: f32 = 5.0;
+        // Match AMLL's `filter 0.4s ease` and `opacity 0.4s ease` transitions.
+        self.blur_transition_elapsed =
+            (self.blur_transition_elapsed + delta).min(AMLL_TRANSITION_DURATION);
+        self.opacity_transition_elapsed =
+            (self.opacity_transition_elapsed + delta).min(AMLL_TRANSITION_DURATION);
+        let bright_duration = if self.target_bright_mask_alpha > 0.2 {
+            AMLL_MASK_ACTIVE_DURATION
+        } else {
+            AMLL_MASK_INACTIVE_DURATION
+        };
+        let dark_duration = if self.target_dark_mask_alpha > 0.2 {
+            AMLL_MASK_ACTIVE_DURATION
+        } else {
+            AMLL_MASK_INACTIVE_DURATION
+        };
+        self.bright_mask_transition_elapsed =
+            (self.bright_mask_transition_elapsed + delta).min(bright_duration);
+        self.dark_mask_transition_elapsed =
+            (self.dark_mask_transition_elapsed + delta).min(dark_duration);
 
-        let blur_lerp = 1.0 - (-BLUR_TRANSITION_SPEED * delta).exp();
-        let opacity_lerp = 1.0 - (-OPACITY_TRANSITION_SPEED * delta).exp();
+        let blur_progress = amll_ease(self.blur_transition_elapsed / AMLL_TRANSITION_DURATION);
+        let opacity_progress =
+            amll_ease(self.opacity_transition_elapsed / AMLL_TRANSITION_DURATION);
 
-        // Smooth blur transition
-        self.blur += (self.target_blur - self.blur) * blur_lerp;
+        self.blur = self.blur_transition_from
+            + (self.target_blur - self.blur_transition_from) * blur_progress;
+        self.opacity = self.opacity_transition_from
+            + (self.target_opacity - self.opacity_transition_from) * opacity_progress;
 
-        // Smooth opacity transition
-        self.opacity += (self.target_opacity - self.opacity) * opacity_lerp;
+        let bright_progress =
+            ease_out_progress(self.bright_mask_transition_elapsed / bright_duration);
+        let dark_progress = ease_out_progress(self.dark_mask_transition_elapsed / dark_duration);
+        self.bright_mask_alpha = self.bright_mask_transition_from
+            + (self.target_bright_mask_alpha - self.bright_mask_transition_from) * bright_progress;
+        self.dark_mask_alpha = self.dark_mask_transition_from
+            + (self.target_dark_mask_alpha - self.dark_mask_transition_from) * dark_progress;
+    }
+
+    fn set_target_mask_alpha(&mut self, bright: f32, dark: f32) {
+        if (bright - self.target_bright_mask_alpha).abs() > 0.0001 {
+            self.bright_mask_transition_from = self.bright_mask_alpha;
+            self.bright_mask_transition_elapsed = 0.0;
+            self.target_bright_mask_alpha = bright;
+        }
+        if (dark - self.target_dark_mask_alpha).abs() > 0.0001 {
+            self.dark_mask_transition_from = self.dark_mask_alpha;
+            self.dark_mask_transition_elapsed = 0.0;
+            self.target_dark_mask_alpha = dark;
+        }
+    }
+
+    fn snap_mask_targets(&mut self) {
+        self.bright_mask_alpha = self.target_bright_mask_alpha;
+        self.dark_mask_alpha = self.target_dark_mask_alpha;
+        self.bright_mask_transition_from = self.bright_mask_alpha;
+        self.dark_mask_transition_from = self.dark_mask_alpha;
+        self.bright_mask_transition_elapsed = AMLL_MASK_ACTIVE_DURATION;
+        self.dark_mask_transition_elapsed = AMLL_MASK_ACTIVE_DURATION;
     }
 }
 
@@ -607,6 +838,27 @@ impl LineAnimationManager {
             // Update active state
             anim.is_active = is_active;
 
+            // AMLL keeps mask alpha independent from line scale. Gradient/active
+            // lines animate to (1.0, 0.4) in 0.3s ease-out; solid lines return to
+            // (0.2, 0.2) in 0.45s ease-out.
+            if is_active {
+                anim.set_target_mask_alpha(1.0, 0.4);
+            } else {
+                anim.set_target_mask_alpha(0.2, 0.2);
+            }
+
+            // Background vocals have a separate wrapper spring in AMLL. Rustle's
+            // flattened line list uses the default post-position direction.
+            let target_bg_slide_y = if anim.is_bg {
+                if is_active || !is_playing {
+                    0.0
+                } else {
+                    -80.0
+                }
+            } else {
+                0.0
+            };
+
             // default: Calculate target scale
             // SCALE_ASPECT = enableScale ? 97 : 100
             // targetScale = 100 if active or !playing, else (isBG ? 75 : SCALE_ASPECT)
@@ -639,10 +891,12 @@ impl LineAnimationManager {
                 }
                 level * blur_multiplier
             };
-            // Set target blur (will be smoothly interpolated in update())
-            anim.target_blur = blur_level;
+            // AMLL clamps the CSS blur value before its transition starts.
+            anim.set_target_blur(blur_level.min(AMLL_MAX_BLUR));
             if disable_blur {
                 anim.blur = 0.0;
+                anim.blur_transition_from = 0.0;
+                anim.blur_transition_elapsed = AMLL_TRANSITION_DURATION;
             }
 
             // default: Calculate opacity
@@ -650,7 +904,7 @@ impl LineAnimationManager {
             let target_opacity = if self.hide_passed_lines {
                 if idx < scroll_to_index && is_playing {
                     // default: 为了避免浏览器优化，使用极小但不为零的值
-                    0.00001
+                    0.0001
                 } else if anim.is_bg {
                     if is_active {
                         0.4
@@ -684,20 +938,21 @@ impl LineAnimationManager {
                     1.0
                 }
             };
-            // Set target opacity (will be smoothly interpolated in update())
-            anim.target_opacity = target_opacity;
+            // Match AMLL's wrapper opacity transition target.
+            anim.set_target_opacity(target_opacity);
 
             // Set targets
             if is_seek {
                 // Force immediate position on seek
                 anim.set_position_y(cur_pos);
                 anim.set_scale(target_scale);
+                anim.set_bg_slide_y(target_bg_slide_y);
                 // Also force immediate blur and opacity on seek
-                anim.blur = anim.target_blur;
-                anim.opacity = anim.target_opacity;
+                anim.snap_visual_targets();
             } else {
                 anim.set_target_y(cur_pos, delay);
                 anim.set_target_scale(target_scale);
+                anim.set_target_bg_slide_y(target_bg_slide_y, delay);
             }
 
             // default: Advance position for next line
@@ -905,9 +1160,9 @@ mod tests {
             "Line before current should have blur = 1 + distance + 1"
         );
 
-        // Line 0: 1 + abs(5 - 0) + 1 = 7
+        // Line 0's raw value is 7, then AMLL's 5px cap is applied.
         let blur = get_blur_for_line(&mut manager, 10, 0, 5, &buffered, 1920.0);
-        assert_eq!(blur, 7.0, "Line 0 should have blur = 7");
+        assert_eq!(blur, 5.0, "Line 0 should be capped at blur = 5");
     }
 
     #[test]
@@ -976,33 +1231,44 @@ mod tests {
     }
 
     // ========== Property 4: Blur level maximum cap ==========
-    // The cap is applied in pipeline.rs, not in line_animation.rs
-    // This test verifies the blur calculation can produce values > 32
-    // The actual cap is tested in pipeline tests
 
     #[test]
-    fn test_blur_can_exceed_32_before_cap() {
+    fn test_blur_is_capped_before_animation() {
         let mut manager = create_test_manager(50);
         let mut buffered = HashSet::new();
         buffered.insert(25);
 
-        // Line 0 with scroll_to_index = 25
-        // Formula: 1 + abs(25 - 0) + 1 = 27
+        // Line 0 with scroll_to_index = 25 is clamped to AMLL's 5px cap.
         let blur = get_blur_for_line(&mut manager, 50, 0, 25, &buffered, 1920.0);
         assert_eq!(
-            blur, 27.0,
-            "Blur calculation should produce 27 for distant line"
+            blur, 5.0,
+            "Distant line blur should be capped at AMLL's 5px"
         );
 
-        // Line 0 with scroll_to_index = 40
-        // Formula: 1 + abs(40 - 0) + 1 = 42
+        // The cap also applies when the raw distance is even larger.
         let mut buffered2 = HashSet::new();
         buffered2.insert(40);
         let blur = get_blur_for_line(&mut manager, 50, 0, 40, &buffered2, 1920.0);
-        assert_eq!(
-            blur, 42.0,
-            "Blur calculation can exceed 32 (cap applied later)"
-        );
+        assert_eq!(blur, 5.0, "Blur should remain capped at 5px");
+    }
+
+    #[test]
+    fn test_amll_ease_curve_endpoints_and_midpoint() {
+        assert!((amll_ease(0.0) - 0.0).abs() < 0.0001);
+        assert!((amll_ease(1.0) - 1.0).abs() < 0.0001);
+        assert!((amll_ease(0.5) - 0.802).abs() < 0.002);
+    }
+
+    #[test]
+    fn test_mask_alpha_transition_is_independent_from_scale() {
+        let mut animation = LineAnimation::new(0.0, false);
+        animation.set_target_mask_alpha(1.0, 0.4);
+        animation.set_scale(0.97 * 100.0);
+        animation.update(0.3);
+
+        assert!((animation.bright_mask_alpha - 1.0).abs() < 0.0001);
+        assert!((animation.dark_mask_alpha - 0.4).abs() < 0.0001);
+        assert_eq!(animation.current_scale(), 0.97);
     }
 
     #[test]

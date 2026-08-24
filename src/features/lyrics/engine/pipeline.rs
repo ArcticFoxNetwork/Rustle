@@ -30,6 +30,24 @@ use iced::widget::shader::{Pipeline, Primitive};
 use std::collections::HashSet;
 use std::sync::Arc;
 
+const AMLL_MAX_BLUR_PX: f32 = 5.0;
+const AMLL_BG_SLIDE_DISTANCE: f32 = 80.0;
+
+#[inline]
+fn logical_blur_to_physical(logical_blur: f32, scale: f32) -> f32 {
+    logical_blur.clamp(0.0, AMLL_MAX_BLUR_PX) * scale.max(0.0)
+}
+
+#[inline]
+fn background_slide_progress(slide_y: f32) -> f32 {
+    (1.0 - slide_y.abs() / AMLL_BG_SLIDE_DISTANCE).clamp(0.0, 1.0)
+}
+
+#[inline]
+fn background_slide_scale(slide_y: f32) -> f32 {
+    0.8 + background_slide_progress(slide_y) * 0.2
+}
+
 /// iced Pipeline 实现，管理 GPU 管线生命周期
 pub struct LyricsEnginePipeline {
     /// The GPU pipeline for text rendering
@@ -124,6 +142,11 @@ pub struct LyricsEnginePrimitive {
     pub line_blur_levels: Arc<Vec<f32>>,
     /// Per-line opacities
     pub line_opacities: Arc<Vec<f32>>,
+    /// Per-line background wrapper slide positions (-80..0 percent)
+    pub line_bg_slide_y: Arc<Vec<f32>>,
+    /// Per-line independent mask alpha values
+    pub line_bright_mask_alpha: Arc<Vec<f32>>,
+    pub line_dark_mask_alpha: Arc<Vec<f32>>,
 }
 
 /// Serializable interlude dots state for primitive
@@ -203,6 +226,33 @@ impl LyricsEnginePrimitive {
         } else {
             buffers.opacities_arc()
         };
+        let line_bg_slide_y = if buffers.bg_slide_y().len() < line_count {
+            let mut values = buffers.bg_slide_y().to_vec();
+            while values.len() < line_count {
+                values.push(0.0);
+            }
+            Arc::new(values)
+        } else {
+            buffers.bg_slide_y_arc()
+        };
+        let line_bright_mask_alpha = if buffers.bright_mask_alpha().len() < line_count {
+            let mut values = buffers.bright_mask_alpha().to_vec();
+            while values.len() < line_count {
+                values.push(0.2);
+            }
+            Arc::new(values)
+        } else {
+            buffers.bright_mask_alpha_arc()
+        };
+        let line_dark_mask_alpha = if buffers.dark_mask_alpha().len() < line_count {
+            let mut values = buffers.dark_mask_alpha().to_vec();
+            while values.len() < line_count {
+                values.push(0.2);
+            }
+            Arc::new(values)
+        } else {
+            buffers.dark_mask_alpha_arc()
+        };
 
         // Get cached shaped lines (Single Source of Truth)
         let shaped_lines = engine.cached_shaped_lines();
@@ -237,6 +287,9 @@ impl LyricsEnginePrimitive {
             line_scales,
             line_blur_levels,
             line_opacities,
+            line_bg_slide_y,
+            line_bright_mask_alpha,
+            line_dark_mask_alpha,
         }
     }
 
@@ -292,6 +345,24 @@ impl LyricsEnginePrimitive {
                 1.0
             };
 
+            let bg_slide_y = if line.is_bg && idx < self.line_bg_slide_y.len() {
+                self.line_bg_slide_y[idx]
+            } else {
+                0.0
+            };
+            let bg_slide_scale = if line.is_bg {
+                background_slide_scale(bg_slide_y)
+            } else {
+                1.0
+            };
+            let render_scale = animated_scale * bg_slide_scale;
+            let line_height_physical = self
+                .cached_line_heights
+                .get(idx)
+                .copied()
+                .unwrap_or(self.config.line_height)
+                * scale;
+
             let is_active = self.buffered_lines.contains(&idx);
 
             // Use pre-computed blur from LineAnimationManager if available
@@ -333,14 +404,14 @@ impl LyricsEnginePrimitive {
                 let base_opacity = self.line_opacities[idx];
                 // Apply hide passed lines on top
                 if self.config.hide_passed_lines && idx < self.scroll_to_index && self.is_playing {
-                    0.00001
+                    0.0001
                 } else {
                     base_opacity
                 }
             } else {
                 // Fallback calculation (shouldn't happen in normal operation)
                 if self.config.hide_passed_lines && idx < self.scroll_to_index && self.is_playing {
-                    0.00001
+                    0.0001
                 } else if is_active {
                     0.85
                 } else if line.is_bg {
@@ -355,17 +426,55 @@ impl LyricsEnginePrimitive {
                 }
             };
 
+            // Animation state is kept in logical/CSS pixels. Convert blur to
+            // physical pixels at the same boundary as positions and glyphs.
+            let blur_px = logical_blur_to_physical(blur, scale);
+            let (bright_mask_alpha, dark_mask_alpha) = if idx < self.line_bright_mask_alpha.len()
+                && idx < self.line_dark_mask_alpha.len()
+            {
+                (
+                    self.line_bright_mask_alpha[idx],
+                    self.line_dark_mask_alpha[idx],
+                )
+            } else if is_active {
+                (1.0, 0.4)
+            } else {
+                (0.2, 0.2)
+            };
+
             styles.push(ComputedLineStyle {
-                y_position,
-                scale: animated_scale,
-                blur: blur.min(32.0), // default: Math.min(32, blur)
+                y_position: y_position + (bg_slide_y / 100.0) * line_height_physical,
+                scale: render_scale,
+                blur: blur_px,
                 opacity: final_opacity,
                 glow,
                 is_active,
+                bright_mask_alpha,
+                dark_mask_alpha,
             });
         }
 
         styles
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{background_slide_progress, background_slide_scale, logical_blur_to_physical};
+
+    #[test]
+    fn blur_cap_is_applied_before_physical_scale() {
+        assert_eq!(logical_blur_to_physical(4.0, 2.0), 8.0);
+        assert_eq!(logical_blur_to_physical(8.0, 2.0), 10.0);
+        assert_eq!(logical_blur_to_physical(-1.0, 2.0), 0.0);
+    }
+
+    #[test]
+    fn background_slide_uses_amll_progress_and_scale() {
+        assert_eq!(background_slide_progress(-80.0), 0.0);
+        assert_eq!(background_slide_progress(0.0), 1.0);
+        assert_eq!(background_slide_scale(-80.0), 0.8);
+        assert_eq!(background_slide_scale(0.0), 1.0);
     }
 }
 

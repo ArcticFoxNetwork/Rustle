@@ -81,7 +81,11 @@ struct LineUniforms {
     glow: f32,
     is_active: u32,
     line_height: f32,
-    _padding: f32,
+    bright_mask_alpha: f32,
+    dark_mask_alpha: f32,
+    _padding0: f32,
+    _padding1: f32,
+    _padding2: f32,
 };
 
 @group(0) @binding(0) var<uniform> globals: GlobalUniforms;
@@ -471,7 +475,8 @@ fn emphasis_easing(x: f32) -> f32 {
 }
 
 fn calculate_emphasis_amount(word_duration: f32, last_word: bool) -> f32 {
-    let du = select(word_duration, word_duration * 1.2, last_word);
+    var du = max(1000.0, word_duration);
+    du = select(du, du * 1.2, last_word);
     var amount = du / 2000.0;
     amount = select(pow(amount, 3.0), sqrt(amount), amount > 1.0);
     amount = amount * 0.6;
@@ -480,7 +485,8 @@ fn calculate_emphasis_amount(word_duration: f32, last_word: bool) -> f32 {
 }
 
 fn calculate_emphasis_blur(word_duration: f32, last_word: bool) -> f32 {
-    let du = select(word_duration, word_duration * 1.2, last_word);
+    var du = max(1000.0, word_duration);
+    du = select(du, du * 1.2, last_word);
     var blur = du / 3000.0;
     blur = select(pow(blur, 3.0), sqrt(blur), blur > 1.0);
     blur = blur * 0.5;
@@ -532,7 +538,8 @@ fn calculate_basic_float_progress(
         return 0.0;
     }
     let progress = clamp(elapsed / duration, 0.0, 1.0);
-    return 1.0 - (1.0 - progress) * (1.0 - progress);
+    // AMLL uses CSS `ease-out`, i.e. cubic-bezier(0, 0, 0.58, 1).
+    return solve_cubic_bezier(progress, 0.0, 0.0, 0.58, 1.0);
 }
 
 // === Vertex Shader ===
@@ -729,8 +736,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             globals.word_fade_width
         );
 
-        let bright_alpha = calculate_bright_mask_alpha(line.scale);
-        let dark_alpha = calculate_dark_mask_alpha(line.scale);
+        let bright_alpha = line.bright_mask_alpha;
+        let dark_alpha = line.dark_mask_alpha;
         brightness = mix(dark_alpha, bright_alpha, highlight);
     }
     

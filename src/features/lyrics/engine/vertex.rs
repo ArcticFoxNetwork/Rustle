@@ -307,8 +307,11 @@ pub struct LineUniform {
     pub is_active: u32,
     /// Line height
     pub line_height: f32,
-    /// Padding
-    pub _padding: f32,
+    /// Independent AMLL mask alpha values
+    pub bright_mask_alpha: f32,
+    pub dark_mask_alpha: f32,
+    /// Padding to keep a stable 48-byte storage stride
+    pub _padding: [f32; 3],
 }
 
 impl Default for LineUniform {
@@ -321,7 +324,9 @@ impl Default for LineUniform {
             glow: 0.0,
             is_active: 0,
             line_height: 48.0,
-            _padding: 0.0,
+            bright_mask_alpha: 0.2,
+            dark_mask_alpha: 0.2,
+            _padding: [0.0; 3],
         }
     }
 }

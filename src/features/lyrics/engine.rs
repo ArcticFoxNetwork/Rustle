@@ -727,7 +727,7 @@ impl LyricsEngine {
             .iter()
             .map(|line| {
                 let main_font_size = if line.is_bg {
-                    font_size * self.config.bg_font_size_ratio
+                    (font_size * self.config.bg_font_size_ratio).max(10.0)
                 } else {
                     font_size
                 };

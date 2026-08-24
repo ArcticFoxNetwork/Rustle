@@ -577,7 +577,9 @@ impl LyricsGpuPipeline {
                     glow: style.glow,
                     is_active: if style.is_active { 1 } else { 0 },
                     line_height: actual_height,
-                    _padding: 0.0,
+                    bright_mask_alpha: style.bright_mask_alpha,
+                    dark_mask_alpha: style.dark_mask_alpha,
+                    _padding: [0.0; 3],
                 }
             })
             .collect();
