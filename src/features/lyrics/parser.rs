@@ -131,7 +131,10 @@ pub fn parse_lyrics(content: &str) -> Vec<LyricLineOwned> {
 
 /// Parse lyrics with specified format
 pub fn parse_lyrics_with_format(content: &str, format: LyricsFormat) -> Vec<LyricLineOwned> {
-    let mut lines = match format {
+    // Keep parser output faithful to the source. Display-time normalization
+    // and timing optimization are applied to a clone in `to_ui_lyrics`, just
+    // like AMLL's rawLines/processedLines pipeline.
+    match format {
         LyricsFormat::Lrc => lrc::parse_lrc(content),
         LyricsFormat::Lqe => lqe::parse_lqe(content),
         LyricsFormat::Yrc => yrc::parse_yrc(content),
@@ -146,10 +149,7 @@ pub fn parse_lyrics_with_format(content: &str, format: LyricsFormat) -> Vec<Lyri
             // Try LRC as fallback
             lrc::parse_lrc(content)
         }
-    };
-
-    optimize_lyrics_lines(&mut lines);
-    lines
+    }
 }
 
 /// Parse sidecar LRC attributes like `.tlrc` using raw line timestamps.
@@ -159,6 +159,12 @@ pub fn parse_lrc_sidecar(content: &str) -> Vec<LyricLineOwned> {
 
 /// Convert parsed lyrics to UI format
 pub fn to_ui_lyrics(lines: Vec<LyricLineOwned>) -> Vec<crate::ui::pages::LyricLine> {
+    let mut lines = lines;
+    // Keep the source/cache representation untouched and optimize only the
+    // render copy. This preserves exact source timestamps for seeking,
+    // serialization, and tests while retaining AMLL's display smoothing.
+    optimize_lyrics_lines(&mut lines);
+
     lines
         .into_iter()
         .map(|line| {

@@ -265,7 +265,48 @@ pub fn lyrics(value: &Value) -> Result<Lyrics> {
     Ok(Lyrics {
         lyric: split_lyric("lrc"),
         tlyric: split_lyric("tlyric"),
+        yrc: split_lyric("yrc"),
+        ytlrc: split_lyric("ytlrc"),
+        romalrc: split_lyric("romalrc"),
+        yromalrc: split_lyric("yromalrc"),
     })
+}
+
+#[cfg(test)]
+mod lyric_tests {
+    use super::lyrics;
+    use serde_json::json;
+
+    #[test]
+    fn maps_v1_word_level_lyrics_and_attributes() {
+        let value = json!({
+            "code": 200,
+            "lrc": { "lyric": "[00:00.00]fallback" },
+            "tlyric": { "lyric": "[00:00.00]翻译" },
+            "yrc": { "lyric": "[0,1000](0,500,0)逐(500,500,0)字" },
+            "ytlrc": { "lyric": "[0,1000]translation" },
+            "romalrc": { "lyric": "[00:00.00]roman" },
+            "yromalrc": { "lyric": "[0,1000](0,1000,0)roman" }
+        });
+
+        let mapped = lyrics(&value).expect("valid lyrics response");
+        assert_eq!(mapped.yrc, vec!["[0,1000](0,500,0)逐(500,500,0)字"]);
+        assert_eq!(mapped.ytlrc, vec!["[0,1000]translation"]);
+        assert_eq!(mapped.romalrc, vec!["[00:00.00]roman"]);
+        assert_eq!(mapped.yromalrc, vec!["[0,1000](0,1000,0)roman"]);
+    }
+
+    #[test]
+    fn tolerates_missing_word_level_fields() {
+        let value = json!({
+            "code": 200,
+            "lrc": { "lyric": "[00:00.00]line" }
+        });
+
+        let mapped = lyrics(&value).expect("valid lyrics response");
+        assert_eq!(mapped.lyric, vec!["[00:00.00]line"]);
+        assert!(mapped.yrc.is_empty());
+    }
 }
 
 pub fn playlist_detail(value: &Value) -> Result<PlaylistDetail> {

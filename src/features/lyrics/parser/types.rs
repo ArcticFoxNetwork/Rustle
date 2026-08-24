@@ -184,10 +184,10 @@ fn reset_line_timestamps(lines: &mut [LyricLineOwned]) {
 fn convert_excessive_background_lines(lines: &mut [LyricLineOwned]) {
     let mut consecutive_bg_count = 0usize;
 
-    for line in lines {
+    for (index, line) in lines.iter_mut().enumerate() {
         if line.is_bg {
             consecutive_bg_count += 1;
-            if consecutive_bg_count > 1 {
+            if index == 0 || consecutive_bg_count > 1 {
                 line.is_bg = false;
             }
         } else {
@@ -244,77 +244,130 @@ fn clean_unintentional_overlaps(lines: &mut [LyricLineOwned]) {
             continue;
         }
 
-        let mut next_main_index = i + 1;
-        while next_main_index < lines.len() && lines[next_main_index].is_bg {
-            next_main_index += 1;
-        }
+        // Continue through later main lines so an accidental overlap after an
+        // intentional overlap is still clipped, matching AMLL.
+        for j in (i + 1)..lines.len() {
+            if lines[j].is_bg {
+                continue;
+            }
 
-        let Some(next_line) = lines.get(next_main_index) else {
-            continue;
-        };
-        let next_start_time = next_line.start_time;
-        let next_end_time = next_line.end_time;
+            if lines[i].end_time <= lines[j].start_time {
+                break;
+            }
 
-        let overlap = lines[i].end_time.saturating_sub(next_start_time);
-        if overlap == 0 {
-            continue;
-        }
+            let overlap = lines[i].end_time - lines[j].start_time;
+            let next_duration = lines[j].end_time.saturating_sub(lines[j].start_time);
+            let percentage_threshold = ((next_duration as f64) * 0.1).round() as u64;
+            let is_intentional_overlap =
+                overlap >= 500 || (overlap > 100 && overlap > percentage_threshold);
 
-        let next_duration = next_end_time.saturating_sub(next_start_time);
-        let percentage_threshold = ((next_duration as f64) * 0.1).round() as u64;
-        let is_intentional_overlap = overlap > 100 && overlap > percentage_threshold;
+            if !is_intentional_overlap {
+                lines[i].end_time = lines[j].start_time;
 
-        if !is_intentional_overlap {
-            lines[i].end_time = next_start_time;
-
-            if lines.get(i + 1).is_some_and(|line| line.is_bg) {
-                lines[i + 1].end_time = next_start_time;
+                if lines.get(i + 1).is_some_and(|line| line.is_bg) {
+                    lines[i + 1].end_time = lines[j].start_time;
+                }
+                break;
             }
         }
     }
 }
 
+/// Sort main lyric lines by start time while keeping an attached background
+/// line immediately after its main line.
+fn sort_lyric_lines(lines: &mut [LyricLineOwned]) {
+    let mut groups: Vec<(u64, usize, Vec<LyricLineOwned>)> = Vec::new();
+    let mut index = 0usize;
+
+    while index < lines.len() {
+        let main_line = lines[index].clone();
+        let start_time = main_line.start_time;
+        let original_index = groups.len();
+        let mut group = vec![main_line];
+        index += 1;
+
+        if !group[0].is_bg && lines.get(index).is_some_and(|line| line.is_bg) {
+            group.push(lines[index].clone());
+            index += 1;
+        }
+
+        groups.push((start_time, original_index, group));
+    }
+
+    groups.sort_by_key(|(start_time, original_index, _)| (*start_time, *original_index));
+
+    let mut output_index = 0usize;
+    for (_, _, group) in groups {
+        for line in group {
+            lines[output_index] = line;
+            output_index += 1;
+        }
+    }
+}
+
+/// Try to make each line visible up to 600ms before its first word. This is
+/// the AMLL algorithm: traverse forward, retain original line/group bounds,
+/// and only shift the display line start (word timestamps stay untouched).
 fn try_advance_start_time(lines: &mut [LyricLineOwned]) {
-    for i in (0..lines.len()).rev() {
+    let mut prev_line_start_time = 0u64;
+    let mut prev_line_end_time = 0u64;
+    let mut prev_group_start_time = 0u64;
+    let mut prev_group_end_time = 0u64;
+    let mut has_previous_line = false;
+
+    for i in 0..lines.len() {
         if lines[i].is_bg {
             continue;
         }
 
-        let mut prev_line_index = i.checked_sub(1);
-        while let Some(prev_idx) = prev_line_index {
-            if !lines[prev_idx].is_bg {
-                break;
-            }
-            prev_line_index = prev_idx.checked_sub(1);
-        }
+        let original_start_time = lines[i].start_time;
+        let original_end_time = lines[i].end_time;
 
-        let (target_advance_amount, safe_boundary) = if let Some(prev_idx) = prev_line_index {
-            let prev_line = &lines[prev_idx];
-            let originally_had_gap = lines[i].start_time >= prev_line.end_time;
-
-            if originally_had_gap {
-                (600u64, prev_line.end_time)
+        let (target_advance_amount, safe_boundary) = if has_previous_line {
+            if original_start_time >= prev_line_end_time {
+                (600u64, prev_group_end_time)
             } else {
-                let prev_duration = prev_line.end_time.saturating_sub(prev_line.start_time);
-                (
-                    400u64,
-                    prev_line.start_time + ((prev_duration as f64) * 0.3).round() as u64,
-                )
+                let overlap_duration = prev_line_end_time.saturating_sub(original_start_time);
+                let advance = if overlap_duration < 400 {
+                    overlap_duration * 70 / 100
+                } else {
+                    400
+                };
+                (advance, prev_line_start_time)
             }
         } else {
             (600u64, 0u64)
         };
 
-        let target_time = lines[i].start_time.saturating_sub(target_advance_amount);
+        let target_time = original_start_time.saturating_sub(target_advance_amount);
         let new_start_time = safe_boundary.max(target_time);
 
-        if new_start_time < lines[i].start_time {
+        if new_start_time < original_start_time {
             lines[i].start_time = new_start_time;
         }
 
         if lines.get(i + 1).is_some_and(|line| line.is_bg) {
             lines[i + 1].start_time = lines[i].start_time;
         }
+
+        if has_previous_line {
+            let overlaps_previous_group = original_start_time < prev_group_end_time
+                && original_end_time > prev_group_start_time;
+            if overlaps_previous_group {
+                prev_group_start_time = prev_group_start_time.min(original_start_time);
+                prev_group_end_time = prev_group_end_time.max(original_end_time);
+            } else {
+                prev_group_start_time = original_start_time;
+                prev_group_end_time = original_end_time;
+            }
+        } else {
+            prev_group_start_time = original_start_time;
+            prev_group_end_time = original_end_time;
+        }
+
+        prev_line_start_time = lines[i].start_time;
+        prev_line_end_time = original_end_time;
+        has_previous_line = true;
     }
 }
 
@@ -323,6 +376,7 @@ pub fn optimize_lyrics_lines(lines: &mut [LyricLineOwned]) {
     reset_line_timestamps(lines);
     convert_excessive_background_lines(lines);
     sync_main_and_background_lines(lines);
+    sort_lyric_lines(lines);
     clean_unintentional_overlaps(lines);
     try_advance_start_time(lines);
 }
@@ -364,6 +418,29 @@ mod tests {
         assert_eq!(lines[0].end_time, 2_200);
         assert_eq!(lines[1].start_time, 300);
         assert_eq!(lines[1].end_time, 2_200);
+    }
+
+    #[test]
+    fn optimize_advances_display_start_but_keeps_word_timestamp() {
+        let mut lines = vec![
+            LyricLineOwned {
+                words: vec![make_word(1_120, 5_000, "first")],
+                start_time: 1_120,
+                end_time: 5_000,
+                ..Default::default()
+            },
+            LyricLineOwned {
+                words: vec![make_word(5_000, 8_000, "second")],
+                start_time: 5_000,
+                end_time: 8_000,
+                ..Default::default()
+            },
+        ];
+
+        optimize_lyrics_lines(&mut lines);
+
+        assert_eq!(lines[0].start_time, 520);
+        assert_eq!(lines[0].words[0].start_time, 1_120);
     }
 
     #[test]

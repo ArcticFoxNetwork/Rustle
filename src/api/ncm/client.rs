@@ -338,7 +338,10 @@ impl NcmClient {
 
     pub async fn song_lyric(&self, music_id: u64) -> Result<Lyrics> {
         let query = self.query().param("id", &music_id.to_string());
-        let response = self.client.lyric(&query).await?;
+        // Use the v1 endpoint, which is the only standard NCM endpoint that
+        // returns the word-level YRC payload. The legacy endpoint only
+        // reliably returns line-level LRC data.
+        let response = self.client.lyric_new(&query).await?;
         mapper::lyrics(&response.body)
     }
 

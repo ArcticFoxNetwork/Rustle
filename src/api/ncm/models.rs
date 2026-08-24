@@ -4,6 +4,14 @@ use serde::{Deserialize, Serialize};
 pub struct Lyrics {
     pub lyric: Vec<String>,
     pub tlyric: Vec<String>,
+    /// NetEase word-level lyrics (YRC) returned by `/api/song/lyric/v1`.
+    pub yrc: Vec<String>,
+    /// Word-level translated lyrics, when available.
+    pub ytlrc: Vec<String>,
+    /// Romanized line lyrics.
+    pub romalrc: Vec<String>,
+    /// Word-level romanized lyrics.
+    pub yromalrc: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
