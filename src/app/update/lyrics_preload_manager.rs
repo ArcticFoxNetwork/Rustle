@@ -33,12 +33,18 @@ pub struct LyricsPreloadManager {
 }
 
 impl LyricsPreloadManager {
-    fn has_usable_cache(ncm_id: u64) -> bool {
+    fn has_word_level_cache(ncm_id: u64) -> bool {
+        crate::features::lyrics::has_cached_word_level_lyrics(ncm_id)
+    }
+
+    fn has_any_cache(ncm_id: u64) -> bool {
         crate::features::lyrics::load_cached_lyrics(ncm_id).is_some()
     }
 
     pub fn should_schedule_warmup(&mut self, song_id: i64, ncm_id: u64) -> bool {
-        if Self::has_usable_cache(ncm_id) {
+        // A YRC cache is complete. An old LRC-only cache still needs one
+        // online upgrade attempt, so it must not short-circuit warmup here.
+        if Self::has_word_level_cache(ncm_id) {
             self.mark_ready(song_id, ncm_id);
             return false;
         }
@@ -59,7 +65,7 @@ impl LyricsPreloadManager {
     }
 
     pub fn begin_warmup(&mut self, song_id: i64, ncm_id: u64) -> bool {
-        if Self::has_usable_cache(ncm_id) {
+        if Self::has_word_level_cache(ncm_id) {
             self.mark_ready(song_id, ncm_id);
             return false;
         }
@@ -92,7 +98,7 @@ impl LyricsPreloadManager {
 
     pub fn register_display_fetch(&mut self, song_id: i64, ncm_id: u64) -> DisplayFetchAction {
         match self.entries.get(&song_id).map(|entry| entry.status) {
-            Some(LyricsPreloadStatus::Ready) if Self::has_usable_cache(ncm_id) => {
+            Some(LyricsPreloadStatus::Ready) if Self::has_any_cache(ncm_id) => {
                 DisplayFetchAction::UseCache
             }
             Some(LyricsPreloadStatus::Ready) => {
@@ -115,7 +121,7 @@ impl LyricsPreloadManager {
 
         match result {
             Ok(()) => {
-                if Self::has_usable_cache(entry.ncm_id) {
+                if Self::has_any_cache(entry.ncm_id) {
                     entry.status = LyricsPreloadStatus::Ready;
                     entry.last_error = None;
                 } else {

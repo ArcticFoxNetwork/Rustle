@@ -42,6 +42,14 @@ fn load_cached_yrc_lyrics(ncm_id: u64) -> Option<Vec<LyricLineOwned>> {
     None
 }
 
+/// Return whether a valid word-level cache exists for a song.
+///
+/// This is intentionally narrower than `load_cached_lyrics`: an old `.lrc`
+/// cache must not prevent the first upgrade attempt to the v1 YRC endpoint.
+pub fn has_cached_word_level_lyrics(ncm_id: u64) -> bool {
+    load_cached_yrc_lyrics(ncm_id).is_some()
+}
+
 /// Load cached lyrics, preferring word-level YRC data.
 pub fn load_cached_lyrics(ncm_id: u64) -> Option<Vec<LyricLineOwned>> {
     if let Some(lines) = load_cached_yrc_lyrics(ncm_id) {
