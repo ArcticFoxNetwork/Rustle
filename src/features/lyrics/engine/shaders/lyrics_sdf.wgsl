@@ -475,8 +475,7 @@ fn emphasis_easing(x: f32) -> f32 {
 }
 
 fn calculate_emphasis_amount(word_duration: f32, last_word: bool) -> f32 {
-    var du = max(1000.0, word_duration);
-    du = select(du, du * 1.2, last_word);
+    let du = max(1000.0, word_duration);
     var amount = du / 2000.0;
     amount = select(pow(amount, 3.0), sqrt(amount), amount > 1.0);
     amount = amount * 0.6;
@@ -485,8 +484,7 @@ fn calculate_emphasis_amount(word_duration: f32, last_word: bool) -> f32 {
 }
 
 fn calculate_emphasis_blur(word_duration: f32, last_word: bool) -> f32 {
-    var du = max(1000.0, word_duration);
-    du = select(du, du * 1.2, last_word);
+    let du = max(1000.0, word_duration);
     var blur = du / 3000.0;
     blur = select(pow(blur, 3.0), sqrt(blur), blur > 1.0);
     blur = blur * 0.5;

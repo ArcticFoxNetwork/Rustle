@@ -252,10 +252,7 @@ impl WordData {
     /// - For last word: amount *= 1.6
     /// - amount = min(1.2, amount)
     pub fn emphasis_amount(&self) -> f32 {
-        let mut du = self.duration_ms().max(1000) as f32;
-        if self.is_last_word {
-            du *= 1.2;
-        }
+        let du = self.duration_ms().max(1000) as f32;
         let mut amount = du / 2000.0;
         amount = if amount > 1.0 {
             amount.sqrt()
@@ -263,7 +260,8 @@ impl WordData {
             amount.powi(3)
         };
         amount *= 0.6;
-        // AMLL applies the last-word amount boost after its duration boost.
+        // AMLL applies the duration boost to the animation timeline only; the
+        // amount is calculated from the original effective duration first.
         if self.is_last_word {
             amount *= 1.6;
         }
@@ -280,10 +278,7 @@ impl WordData {
     /// - For last word: blur *= 1.5
     /// - blur = min(0.8, blur)
     pub fn emphasis_blur(&self) -> f32 {
-        let mut du = self.duration_ms().max(1000) as f32;
-        if self.is_last_word {
-            du *= 1.2;
-        }
+        let du = self.duration_ms().max(1000) as f32;
         let mut blur = du / 3000.0;
         blur = if blur > 1.0 {
             blur.sqrt()
@@ -291,7 +286,8 @@ impl WordData {
             blur.powi(3)
         };
         blur *= 0.5;
-        // AMLL applies the last-word blur boost after its duration boost.
+        // AMLL applies the duration boost to the animation timeline only; the
+        // blur is calculated from the original effective duration first.
         if self.is_last_word {
             blur *= 1.5;
         }
@@ -623,10 +619,10 @@ mod tests {
 
     #[test]
     fn test_emphasis_amount_last_word_multiplier() {
-        // AMLL applies du *= 1.2 before the last-word amount multiplier.
+        // AMLL multiplies the amount, while du *= 1.2 affects animation timing only.
         let word = create_word_data(0, 2000, true);
         let amount = word.emphasis_amount();
-        let expected = 1.2_f32.sqrt() * 0.6 * 1.6;
+        let expected = 0.6_f32 * 1.6;
         assert!(
             (amount - expected).abs() < 0.001,
             "Expected {}, got {}",
@@ -685,10 +681,10 @@ mod tests {
 
     #[test]
     fn test_emphasis_blur_last_word_multiplier() {
-        // AMLL applies du *= 1.2 before the last-word blur multiplier and cap.
+        // AMLL multiplies blur, while du *= 1.2 affects animation timing only.
         let word = create_word_data(0, 3000, true);
         let blur = word.emphasis_blur();
-        assert_eq!(blur, 0.8, "Expected capped blur 0.8, got {}", blur);
+        assert!((blur - 0.75).abs() < 0.001, "Expected 0.75, got {}", blur);
     }
 
     #[test]
