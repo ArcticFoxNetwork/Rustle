@@ -50,7 +50,7 @@ jobs:
             $version = $tag.TrimStart('v')
           }
 
-          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/${{ env.APP_NAME }}-windows-x86_64.exe"
+          $url = "https://github.com/${{ github.repository }}/releases/download/$tag/rustle-$version-windows-x86_64.msi"
           $releaseNotesUrl = "https://github.com/${{ github.repository }}/releases/tag/$tag"
 
           "tag=$tag" >> $env:GITHUB_OUTPUT

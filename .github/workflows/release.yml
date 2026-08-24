@@ -254,9 +254,14 @@ jobs:
 
       - name: Install ImageMagick
         run: |
-          choco install imagemagick -y
+          choco install imagemagick --no-progress -y
 
-      - name: Generate ICO icon
+      - name: Install WiX Toolset
+        run: |
+          choco install wixtoolset --version=3.14.1 --no-progress -y
+          cargo install cargo-wix --version 0.3.9 --locked
+
+      - name: Generate Windows ICO icon
         shell: pwsh
         run: |
           magick assets/icons/icon.png -define icon:auto-resize=256,128,64,48,32,16 assets/icons/icon.ico
@@ -267,7 +272,15 @@ jobs:
           key: windows-msvc
 
       - name: Build release
-        run: cargo build --release
+        run: cargo build --release --bin rustle --bin rustle-cleanup
+
+      - name: Build MSI
+        shell: pwsh
+        run: |
+          $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
+          cargo wix --no-build --target-bin-dir target/release `
+            --culture zh-cn --locale wix/zh-CN.wxl `
+            --output "rustle-$version-windows-x86_64.msi"
 
       - name: Rename exe
         shell: pwsh
@@ -278,7 +291,9 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: windows-x86_64
-          path: ${{ env.APP_NAME }}-windows-x86_64.exe
+          path: |
+            ${{ env.APP_NAME }}-windows-x86_64.exe
+            rustle-*-windows-x86_64*.msi
 
   release:
     needs: [linux-appimage, macos, windows]

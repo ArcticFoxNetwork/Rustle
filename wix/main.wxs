@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+    <Product
+        Id="*"
+        Name="!(loc.ProductName)"
+        UpgradeCode="052AC737-D5F0-4A6A-B40D-43D547940370"
+        Manufacturer="!(loc.Manufacturer)"
+        Language="2052"
+        Codepage="936"
+        Version="$(var.Version)">
+
+        <Package
+            Id="*"
+            Keywords="Installer"
+            Description="!(loc.PackageDescription)"
+            Manufacturer="!(loc.Manufacturer)"
+            InstallerVersion="500"
+            Languages="2052"
+            Compressed="yes"
+            InstallScope="perMachine"
+            InstallPrivileges="elevated"
+            SummaryCodepage="936" />
+
+        <MajorUpgrade
+            Schedule="afterInstallInitialize"
+            AllowSameVersionUpgrades="yes"
+            DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+
+        <Media Id="1" Cabinet="media1.cab" EmbedCab="yes" />
+
+        <Property Id="WIXUI_INSTALLDIR" Value="APPLICATIONFOLDER" />
+        <Property Id="REMOVE_RUSTLE_DATA" Value="0" Secure="yes" />
+        <Property Id="CREATE_DESKTOP_SHORTCUT" Secure="yes">
+            <RegistrySearch
+                Id="DesktopShortcutChoiceSearch"
+                Root="HKCU"
+                Key="Software\FeiXiangShi\Rustle\Shortcuts"
+                Name="Desktop"
+                Type="raw" />
+        </Property>
+        <Property Id="START_WITH_WINDOWS" Secure="yes">
+            <RegistrySearch
+                Id="StartupShortcutChoiceSearch"
+                Root="HKCU"
+                Key="Software\FeiXiangShi\Rustle\Shortcuts"
+                Name="Startup"
+                Type="raw" />
+        </Property>
+        <Property Id="ARPHELPLINK" Value="https://github.com/Fei-xiangShi/Rustle" />
+        <Property Id="ARPURLINFOABOUT" Value="https://github.com/Fei-xiangShi/Rustle" />
+        <WixVariable Id="WixUILicenseRtf" Value="wix\license-zh-CN.rtf" />
+
+        <Icon Id="ProductIcon" SourceFile="assets\icons\icon.ico" />
+        <Binary Id="RustleCleanupBinary" SourceFile="$(var.CargoTargetBinDir)\rustle-cleanup.exe" />
+        <Property Id="ARPPRODUCTICON" Value="ProductIcon" />
+
+        <Directory Id="TARGETDIR" Name="SourceDir">
+            <Directory Id="ProgramFiles64Folder">
+                <Directory Id="APPLICATIONFOLDER" Name="Rustle">
+                    <Component Id="ApplicationFiles" Guid="B69F50DB-BEBD-4632-8FE3-716BD15B2F8A">
+                        <File Id="RustleExe" Name="rustle.exe" Source="$(var.CargoTargetBinDir)\rustle.exe" KeyPath="no" />
+                        <RemoveFolder Id="RemoveApplicationFolder" On="uninstall" />
+                        <RegistryValue Root="HKLM" Key="Software\FeiXiangShi\Rustle" Name="InstallPath" Type="string" Value="[APPLICATIONFOLDER]" KeyPath="yes" />
+                    </Component>
+                </Directory>
+            </Directory>
+
+            <Directory Id="ProgramMenuFolder">
+                <Directory Id="RustleStartMenuFolder" Name="Rustle">
+                    <Component Id="StartMenuShortcut" Guid="5B7F2C66-5F18-4A69-8E08-9D4B8A7B46A1">
+                        <Shortcut
+                            Id="RustleStartMenuShortcut"
+                            Name="Rustle"
+                            Description="Rustle music player"
+                            Target="[APPLICATIONFOLDER]rustle.exe"
+                            WorkingDirectory="APPLICATIONFOLDER"
+                            Icon="ProductIcon"
+                            Advertise="no" />
+                        <RemoveFolder Id="RemoveRustleStartMenuFolder" On="uninstall" />
+                        <RegistryValue Root="HKCU" Key="Software\FeiXiangShi\Rustle" Name="StartMenuShortcut" Type="integer" Value="1" KeyPath="yes" />
+                    </Component>
+                </Directory>
+            </Directory>
+
+            <Directory Id="DesktopFolder">
+                <Component Id="DesktopShortcut" Guid="C5BF40CC-DAF2-49DC-8D85-3E60DE9651EA">
+                    <Condition>CREATE_DESKTOP_SHORTCUT = "1"</Condition>
+                    <Shortcut
+                        Id="RustleDesktopShortcut"
+                        Name="Rustle"
+                        Description="Rustle music player"
+                        Target="[APPLICATIONFOLDER]rustle.exe"
+                        WorkingDirectory="APPLICATIONFOLDER"
+                        Icon="ProductIcon"
+                        Advertise="no" />
+                    <RemoveFolder Id="RemoveRustleDesktopFolder" On="uninstall" />
+                    <RegistryValue Root="HKCU" Key="Software\FeiXiangShi\Rustle\Shortcuts" Name="Desktop" Type="integer" Value="1" KeyPath="yes" />
+                </Component>
+            </Directory>
+
+            <Directory Id="StartupFolder">
+                <Component Id="StartupShortcut" Guid="D6B6E1D7-E0EE-4EA3-8C32-2E3A0A6AFDAE">
+                    <Condition>START_WITH_WINDOWS = "1"</Condition>
+                    <Shortcut
+                        Id="RustleStartupShortcut"
+                        Name="Rustle"
+                        Description="Start Rustle when you sign in to Windows"
+                        Target="[APPLICATIONFOLDER]rustle.exe"
+                        WorkingDirectory="APPLICATIONFOLDER"
+                        Icon="ProductIcon"
+                        Advertise="no" />
+                    <RemoveFolder Id="RemoveRustleStartupFolder" On="uninstall" />
+                    <RegistryValue Root="HKCU" Key="Software\FeiXiangShi\Rustle\Shortcuts" Name="Startup" Type="integer" Value="1" KeyPath="yes" />
+                </Component>
+            </Directory>
+        </Directory>
+
+        <Feature Id="MainFeature" Title="!(loc.ProductName)" Level="1" Absent="disallow">
+            <ComponentRef Id="ApplicationFiles" />
+            <ComponentRef Id="StartMenuShortcut" />
+            <ComponentRef Id="DesktopShortcut" />
+            <ComponentRef Id="StartupShortcut" />
+        </Feature>
+
+        <CustomAction
+            Id="RemoveRustleData"
+            BinaryKey="RustleCleanupBinary"
+            ExeCommand="--remove-data"
+            Execute="deferred"
+            Impersonate="yes"
+            Return="check" />
+
+        <InstallExecuteSequence>
+            <Custom Action="RemoveRustleData" Before="RemoveFiles">REMOVE_RUSTLE_DATA = "1" AND REMOVE = "ALL"</Custom>
+        </InstallExecuteSequence>
+
+        <UI>
+            <UIRef Id="WixUI_InstallDir" />
+
+            <Dialog Id="InstallOptionsDlg" Width="370" Height="270" Title="!(loc.InstallOptionsDialogTitle)">
+                <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.VerifyReadyDlgBannerBitmap)" />
+                <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+                <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.InstallOptionsTitle)" />
+                <Control Id="Description" Type="Text" X="25" Y="60" Width="320" Height="32" Text="!(loc.InstallOptionsDescription)" />
+                <Control Id="DesktopShortcutCheckBox" Type="CheckBox" X="25" Y="108" Width="320" Height="18" Property="CREATE_DESKTOP_SHORTCUT" CheckBoxValue="1" Text="!(loc.CreateDesktopShortcut)" />
+                <Control Id="StartupCheckBox" Type="CheckBox" X="25" Y="143" Width="320" Height="18" Property="START_WITH_WINDOWS" CheckBoxValue="1" Text="!(loc.StartWithWindows)" />
+                <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
+                    <Publish Event="NewDialog" Value="InstallDirDlg">1</Publish>
+                </Control>
+                <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.WixUINext)">
+                    <Publish Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+                </Control>
+                <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+                    <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+                </Control>
+                <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+            </Dialog>
+
+            <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="InstallOptionsDlg" Order="5">NOT Installed AND (WIXUI_DONTVALIDATEPATH OR WIXUI_INSTALLDIR_VALID="1")</Publish>
+            <Publish Dialog="VerifyReadyDlg" Control="Back" Event="NewDialog" Value="InstallOptionsDlg" Order="2">NOT Installed</Publish>
+
+            <Dialog Id="RemoveRustleDataDlg" Width="370" Height="270" Title="!(loc.RemoveRustleDataDialogTitle)">
+                <Control Id="BannerBitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="44" TabSkip="no" Text="!(loc.VerifyReadyDlgBannerBitmap)" />
+                <Control Id="BannerLine" Type="Line" X="0" Y="44" Width="370" Height="0" />
+                <Control Id="Title" Type="Text" X="15" Y="6" Width="340" Height="15" Transparent="yes" NoPrefix="yes" Text="!(loc.RemoveRustleDataTitle)" />
+                <Control Id="Description" Type="Text" X="25" Y="60" Width="320" Height="72" Text="!(loc.RemoveRustleDataDescription)" />
+                <Control Id="RemoveDataCheckBox" Type="CheckBox" X="25" Y="145" Width="320" Height="38" Property="REMOVE_RUSTLE_DATA" CheckBoxValue="1" Text="!(loc.RemoveRustleDataCheckBox)" />
+                <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="!(loc.WixUIBack)">
+                    <Publish Event="NewDialog" Value="VerifyReadyDlg">1</Publish>
+                </Control>
+                <Control Id="Remove" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="!(loc.RemoveRustleDataRemove)">
+                    <Publish Event="Remove" Value="All">1</Publish>
+                    <Publish Event="EndDialog" Value="Return">1</Publish>
+                </Control>
+                <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="!(loc.WixUICancel)">
+                    <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+                </Control>
+                <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+            </Dialog>
+
+            <!-- WixUI_InstallDir sets WixUI_InstallMode to Remove from the
+                 maintenance dialog before the built-in Remove action runs. -->
+            <Publish Dialog="VerifyReadyDlg" Control="Remove" Event="NewDialog" Value="RemoveRustleDataDlg" Order="0">WixUI_InstallMode = "Remove" AND OutOfDiskSpace &lt;&gt; 1</Publish>
+            <Publish Dialog="VerifyReadyDlg" Control="RemoveNoShield" Event="NewDialog" Value="RemoveRustleDataDlg" Order="0">WixUI_InstallMode = "Remove" AND OutOfDiskSpace &lt;&gt; 1</Publish>
+        </UI>
+    </Product>
+</Wix>

@@ -78,7 +78,7 @@
 
 | 平台 | 格式 | 架构 |
 |:----:|:----:|:----:|
-| Windows | `.exe` | x86_64 |
+| Windows | `.msi` / `.exe` | x86_64 |
 | macOS | `.dmg` | Intel / Apple Silicon |
 | Linux | `.AppImage` | x86_64 |
 
@@ -114,7 +114,7 @@ cargo build --release --locked
 ./target/release/rustle
 ```
 
-Windows / macOS 安装好 [Rust 工具链](https://rustup.rs) 后直接 `cargo build --release` 即可。
+Windows / macOS 安装好 [Rust 工具链](https://rustup.rs) 后直接 `cargo build --release` 即可；Windows 本地构建未生成临时 ICO 时不保证 EXE 带 PE 文件图标，正式 Release 由 CI 负责生成。
 </details>
 
 ---
