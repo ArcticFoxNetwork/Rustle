@@ -4,8 +4,7 @@ use std::collections::HashMap;
 
 use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager, HotKeyState};
-use iced::Subscription;
-use iced::futures::{SinkExt, Stream};
+use tokio::sync::mpsc;
 
 use crate::features::keybindings::{Action, KeyBinding, KeyBindings, KeyCode};
 
@@ -50,6 +49,12 @@ impl GlobalHotkeyService {
                 }
             }
         }
+
+        tracing::info!(
+            registered = service.registered.len(),
+            thread = ?std::thread::current().id(),
+            "Initialized global hotkeys"
+        );
 
         Ok(service)
     }
@@ -214,28 +219,15 @@ fn code_for_key(key: &KeyCode) -> Code {
     }
 }
 
-/// Subscribe to native events regardless of window focus or visibility.
-pub fn subscription() -> Subscription<u32> {
-    Subscription::run(global_hotkey_events)
-}
-
-fn global_hotkey_events() -> impl Stream<Item = u32> {
-    iced::stream::channel::<u32>(
-        32,
-        |mut sender: iced::futures::channel::mpsc::Sender<u32>| async move {
-            let receiver = GlobalHotKeyEvent::receiver();
-
-            loop {
-                for event in receiver.try_iter() {
-                    if event.state == HotKeyState::Pressed && sender.send(event.id).await.is_err() {
-                        return;
-                    }
-                }
-
-                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
-            }
-        },
-    )
+/// Install event-driven delivery before native shortcuts are registered.
+pub fn install_event_handler() -> mpsc::UnboundedReceiver<u32> {
+    let (sender, receiver) = mpsc::unbounded_channel();
+    GlobalHotKeyEvent::set_event_handler(Some(move |event: GlobalHotKeyEvent| {
+        if event.state == HotKeyState::Pressed {
+            let _ = sender.send(event.id);
+        }
+    }));
+    receiver
 }
 
 trait HotkeyRegistrar {

@@ -99,29 +99,12 @@ impl App {
             Locale::new(lang)
         };
 
-        let global_hotkeys = match crate::platform::global_hotkeys::GlobalHotkeyService::new(
-            &settings.keybindings,
-        ) {
-            Ok(service) => Some(service),
-            Err(error) => {
-                tracing::warn!(%error, "Global hotkeys are unavailable");
-                None
-            }
-        };
-
         // 2. Initialize audio system
         let (audio_thread, audio, audio_chain, audio_listener_task) =
             helpers::init_audio(&settings);
 
         // 3. Initialize sub-states
-        let core = CoreState::new(
-            settings,
-            locale,
-            audio_thread,
-            audio,
-            audio_chain,
-            global_hotkeys,
-        );
+        let core = CoreState::new(settings, locale, audio_thread, audio, audio_chain);
         let library = LibraryState::default();
         let playback = PlaybackSessionState::default();
         let ui = UiState::new();
@@ -139,20 +122,22 @@ impl App {
         tracing::info!("Opening main window with id: {:?}", window_id);
 
         // 5. Initialize async tasks
-        let open_window_and_init_mpris = open_window.then(move |_| {
-            crate::platform::window::native_window_handle(window_id).map(|window_handle| {
-                match helpers::init_mpris(window_handle) {
-                    Ok((handle, rx)) => Message::MprisStartedWithHandle(handle, rx),
-                    Err(e) => {
-                        tracing::warn!("Failed to start media controls: {}", e);
-                        Message::Noop
+        let open_window_and_init_services = open_window
+            .then(move |_| {
+                crate::platform::window::native_window_handle(window_id).map(|window_handle| {
+                    match helpers::init_mpris(window_handle) {
+                        Ok((handle, rx)) => Message::MprisStartedWithHandle(handle, rx),
+                        Err(e) => {
+                            tracing::warn!("Failed to start media controls: {}", e);
+                            Message::Noop
+                        }
                     }
-                }
+                })
             })
-        });
+            .chain(Task::done(Message::InitializeGlobalHotkeys));
 
         let init_task = Task::batch([
-            open_window_and_init_mpris,
+            open_window_and_init_services,
             // Protocol IPC listener and URI stream
             {
                 let (ipc_tx, ipc_rx) = crate::protocol::ipc::ipc_channel();
@@ -331,14 +316,7 @@ impl App {
             iced::Subscription::none()
         };
 
-        // 12. Native global hotkeys remain active while unfocused or hidden.
-        let global_hotkey_sub = if self.core.global_hotkeys.is_some() {
-            crate::platform::global_hotkeys::subscription().map(Message::GlobalHotkeyPressed)
-        } else {
-            iced::Subscription::none()
-        };
-
-        // 13. Player events - handled via Task::run in initialization, not subscription
+        // 12. Player events - handled via Task::run in initialization, not subscription
         // (see handle_player_event_receiver_ready message)
 
         // Batch all subscriptions
@@ -352,7 +330,6 @@ impl App {
             shown_sub,
             focus_sub,
             mouse_sub,
-            global_hotkey_sub,
         ])
     }
 }

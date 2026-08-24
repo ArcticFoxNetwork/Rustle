@@ -477,6 +477,8 @@ pub enum Message {
     ShowOrFocusWindow,
     /// Toggle window visibility
     ToggleWindow,
+    /// Initialize native global shortcuts after the main window is open
+    InitializeGlobalHotkeys,
     /// Window finished showing and is ready to render
     WindowShown,
     /// Window gained focus
@@ -1094,6 +1096,7 @@ impl std::fmt::Debug for Message {
             Self::ShowWindow => simple!("ShowWindow"),
             Self::ShowOrFocusWindow => simple!("ShowOrFocusWindow"),
             Self::ToggleWindow => simple!("ToggleWindow"),
+            Self::InitializeGlobalHotkeys => simple!("InitializeGlobalHotkeys"),
             Self::WindowShown => simple!("WindowShown"),
             Self::WindowFocused => simple!("WindowFocused"),
             Self::WindowUnfocused => simple!("WindowUnfocused"),

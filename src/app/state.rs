@@ -212,7 +212,6 @@ impl CoreState {
         audio_thread: Option<crate::audio::AudioThreadHandle>,
         audio: Option<crate::audio::AudioHandle>,
         audio_chain: AudioProcessingChain,
-        global_hotkeys: Option<crate::platform::global_hotkeys::GlobalHotkeyService>,
     ) -> Self {
         let discord_enabled = settings.system.discord_enabled;
         Self {
@@ -232,7 +231,7 @@ impl CoreState {
             mpris_handle: None,
             mpris_rx: None,
             discord_presence: DiscordPresence::new(discord_enabled),
-            global_hotkeys,
+            global_hotkeys: None,
             window_restore_mode: iced::window::Mode::Windowed,
             window_visibility: WindowVisibilityState::Visible,
             window_focused: true,

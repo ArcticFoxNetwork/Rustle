@@ -177,6 +177,29 @@ impl App {
                 Some(window::drag_resize(direction))
             }
 
+            Message::InitializeGlobalHotkeys => {
+                let mut receiver = crate::platform::global_hotkeys::install_event_handler();
+                match crate::platform::global_hotkeys::GlobalHotkeyService::new(
+                    &self.core.settings.keybindings,
+                ) {
+                    Ok(service) => {
+                        self.core.global_hotkeys = Some(service);
+                        Some(Task::run(
+                            async_stream::stream! {
+                                while let Some(id) = receiver.recv().await {
+                                    yield id;
+                                }
+                            },
+                            Message::GlobalHotkeyPressed,
+                        ))
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "Global hotkeys are unavailable");
+                        Some(Task::none())
+                    }
+                }
+            }
+
             Message::WindowShown => {
                 if self.core.window_visibility == WindowVisibilityState::Showing
                     && self.core.window_operation_pending
