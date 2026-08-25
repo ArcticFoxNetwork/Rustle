@@ -18,6 +18,41 @@ impl App {
 
         tracing::info!("Opening playlist: {}", playlist_id);
         self.reset_playlist_page_state();
+
+        // Publish a lightweight local skeleton immediately. This keeps the
+        // route from flashing to an empty surface while the database task
+        // loads songs and computes the full view model.
+        let preview_name = self
+            .library
+            .playlists
+            .iter()
+            .find(|playlist| playlist.id == playlist_id)
+            .map(|playlist| playlist.name.clone())
+            .unwrap_or_else(|| "加载中...".to_string());
+        self.ui.playlist_page.current = Some(crate::ui::pages::PlaylistView {
+            kind: crate::ui::pages::playlist::DetailPageKind::Playlist,
+            id: playlist_id,
+            name: preview_name,
+            description: None,
+            profile_stats: None,
+            artist_tab: crate::ui::pages::playlist::ArtistPageTab::TopSongs,
+            artist_albums: Vec::new(),
+            user_playlists: Vec::new(),
+            cover_path: None,
+            owner: "本地".to_string(),
+            owner_artist_id: None,
+            owner_avatar_path: None,
+            creator_id: 0,
+            song_count: 0,
+            total_duration: String::new(),
+            like_count: String::new(),
+            songs: Vec::new(),
+            palette: crate::utils::ColorPalette::default(),
+            is_local: true,
+            is_subscribed: false,
+            watched_folder_path: None,
+            watch_enabled: false,
+        });
         self.ui.playlist_page.load_state =
             crate::app::update::page_loader::PlaylistLoadState::Loading;
 
@@ -36,6 +71,8 @@ impl App {
         self.ui.playlist_page.search_expanded = false;
         self.ui.playlist_page.search_query.clear();
         self.ui.playlist_page.viewing_recently_played = false;
+        self.ui.playlist_page.ncm_cache_baseline = None;
+        self.ui.playlist_page.ncm_replace_songs_on_chunk = false;
         self.ui.clear_playlist_animations();
 
         if self.ui.lyrics.is_open {

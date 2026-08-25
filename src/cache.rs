@@ -8,8 +8,101 @@ use std::time::SystemTime;
 use tracing::{info, warn};
 
 use crate::utils::{
-    automix_cache_dir, avatars_cache_dir, banners_cache_dir, covers_cache_dir, songs_cache_dir,
+    automix_cache_dir, avatars_cache_dir, banners_cache_dir, cache_dir, covers_cache_dir,
+    songs_cache_dir,
 };
+
+/// Directory for serialized remote playlist snapshots.
+pub fn playlists_cache_dir() -> PathBuf {
+    cache_dir().join("playlists")
+}
+
+/// Load a cached NCM playlist snapshot.
+pub async fn load_ncm_playlist_cache(playlist_id: u64) -> Option<crate::api::PlaylistDetail> {
+    let path = playlists_cache_dir().join(format!("{playlist_id}.json"));
+    let bytes = match tokio::fs::read(&path).await {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::debug!(playlist_id, ?error, "NCM playlist cache miss");
+            return None;
+        }
+    };
+    match serde_json::from_slice(&bytes) {
+        Ok(detail) => {
+            tracing::info!(playlist_id, bytes = bytes.len(), "NCM playlist cache hit");
+            Some(detail)
+        }
+        Err(error) => {
+            tracing::warn!(playlist_id, ?error, "NCM playlist cache is invalid");
+            None
+        }
+    }
+}
+
+/// Save a complete NCM playlist snapshot for fast subsequent entry.
+pub async fn save_ncm_playlist_cache(detail: &crate::api::PlaylistDetail) {
+    let dir = playlists_cache_dir();
+    if tokio::fs::create_dir_all(&dir).await.is_err() {
+        tracing::warn!(
+            playlist_id = detail.id,
+            "Failed to create NCM playlist cache directory"
+        );
+        return;
+    }
+    let path = dir.join(format!("{}.json", detail.id));
+    let bytes = match serde_json::to_vec(detail) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            tracing::warn!(
+                playlist_id = detail.id,
+                ?error,
+                "Failed to serialize NCM playlist cache"
+            );
+            return;
+        }
+    };
+    let nonce = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let tmp = dir.join(format!(
+        "{}.{}.{}.json.tmp",
+        detail.id,
+        std::process::id(),
+        nonce
+    ));
+    if tokio::fs::write(&tmp, &bytes).await.is_err() {
+        tracing::warn!(
+            playlist_id = detail.id,
+            "Failed to write NCM playlist cache"
+        );
+        return;
+    }
+
+    // `rename` does not replace an existing destination on Windows. Retry
+    // after removing the old snapshot so refreshes actually update the cache.
+    match tokio::fs::rename(&tmp, &path).await {
+        Ok(()) => {}
+        Err(first_error) => {
+            let _ = tokio::fs::remove_file(&path).await;
+            if let Err(error) = tokio::fs::rename(&tmp, &path).await {
+                tracing::warn!(
+                    playlist_id = detail.id,
+                    ?first_error,
+                    ?error,
+                    "Failed to replace NCM playlist cache"
+                );
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return;
+            }
+        }
+    }
+    tracing::info!(
+        playlist_id = detail.id,
+        tracks = detail.tracks.len(),
+        "NCM playlist cache saved"
+    );
+}
 
 /// Information about a cached file
 #[derive(Debug)]
@@ -31,6 +124,7 @@ pub struct CacheStats {
     pub songs_bytes: u64,
     pub banners_bytes: u64,
     pub avatars_bytes: u64,
+    pub playlists_bytes: u64,
 }
 
 /// Get all cache directories
@@ -41,6 +135,7 @@ fn cache_directories() -> Vec<PathBuf> {
         banners_cache_dir(),
         avatars_cache_dir(),
         automix_cache_dir(),
+        playlists_cache_dir(),
     ]
 }
 
@@ -111,8 +206,16 @@ pub fn calculate_cache_stats() -> CacheStats {
         stats.file_count += 1;
     }
 
-    stats.total_bytes =
-        stats.covers_bytes + stats.songs_bytes + stats.banners_bytes + stats.avatars_bytes;
+    for entry in collect_entries(&playlists_cache_dir()) {
+        stats.playlists_bytes += entry.size;
+        stats.file_count += 1;
+    }
+
+    stats.total_bytes = stats.covers_bytes
+        + stats.songs_bytes
+        + stats.banners_bytes
+        + stats.avatars_bytes
+        + stats.playlists_bytes;
 
     stats
 }

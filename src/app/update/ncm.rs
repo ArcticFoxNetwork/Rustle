@@ -52,6 +52,139 @@ fn format_social_count(value: u64) -> String {
     }
 }
 
+const NCM_PLAYLIST_BATCH_SIZE: usize = 120;
+
+fn convert_ncm_playlist_chunks(
+    playlist_id: i64,
+    generation: u64,
+    tracks: Vec<crate::api::Track>,
+    cache_detail: Option<crate::api::PlaylistDetail>,
+) -> Task<Message> {
+    let batch_count = tracks.len().div_ceil(NCM_PLAYLIST_BATCH_SIZE);
+    Task::run(
+        async_stream::stream! {
+            let mut all_tracks = Vec::with_capacity(tracks.len());
+            let mut cache_detail = cache_detail;
+            if tracks.is_empty() {
+                if let Some(mut detail) = cache_detail.take() {
+                    detail.tracks.clear();
+                    crate::cache::save_ncm_playlist_cache(&detail).await;
+                }
+                yield Message::NcmPlaylistSongsChunk(
+                    generation,
+                    playlist_id,
+                    Vec::new(),
+                    Vec::new(),
+                    true,
+                );
+            } else {
+                for batch_index in 0..batch_count {
+                    let start = batch_index * NCM_PLAYLIST_BATCH_SIZE;
+                    let end = (start + NCM_PLAYLIST_BATCH_SIZE).min(tracks.len());
+                    let batch = tracks[start..end].to_vec();
+                    let batch_for_message = batch.clone();
+                    all_tracks.extend(batch.iter().cloned());
+                    let converted = tokio::task::spawn_blocking(move || {
+                        crate::app::update::page_loader::convert_ncm_tracks_to_views_with_offset(
+                            &batch,
+                            start,
+                        )
+                    })
+                    .await
+                    .unwrap_or_default();
+                    let is_last = batch_index + 1 == batch_count;
+                    if is_last {
+                        if let Some(mut detail) = cache_detail.take() {
+                            detail.tracks = all_tracks.clone();
+                            crate::cache::save_ncm_playlist_cache(&detail).await;
+                        }
+                    }
+                    yield Message::NcmPlaylistSongsChunk(
+                        generation,
+                        playlist_id,
+                        batch_for_message,
+                        converted,
+                        is_last,
+                    );
+                }
+            }
+        },
+        |message| message,
+    )
+}
+
+fn fetch_ncm_playlist_chunks(
+    client: NcmClient,
+    playlist_id: i64,
+    generation: u64,
+    track_ids: Vec<u64>,
+    cache_detail: Option<crate::api::PlaylistDetail>,
+) -> Task<Message> {
+    let batch_count = track_ids.len().div_ceil(NCM_PLAYLIST_BATCH_SIZE);
+    Task::run(
+        async_stream::stream! {
+            let mut all_tracks = Vec::new();
+            let mut cache_detail = cache_detail;
+            if track_ids.is_empty() {
+                if let Some(mut detail) = cache_detail.take() {
+                    detail.tracks.clear();
+                    crate::cache::save_ncm_playlist_cache(&detail).await;
+                }
+                yield Message::NcmPlaylistSongsChunk(
+                    generation,
+                    playlist_id,
+                    Vec::new(),
+                    Vec::new(),
+                    true,
+                );
+            } else {
+                for batch_index in 0..batch_count {
+                    let start = batch_index * NCM_PLAYLIST_BATCH_SIZE;
+                    let end = (start + NCM_PLAYLIST_BATCH_SIZE).min(track_ids.len());
+                    let tracks = match client.track_detail(&track_ids[start..end]).await {
+                        Ok(tracks) => tracks,
+                        Err(error) => {
+                            error!("Failed to load NCM playlist tracks: {:?}", error);
+                            yield Message::NcmPlaylistLoadFailed(
+                                generation,
+                                playlist_id,
+                                "加载歌单歌曲失败".to_string(),
+                            );
+                            return;
+                        }
+                    };
+                    let batch_for_message = tracks.clone();
+                    all_tracks.extend(tracks.iter().cloned());
+                    let batch_for_conversion = tracks.clone();
+                    let converted = tokio::task::spawn_blocking(move || {
+                        crate::app::update::page_loader::convert_ncm_tracks_to_views_with_offset(
+                            &batch_for_conversion,
+                            start,
+                        )
+                    })
+                    .await
+                    .unwrap_or_default();
+                    let is_last = batch_index + 1 == batch_count;
+                    if is_last {
+                        if let Some(mut detail) = cache_detail.take() {
+                            detail.tracks = all_tracks.clone();
+                            crate::cache::save_ncm_playlist_cache(&detail).await;
+                        }
+                    }
+                    yield Message::NcmPlaylistSongsChunk(
+                        generation,
+                        playlist_id,
+                        batch_for_message,
+                        converted,
+                        is_last,
+                    );
+                }
+            }
+        },
+        |message| message,
+    )
+}
+
 impl App {
     pub(crate) fn ncm_track_to_db_song(track: &crate::api::Track) -> crate::database::DbSong {
         let metadata = crate::metadata::SongMetadata::from(track);
@@ -170,15 +303,10 @@ impl App {
             return Task::none();
         }
 
-        if matches!(
-            self.ui.playlist_page.load_state,
-            crate::app::update::page_loader::PlaylistLoadState::Loading
-        ) {
-            debug!("Playlist already loading, skipping");
-            return Task::none();
-        }
-
         debug!("Opening NCM playlist: {}", playlist_id);
+        self.ui.playlist_page.ncm_load_generation =
+            self.ui.playlist_page.ncm_load_generation.wrapping_add(1);
+        let generation = self.ui.playlist_page.ncm_load_generation;
         self.reset_playlist_page_state();
 
         let (name, owner) = if is_daily_recommend {
@@ -280,22 +408,16 @@ impl App {
                     }
                 },
                 move |result| match result {
-                    Ok(detail) => Message::NcmPlaylistDetailLoaded(detail),
-                    Err(message) => Message::PlaylistPageLoadFailed(internal_id, message),
+                    Ok(detail) => Message::NcmPlaylistDetailLoaded(generation, detail),
+                    Err(message) => {
+                        Message::NcmPlaylistLoadFailed(generation, internal_id, message)
+                    }
                 },
             )
         } else {
             Task::perform(
-                async move {
-                    client.playlist_detail(playlist_id).await.map_err(|e| {
-                        error!("Failed to load NCM playlist detail: {:?}", e);
-                        "加载歌单失败".to_string()
-                    })
-                },
-                move |result| match result {
-                    Ok(detail) => Message::NcmPlaylistDetailLoaded(detail),
-                    Err(message) => Message::PlaylistPageLoadFailed(internal_id, message),
-                },
+                async move { crate::cache::load_ncm_playlist_cache(playlist_id).await },
+                move |cached| Message::NcmPlaylistCacheLoaded(generation, playlist_id, cached),
             )
         }
     }
@@ -1082,7 +1204,181 @@ impl App {
                 }
             }
 
-            Message::NcmPlaylistDetailLoaded(detail) => {
+            Message::NcmPlaylistCacheLoaded(generation, playlist_id, cached) => {
+                if *generation != self.ui.playlist_page.ncm_load_generation
+                    || !matches!(self.ui.current_route, Route::NcmPlaylist(id) if id == *playlist_id)
+                {
+                    return Some(Task::none());
+                }
+                let generation = *generation;
+                let internal_id = -(*playlist_id as i64);
+                let refresh_id = *playlist_id;
+                let Some(client) = &self.core.ncm_client else {
+                    return Some(Self::toast_warning(
+                        self.core.locale.get(Key::NotLoggedIn).to_string(),
+                    ));
+                };
+
+                if let Some(detail) = cached {
+                    let total_secs: u64 = detail.tracks.iter().map(|s| s.duration_ms / 1000).sum();
+                    let total_mins = total_secs / 60;
+                    let total_duration = if total_mins / 60 > 0 {
+                        format!("约 {} 小时 {} 分钟", total_mins / 60, total_mins % 60)
+                    } else {
+                        format!("{} 分钟", total_mins)
+                    };
+                    if let Some(playlist) = &mut self.ui.playlist_page.current
+                        && playlist.id == internal_id
+                    {
+                        playlist.name = detail.name.clone();
+                        playlist.description =
+                            (!detail.description.is_empty()).then(|| detail.description.clone());
+                        playlist.owner = detail.creator.nickname.clone();
+                        playlist.creator_id = detail.creator.id;
+                        playlist.song_count = detail.track_count as u32;
+                        playlist.total_duration = total_duration;
+                        playlist.is_subscribed = detail.subscribed;
+                    }
+                    self.ui.playlist_page.ncm_cache_baseline = Some(detail.clone());
+                    self.ui.playlist_page.ncm_replace_songs_on_chunk = false;
+                    let mut cached_views =
+                        crate::app::update::page_loader::convert_ncm_tracks_to_views(
+                            &detail.tracks,
+                        );
+                    for song in &mut cached_views {
+                        song.source = crate::utils::compute_source(
+                            "",
+                            song.id,
+                            Some(&song.artist),
+                            Some(&song.title),
+                        );
+                    }
+                    if let Some(playlist) = &mut self.ui.playlist_page.current
+                        && playlist.id == internal_id
+                    {
+                        playlist.songs = cached_views;
+                    }
+                    self.ui.home.current_ncm_playlist_songs = detail.tracks.clone();
+                    self.ui.playlist_page.load_state =
+                        crate::app::update::page_loader::PlaylistLoadState::Ready;
+                    let refresh_client = client.clone();
+                    let refresh_task = Task::perform(
+                        async move { refresh_client.playlist_detail_preview(refresh_id).await },
+                        move |result| match result {
+                            Ok((detail, track_ids)) => {
+                                Message::NcmPlaylistPreviewLoaded(generation, detail, track_ids)
+                            }
+                            Err(error) => {
+                                error!("Failed to refresh NCM playlist metadata: {:?}", error);
+                                Message::NoOp
+                            }
+                        },
+                    );
+                    Some(refresh_task)
+                } else {
+                    let client = client.clone();
+                    Some(Task::perform(
+                        async move { client.playlist_detail_preview(refresh_id).await },
+                        move |result| match result {
+                            Ok((detail, track_ids)) => {
+                                Message::NcmPlaylistPreviewLoaded(generation, detail, track_ids)
+                            }
+                            Err(error) => {
+                                error!("Failed to load NCM playlist metadata: {:?}", error);
+                                Message::NcmPlaylistLoadFailed(
+                                    generation,
+                                    internal_id,
+                                    "加载歌单失败".to_string(),
+                                )
+                            }
+                        },
+                    ))
+                }
+            }
+
+            Message::NcmPlaylistPreviewLoaded(generation, detail, track_ids) => {
+                if *generation != self.ui.playlist_page.ncm_load_generation
+                    || !matches!(self.ui.current_route, Route::NcmPlaylist(id) if id == detail.id)
+                {
+                    return Some(Task::none());
+                }
+                let generation = *generation;
+                let playlist_id = -(detail.id as i64);
+                let baseline = self.ui.playlist_page.ncm_cache_baseline.take();
+                let unchanged = baseline.as_ref().is_some_and(|cached| {
+                    cached.track_update_time == detail.track_update_time
+                        && cached.track_count == detail.track_count
+                });
+
+                if let Some(playlist) = &mut self.ui.playlist_page.current
+                    && playlist.id == playlist_id
+                {
+                    playlist.name = detail.name.clone();
+                    playlist.description =
+                        (!detail.description.is_empty()).then(|| detail.description.clone());
+                    playlist.owner = if detail.creator.nickname.is_empty() {
+                        "网易云音乐".to_string()
+                    } else {
+                        detail.creator.nickname.clone()
+                    };
+                    playlist.creator_id = detail.creator.id;
+                    playlist.song_count = detail.track_count as u32;
+                    playlist.is_subscribed = detail.subscribed;
+                }
+
+                if unchanged {
+                    self.ui.playlist_page.load_state =
+                        crate::app::update::page_loader::PlaylistLoadState::Ready;
+                    return Some(Task::none());
+                }
+
+                self.ui.playlist_page.ncm_replace_songs_on_chunk = baseline.is_some();
+                self.ui.home.current_ncm_playlist_songs.clear();
+                self.ui.playlist_page.load_state =
+                    crate::app::update::page_loader::PlaylistLoadState::Loading;
+
+                let Some(client) = &self.core.ncm_client else {
+                    return Some(Self::toast_warning(
+                        self.core.locale.get(Key::NotLoggedIn).to_string(),
+                    ));
+                };
+                let track_task = fetch_ncm_playlist_chunks(
+                    client.clone(),
+                    playlist_id,
+                    generation,
+                    track_ids.clone(),
+                    Some(detail.clone()),
+                );
+                let creator_task = if detail.creator.id != 0 {
+                    let creator_client = client.clone();
+                    let creator_id = detail.creator.id;
+                    Task::perform(
+                        async move { creator_client.user_detail(creator_id).await.ok() },
+                        move |result| {
+                            result
+                                .map(|detail| {
+                                    Message::NcmPlaylistCreatorDetailLoaded(
+                                        generation,
+                                        playlist_id,
+                                        detail,
+                                    )
+                                })
+                                .unwrap_or(Message::NoOp)
+                        },
+                    )
+                } else {
+                    Task::none()
+                };
+                Some(Task::batch([track_task, creator_task]))
+            }
+
+            Message::NcmPlaylistDetailLoaded(generation, detail) => {
+                if *generation != self.ui.playlist_page.ncm_load_generation
+                    || !matches!(self.ui.current_route, Route::NcmPlaylist(id) if id == detail.id)
+                {
+                    return Some(Task::none());
+                }
+                let generation = *generation;
                 debug!(
                     "NCM playlist detail loaded: {} with {} tracks",
                     detail.name,
@@ -1118,13 +1414,15 @@ impl App {
                         detail.creator.nickname.clone()
                     };
                     playlist.creator_id = detail.creator.id;
-                    playlist.song_count = detail.tracks.len() as u32;
+                    playlist.song_count = detail.track_count as u32;
                     playlist.total_duration = total_duration;
                     playlist.is_subscribed = detail.subscribed;
                 }
 
-                // Store NCM tracks for playback
-                self.ui.home.current_ncm_playlist_songs = detail.tracks.clone();
+                // Raw tracks are appended as conversion batches arrive. This
+                // keeps playback state and the visible list on the same load
+                // lifecycle.
+                self.ui.home.current_ncm_playlist_songs.clear();
 
                 let creator_detail_task = if detail.creator.id != 0 {
                     if let Some(client) = &self.core.ncm_client {
@@ -1135,7 +1433,11 @@ impl App {
                             async move { client.user_detail(creator_id).await.ok() },
                             move |result| {
                                 if let Some(user_detail) = result {
-                                    Message::PlaylistCreatorDetailLoaded(internal_id, user_detail)
+                                    Message::NcmPlaylistCreatorDetailLoaded(
+                                        generation,
+                                        internal_id,
+                                        user_detail,
+                                    )
                                 } else {
                                     Message::NoOp
                                 }
@@ -1148,28 +1450,11 @@ impl App {
                     Task::none()
                 };
 
-                // Spawn async task to convert tracks (covers are handled by ImageState).
-                let tracks = detail.tracks.clone();
-
-                // Start tracks conversion task
-                let tracks_task = Task::perform(
-                    async move {
-                        // Run all blocking operations in spawn_blocking
-                        tokio::task::spawn_blocking(move || {
-                            // Convert tracks to views
-                            let song_views =
-                                crate::app::update::page_loader::convert_ncm_tracks_to_views(
-                                    &tracks,
-                                );
-
-                            (playlist_id, song_views)
-                        })
-                        .await
-                        .unwrap_or_else(|_| (playlist_id, Vec::new()))
-                    },
-                    |(playlist_id, song_views)| {
-                        Message::NcmPlaylistSongsReady(playlist_id, song_views)
-                    },
+                let tracks_task = convert_ncm_playlist_chunks(
+                    playlist_id,
+                    generation,
+                    detail.tracks.clone(),
+                    None,
                 );
 
                 Some(Task::batch([tracks_task, creator_detail_task]))
@@ -1188,6 +1473,90 @@ impl App {
                 }
 
                 Some(Self::toast_error(message.clone()))
+            }
+
+            Message::NcmPlaylistLoadFailed(generation, playlist_id, message) => {
+                if *generation != self.ui.playlist_page.ncm_load_generation
+                    || !self
+                        .ui
+                        .playlist_page
+                        .current
+                        .as_ref()
+                        .is_some_and(|playlist| playlist.id == *playlist_id)
+                {
+                    return Some(Task::none());
+                }
+                self.ui.playlist_page.load_state =
+                    crate::app::update::page_loader::PlaylistLoadState::Idle;
+                Some(Self::toast_error(message.clone()))
+            }
+
+            Message::NcmPlaylistSongsChunk(
+                generation,
+                playlist_id,
+                tracks,
+                song_views,
+                is_last,
+            ) => {
+                if *generation != self.ui.playlist_page.ncm_load_generation {
+                    return Some(Task::none());
+                }
+                let is_current = self
+                    .ui
+                    .playlist_page
+                    .current
+                    .as_ref()
+                    .is_some_and(|playlist| playlist.id == *playlist_id);
+                if !is_current {
+                    return Some(Task::none());
+                }
+                if self.ui.playlist_page.ncm_replace_songs_on_chunk {
+                    if let Some(playlist) = &mut self.ui.playlist_page.current
+                        && playlist.id == *playlist_id
+                    {
+                        playlist.songs.clear();
+                    }
+                    self.ui.home.current_ncm_playlist_songs.clear();
+                    self.ui.playlist_page.ncm_replace_songs_on_chunk = false;
+                }
+                self.ui
+                    .home
+                    .current_ncm_playlist_songs
+                    .extend(tracks.iter().cloned());
+                let mut song_views = song_views.clone();
+                debug!(
+                    "NCM playlist songs chunk ready: {} tracks / {} songs (last={})",
+                    tracks.len(),
+                    song_views.len(),
+                    is_last
+                );
+
+                if let Some(playlist) = &mut self.ui.playlist_page.current
+                    && playlist.id == *playlist_id
+                {
+                    for song in &mut song_views {
+                        song.source = crate::utils::compute_source(
+                            "",
+                            song.id,
+                            Some(&song.artist),
+                            Some(&song.title),
+                        );
+                    }
+                    playlist.songs.extend(song_views);
+                    if *is_last {
+                        self.ui.playlist_page.load_state =
+                            crate::app::update::page_loader::PlaylistLoadState::Ready;
+                    }
+                }
+
+                if *is_last {
+                    Some(iced::widget::operation::snap_to(
+                        iced::widget::Id::new("playlist_scroll"),
+                        iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
+                    ))
+                } else {
+                    Some(Task::none())
+                }
             }
 
             Message::NcmPlaylistSongsReady(playlist_id, song_views) => {
@@ -1531,6 +1900,21 @@ impl App {
                 );
 
                 Some(tracks_task)
+            }
+
+            Message::NcmPlaylistCreatorDetailLoaded(generation, playlist_id, detail) => {
+                if *generation != self.ui.playlist_page.ncm_load_generation
+                    || !matches!(self.ui.current_route, Route::NcmPlaylist(id) if -(id as i64) == *playlist_id)
+                {
+                    return Some(Task::none());
+                }
+                if let Some(playlist) = &mut self.ui.playlist_page.current
+                    && playlist.id == *playlist_id
+                    && detail.artist_id != 0
+                {
+                    playlist.owner_artist_id = Some(detail.artist_id);
+                }
+                Some(Task::none())
             }
 
             Message::PlaylistCreatorDetailLoaded(playlist_id, detail) => {

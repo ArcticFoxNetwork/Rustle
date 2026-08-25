@@ -1,6 +1,8 @@
 use anyhow::{Result, anyhow};
-use ncm_api_rs::{ApiClient, Query, create_client};
+use futures_util::stream::{self, StreamExt};
+use ncm_api_rs::{ApiClient, CryptoType, Query, RequestOption, create_client};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::{fs, io, path::PathBuf};
@@ -171,6 +173,25 @@ impl NcmClient {
         query
     }
 
+    /// Build request options for the small number of endpoints where the
+    /// bundled SDK method does not expose all request parameters.  Keeping
+    /// this here still routes the request through ncm-api-rs' encryption,
+    /// cookie, proxy, and device handling instead of introducing a second
+    /// HTTP client.
+    fn request_options(query: &Query) -> RequestOption {
+        RequestOption {
+            crypto: CryptoType::default(),
+            cookie: query.cookie.clone(),
+            ua: query.ua.clone(),
+            proxy: query.proxy.clone(),
+            real_ip: query.real_ip.clone(),
+            random_cn_ip: query.random_cn_ip,
+            e_r: query.e_r,
+            domain: query.domain.clone(),
+            check_token: false,
+        }
+    }
+
     fn remember_cookies(&self, cookies: Vec<String>) {
         if cookies.is_empty() {
             return;
@@ -282,9 +303,23 @@ impl NcmClient {
             }
 
             let fetch_limit = detail.track_count.min(track_ids.len() as u64) as usize;
+            let chunks = track_ids[..fetch_limit]
+                .chunks(PLAYLIST_DETAIL_CHUNK_SIZE)
+                .map(|chunk| chunk.to_vec())
+                .collect::<Vec<_>>();
+            // Keep a small amount of parallelism so large playlists do not
+            // make the first page wait for a long serial chain of requests.
+            // `buffered` preserves input order while limiting in-flight calls.
+            let results = stream::iter(chunks.into_iter().map(|chunk| {
+                let client = self.clone();
+                async move { client.track_detail(&chunk).await }
+            }))
+            .buffered(3)
+            .collect::<Vec<_>>()
+            .await;
             let mut tracks = Vec::with_capacity(fetch_limit);
-            for chunk in track_ids[..fetch_limit].chunks(PLAYLIST_DETAIL_CHUNK_SIZE) {
-                tracks.extend(self.track_detail(chunk).await?);
+            for result in results {
+                tracks.extend(result?);
             }
 
             if tracks.len() < fetch_limit {
@@ -299,6 +334,44 @@ impl NcmClient {
         }
 
         Ok(detail)
+    }
+
+    /// Fetch only playlist metadata and track IDs.
+    ///
+    /// This mirrors SPlayer's first `/playlist/detail` request: callers can
+    /// render the playlist header immediately and hydrate track details in a
+    /// separate, progressive phase.
+    pub async fn playlist_detail_preview(
+        &self,
+        playlist_id: u64,
+    ) -> Result<(PlaylistDetail, Vec<u64>)> {
+        let query = self.query().param("id", &playlist_id.to_string());
+        // ncm-api-rs' playlist_detail helper currently hard-codes `n=100000`.
+        // Use its public raw request method with n=0 so the metadata response
+        // contains trackIds without eagerly materializing hundreds of songs.
+        let response = self
+            .client
+            .request(
+                "/api/v6/playlist/detail",
+                json!({
+                    "id": playlist_id.to_string(),
+                    "n": 0,
+                    "s": 8,
+                }),
+                Self::request_options(&query),
+            )
+            .await?;
+        self.remember_cookies(response.cookie);
+        let body = response.body;
+        let detail = mapper::playlist_detail(&body)?;
+        let mut track_ids = mapper::playlist_track_ids(&body);
+        if track_ids.is_empty() {
+            track_ids = detail.tracks.iter().map(|track| track.id).collect();
+        }
+        if detail.track_count > 0 && track_ids.is_empty() {
+            return Err(anyhow!("playlist track ids missing"));
+        }
+        Ok((detail, track_ids))
     }
 
     pub async fn artist_detail(&self, artist_id: u64) -> Result<ArtistDetail> {
