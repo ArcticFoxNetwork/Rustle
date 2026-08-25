@@ -66,3 +66,16 @@ pub async fn update_volume(pool: &Pool<Sqlite>, volume: f64) -> Result<()> {
 
     Ok(())
 }
+
+/// Update whether Personal FM mode should be restored on the next launch.
+pub async fn update_personal_fm_mode(pool: &Pool<Sqlite>, enabled: bool) -> Result<()> {
+    let now = current_timestamp();
+
+    sqlx::query("UPDATE playback_state SET personal_fm_mode = ?, updated_at = ? WHERE id = 1")
+        .bind(enabled)
+        .bind(now)
+        .execute(pool)
+        .await?;
+
+    Ok(())
+}

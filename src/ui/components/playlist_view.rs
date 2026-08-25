@@ -45,6 +45,9 @@ const MAX_ARTIST_LEN: usize = 25;
 #[derive(Debug, Clone)]
 pub struct SongItem {
     pub id: i64,
+    /// Remote cover URL when the row represents an online song.
+    /// Local songs resolve their cover through the local image cache.
+    pub cover_url: Option<String>,
     /// Pre-formatted index string to avoid format! in render loop
     pub index_str: String,
     /// Original title for search/filter
@@ -70,6 +73,7 @@ impl SongItem {
     /// Cover resolution is deferred to `image::resolve`.
     pub fn new(
         id: i64,
+        cover_url: Option<String>,
         index: usize,
         title: String,
         artist: String,
@@ -91,6 +95,7 @@ impl SongItem {
 
         Self {
             id,
+            cover_url,
             index_str,
             title,
             artist,
@@ -305,6 +310,9 @@ pub fn build_list<'a>(
     };
 
     let indices_for_key = filtered_indices.clone();
+    let indices_for_visible = filtered_indices.clone();
+    let songs_for_visible = songs;
+    let image_generation = image_state.generation;
 
     VirtualList::new(song_count, SONG_ROW_HEIGHT, item_builder)
         .keyed_by(move |index| {
@@ -331,6 +339,29 @@ pub fn build_list<'a>(
             let song_id = songs.get(song_index).map(|s| s.id);
             Message::HoverSong(song_id)
         })
+        .on_visible_range(move |(start, end)| {
+            let mut images = Vec::new();
+            for index in start..end {
+                let song_index = indices_for_visible
+                    .as_ref()
+                    .and_then(|indices| indices.get(index).copied())
+                    .unwrap_or(index);
+                let Some(song) = songs_for_visible.get(song_index) else {
+                    continue;
+                };
+                let Some((kind, id)) = crate::image::song_cover_key(song.id) else {
+                    continue;
+                };
+                let Some(url) = song.cover_url.as_deref() else {
+                    continue;
+                };
+                if !url.is_empty() {
+                    images.push((kind, id, url.to_string()));
+                }
+            }
+            Message::ImageViewportChanged(image_generation, images)
+        })
+        .visible_range_token(image_generation)
         .into()
 }
 

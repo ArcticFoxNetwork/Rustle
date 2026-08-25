@@ -41,6 +41,10 @@ impl App {
         self.close_route_overlays();
         self.reset_route_transient_state();
 
+        if previous_route != *route {
+            self.ui.image_state.cancel_pending_and_inflight();
+        }
+
         if matches!(previous_route, Route::Search { .. }) && !matches!(route, Route::Search { .. })
         {
             self.clear_search_cover_cache();
@@ -264,6 +268,9 @@ impl App {
         }
 
         let should_reload_search = self.sync_route_state(&route);
-        self.route_effects(&route, should_reload_search)
+        Task::batch([
+            self.route_effects(&route, should_reload_search),
+            self.pump_image_downloads(),
+        ])
     }
 }

@@ -317,6 +317,7 @@ impl App {
                     state.volume
                 );
                 self.set_output_volume(state.volume as f32, false);
+                self.playback.personal_fm_mode = state.personal_fm_mode;
                 self.playback.saved_state = Some(state.clone());
                 self.playback.startup_restore.playback_state_loaded = true;
                 self.refresh_playback_runtime();
@@ -420,6 +421,7 @@ impl App {
 
                         pages::PlaylistSongView::new(
                             song.id,
+                            None,
                             i + 1,
                             meta.title.clone(),
                             meta.artist.clone(),

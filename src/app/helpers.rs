@@ -399,6 +399,7 @@ pub async fn load_playlist_view(
             let added_date = format_relative_time(song.added_at);
             pages::PlaylistSongView::new(
                 song.song.id,
+                None,
                 i + 1,
                 meta.title.clone(),
                 meta.artist.clone(),
@@ -473,6 +474,7 @@ impl App {
     pub fn enter_fm_mode(&mut self) {
         self.playback.personal_fm_mode = true;
         self.playback.ncm_scrobble_source_id = None;
+        self.persist_personal_fm_mode(true);
         self.clear_shuffle_cache();
     }
 
@@ -480,6 +482,7 @@ impl App {
     pub fn exit_fm_mode(&mut self) {
         self.playback.personal_fm_mode = false;
         self.playback.ncm_scrobble_source_id = None;
+        self.persist_personal_fm_mode(false);
     }
 
     /// Check if more FM songs should be fetched

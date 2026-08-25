@@ -281,6 +281,16 @@ pub enum Message {
     PlaylistViewLoaded(PlaylistViewPayload),
     /// NCM playlist songs converted for display.
     NcmPlaylistSongsReady(i64, Vec<crate::ui::pages::PlaylistSongView>),
+    /// A batch of NCM playlist songs converted for display.
+    /// The boolean marks the final batch so the page can become ready without
+    /// waiting for the entire list to be converted in one UI update.
+    NcmPlaylistSongsChunk(
+        u64,
+        i64,
+        Vec<crate::api::Track>,
+        Vec<crate::ui::pages::PlaylistSongView>,
+        bool,
+    ),
     /// Play a specific song
     PlaySong(i64),
     /// Hover over a song in playlist
@@ -574,7 +584,17 @@ pub enum Message {
     /// User playlists loaded
     UserPlaylistsLoaded(Vec<PlaylistSummary>),
     /// NCM playlist detail loaded
-    NcmPlaylistDetailLoaded(PlaylistDetail),
+    NcmPlaylistDetailLoaded(u64, PlaylistDetail),
+    /// Cached NCM playlist snapshot loaded before a refresh.
+    NcmPlaylistCacheLoaded(u64, u64, Option<PlaylistDetail>),
+    /// NCM playlist metadata and track IDs loaded independently.
+    NcmPlaylistPreviewLoaded(u64, PlaylistDetail, Vec<u64>),
+    /// Creator details for an NCM playlist, tied to the playlist request
+    /// generation for stale-response protection.
+    NcmPlaylistCreatorDetailLoaded(u64, i64, UserDetail),
+    /// NCM playlist request failed. The generation prevents an old request
+    /// from changing a page that has since been opened again.
+    NcmPlaylistLoadFailed(u64, i64, String),
     /// Playlist-like detail page failed to load (internal page id, user-facing message)
     PlaylistPageLoadFailed(i64, String),
     /// Artist detail loaded
@@ -593,10 +613,18 @@ pub enum Message {
     PlaylistCreatorDetailLoaded(i64, UserDetail),
 
     // ============ Unified Image Pipeline ============
-    /// Image download completed and cached locally (kind, id, local_path)
-    ImageDownloadReady(crate::image::ImageKind, u64, PathBuf),
-    /// Image download failed and should be eligible for retry (kind, id)
-    ImageDownloadFailed(crate::image::ImageKind, u64),
+    /// Image download completed and cached locally (generation, scope, kind, id, local_path)
+    ImageDownloadReady(
+        u64,
+        crate::app::state::ImageRequestScope,
+        crate::image::ImageKind,
+        u64,
+        PathBuf,
+    ),
+    /// Image download failed and should be eligible for retry (generation, scope, kind, id)
+    ImageDownloadFailed(u64, crate::app::state::ImageRequestScope, crate::image::ImageKind, u64),
+    /// Image references entering a virtual list's visible/overscan range.
+    ImageViewportChanged(u64, Vec<(crate::image::ImageKind, u64, String)>),
 
     /// Toggle playlist subscription (subscribe/unsubscribe)
     TogglePlaylistSubscribe(i64),
@@ -827,7 +855,41 @@ impl std::fmt::Debug for Message {
             Self::TrayStarted(_) => simple!("TrayStarted"),
 
             // Complex types - show key identifier only
-            Self::NcmPlaylistDetailLoaded(d) => simple!("NcmPlaylistDetailLoaded", "id={}", d.id),
+            Self::NcmPlaylistDetailLoaded(generation, d) => simple!(
+                "NcmPlaylistDetailLoaded",
+                "id={}, generation={}",
+                d.id,
+                generation
+            ),
+            Self::NcmPlaylistCacheLoaded(generation, id, cached) => {
+                simple!(
+                    "NcmPlaylistCacheLoaded",
+                    "id={}, hit={}, generation={}",
+                    id,
+                    cached.is_some(),
+                    generation
+                )
+            }
+            Self::NcmPlaylistPreviewLoaded(generation, d, ids) => simple!(
+                "NcmPlaylistPreviewLoaded",
+                "id={}, {} track ids, generation={}",
+                d.id,
+                ids.len(),
+                generation
+            ),
+            Self::NcmPlaylistCreatorDetailLoaded(generation, id, detail) => simple!(
+                "NcmPlaylistCreatorDetailLoaded",
+                "playlist_id={}, user_id={}, generation={}",
+                id,
+                detail.user_id,
+                generation
+            ),
+            Self::NcmPlaylistLoadFailed(generation, id, _) => simple!(
+                "NcmPlaylistLoadFailed",
+                "id={}, generation={}",
+                id,
+                generation
+            ),
             Self::PlaylistPageLoadFailed(id, _) => {
                 simple!("PlaylistPageLoadFailed", "id={}", id)
             }
@@ -879,6 +941,15 @@ impl std::fmt::Debug for Message {
             Self::NcmPlaylistSongsReady(id, songs) => {
                 simple!("NcmPlaylistSongsReady", "id={}, {} songs", id, songs.len())
             }
+            Self::NcmPlaylistSongsChunk(generation, id, tracks, songs, last) => simple!(
+                "NcmPlaylistSongsChunk",
+                "id={}, {} tracks, {} songs, last={}, generation={}",
+                id,
+                tracks.len(),
+                songs.len(),
+                last,
+                generation
+            ),
             Self::PlaybackStateLoaded(_) => simple!("PlaybackStateLoaded"),
             Self::ScanProgressUpdate(_) => simple!("ScanProgressUpdate"),
             Self::WatchedFoldersLoaded(v) => {
@@ -1146,11 +1217,33 @@ impl std::fmt::Debug for Message {
             Self::ToggleBannerFavorite(i) => simple!("ToggleBannerFavorite", "{}", i),
 
             // Cloud Playlist
-            Self::ImageDownloadReady(kind, id, _path) => {
-                simple!("ImageDownloadReady", "{:?}, {}", kind, id)
+            Self::ImageDownloadReady(generation, scope, kind, id, _path) => {
+                simple!(
+                    "ImageDownloadReady",
+                    "generation={}, {:?}, {:?}, {}",
+                    generation,
+                    scope,
+                    kind,
+                    id
+                )
             }
-            Self::ImageDownloadFailed(kind, id) => {
-                simple!("ImageDownloadFailed", "{:?}, {}", kind, id)
+            Self::ImageDownloadFailed(generation, scope, kind, id) => {
+                simple!(
+                    "ImageDownloadFailed",
+                    "generation={}, {:?}, {:?}, {}",
+                    generation,
+                    scope,
+                    kind,
+                    id
+                )
+            }
+            Self::ImageViewportChanged(generation, images) => {
+                simple!(
+                    "ImageViewportChanged",
+                    "generation={}, {} images",
+                    generation,
+                    images.len()
+                )
             }
             Self::TogglePlaylistSubscribe(id) => simple!("TogglePlaylistSubscribe", "{}", id),
             Self::PlaylistSubscribeChanged(id, s) => {

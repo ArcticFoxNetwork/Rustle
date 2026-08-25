@@ -5,8 +5,8 @@
 
 use iced::Task;
 
-use crate::app::state::ImageRequest;
-use crate::app::{App, Message};
+use crate::app::state::{ImageRequest, ImageRequestScope};
+use crate::app::{App, Message, Route};
 use crate::image::{ImageKind, ImageResult};
 
 const MAX_IMAGE_DOWNLOADS: usize = 6;
@@ -17,7 +17,14 @@ impl App {
     /// Handle unified image-pipeline messages.
     pub fn handle_image(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
-            Message::ImageDownloadReady(kind, id, path) => {
+            Message::ImageDownloadReady(generation, scope, kind, id, path) => {
+                if !self
+                    .ui
+                    .image_state
+                    .is_current_inflight(*kind, *id, *generation, *scope)
+                {
+                    return Some(Task::none());
+                }
                 self.store_image_handle(*kind, *id, path.clone());
                 Some(Task::batch([
                     self.after_image_ready(*kind, *id, path),
@@ -25,9 +32,24 @@ impl App {
                 ]))
             }
 
-            Message::ImageDownloadFailed(kind, id) => {
+            Message::ImageDownloadFailed(generation, scope, kind, id) => {
+                if !self
+                    .ui
+                    .image_state
+                    .is_current_inflight(*kind, *id, *generation, *scope)
+                {
+                    return Some(Task::none());
+                }
                 self.ui.image_state.clear_inflight(*kind, *id);
                 Some(self.pump_image_downloads())
+            }
+
+            Message::ImageViewportChanged(generation, _) => {
+                if *generation != self.ui.image_state.generation {
+                    return Some(Task::none());
+                }
+                self.ui.image_state.cancel_viewport_requests();
+                Some(Task::none())
             }
 
             _ => None,
@@ -55,40 +77,46 @@ impl App {
 
         match message {
             Message::AutoLoginResult(Some(login_info), _) | Message::LoginSuccess(login_info) => {
-                refs.push(RemoteImage::new(
+                refs.push(RemoteImage::global(
                     ImageKind::UserAvatar,
                     login_info.user_id,
                     &login_info.avatar_url,
                 ));
             }
-            Message::BannersLoaded(banners) => {
+            Message::BannersLoaded(banners)
+                if matches!(self.ui.current_route, Route::Home | Route::Radio) =>
+            {
                 refs.extend(banners.iter().enumerate().map(|(index, banner)| {
                     RemoteImage::new(ImageKind::Banner, index as u64, &banner.image_url)
                 }));
             }
             Message::TopPicksLoaded(playlists)
-            | Message::UserPlaylistsLoaded(playlists)
-            | Message::RecommendedPlaylistsLoaded(playlists) => {
+                | Message::UserPlaylistsLoaded(playlists)
+                if matches!(self.ui.current_route, Route::Home | Route::Radio) =>
+            {
                 refs.extend(remote_playlist_covers(playlists));
             }
-            Message::HotPlaylistsLoaded(playlists, _) => {
+            Message::RecommendedPlaylistsLoaded(playlists)
+                if matches!(self.ui.current_route, Route::Discover(_)) =>
+            {
+                refs.extend(remote_playlist_covers(playlists));
+            }
+            Message::HotPlaylistsLoaded(playlists, _)
+                if matches!(self.ui.current_route, Route::Discover(_)) =>
+            {
                 refs.extend(remote_playlist_covers(playlists));
             }
             Message::TrendingSongsLoaded(songs)
-            | Message::AddNcmPlaylist(songs, _)
+                if matches!(self.ui.current_route, Route::Home | Route::Radio) =>
+            {
+                refs.extend(remote_track_covers(songs));
+            }
+            Message::AddNcmPlaylist(songs, _)
             | Message::AddNcmPlaylistWithSource(songs, _, _) => {
                 refs.extend(remote_track_covers(songs));
             }
-            Message::UserArtistDetailLoaded(
-                _,
-                crate::api::ArtistDetail {
-                    top_tracks: tracks, ..
-                },
-            ) => {
-                refs.extend(remote_track_covers(tracks));
-            }
             Message::PlayNcmSong(song) => {
-                refs.push(RemoteImage::new(
+                refs.push(RemoteImage::global(
                     ImageKind::SongCover,
                     song.id,
                     song.cover_url(),
@@ -101,7 +129,8 @@ impl App {
             {
                 match payload.context.tab {
                     crate::app::state::SearchTab::Songs => {
-                        refs.extend(remote_track_covers(&payload.tracks))
+                        // Song results are rendered by a virtual list; their
+                        // covers are requested from the visible range callback.
                     }
                     crate::app::state::SearchTab::Albums => {
                         refs.extend(remote_album_covers(&payload.albums));
@@ -120,7 +149,10 @@ impl App {
                     }
                 }
             }
-            Message::NcmPlaylistDetailLoaded(detail) => {
+            Message::NcmPlaylistDetailLoaded(generation, detail)
+                if *generation == self.ui.playlist_page.ncm_load_generation
+                    && matches!(self.ui.current_route, Route::NcmPlaylist(id) if id == detail.id) =>
+            {
                 refs.push(RemoteImage::new(
                     ImageKind::PlaylistCover,
                     detail.id,
@@ -133,9 +165,44 @@ impl App {
                         &detail.creator.avatar_url,
                     ));
                 }
-                refs.extend(remote_track_covers(&detail.tracks));
             }
-            Message::AlbumDetailLoaded(detail) => {
+            Message::NcmPlaylistCacheLoaded(generation, playlist_id, Some(detail))
+                if *generation == self.ui.playlist_page.ncm_load_generation
+                    && matches!(self.ui.current_route, Route::NcmPlaylist(id) if id == *playlist_id) =>
+            {
+                refs.push(RemoteImage::new(
+                    ImageKind::PlaylistCover,
+                    detail.id,
+                    &detail.cover_url,
+                ));
+                if detail.creator.id != 0 {
+                    refs.push(RemoteImage::new(
+                        ImageKind::UserAvatar,
+                        detail.creator.id,
+                        &detail.creator.avatar_url,
+                    ));
+                }
+            }
+            Message::NcmPlaylistPreviewLoaded(generation, detail, _)
+                if *generation == self.ui.playlist_page.ncm_load_generation
+                    && matches!(self.ui.current_route, Route::NcmPlaylist(id) if id == detail.id) =>
+            {
+                refs.push(RemoteImage::new(
+                    ImageKind::PlaylistCover,
+                    detail.id,
+                    &detail.cover_url,
+                ));
+                if detail.creator.id != 0 {
+                    refs.push(RemoteImage::new(
+                        ImageKind::UserAvatar,
+                        detail.creator.id,
+                        &detail.creator.avatar_url,
+                    ));
+                }
+            }
+            Message::AlbumDetailLoaded(detail)
+                if matches!(self.ui.current_route, Route::Album(id) if id == detail.id) =>
+            {
                 refs.push(RemoteImage::new(
                     ImageKind::AlbumCover,
                     detail.id,
@@ -148,20 +215,24 @@ impl App {
                         &artist.image_url,
                     ));
                 }
-                refs.extend(remote_track_covers(&detail.tracks));
             }
-            Message::ArtistDetailLoaded(detail) => {
+            Message::ArtistDetailLoaded(detail)
+                if matches!(self.ui.current_route, Route::Artist(id) if id == detail.id) =>
+            {
                 refs.push(RemoteImage::new(
                     ImageKind::ArtistCover,
                     detail.id,
                     &detail.image_url,
                 ));
-                refs.extend(remote_track_covers(&detail.top_tracks));
             }
-            Message::ArtistAlbumsLoaded(_, albums) => {
+            Message::ArtistAlbumsLoaded(artist_id, albums)
+                if matches!(self.ui.current_route, Route::Artist(id) if u64::try_from(*artist_id).ok() == Some(id)) =>
+            {
                 refs.extend(remote_album_covers(albums));
             }
-            Message::UserPageDetailLoaded(_, detail) => {
+            Message::UserPageDetailLoaded(page_id, detail)
+                if matches!(self.ui.current_route, Route::User(id) if u64::try_from(*page_id).ok() == Some(id)) =>
+            {
                 refs.push(RemoteImage::new(
                     ImageKind::UserAvatar,
                     detail.user_id,
@@ -175,7 +246,9 @@ impl App {
                     ));
                 }
             }
-            Message::UserPagePlaylistsLoaded(_, playlists) => {
+            Message::UserPagePlaylistsLoaded(page_id, playlists)
+                if matches!(self.ui.current_route, Route::User(id) if u64::try_from(*page_id).ok() == Some(id)) =>
+            {
                 refs.extend(remote_playlist_covers(playlists));
             }
             Message::PlaylistCreatorDetailLoaded(_, detail) => {
@@ -188,7 +261,7 @@ impl App {
             Message::DownloadBatchEnqueue(items) => {
                 refs.extend(items.iter().filter_map(|(_, ncm_id, _, metadata)| {
                     if let Some(crate::metadata::CoverSource::Url(url)) = &metadata.cover {
-                        Some(RemoteImage::new(ImageKind::SongCover, *ncm_id, url))
+                        Some(RemoteImage::global(ImageKind::SongCover, *ncm_id, url))
                     } else {
                         None
                     }
@@ -201,15 +274,31 @@ impl App {
                     } else {
                         *song_id as u64
                     };
-                    refs.push(RemoteImage::new(ImageKind::SongCover, id, url));
+                    refs.push(RemoteImage::global(ImageKind::SongCover, id, url));
                 }
+            }
+            Message::ImageViewportChanged(generation, images)
+                if *generation == self.ui.image_state.generation =>
+            {
+                refs.extend(
+                    images
+                        .iter()
+                        .map(|(kind, id, url)| RemoteImage::viewport(*kind, *id, url)),
+                );
             }
             _ => {}
         }
 
         let mut tasks = refs
             .into_iter()
-            .map(|image| self.enqueue_image_download(image.kind, image.id, &image.url))
+            .map(|image| {
+                self.enqueue_image_download_scoped(
+                    image.kind,
+                    image.id,
+                    &image.url,
+                    image.scope,
+                )
+            })
             .collect::<Vec<_>>();
         tasks.push(self.pump_image_downloads());
 
@@ -238,7 +327,12 @@ impl App {
 
         if let Some(path_or_url) = song.cover_path.as_deref() {
             if crate::image::is_remote_url(path_or_url) {
-                let enqueue_task = self.enqueue_image_download(kind, id, path_or_url);
+                let enqueue_task = self.enqueue_image_download_scoped(
+                    kind,
+                    id,
+                    path_or_url,
+                    ImageRequestScope::Global,
+                );
                 return Task::batch([enqueue_task, self.pump_image_downloads()]);
             }
         }
@@ -279,11 +373,29 @@ impl App {
 
     /// If the given `(kind, id)` is already in memory or on disk, populate
     /// `ImageState` immediately. Otherwise queue it for the bounded downloader.
-    fn enqueue_image_download(&mut self, kind: ImageKind, id: u64, url: &str) -> Task<Message> {
+    fn enqueue_image_download_scoped(
+        &mut self,
+        kind: ImageKind,
+        id: u64,
+        url: &str,
+        scope: ImageRequestScope,
+    ) -> Task<Message> {
         if url.is_empty() {
             return Task::none();
         }
         if self.ui.image_state.get(kind, id).is_some() {
+            // The image may have been loaded while the user was on another
+            // page (for example, from a playlist grid). Keep the current
+            // detail page in sync as well; otherwise its palette remains the
+            // default even though the cover is already available.
+            if let Some(path) = self
+                .ui
+                .image_state
+                .image_data(kind, id)
+                .map(|(path, _, _)| path.clone())
+            {
+                self.sync_loaded_image_to_current_page(kind, id, &path);
+            }
             return Task::none();
         }
         if let Some(task) = self.register_cached_image(kind, id) {
@@ -296,11 +408,20 @@ impl App {
             return Task::none();
         }
 
-        self.ui.image_state.enqueue(kind, id, url.to_string());
+        if scope == ImageRequestScope::Page {
+            self.ui.image_state.enqueue(kind, id, url.to_string());
+        } else {
+            self.ui.image_state.enqueue_with_scope(
+                kind,
+                id,
+                url.to_string(),
+                scope,
+            );
+        }
         Task::none()
     }
 
-    fn pump_image_downloads(&mut self) -> Task<Message> {
+    pub(super) fn pump_image_downloads(&mut self) -> Task<Message> {
         let Some(client) = self.core.ncm_client.as_ref().cloned() else {
             return Task::none();
         };
@@ -324,8 +445,15 @@ impl App {
                 continue;
             }
 
-            self.ui.image_state.mark_inflight(request.kind, request.id);
-            tasks.push(start_image_download(client.clone(), request));
+            let (task, handle) = start_image_download(client.clone(), request.clone());
+            self.ui.image_state.mark_inflight(
+                request.kind,
+                request.id,
+                request.generation,
+                request.scope,
+                handle,
+            );
+            tasks.push(task);
         }
 
         Task::batch(tasks)
@@ -535,8 +663,17 @@ impl App {
     }
 }
 
-fn start_image_download(client: crate::api::NcmClient, request: ImageRequest) -> Task<Message> {
-    let ImageRequest { kind, id, url } = request;
+fn start_image_download(
+    client: crate::api::NcmClient,
+    request: ImageRequest,
+) -> (Task<Message>, iced::task::Handle) {
+    let ImageRequest {
+        kind,
+        id,
+        url,
+        generation,
+        scope,
+    } = request;
     let (width, height): (u16, u16) = match kind {
         ImageKind::Banner => (800, 280),
         ImageKind::SongCover | ImageKind::LocalSongCover => (200, 200),
@@ -552,16 +689,18 @@ fn start_image_download(client: crate::api::NcmClient, request: ImageRequest) ->
                 .map(|path| ImageResult { kind, id, path })
         },
         move |result| match result {
-            Some(r) => Message::ImageDownloadReady(r.kind, r.id, r.path),
-            None => Message::ImageDownloadFailed(kind, id),
+            Some(r) => Message::ImageDownloadReady(generation, scope, r.kind, r.id, r.path),
+            None => Message::ImageDownloadFailed(generation, scope, kind, id),
         },
     )
+    .abortable()
 }
 
 struct RemoteImage {
     kind: ImageKind,
     id: u64,
     url: String,
+    scope: ImageRequestScope,
 }
 
 impl RemoteImage {
@@ -570,6 +709,25 @@ impl RemoteImage {
             kind,
             id,
             url: url.to_string(),
+            scope: ImageRequestScope::Page,
+        }
+    }
+
+    fn global(kind: ImageKind, id: u64, url: &str) -> Self {
+        Self {
+            kind,
+            id,
+            url: url.to_string(),
+            scope: ImageRequestScope::Global,
+        }
+    }
+
+    fn viewport(kind: ImageKind, id: u64, url: &str) -> Self {
+        Self {
+            kind,
+            id,
+            url: url.to_string(),
+            scope: ImageRequestScope::Viewport,
         }
     }
 }

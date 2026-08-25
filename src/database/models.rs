@@ -83,6 +83,8 @@ pub struct DbPlaybackState {
     pub shuffle: bool,
     /// Repeat mode: 0=off, 1=all, 2=one
     pub repeat_mode: i64,
+    /// Whether Personal FM mode was active when playback state was saved
+    pub personal_fm_mode: bool,
     /// Last updated timestamp
     pub updated_at: i64,
 }

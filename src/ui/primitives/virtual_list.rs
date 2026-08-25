@@ -31,6 +31,9 @@ use std::rc::Rc;
 
 /// Buffer items to render above and below the visible area
 const BUFFER_ITEMS: usize = 8;
+/// Number of rows used before the first real layout reports a viewport size.
+/// This keeps initial image demand bounded while the widget is bootstrapping.
+const INITIAL_VIEWPORT_ITEMS: usize = 10;
 
 /// Scrollbar configuration
 const SCROLLBAR_WIDTH: f32 = 6.0;
@@ -80,8 +83,15 @@ impl VirtualListState {
 
     /// Calculate visible range with buffer
     pub fn visible_range(&self) -> (usize, usize) {
-        if self.item_count == 0 || self.viewport_height <= 0.0 {
+        if self.item_count == 0 {
             return (0, 0);
+        }
+
+        if self.viewport_height <= 0.0 {
+            return (
+                0,
+                (INITIAL_VIEWPORT_ITEMS + BUFFER_ITEMS).min(self.item_count),
+            );
         }
 
         let first_visible = (self.scroll_offset / self.item_height).floor() as usize;
@@ -107,6 +117,29 @@ impl VirtualListState {
     /// Get maximum scroll offset
     pub fn max_scroll(&self) -> f32 {
         (self.total_height() - self.viewport_height).max(0.0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::VirtualListState;
+
+    #[test]
+    fn visible_range_includes_overscan_and_stays_within_item_count() {
+        let mut state = VirtualListState::new(20, 50.0);
+        state.update(20, 50.0, 200.0);
+
+        assert_eq!(state.visible_range(), (0, 13));
+
+        state.scroll_offset = 500.0;
+        assert_eq!(state.visible_range(), (2, 20));
+    }
+
+    #[test]
+    fn visible_range_has_bounded_bootstrap_before_layout() {
+        let state = VirtualListState::new(100, 50.0);
+
+        assert_eq!(state.visible_range(), (0, 18));
     }
 }
 
@@ -136,6 +169,11 @@ where
     on_empty_area: Option<Message>,
     /// Function to create hover message for an item index
     on_item_hover: Option<Box<dyn Fn(usize) -> Message + 'a>>,
+    /// Function to create a message when the visible range changes.
+    on_visible_range: Option<Box<dyn Fn((usize, usize)) -> Message + 'a>>,
+    /// Optional owner token used to force a fresh range notification when a
+    /// page reuses the same widget tree with different image ownership.
+    visible_range_token: Option<u64>,
 }
 
 impl<'a, Message, Theme, Renderer> VirtualList<'a, Message, Theme, Renderer, usize>
@@ -159,6 +197,8 @@ where
             show_scrollbar: true,
             on_empty_area: None,
             on_item_hover: None,
+            on_visible_range: None,
+            visible_range_token: None,
         }
     }
 }
@@ -215,6 +255,23 @@ where
         self
     }
 
+    /// Set a callback for the current visible range, including the built-in
+    /// overscan buffer. The callback is emitted only when the range changes.
+    pub fn on_visible_range<F>(mut self, f: F) -> Self
+    where
+        F: Fn((usize, usize)) -> Message + 'a,
+    {
+        self.on_visible_range = Some(Box::new(f));
+        self
+    }
+
+    /// Set an owner token for visible-range notifications. A changed token
+    /// emits the current range again even when the numeric range is unchanged.
+    pub fn visible_range_token(mut self, token: u64) -> Self {
+        self.visible_range_token = Some(token);
+        self
+    }
+
     /// Set a stable identity key for each item.
     ///
     /// Use a domain identifier (for example, a track id plus original index) when
@@ -235,6 +292,28 @@ where
             show_scrollbar: self.show_scrollbar,
             on_empty_area: self.on_empty_area,
             on_item_hover: self.on_item_hover,
+            on_visible_range: self.on_visible_range,
+            visible_range_token: self.visible_range_token,
+        }
+    }
+
+    fn publish_visible_range(
+        &self,
+        internal_state: &mut VirtualListInternalState<Key>,
+        shell: &mut Shell<'_, Message>,
+    ) {
+        let range = self.state.borrow().visible_range();
+        if internal_state.last_notified_token != self.visible_range_token {
+            internal_state.last_notified_visible_range = None;
+            internal_state.last_notified_token = self.visible_range_token;
+        }
+        if internal_state.last_notified_visible_range == Some(range) {
+            return;
+        }
+
+        internal_state.last_notified_visible_range = Some(range);
+        if let Some(on_visible_range) = &self.on_visible_range {
+            shell.publish(on_visible_range(range));
         }
     }
 }
@@ -253,6 +332,12 @@ struct VirtualListInternalState<Key> {
     scrollbar_hovered: bool,
     /// Last hovered item key for deduplication
     last_hovered_item: Option<Key>,
+    /// Last visible range reported to the application.
+    last_notified_visible_range: Option<(usize, usize)>,
+    /// Owner token associated with the last visible-range notification.
+    last_notified_token: Option<u64>,
+    /// Stable keys in the last diffed visible/overscan range.
+    last_visible_keys: Vec<Key>,
 }
 
 impl<Key> Default for VirtualListInternalState<Key> {
@@ -264,6 +349,9 @@ impl<Key> Default for VirtualListInternalState<Key> {
             drag_start_offset: 0.0,
             scrollbar_hovered: false,
             last_hovered_item: None,
+            last_notified_visible_range: None,
+            last_notified_token: None,
+            last_visible_keys: Vec::new(),
         }
     }
 }
@@ -286,6 +374,11 @@ where
         let internal_state = tree.state.downcast_mut::<VirtualListInternalState<Key>>();
 
         internal_state.cached_visible_range = (start, end);
+        let visible_keys: Vec<Key> = (start..end).map(|idx| (self.item_key)(idx)).collect();
+        if internal_state.last_visible_keys != visible_keys {
+            internal_state.last_visible_keys = visible_keys;
+            internal_state.last_notified_visible_range = None;
+        }
 
         // Prune trees for items far outside the visible range (keep a generous buffer)
         let prune_start = start.saturating_sub(BUFFER_ITEMS * 2);
@@ -475,6 +568,8 @@ where
         let bounds = layout.bounds();
         let internal_state = tree.state.downcast_mut::<VirtualListInternalState<Key>>();
 
+        self.publish_visible_range(internal_state, shell);
+
         let scrollbar_bounds = {
             let state = self.state.borrow();
             self.calculate_scrollbar_bounds(bounds, &state)
@@ -530,6 +625,8 @@ where
                             if (new_offset - state.scroll_offset).abs() > 0.01 {
                                 state.scroll_offset = new_offset;
                                 shell.invalidate_layout();
+                                drop(state);
+                                self.publish_visible_range(internal_state, shell);
                             }
                         }
                     }
@@ -587,6 +684,8 @@ where
             if (new_offset - state.scroll_offset).abs() > 0.01 {
                 state.scroll_offset = new_offset;
                 shell.invalidate_layout();
+                drop(state);
+                self.publish_visible_range(internal_state, shell);
             }
             shell.capture_event();
         }

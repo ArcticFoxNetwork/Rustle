@@ -105,6 +105,7 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
             volume REAL NOT NULL DEFAULT 1.0,
             shuffle INTEGER NOT NULL DEFAULT 0,
             repeat_mode INTEGER NOT NULL DEFAULT 0,
+            personal_fm_mode INTEGER NOT NULL DEFAULT 0,
             updated_at INTEGER NOT NULL,
             FOREIGN KEY (current_song_id) REFERENCES songs(id) ON DELETE SET NULL
         );
@@ -175,6 +176,11 @@ pub async fn run_migrations(pool: &Pool<Sqlite>) -> Result<()> {
     let _ = sqlx::query("ALTER TABLE watched_folders ADD COLUMN playlist_id INTEGER")
         .execute(pool)
         .await;
+    let _ = sqlx::query(
+        "ALTER TABLE playback_state ADD COLUMN personal_fm_mode INTEGER NOT NULL DEFAULT 0",
+    )
+    .execute(pool)
+    .await;
 
     sqlx::query(
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_watched_folders_playlist ON watched_folders(playlist_id) WHERE playlist_id IS NOT NULL",

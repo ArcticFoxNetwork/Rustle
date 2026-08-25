@@ -41,9 +41,15 @@ use std::collections::HashMap as StateMap;
 #[derive(Debug, Default)]
 pub struct ImageState {
     pub entries: StateMap<(crate::image::ImageKind, u64), ImageEntry>,
-    pub inflight: std::collections::HashSet<(crate::image::ImageKind, u64)>,
+    pub inflight: StateMap<(crate::image::ImageKind, u64), ImageInFlight>,
     pub pending: VecDeque<ImageRequest>,
     pub queued: std::collections::HashSet<(crate::image::ImageKind, u64)>,
+    /// Monotonic generation for page-owned image work.
+    pub generation: u64,
+    /// Monotonic generation for the currently published virtual-list range.
+    /// This is separate from `generation` so scrolling cannot make an old
+    /// viewport completion look like a current page completion.
+    pub viewport_generation: u64,
 }
 
 #[derive(Debug, Clone)]
@@ -58,6 +64,22 @@ pub struct ImageRequest {
     pub kind: crate::image::ImageKind,
     pub id: u64,
     pub url: String,
+    pub generation: u64,
+    pub scope: ImageRequestScope,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ImageRequestScope {
+    Global,
+    Page,
+    Viewport,
+}
+
+#[derive(Debug)]
+pub struct ImageInFlight {
+    pub generation: u64,
+    pub handle: iced::task::Handle,
+    pub scope: ImageRequestScope,
 }
 
 impl ImageState {
@@ -91,21 +113,32 @@ impl ImageState {
                 dimensions,
             },
         );
-        self.inflight.remove(&(kind, id));
+        if let Some(request) = self.inflight.remove(&(kind, id)) {
+            request.handle.abort();
+        }
         self.queued.remove(&(kind, id));
-    }
-
-    pub fn mark_inflight(&mut self, kind: crate::image::ImageKind, id: u64) {
-        self.queued.remove(&(kind, id));
-        self.inflight.insert((kind, id));
     }
 
     pub fn clear_inflight(&mut self, kind: crate::image::ImageKind, id: u64) {
         self.inflight.remove(&(kind, id));
     }
 
+    pub fn is_current_inflight(
+        &self,
+        kind: crate::image::ImageKind,
+        id: u64,
+        generation: u64,
+        scope: ImageRequestScope,
+    ) -> bool {
+        self.inflight
+            .get(&(kind, id))
+            .is_some_and(|request| {
+                request.generation == generation && request.scope == scope
+            })
+    }
+
     pub fn is_inflight(&self, kind: crate::image::ImageKind, id: u64) -> bool {
-        self.inflight.contains(&(kind, id))
+        self.inflight.contains_key(&(kind, id))
     }
 
     pub fn is_queued(&self, kind: crate::image::ImageKind, id: u64) -> bool {
@@ -113,24 +146,292 @@ impl ImageState {
     }
 
     pub fn enqueue(&mut self, kind: crate::image::ImageKind, id: u64, url: String) -> bool {
+        self.enqueue_with_scope(kind, id, url, ImageRequestScope::Page)
+    }
+
+    pub fn enqueue_with_scope(
+        &mut self,
+        kind: crate::image::ImageKind,
+        id: u64,
+        url: String,
+        scope: ImageRequestScope,
+    ) -> bool {
         let key = (kind, id);
         if self.entries.contains_key(&key)
-            || self.inflight.contains(&key)
+            || self.inflight.contains_key(&key)
             || self.queued.contains(&key)
             || url.is_empty()
         {
             return false;
         }
 
-        self.pending.push_back(ImageRequest { kind, id, url });
+        let generation = match scope {
+            ImageRequestScope::Global => 0,
+            ImageRequestScope::Page => self.generation,
+            ImageRequestScope::Viewport => self.viewport_generation,
+        };
+        self.pending.push_back(ImageRequest {
+            kind,
+            id,
+            url,
+            generation,
+            scope,
+        });
         self.queued.insert(key);
         true
+    }
+
+    pub fn mark_inflight(
+        &mut self,
+        kind: crate::image::ImageKind,
+        id: u64,
+        generation: u64,
+        scope: ImageRequestScope,
+        handle: iced::task::Handle,
+    ) {
+        self.queued.remove(&(kind, id));
+        self.inflight
+            .insert(
+                (kind, id),
+                ImageInFlight {
+                    generation,
+                    handle,
+                    scope,
+                },
+            );
+    }
+
+    /// Cancel requests owned by the previous virtual-list range while leaving
+    /// page-level header/card work intact.
+    pub fn cancel_viewport_requests(&mut self) {
+        let mut retained = StateMap::default();
+        for (key, request) in self.inflight.drain() {
+            if request.scope == ImageRequestScope::Viewport {
+                request.handle.abort();
+            } else {
+                retained.insert(key, request);
+            }
+        }
+        self.inflight = retained;
+        self.pending
+            .retain(|request| request.scope != ImageRequestScope::Viewport);
+        self.rebuild_queued_keys();
+        self.viewport_generation = self.viewport_generation.wrapping_add(1);
+    }
+
+    /// Cancel page/viewport image work while retaining global work and
+    /// successful cache entries.
+    pub fn cancel_pending_and_inflight(&mut self) {
+        let mut retained = StateMap::default();
+        for (key, request) in self.inflight.drain() {
+            if request.scope == ImageRequestScope::Global {
+                retained.insert(key, request);
+            } else {
+                request.handle.abort();
+            }
+        }
+        self.inflight = retained;
+        self.pending
+            .retain(|request| request.scope == ImageRequestScope::Global);
+        self.rebuild_queued_keys();
+        self.generation = self.generation.wrapping_add(1);
+        self.viewport_generation = self.viewport_generation.wrapping_add(1);
     }
 
     pub fn pop_pending(&mut self) -> Option<ImageRequest> {
         let request = self.pending.pop_front()?;
         self.queued.remove(&(request.kind, request.id));
         Some(request)
+    }
+
+    fn rebuild_queued_keys(&mut self) {
+        self.queued.clear();
+        self.queued.extend(
+            self.pending
+                .iter()
+                .map(|request| (request.kind, request.id)),
+        );
+        self.queued.extend(self.inflight.keys().copied());
+    }
+}
+
+#[cfg(test)]
+mod image_state_tests {
+    use super::*;
+
+    #[test]
+    fn cancelling_image_work_aborts_active_task_and_advances_generation() {
+        let mut state = ImageState::default();
+        assert!(state.enqueue(
+            crate::image::ImageKind::SongCover,
+            7,
+            "https://example.invalid/cover.jpg".to_string()
+        ));
+
+        let request = state.pop_pending().expect("queued image request");
+        let (_task, handle) = iced::Task::perform(async {}, |_| ()).abortable();
+        let observer = handle.clone();
+        state.mark_inflight(
+            request.kind,
+            request.id,
+            request.generation,
+            request.scope,
+            handle,
+        );
+
+        assert!(state.is_current_inflight(
+            request.kind,
+            request.id,
+            0,
+            request.scope
+        ));
+        state.cancel_pending_and_inflight();
+
+        assert!(observer.is_aborted());
+        assert_eq!(state.generation, 1);
+        assert!(!state.is_current_inflight(
+            request.kind,
+            request.id,
+            0,
+            request.scope
+        ));
+    }
+
+    #[test]
+    fn cancelling_image_work_keeps_successful_cache_entries() {
+        let mut state = ImageState::default();
+        let key = (crate::image::ImageKind::SongCover, 8);
+        state.insert_path(key.0, key.1, PathBuf::from("cached-cover.jpg"));
+
+        state.cancel_pending_and_inflight();
+
+        assert!(state.get(key.0, key.1).is_some());
+    }
+
+    #[test]
+    fn route_cancellation_keeps_global_image_work() {
+        let mut state = ImageState::default();
+        let key = (crate::image::ImageKind::UserAvatar, 10);
+        assert!(state.enqueue_with_scope(
+            key.0,
+            key.1,
+            "https://example.invalid/avatar.jpg".to_string(),
+            ImageRequestScope::Global,
+        ));
+        let request = state.pop_pending().expect("global image request");
+        let (_task, handle) = iced::Task::perform(async {}, |_| ()).abortable();
+        let observer = handle.clone();
+        state.mark_inflight(
+            request.kind,
+            request.id,
+            request.generation,
+            request.scope,
+            handle,
+        );
+
+        state.cancel_pending_and_inflight();
+
+        assert!(!observer.is_aborted());
+        assert!(state.is_current_inflight(
+            key.0,
+            key.1,
+            0,
+            ImageRequestScope::Global,
+        ));
+    }
+
+    #[test]
+    fn cancelling_viewport_work_keeps_page_work() {
+        let mut state = ImageState::default();
+        let page_key = (crate::image::ImageKind::PlaylistCover, 1);
+        let viewport_key = (crate::image::ImageKind::SongCover, 2);
+
+        assert!(state.enqueue_with_scope(
+            page_key.0,
+            page_key.1,
+            "https://example.invalid/page.jpg".to_string(),
+            ImageRequestScope::Page,
+        ));
+        assert!(state.enqueue_with_scope(
+            viewport_key.0,
+            viewport_key.1,
+            "https://example.invalid/row.jpg".to_string(),
+            ImageRequestScope::Viewport,
+        ));
+
+        let page_request = state.pop_pending().expect("page request");
+        let viewport_request = state.pop_pending().expect("viewport request");
+        let (_page_task, page_handle) = iced::Task::perform(async {}, |_| ()).abortable();
+        let (_viewport_task, viewport_handle) = iced::Task::perform(async {}, |_| ()).abortable();
+        let page_observer = page_handle.clone();
+        let viewport_observer = viewport_handle.clone();
+        state.mark_inflight(
+            page_request.kind,
+            page_request.id,
+            page_request.generation,
+            page_request.scope,
+            page_handle,
+        );
+        state.mark_inflight(
+            viewport_request.kind,
+            viewport_request.id,
+            viewport_request.generation,
+            viewport_request.scope,
+            viewport_handle,
+        );
+
+        state.cancel_viewport_requests();
+
+        assert!(!page_observer.is_aborted());
+        assert!(viewport_observer.is_aborted());
+        assert!(state.is_inflight(page_key.0, page_key.1));
+        assert!(!state.is_inflight(viewport_key.0, viewport_key.1));
+        assert_eq!(state.viewport_generation, 1);
+
+        assert!(state.enqueue_with_scope(
+            viewport_key.0,
+            viewport_key.1,
+            "https://example.invalid/row.jpg".to_string(),
+            ImageRequestScope::Viewport,
+        ));
+        assert_eq!(
+            state.pop_pending().expect("replacement viewport request").generation,
+            1
+        );
+    }
+
+    #[test]
+    fn completion_identity_includes_scope() {
+        let mut state = ImageState::default();
+        let key = (crate::image::ImageKind::SongCover, 9);
+        assert!(state.enqueue_with_scope(
+            key.0,
+            key.1,
+            "https://example.invalid/row.jpg".to_string(),
+            ImageRequestScope::Viewport,
+        ));
+        let request = state.pop_pending().expect("viewport request");
+        let (_task, handle) = iced::Task::perform(async {}, |_| ()).abortable();
+        state.mark_inflight(
+            request.kind,
+            request.id,
+            request.generation,
+            request.scope,
+            handle,
+        );
+
+        assert!(state.is_current_inflight(
+            key.0,
+            key.1,
+            request.generation,
+            ImageRequestScope::Viewport,
+        ));
+        assert!(!state.is_current_inflight(
+            key.0,
+            key.1,
+            request.generation,
+            ImageRequestScope::Page,
+        ));
     }
 }
 
@@ -759,6 +1060,17 @@ impl App {
         }
     }
 
+    pub(crate) fn persist_personal_fm_mode(&self, enabled: bool) {
+        if let Some(db) = &self.core.db {
+            let db = db.clone();
+            tokio::spawn(async move {
+                if let Err(err) = db.update_personal_fm_mode(enabled).await {
+                    tracing::warn!("Failed to persist Personal FM mode: {}", err);
+                }
+            });
+        }
+    }
+
     pub(crate) fn persist_queue_snapshot(&self) {
         if let Some(db) = &self.core.db {
             let db = db.clone();
@@ -1221,6 +1533,9 @@ impl UiState {
                 load_state: Default::default(),
                 content_width: 904.0,
                 description_expanded: false,
+                ncm_cache_baseline: None,
+                ncm_replace_songs_on_chunk: false,
+                ncm_load_generation: 0,
             },
 
             lyrics: LyricsState {
@@ -1352,6 +1667,15 @@ pub struct PlaylistPageState {
     pub content_width: f32,
     /// Whether the playlist description is expanded (vs clamped to 2 lines)
     pub description_expanded: bool,
+    /// Cached NCM snapshot used to decide whether a background refresh changed
+    /// the playlist contents.
+    pub ncm_cache_baseline: Option<crate::api::PlaylistDetail>,
+    /// Replace cached songs when the first refreshed batch arrives.
+    pub ncm_replace_songs_on_chunk: bool,
+    /// Monotonic token for NCM playlist requests. Every route entry gets a
+    /// new token so a request from an earlier visit cannot update the page
+    /// after the user has switched away and back.
+    pub ncm_load_generation: u64,
 }
 
 impl Default for PlaylistPageState {
@@ -1370,6 +1694,9 @@ impl Default for PlaylistPageState {
             load_state: Default::default(),
             content_width: 904.0,
             description_expanded: false,
+            ncm_cache_baseline: None,
+            ncm_replace_songs_on_chunk: false,
+            ncm_load_generation: 0,
         }
     }
 }

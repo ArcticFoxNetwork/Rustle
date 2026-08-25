@@ -42,6 +42,15 @@ impl App {
 pub fn convert_ncm_tracks_to_views(
     tracks: &[crate::api::Track],
 ) -> Vec<crate::ui::pages::PlaylistSongView> {
+    convert_ncm_tracks_to_views_with_offset(tracks, 0)
+}
+
+/// Convert a batch of NCM tracks while preserving their absolute playlist
+/// positions. This is used by the progressive playlist loader.
+pub fn convert_ncm_tracks_to_views_with_offset(
+    tracks: &[crate::api::Track],
+    start_index: usize,
+) -> Vec<crate::ui::pages::PlaylistSongView> {
     tracks
         .iter()
         .enumerate()
@@ -57,7 +66,8 @@ pub fn convert_ncm_tracks_to_views(
 
             crate::ui::components::playlist_view::SongItem::new(
                 -(track.id as i64),
-                i + 1,
+                Some(track.cover_url().to_string()),
+                start_index + i + 1,
                 meta.title.clone(),
                 meta.artist.clone(),
                 meta.album.clone(),

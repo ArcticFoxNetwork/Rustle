@@ -242,6 +242,10 @@ impl Database {
         ops::update_volume(&self.pool, volume).await
     }
 
+    pub async fn update_personal_fm_mode(&self, enabled: bool) -> Result<()> {
+        ops::update_personal_fm_mode(&self.pool, enabled).await
+    }
+
     // ============ Play History Operations ============
 
     pub async fn record_play(
