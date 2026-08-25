@@ -25,7 +25,7 @@ fn load_cached_yrc_lyrics(ncm_id: u64) -> Option<Vec<LyricLineOwned>> {
     if yrc_path.exists()
         && let Ok(content) = std::fs::read_to_string(&yrc_path)
     {
-        let mut lines = parse_lyrics_with_format(&content, LyricsFormat::Yrc);
+        let mut lines = super::parse_lyrics(&content);
         if !lines.is_empty() {
             // Try to load translation
             let tlrc_path = get_cache_path(ncm_id, ".tlrc");
@@ -61,7 +61,7 @@ pub fn load_cached_lyrics(ncm_id: u64) -> Option<Vec<LyricLineOwned>> {
     if lrc_path.exists()
         && let Ok(content) = std::fs::read_to_string(&lrc_path)
     {
-        let mut lines = parse_lyrics_with_format(&content, LyricsFormat::Lrc);
+        let mut lines = super::parse_lyrics(&content);
         if !lines.is_empty() {
             // Try to load translation
             let tlrc_path = get_cache_path(ncm_id, ".tlrc");

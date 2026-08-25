@@ -45,6 +45,16 @@ fn is_word_timed_line_header(header: &str) -> bool {
         && duration.chars().all(|ch| ch.is_ascii_digit())
 }
 
+fn is_lrc_timestamp_header(header: &str) -> bool {
+    let parts: Vec<&str> = header.split(':').collect();
+    parts.len() >= 2
+        && parts.iter().all(|part| {
+            !part.is_empty()
+                && part.chars().all(|ch| ch.is_ascii_digit() || ch == '.')
+                && part.chars().any(|ch| ch.is_ascii_digit())
+        })
+}
+
 /// Detect lyrics format from content
 pub fn detect_format(content: &str) -> LyricsFormat {
     let trimmed = content.trim();
@@ -60,31 +70,35 @@ pub fn detect_format(content: &str) -> LyricsFormat {
         return LyricsFormat::Ttml;
     }
 
-    if trimmed.starts_with('[') {
-        if let Some(first_line) = trimmed.lines().find(|line| !line.trim().is_empty()) {
-            if let Some((header, after_bracket)) = split_bracket_prefix(first_line.trim()) {
-                let after_bracket = after_bracket.trim_start();
-                if is_word_timed_line_header(header) {
-                    // YRC uses a `[start,duration]` line header followed by word markers
-                    // in the form `(start,duration,0)text`.
-                    if after_bracket.starts_with('(') && after_bracket.contains(",0)") {
-                        return LyricsFormat::Yrc;
-                    }
+    // Scan for the first actual lyric line instead of assuming that the first
+    // non-empty line is a timestamp. NCM YRC responses can contain JSON
+    // metadata lines before the YRC payload; AMLL's parser skips those lines.
+    for first_line in trimmed
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.starts_with('['))
+    {
+        if let Some((header, after_bracket)) = split_bracket_prefix(first_line) {
+            let after_bracket = after_bracket.trim_start();
+            if is_word_timed_line_header(header) {
+                // YRC uses a `[start,duration]` line header followed by word markers
+                // in the form `(start,duration,0)text`.
+                if after_bracket.starts_with('(') && after_bracket.contains(",0)") {
+                    return LyricsFormat::Yrc;
+                }
 
-                    // QRC also uses `[start,duration]`, but the word timing marker trails
-                    // the text as `word(start,duration)`.
-                    if after_bracket.contains('(')
-                        && after_bracket.contains(')')
-                        && !after_bracket.contains(",0)")
-                    {
-                        return LyricsFormat::Qrc;
-                    }
+                // QRC also uses `[start,duration]`, but the word timing marker trails
+                // the text as `word(start,duration)`.
+                if after_bracket.contains('(')
+                    && after_bracket.contains(')')
+                    && !after_bracket.contains(",0)")
+                {
+                    return LyricsFormat::Qrc;
                 }
             }
 
             // LYS format: starts with [digit] property marker
             if first_line.len() >= 3
-                && first_line.starts_with('[')
                 && let Some(c) = first_line.chars().nth(1)
                 && c.is_ascii_digit()
                 && let Some(c2) = first_line.chars().nth(2)
@@ -92,32 +106,36 @@ pub fn detect_format(content: &str) -> LyricsFormat {
             {
                 return LyricsFormat::Lys;
             }
-            // ESLrc: [mm:ss.xx]text[mm:ss.xx]
-            // Check if there are multiple timestamps in a single line
-            let timestamp_count = first_line.matches('[').count();
-            if timestamp_count >= 2 {
-                // Check if it's ESLrc pattern (timestamps interleaved with text)
-                let parts: Vec<&str> = first_line.split('[').collect();
-                if parts.len() >= 3 {
-                    // ESLrc has pattern: [time]word[time]word[time]
-                    let mut is_eslrc = true;
-                    for part in parts.iter().skip(1) {
-                        if let Some(bracket_pos) = part.find(']') {
-                            let after = &part[bracket_pos + 1..];
-                            // In ESLrc, text comes after each timestamp
-                            if after.is_empty() && part != parts.last().unwrap() {
-                                is_eslrc = false;
-                                break;
-                            }
+        }
+
+        // ESLrc: [mm:ss.xx]text[mm:ss.xx]
+        // Check if it's an ESLrc pattern (timestamps interleaved with text).
+        let timestamp_count = first_line.matches('[').count();
+        if timestamp_count >= 2 {
+            let parts: Vec<&str> = first_line.split('[').collect();
+            if parts.len() >= 3 {
+                let mut is_eslrc = true;
+                for part in parts.iter().skip(1) {
+                    if let Some(bracket_pos) = part.find(']') {
+                        let after = &part[bracket_pos + 1..];
+                        if after.is_empty() && part != parts.last().unwrap() {
+                            is_eslrc = false;
+                            break;
                         }
                     }
-                    if is_eslrc {
-                        return LyricsFormat::EsLrc;
-                    }
+                }
+                if is_eslrc {
+                    return LyricsFormat::EsLrc;
                 }
             }
         }
-        return LyricsFormat::Lrc;
+
+        // A regular timestamped line is enough to classify the content as LRC.
+        if let Some((header, _)) = split_bracket_prefix(first_line)
+            && is_lrc_timestamp_header(header)
+        {
+            return LyricsFormat::Lrc;
+        }
     }
 
     LyricsFormat::Unknown
@@ -281,6 +299,20 @@ mod tests {
     #[test]
     fn test_detect_yrc() {
         let content = "[0,1000](0,500,0)Hello(500,500,0)World";
+        assert_eq!(detect_format(content), LyricsFormat::Yrc);
+    }
+
+    #[test]
+    fn test_detect_yrc_after_ncm_metadata_lines() {
+        let content =
+            "{\"t\":0,\"c\":[{\"tx\":\"作词: \"}]}\n[0,1000](0,500,0)Hello(500,500,0)World";
+        assert_eq!(detect_format(content), LyricsFormat::Yrc);
+        assert_eq!(parse_lyrics(content)[0].words[0].word, "Hello");
+    }
+
+    #[test]
+    fn test_detect_yrc_after_bracket_metadata_lines() {
+        let content = "[ti:Title]\n[ar:Artist]\n[0,1000](0,500,0)Hello(500,500,0)World";
         assert_eq!(detect_format(content), LyricsFormat::Yrc);
     }
 
