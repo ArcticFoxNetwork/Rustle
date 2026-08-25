@@ -595,8 +595,6 @@ pub enum Message {
     /// NCM playlist request failed. The generation prevents an old request
     /// from changing a page that has since been opened again.
     NcmPlaylistLoadFailed(u64, i64, String),
-    /// Playlist-like detail page failed to load (internal page id, user-facing message)
-    PlaylistPageLoadFailed(i64, String),
     /// Artist detail loaded
     ArtistDetailLoaded(ArtistDetail),
     /// Album detail loaded
@@ -609,8 +607,6 @@ pub enum Message {
     UserPagePlaylistsLoaded(i64, Vec<PlaylistSummary>),
     /// Artist detail loaded for a user page
     UserArtistDetailLoaded(i64, ArtistDetail),
-    /// Playlist creator user detail loaded
-    PlaylistCreatorDetailLoaded(i64, UserDetail),
 
     // ============ Unified Image Pipeline ============
     /// Image download completed and cached locally (generation, scope, kind, id, local_path)
@@ -890,9 +886,6 @@ impl std::fmt::Debug for Message {
                 id,
                 generation
             ),
-            Self::PlaylistPageLoadFailed(id, _) => {
-                simple!("PlaylistPageLoadFailed", "id={}", id)
-            }
             Self::ArtistDetailLoaded(d) => simple!("ArtistDetailLoaded", "id={}", d.id),
             Self::AlbumDetailLoaded(d) => simple!("AlbumDetailLoaded", "id={}", d.id),
             Self::ArtistAlbumsLoaded(id, albums) => {
@@ -925,14 +918,6 @@ impl std::fmt::Debug for Message {
                     "page_id={}, artist_id={}",
                     id,
                     d.id
-                )
-            }
-            Self::PlaylistCreatorDetailLoaded(id, d) => {
-                simple!(
-                    "PlaylistCreatorDetailLoaded",
-                    "playlist_id={}, user_id={}",
-                    id,
-                    d.user_id
                 )
             }
             Self::PlaylistViewLoaded(payload) => {

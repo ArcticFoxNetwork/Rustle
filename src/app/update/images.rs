@@ -251,13 +251,6 @@ impl App {
             {
                 refs.extend(remote_playlist_covers(playlists));
             }
-            Message::PlaylistCreatorDetailLoaded(_, detail) => {
-                refs.push(RemoteImage::new(
-                    ImageKind::UserAvatar,
-                    detail.user_id,
-                    &detail.avatar_url,
-                ));
-            }
             Message::DownloadBatchEnqueue(items) => {
                 refs.extend(items.iter().filter_map(|(_, ncm_id, _, metadata)| {
                     if let Some(crate::metadata::CoverSource::Url(url)) = &metadata.cover {

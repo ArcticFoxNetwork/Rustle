@@ -1460,21 +1460,6 @@ impl App {
                 Some(Task::batch([tracks_task, creator_detail_task]))
             }
 
-            Message::PlaylistPageLoadFailed(playlist_id, message) => {
-                if self
-                    .ui
-                    .playlist_page
-                    .current
-                    .as_ref()
-                    .is_some_and(|playlist| playlist.id == *playlist_id)
-                {
-                    self.ui.playlist_page.load_state =
-                        crate::app::update::page_loader::PlaylistLoadState::Idle;
-                }
-
-                Some(Self::toast_error(message.clone()))
-            }
-
             Message::NcmPlaylistLoadFailed(generation, playlist_id, message) => {
                 if *generation != self.ui.playlist_page.ncm_load_generation
                     || !self
@@ -1908,16 +1893,6 @@ impl App {
                 {
                     return Some(Task::none());
                 }
-                if let Some(playlist) = &mut self.ui.playlist_page.current
-                    && playlist.id == *playlist_id
-                    && detail.artist_id != 0
-                {
-                    playlist.owner_artist_id = Some(detail.artist_id);
-                }
-                Some(Task::none())
-            }
-
-            Message::PlaylistCreatorDetailLoaded(playlist_id, detail) => {
                 if let Some(playlist) = &mut self.ui.playlist_page.current
                     && playlist.id == *playlist_id
                     && detail.artist_id != 0
