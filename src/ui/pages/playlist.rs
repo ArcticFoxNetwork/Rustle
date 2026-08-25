@@ -110,6 +110,11 @@ pub fn view<'a>(
     // Wrap header+controls in gradient container
     // Use the extracted palette colors directly for a more vibrant look
     let primary = palette.primary;
+    // The skeleton page uses `ColorPalette::default()` until its cover is
+    // available. Do not paint that placeholder palette into the gradient:
+    // while the cover is loading, the page should blend into the theme's
+    // actual background instead of flashing the default pink/purple color.
+    let has_background_cover = playlist_page_cover_handle(playlist, image_state).is_some();
     // Apply slight boost for brighter gradient
     let top_r = (primary.r * 1.1 + 0.05).min(1.0);
     let top_g = (primary.g * 1.05 + 0.03).min(1.0);
@@ -120,6 +125,12 @@ pub fn view<'a>(
         .style(move |theme| {
             // Get the bottom color based on theme (black for dark, white for light)
             let bottom_color = theme::background(theme);
+            if !has_background_cover {
+                return iced::widget::container::Style {
+                    background: Some(iced::Background::Color(bottom_color)),
+                    ..Default::default()
+                };
+            }
             let is_light = !theme::is_dark_theme(theme);
 
             // For light mode: make colors brighter and less saturated
@@ -443,23 +454,17 @@ fn build_header(
         .into()
 }
 
-fn playlist_header_cover_handle<'a>(
+fn playlist_page_cover_handle<'a>(
     playlist: &PlaylistView,
     image_state: &'a ImageState,
 ) -> Option<&'a iced::widget::image::Handle> {
     if playlist.is_local {
-        let page_cover = u64::try_from(playlist.id)
+        return u64::try_from(playlist.id)
             .ok()
             .and_then(|id| image_state.get(crate::image::ImageKind::LocalPlaylistCover, id));
-        return page_cover.or_else(|| {
-            playlist.songs.first().and_then(|song| {
-                let (kind, id) = crate::image::song_cover_key(song.id)?;
-                image_state.get(kind, id)
-            })
-        });
     }
 
-    let page_cover = match playlist.kind {
+    match playlist.kind {
         DetailPageKind::Playlist => playlist
             .id
             .checked_neg()
@@ -478,9 +483,14 @@ fn playlist_header_cover_handle<'a>(
         DetailPageKind::User => playlist
             .owner_artist_id
             .and_then(|id| image_state.get(crate::image::ImageKind::ArtistCover, id)),
-    };
+    }
+}
 
-    page_cover.or_else(|| {
+fn playlist_header_cover_handle<'a>(
+    playlist: &PlaylistView,
+    image_state: &'a ImageState,
+) -> Option<&'a iced::widget::image::Handle> {
+    playlist_page_cover_handle(playlist, image_state).or_else(|| {
         playlist.songs.first().and_then(|song| {
             let (kind, id) = crate::image::song_cover_key(song.id)?;
             image_state.get(kind, id)
