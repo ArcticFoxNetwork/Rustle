@@ -75,7 +75,7 @@ jobs:
         shell: pwsh
         run: |
           .\wingetcreate.exe update "${{ env.PACKAGE_ID }}" `
-            -u "${{ steps.release.outputs.url }}" `
+            -u "${{ steps.release.outputs.url }}|x64|machine" `
             -v "${{ steps.release.outputs.version }}" `
             --release-notes-url "${{ steps.release.outputs.releaseNotesUrl }}" `
             -t "$env:WINGET_CREATE_TOKEN" `
