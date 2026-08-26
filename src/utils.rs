@@ -277,6 +277,10 @@ pub fn avatars_cache_dir() -> PathBuf {
     cache_dir().join("avatars")
 }
 
+pub fn vip_badges_cache_dir() -> PathBuf {
+    cache_dir().join("vip_badges")
+}
+
 pub fn automix_cache_dir() -> PathBuf {
     cache_dir().join("automix")
 }

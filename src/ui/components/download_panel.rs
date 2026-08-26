@@ -580,6 +580,10 @@ fn quality_color(quality: crate::features::settings::MusicQuality) -> Color {
             Color::from_rgb(168.0 / 255.0, 85.0 / 255.0, 247.0 / 255.0)
         }
         crate::features::settings::MusicQuality::HiRes => Color::from_rgb(1.0, 0.76, 0.03),
+        crate::features::settings::MusicQuality::JvEffect => Color::from_rgb(0.70, 0.38, 0.96),
+        crate::features::settings::MusicQuality::Sky => Color::from_rgb(0.31, 0.57, 0.96),
+        crate::features::settings::MusicQuality::Dolby => Color::from_rgb(0.22, 0.76, 0.85),
+        crate::features::settings::MusicQuality::JyMaster => Color::from_rgb(0.95, 0.48, 0.22),
     }
 }
 

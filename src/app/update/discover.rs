@@ -47,6 +47,7 @@ impl App {
                         id: 0,
                         nickname: locale.get(Key::DiscoverDailyRecommendDesc).to_string(),
                         avatar_url: String::new(),
+                        vip: crate::api::VipInfo::default(),
                     },
                     subscribed: false,
                 }];

@@ -182,11 +182,5 @@ fn current_timestamp() -> i64 {
 }
 
 fn parse_quality(value: &str) -> MusicQuality {
-    match value {
-        "Standard" | "128kbps" => MusicQuality::Standard,
-        "Higher" | "192kbps" => MusicQuality::Higher,
-        "Lossless" | "SQ (无损)" => MusicQuality::Lossless,
-        "HiRes" | "Hi-Res" => MusicQuality::HiRes,
-        _ => MusicQuality::High,
-    }
+    MusicQuality::from_display_name(value).unwrap_or(MusicQuality::High)
 }

@@ -90,6 +90,45 @@ pub fn view<'a>(
                             let duration_secs = song.duration_ms / 1000;
                             let duration_str =
                                 format!("{}:{:02}", duration_secs / 60, duration_secs % 60);
+                            let quality_label = song
+                                .quality_options
+                                .iter()
+                                .max_by_key(|option| option.level.priority())
+                                .map(|option| option.level.short_name().to_string());
+                            let availability_label = song.availability.label();
+                            let availability_restricted = song.availability.is_restricted();
+                            let quality_badge: Element<'static, Message> = quality_label
+                                .map(|label| -> Element<'static, Message> {
+                                    text(label)
+                                        .size(theme::TEXT_SIZE_CAPTION)
+                                        .style(|_theme| iced::widget::text::Style {
+                                            color: Some(theme::ACCENT),
+                                        })
+                                        .into()
+                                })
+                                .unwrap_or_else(|| -> Element<'static, Message> {
+                                    Space::new().width(0).into()
+                                });
+                            let availability_badge: Element<'static, Message> =
+                                if availability_label.is_empty() {
+                                    Space::new().width(0).into()
+                                } else {
+                                    text(availability_label)
+                                        .size(theme::TEXT_SIZE_CAPTION)
+                                        .style(move |theme| iced::widget::text::Style {
+                                            color: Some(if availability_restricted {
+                                                theme::ACCENT_PINK
+                                            } else {
+                                                theme::text_muted(theme)
+                                            }),
+                                        })
+                                        .into()
+                                };
+                            let badges = row![
+                                quality_badge,
+                                availability_badge,
+                            ]
+                            .spacing(6);
 
                             let song_row = button(
                                 row![
@@ -110,6 +149,7 @@ pub fn view<'a>(
                                                     )),
                                                 }
                                             }),
+                                        badges,
                                     ]
                                     .width(Fill),
                                     text(song.artist_names())

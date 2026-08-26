@@ -5,7 +5,8 @@
 //! Clicking tab scrolls to corresponding section
 
 use iced::widget::{
-    Space, button, column, container, pick_list, row, scrollable, svg, text, text_input, toggler,
+    Space, button, column, container, image, pick_list, row, scrollable, svg, text, text_input,
+    toggler,
 };
 use iced::{Alignment, Background, Border, Color, Element, Fill, Length, Padding};
 
@@ -318,18 +319,32 @@ fn account_section(
                 })
             };
 
-            let vip_text = if info.vip_type > 0 {
-                text("VIP")
-                    .size(theme::TEXT_SIZE_CAPTION)
-                    .style(|_theme| text::Style {
-                        color: Some(theme::ACCENT_PINK),
+            let vip_text: Element<'static, Message> = if info.vip.is_vip() {
+                let icon = image_state
+                    .get(ImageKind::VipBadge, info.user_id)
+                    .cloned()
+                    .map(|handle| -> Element<'static, Message> {
+                        image(handle).width(18).height(18).into()
                     })
+                    .unwrap_or_else(|| Space::new().width(0).into());
+                row![
+                    icon,
+                    Space::new().width(4),
+                    text(info.membership_label())
+                        .size(theme::TEXT_SIZE_CAPTION)
+                        .style(|_theme| text::Style {
+                            color: Some(theme::ACCENT_PINK),
+                        }),
+                ]
+                .align_y(Alignment::Center)
+                .into()
             } else {
                 text(locale.get(Key::FreeAccount))
                     .size(theme::TEXT_SIZE_CAPTION)
                     .style(|theme| text::Style {
                         color: Some(theme::settings_desc(theme)),
                     })
+                    .into()
             };
 
             column![
@@ -481,14 +496,8 @@ fn playback_section(settings: &Settings, locale: Locale) -> Element<'static, Mes
             locale.get(Key::SettingsMusicQuality),
             Some(locale.get(Key::SettingsMusicQualityDesc)),
             styled_pick_list(quality_options, Some(current_quality), |value| {
-                let quality = match value.as_str() {
-                    "128kbps" => MusicQuality::Standard,
-                    "192kbps" => MusicQuality::Higher,
-                    "320kbps" => MusicQuality::High,
-                    "SQ (无损)" => MusicQuality::Lossless,
-                    "Hi-Res" => MusicQuality::HiRes,
-                    _ => MusicQuality::High,
-                };
+                let quality = MusicQuality::from_display_name(&value)
+                    .unwrap_or(MusicQuality::High);
                 Message::UpdateMusicQuality(quality)
             },)
         ),
@@ -982,13 +991,8 @@ fn storage_section(
                 locale.get(Key::SettingsDownloadQuality),
                 None,
                 styled_pick_list(qualities, Some(current_quality), |value| {
-                    let q = match value.as_str() {
-                        "128kbps" => crate::features::MusicQuality::Standard,
-                        "192kbps" => crate::features::MusicQuality::Higher,
-                        "SQ (无损)" => crate::features::MusicQuality::Lossless,
-                        "Hi-Res" => crate::features::MusicQuality::HiRes,
-                        _ => crate::features::MusicQuality::High,
-                    };
+                    let q = crate::features::MusicQuality::from_display_name(&value)
+                        .unwrap_or(crate::features::MusicQuality::High);
                     Message::UpdateDownloadQuality(q)
                 }),
             )

@@ -427,6 +427,7 @@ pub enum Message {
         Option<String>,
         Option<crate::audio::SharedBuffer>,
         Option<u64>,
+        Option<crate::app::update::song_resolver::ResolvedAudioQuality>,
         PlaybackContext,
     ),
     /// Song resolution failed
@@ -1141,7 +1142,7 @@ impl std::fmt::Debug for Message {
             // Queue management
             Self::PlayPlaylist(id) => simple!("PlayPlaylist", "{}", id),
             Self::PlayQueueIndex(i) => simple!("PlayQueueIndex", "{}", i),
-            Self::SongResolvedStreaming(i, _, _, buffer, _, _) => {
+            Self::SongResolvedStreaming(i, _, _, buffer, _, _, _) => {
                 simple!(
                     "SongResolvedStreaming",
                     "idx={}, buffer={}",

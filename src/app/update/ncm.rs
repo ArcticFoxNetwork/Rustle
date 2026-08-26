@@ -396,6 +396,7 @@ impl App {
                                 id: 0,
                                 nickname: creator,
                                 avatar_url: String::new(),
+                                vip: crate::api::VipInfo::default(),
                             },
                             track_count: tracks.len() as u64,
                             subscribed: false,
@@ -705,6 +706,7 @@ impl App {
                     let mut user_info =
                         UserInfo::new(login_info.user_id, login_info.nickname.clone());
                     user_info.vip_type = login_info.vip_type;
+                    user_info.vip = login_info.vip.clone();
                     self.core.user_info = Some(user_info);
 
                     let client = self.core.ncm_client.clone();
@@ -895,6 +897,7 @@ impl App {
 
                 let mut user_info = UserInfo::new(login_info.user_id, login_info.nickname.clone());
                 user_info.vip_type = login_info.vip_type;
+                user_info.vip = login_info.vip.clone();
                 self.core.user_info = Some(user_info);
 
                 Some(Task::batch([

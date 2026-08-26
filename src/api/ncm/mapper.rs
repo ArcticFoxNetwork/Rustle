@@ -52,6 +52,73 @@ fn first_str(value: &Value, keys: &[&str]) -> String {
         .to_string()
 }
 
+fn optional_string(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| value.get(*key).and_then(Value::as_str))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+fn normalized_https_url(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        String::new()
+    } else if value.starts_with("https://") {
+        value.to_string()
+    } else if let Some(rest) = value.strip_prefix("http://") {
+        format!("https://{rest}")
+    } else if value.starts_with("//") {
+        format!("https:{value}")
+    } else {
+        String::new()
+    }
+}
+
+fn vip_info_from_nodes(profile: Option<&Value>, root: Option<&Value>) -> VipInfo {
+    let root = root.unwrap_or(&Value::Null);
+    let profile = profile.unwrap_or(root);
+    let rights = root
+        .get("vipRights")
+        .or_else(|| profile.get("vipRights"));
+    let associator = rights.and_then(|value| value.get("associator"));
+
+    let vip_type = profile
+        .get("vipType")
+        .or_else(|| root.get("vipType"))
+        .and_then(as_i32)
+        .unwrap_or_default();
+    let red_vip_level = rights
+        .and_then(|value| value.get("redVipLevel"))
+        .or_else(|| profile.get("redVipLevel"))
+        .or_else(|| profile.get("vipLevel"))
+        .or_else(|| root.get("redVipLevel"))
+        .or_else(|| root.get("vipLevel"))
+        .and_then(as_u32)
+        .unwrap_or_default();
+    let annual_count = root
+        .get("redVipAnnualCount")
+        .or_else(|| profile.get("redVipAnnualCount"))
+        .or_else(|| root.get("annualCount"))
+        .or_else(|| profile.get("annualCount"))
+        .and_then(as_u32)
+        .unwrap_or_default();
+    let icon_url = associator
+        .and_then(|value| value.get("iconUrl"))
+        .or_else(|| profile.get("vipIconUrl"))
+        .or_else(|| root.get("vipIconUrl"))
+        .and_then(Value::as_str)
+        .map(normalized_https_url)
+        .unwrap_or_default();
+
+    VipInfo {
+        vip_type,
+        red_vip_level,
+        annual_count,
+        icon_url,
+    }
+}
+
 fn timestamp_to_year(ts_ms: u64) -> Option<u32> {
     if ts_ms == 0 {
         return None;
@@ -89,8 +156,79 @@ fn user_summary_from_value(value: Option<&Value>) -> UserSummary {
             id: user.get("userId").and_then(as_u64).unwrap_or_default(),
             nickname: str_value(user, "nickname"),
             avatar_url: str_value(user, "avatarUrl"),
+            vip: vip_info_from_nodes(Some(user), Some(user)),
         })
         .unwrap_or_default()
+}
+
+fn quality_option_from_value(
+    level: NcmQualityLevel,
+    value: &Value,
+) -> Option<SongQualityOption> {
+    if value.is_null() || value.as_bool() == Some(false) {
+        return None;
+    }
+
+    let bitrate = value
+        .get("br")
+        .or_else(|| value.get("bitrate"))
+        .and_then(as_u32)
+        .filter(|value| *value > 0);
+    let size = value
+        .get("size")
+        .or_else(|| value.get("fileSize"))
+        .and_then(as_u64)
+        .filter(|value| *value > 0);
+    if bitrate.is_none() && size.is_none() {
+        return None;
+    }
+
+    Some(SongQualityOption {
+        level,
+        bitrate,
+        size,
+        format: optional_string(value, &["format", "type", "encodeType"]),
+        sample_rate: value
+            .get("sr")
+            .or_else(|| value.get("sampleRate"))
+            .and_then(as_u32)
+            .filter(|value| *value > 0),
+        bit_depth: value
+            .get("bitDepth")
+            .or_else(|| value.get("depth"))
+            .and_then(as_u32)
+            .filter(|value| *value > 0),
+        channels: value
+            .get("channel")
+            .or_else(|| value.get("channels"))
+            .or_else(|| value.get("channelCount"))
+            .and_then(as_u32)
+            .filter(|value| *value > 0),
+    })
+}
+
+fn quality_options_from_object(value: &Value) -> Vec<SongQualityOption> {
+    let aliases = [
+        (NcmQualityLevel::Standard, &["standard", "l"][..]),
+        (NcmQualityLevel::Higher, &["higher", "m"][..]),
+        (NcmQualityLevel::ExHigh, &["exhigh", "h"][..]),
+        (NcmQualityLevel::Lossless, &["lossless", "sq"][..]),
+        (NcmQualityLevel::HiRes, &["hires", "hr"][..]),
+        (NcmQualityLevel::JvEffect, &["jyeffect"][..]),
+        (NcmQualityLevel::Sky, &["sky"][..]),
+        (NcmQualityLevel::Dolby, &["dolby"][..]),
+        (NcmQualityLevel::JyMaster, &["jymaster"][..]),
+    ];
+    let mut options = aliases
+        .into_iter()
+        .filter_map(|(level, keys)| {
+            keys.iter()
+                .find_map(|key| value.get(*key))
+                .and_then(|node| quality_option_from_value(level, node))
+        })
+        .collect::<Vec<_>>();
+    options.sort_by_key(|option| option.level.priority());
+    options
 }
 
 pub fn album_summary_from_value(album: &Value) -> Option<AlbumSummary> {
@@ -200,6 +338,7 @@ pub fn track_from_value(track: &Value, album_override: Option<&Value>) -> Result
             .and_then(Value::as_str)
             .filter(|tags| !tags.is_empty())
             .map(ToString::to_string),
+        quality_options: quality_options_from_object(track),
     })
 }
 
@@ -211,7 +350,7 @@ pub fn tracks_from_array(items: Option<&Vec<Value>>, album_override: Option<&Val
         .collect()
 }
 
-pub fn track_urls(value: &Value) -> Result<Vec<TrackUrl>> {
+pub fn track_urls(value: &Value, requested_level: NcmQualityLevel) -> Result<Vec<TrackUrl>> {
     if !code_ok(value) {
         return Err(anyhow!("track url request failed"));
     }
@@ -225,14 +364,82 @@ pub fn track_urls(value: &Value) -> Result<Vec<TrackUrl>> {
             (!url.is_empty()).then(|| TrackUrl {
                 id: item.get("id").and_then(as_u64).unwrap_or_default(),
                 url: url.to_string(),
+                requested_level,
+                level: item
+                    .get("level")
+                    .and_then(Value::as_str)
+                    .and_then(NcmQualityLevel::from_api_level)
+                    .unwrap_or(requested_level),
                 rate: item
                     .get("br")
                     .or_else(|| item.get("rate"))
                     .and_then(as_u32)
                     .unwrap_or_default(),
+                size: item
+                    .get("size")
+                    .and_then(as_u64)
+                    .filter(|value| *value > 0),
+                format: optional_string(item, &["type", "format", "encodeType"]),
+                sample_rate: item
+                    .get("sr")
+                    .or_else(|| item.get("sampleRate"))
+                    .and_then(as_u32)
+                    .filter(|value| *value > 0),
+                bit_depth: item
+                    .get("bitDepth")
+                    .and_then(as_u32)
+                    .filter(|value| *value > 0),
+                channels: item
+                    .get("channel")
+                    .or_else(|| item.get("channelCount"))
+                    .and_then(as_u32)
+                    .filter(|value| *value > 0),
             })
         })
         .collect())
+}
+
+pub fn song_quality_detail(value: &Value, song_id: u64) -> Result<SongQualityDetail> {
+    if !code_ok(value) {
+        return Err(anyhow!("song quality detail request failed"));
+    }
+    let data = value.get("data").unwrap_or(value);
+    let mut options = quality_options_from_object(data);
+
+    if let Some(items) = data
+        .get("levels")
+        .or_else(|| data.get("qualities"))
+        .and_then(Value::as_array)
+    {
+        for item in items {
+            let Some(level) = item
+                .get("level")
+                .and_then(Value::as_str)
+                .and_then(NcmQualityLevel::from_api_level)
+            else {
+                continue;
+            };
+            if let Some(option) = quality_option_from_value(level, item)
+                && let Some(existing) = options.iter_mut().find(|entry| entry.level == level)
+            {
+                *existing = option;
+            } else if let Some(option) = quality_option_from_value(level, item) {
+                options.push(option);
+            }
+        }
+    }
+
+    options.sort_by_key(|option| option.level.priority());
+    options.dedup_by_key(|option| option.level);
+    let highest_available = options
+        .iter()
+        .max_by_key(|option| option.level.priority())
+        .map(|option| option.level);
+    Ok(SongQualityDetail {
+        song_id,
+        options,
+        highest_available,
+    })
 }
 
 pub fn track_detail(value: &Value) -> Result<Vec<Track>> {
@@ -306,6 +513,91 @@ mod lyric_tests {
         let mapped = lyrics(&value).expect("valid lyrics response");
         assert_eq!(mapped.lyric, vec!["[00:00.00]line"]);
         assert!(mapped.yrc.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod quality_tests {
+    use super::{login_info, song_quality_detail, track_urls};
+    use crate::api::ncm::models::NcmQualityLevel;
+    use serde_json::json;
+
+    #[test]
+    fn maps_all_quality_levels_and_selects_highest() {
+        let value = json!({
+            "code": 200,
+            "data": {
+                "standard": {"br": 128000, "size": 1000},
+                "higher": {"br": 192000, "size": 2000},
+                "exhigh": {"br": 320000, "size": 3000},
+                "lossless": {"br": 999000, "size": 4000},
+                "hires": {"br": 1900000, "size": 5000},
+                "jyeffect": {"br": 2000000, "size": 6000},
+                "sky": {"br": 2100000, "size": 7000},
+                "dolby": {"br": 2200000, "size": 8000},
+                "jymaster": {"br": 2400000, "size": 9000}
+            }
+        });
+        let detail = song_quality_detail(&value, 42).expect("quality detail");
+        assert_eq!(detail.options.len(), 9);
+        assert_eq!(detail.highest_available, Some(NcmQualityLevel::JyMaster));
+        assert_eq!(
+            detail
+                .best_for(NcmQualityLevel::Dolby)
+                .expect("dolby")
+                .level,
+            NcmQualityLevel::Dolby
+        );
+    }
+
+    #[test]
+    fn ignores_empty_quality_and_preserves_server_downgrade() {
+        let detail = song_quality_detail(
+            &json!({
+                "code": 200,
+                "data": {
+                    "lossless": {"br": 0, "size": 0},
+                    "exhigh": {"br": 320000, "size": 1234}
+                }
+            }),
+            7,
+        )
+        .expect("quality detail");
+        assert_eq!(detail.options.len(), 1);
+
+        let urls = track_urls(
+            &json!({
+                "code": 200,
+                "data": [{"id": 7, "url": "https://cdn/song.mp3", "level": "exhigh", "br": 320000}]
+            }),
+            NcmQualityLevel::Lossless,
+        )
+        .expect("url response");
+        assert_eq!(urls[0].requested_level, NcmQualityLevel::Lossless);
+        assert_eq!(urls[0].level, NcmQualityLevel::ExHigh);
+    }
+
+    #[test]
+    fn maps_vip_level_annual_flag_and_https_icon() {
+        let login = login_info(&json!({
+            "code": 200,
+            "profile": {
+                "userId": 9,
+                "nickname": "tester",
+                "avatarUrl": "https://avatar",
+                "vipType": 11,
+                "vipRights": {
+                    "redVipLevel": 7,
+                    "associator": {"iconUrl": "http://vip/icon.png"}
+                },
+                "redVipAnnualCount": 1
+            }
+        }))
+        .expect("login info");
+        assert_eq!(login.vip.red_vip_level, 7);
+        assert_eq!(login.vip.annual_count, 1);
+        assert_eq!(login.vip.icon_url, "https://vip/icon.png");
+        assert!(login.vip.is_vip());
     }
 }
 
@@ -452,6 +744,7 @@ pub fn user_detail(value: &Value) -> Result<UserDetail> {
             .unwrap_or_default(),
         avatar_url: str_value(profile, "avatarUrl"),
         background_url: str_value(profile, "backgroundUrl"),
+        vip: vip_info_from_nodes(Some(profile), Some(value)),
     })
 }
 
@@ -623,6 +916,7 @@ pub fn login_info(value: &Value) -> Result<LoginInfo> {
             nickname: String::new(),
             avatar_url: String::new(),
             vip_type: 0,
+            vip: VipInfo::default(),
             msg: value
                 .get("msg")
                 .or_else(|| value.get("message"))
@@ -636,12 +930,34 @@ pub fn login_info(value: &Value) -> Result<LoginInfo> {
         .get("profile")
         .ok_or_else(|| anyhow!("login profile missing"))?;
 
+    let vip = vip_info_from_nodes(Some(profile), Some(value));
     Ok(LoginInfo {
         code,
         user_id: profile.get("userId").and_then(as_u64).unwrap_or_default(),
         nickname: str_value(profile, "nickname"),
         avatar_url: str_value(profile, "avatarUrl"),
-        vip_type: profile.get("vipType").and_then(as_i32).unwrap_or_default(),
+        vip_type: vip.vip_type,
+        vip,
+        msg: String::new(),
+    })
+}
+
+pub fn account_info(value: &Value) -> Result<LoginInfo> {
+    if !code_ok(value) {
+        return Err(anyhow!("account info request failed"));
+    }
+    let profile = value
+        .get("profile")
+        .or_else(|| value.get("userProfile"))
+        .ok_or_else(|| anyhow!("account profile missing"))?;
+    let vip = vip_info_from_nodes(Some(profile), Some(value));
+    Ok(LoginInfo {
+        code: 200,
+        user_id: profile.get("userId").and_then(as_u64).unwrap_or_default(),
+        nickname: str_value(profile, "nickname"),
+        avatar_url: str_value(profile, "avatarUrl"),
+        vip_type: vip.vip_type,
+        vip,
         msg: String::new(),
     })
 }

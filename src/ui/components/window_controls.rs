@@ -97,7 +97,7 @@ pub fn view<'a>(
     // Add left margin to move buttons away from edge
     let nav_buttons = container(nav_group).padding(Padding::new(12.0).left(16.0));
 
-    // User info (avatar + username + SVIP badge, right side before settings)
+    // User info (avatar + username + API-backed membership badge)
     let avatar_size = 28.0;
     let avatar_radius = avatar_size / 2.0;
     let avatar_icon_size = 14.0;
@@ -127,7 +127,18 @@ pub fn view<'a>(
 
     let user_text: Element<'_, Message> = if is_logged_in {
         if let Some(info) = user_info {
-            if info.vip_type > 0 {
+            if info.vip.is_vip() {
+                let vip_badge: Element<'static, Message> = image_state
+                    .get(ImageKind::VipBadge, info.user_id)
+                    .cloned()
+                    .map(|handle| {
+                        image(handle)
+                            .width(18)
+                            .height(18)
+                            .content_fit(ContentFit::Contain)
+                            .into()
+                    })
+                    .unwrap_or_else(|| Space::new().width(0).into());
                 row![
                     text(info.nickname.clone())
                         .size(theme::TEXT_SIZE_BODY_LARGE)
@@ -136,7 +147,9 @@ pub fn view<'a>(
                             color: Some(theme::text_primary(theme))
                         }),
                     Space::new().width(6),
-                    text("SVIP")
+                    vip_badge,
+                    Space::new().width(4),
+                    text(info.membership_label())
                         .size(theme::TEXT_SIZE_BODY_LARGE)
                         .style(|_theme| text::Style {
                             color: Some(theme::ACCENT_PINK)

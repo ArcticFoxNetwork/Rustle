@@ -355,6 +355,7 @@ impl App {
             is_fm_mode,
             is_first_song,
             current_song_cover,
+            self.playback.current_quality.as_ref(),
         );
 
         // Queue overlay - full width, positioned above player bar

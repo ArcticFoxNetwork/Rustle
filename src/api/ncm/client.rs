@@ -153,12 +153,17 @@ impl NcmClient {
             2 => "exhigh",
             3 => "lossless",
             4 => "hires",
+            5 => "jyeffect",
+            6 => "sky",
+            7 => "dolby",
+            8 => "jymaster",
             _ => "exhigh",
         }
     }
 
-    fn current_level(&self) -> &'static str {
-        Self::quality_to_level(self.quality())
+    pub fn current_quality_level(&self) -> NcmQualityLevel {
+        NcmQualityLevel::from_api_level(Self::quality_to_level(self.quality()))
+            .unwrap_or(NcmQualityLevel::ExHigh)
     }
 
     fn query(&self) -> Query {
@@ -261,7 +266,32 @@ impl NcmClient {
     pub async fn login_status(&self) -> Result<LoginInfo> {
         let response = self.client.login_status(&self.query()).await?;
         self.remember_cookies(response.cookie);
-        mapper::login_info(&response.body)
+        let mut login = mapper::login_info(&response.body)?;
+        // `/login/status` is intentionally sparse on newer accounts. Merge the
+        // richer account payload when it is available, but never make login
+        // fail only because membership metadata could not be refreshed.
+        if login.code == 200
+            && let Ok(account) = self.account_info().await
+        {
+            if login.user_id == 0 {
+                login.user_id = account.user_id;
+            }
+            if login.nickname.is_empty() {
+                login.nickname = account.nickname;
+            }
+            if login.avatar_url.is_empty() {
+                login.avatar_url = account.avatar_url;
+            }
+            login.vip_type = account.vip_type;
+            login.vip = account.vip;
+        }
+        Ok(login)
+    }
+
+    pub async fn account_info(&self) -> Result<LoginInfo> {
+        let response = self.client.user_account(&self.query()).await?;
+        self.remember_cookies(response.cookie);
+        mapper::account_info(&response.body)
     }
 
     pub async fn logout(&self) {
@@ -392,14 +422,65 @@ impl NcmClient {
         mapper::user_detail(&response.body)
     }
 
+    #[allow(dead_code)]
     pub async fn track_urls(&self, ids: &[u64]) -> Result<Vec<TrackUrl>> {
+        self.track_urls_for_level(ids, self.current_quality_level())
+            .await
+    }
+
+    pub async fn track_urls_for_level(
+        &self,
+        ids: &[u64],
+        level: NcmQualityLevel,
+    ) -> Result<Vec<TrackUrl>> {
         let id_list = ids.iter().map(u64::to_string).collect::<Vec<_>>().join(",");
         let query = self
             .query()
             .param("id", &id_list)
-            .param("level", self.current_level());
+            .param("level", level.api_level());
         let response = self.client.song_url_v1(&query).await?;
-        mapper::track_urls(&response.body)
+        mapper::track_urls(&response.body, level)
+    }
+
+    pub async fn song_quality(&self, song_id: u64) -> Result<SongQualityDetail> {
+        let query = self.query().param("id", &song_id.to_string());
+        let response = self.client.song_music_detail(&query).await?;
+        mapper::song_quality_detail(&response.body, song_id)
+    }
+
+    /// Resolve one playable URL while preserving requested and actual quality.
+    /// If the detail endpoint is unavailable, the normal URL endpoint remains
+    /// a compatibility fallback. Empty/unauthorized URLs are never success.
+    pub async fn resolve_track_url(
+        &self,
+        song_id: u64,
+        requested: NcmQualityLevel,
+    ) -> Result<TrackUrl> {
+        let selected = match self.song_quality(song_id).await {
+            Ok(detail) => detail
+                .best_for(requested)
+                .map(|option| option.level)
+                .unwrap_or(requested),
+            Err(error) => {
+                tracing::warn!(
+                    "Failed to fetch quality detail for song {}: {}; using direct URL request",
+                    song_id,
+                    error
+                );
+                requested
+            }
+        };
+        self.track_urls_for_level(&[song_id], selected)
+            .await?
+            .into_iter()
+            .find(|track| track.id == song_id || track.id == 0)
+            .ok_or_else(|| {
+                anyhow!(
+                    "no playable URL for song {} at requested quality {}",
+                    song_id,
+                    requested.api_level()
+                )
+            })
     }
 
     pub async fn track_detail(&self, ids: &[u64]) -> Result<Vec<Track>> {
@@ -496,7 +577,8 @@ impl NcmClient {
     {
         if !path.exists() {
             let url = url.into();
-            let image_url = format!("{}?param={}y{}", url, width, height);
+            let separator = if url.contains('?') { '&' } else { '?' };
+            let image_url = format!("{}{}param={}y{}", url, separator, width, height);
             let response = reqwest::Client::new().get(&image_url).send().await?;
             if response.status().is_success() {
                 let bytes = response.bytes().await?;

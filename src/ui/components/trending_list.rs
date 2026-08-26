@@ -111,7 +111,35 @@ fn view_song_item<'a>(
             color: Some(theme::text_secondary(theme)),
         });
 
-    let song_info = column![song_name, artist_text,].spacing(2);
+    let quality_badge: Element<'a, Message> = match song
+        .quality_options
+        .iter()
+        .max_by_key(|option| option.level.priority())
+    {
+        Some(option) => text(option.level.short_name())
+            .size(theme::TEXT_SIZE_CAPTION)
+            .style(|_theme| text::Style {
+                color: Some(theme::ACCENT),
+            })
+            .into(),
+        None => Space::new().width(0).into(),
+    };
+    let availability_badge: Element<'a, Message> = if song.availability.label().is_empty() {
+        Space::new().width(0).into()
+    } else {
+        text(song.availability.label())
+            .size(theme::TEXT_SIZE_CAPTION)
+            .style(|theme| text::Style {
+                color: Some(if song.availability.is_restricted() {
+                    theme::ACCENT_PINK
+                } else {
+                    theme::text_muted(theme)
+                }),
+            })
+            .into()
+    };
+
+    let song_info = column![song_name, artist_text, row![quality_badge, availability_badge].spacing(6),].spacing(2);
 
     // Duration text and favorite button - show favorite on hover if logged in
     let (duration_or_favorite, duration_width): (Element<'_, Message>, f32) =

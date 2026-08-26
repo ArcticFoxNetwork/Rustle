@@ -404,9 +404,12 @@ async fn download_audio_streaming(
         return Message::PreloadAudioFailed(idx, direction, identity);
     }
 
-    let song_stem = ncm_id.to_string();
+    let requested_level = client.current_quality_level();
+    let song_stem = format!("{}_{}", ncm_id, requested_level.api_level());
 
-    if let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &song_stem) {
+    if let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &song_stem)
+        .or_else(|| crate::utils::find_cached_audio(&song_cache_dir, &ncm_id.to_string()))
+    {
         let file_size = std::fs::metadata(&cached_path)
             .map(|m| m.len())
             .unwrap_or(0);
@@ -434,21 +437,15 @@ async fn download_audio_streaming(
         let _ = std::fs::remove_file(&cached_path);
     }
 
-    let urls = match client.track_urls(&[ncm_id]).await {
-        Ok(urls) => urls,
+    let url = match client.resolve_track_url(ncm_id, requested_level).await {
+        Ok(url) => url,
         Err(e) => {
             tracing::error!("Preload: failed to get song URL for {}: {}", ncm_id, e);
             return Message::PreloadAudioFailed(idx, direction, identity);
         }
     };
 
-    let song_url = match urls.first() {
-        Some(u) if !u.url.is_empty() => u.url.clone(),
-        _ => {
-            tracing::error!("Preload: no valid URL for song {}", ncm_id);
-            return Message::PreloadAudioFailed(idx, direction, identity);
-        }
-    };
+    let song_url = url.url;
 
     let cache_path = song_cache_dir.join(&song_stem);
 

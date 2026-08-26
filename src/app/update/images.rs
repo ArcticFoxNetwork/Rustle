@@ -82,6 +82,13 @@ impl App {
                     login_info.user_id,
                     &login_info.avatar_url,
                 ));
+                if !login_info.vip.icon_url.is_empty() {
+                    refs.push(RemoteImage::global(
+                        ImageKind::VipBadge,
+                        login_info.user_id,
+                        &login_info.vip.icon_url,
+                    ));
+                }
             }
             Message::BannersLoaded(banners)
                 if matches!(self.ui.current_route, Route::Home | Route::Radio) =>
@@ -670,7 +677,7 @@ fn start_image_download(
     let (width, height): (u16, u16) = match kind {
         ImageKind::Banner => (800, 280),
         ImageKind::SongCover | ImageKind::LocalSongCover => (200, 200),
-        ImageKind::UserAvatar => (200, 200),
+        ImageKind::UserAvatar | ImageKind::VipBadge => (200, 200),
         _ => (300, 300),
     };
 

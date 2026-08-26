@@ -122,6 +122,14 @@ pub enum MusicQuality {
     Lossless,
     /// Hi-Res quality (~1900kbps)
     HiRes,
+    /// NCM HD enhanced sound.
+    JvEffect,
+    /// NCM immersive surround sound.
+    Sky,
+    /// Dolby Atmos.
+    Dolby,
+    /// NCM master quality.
+    JyMaster,
 }
 
 impl MusicQuality {
@@ -133,6 +141,10 @@ impl MusicQuality {
             Self::High,
             Self::Lossless,
             Self::HiRes,
+            Self::JvEffect,
+            Self::Sky,
+            Self::Dolby,
+            Self::JyMaster,
         ]
     }
 
@@ -144,6 +156,10 @@ impl MusicQuality {
             Self::High => 2,     // 320000
             Self::Lossless => 3, // 999000 (SQ)
             Self::HiRes => 4,    // 1900000 (Hi-Res)
+            Self::JvEffect => 5,
+            Self::Sky => 6,
+            Self::Dolby => 7,
+            Self::JyMaster => 8,
         }
     }
 
@@ -155,6 +171,25 @@ impl MusicQuality {
             Self::High => "320kbps",
             Self::Lossless => "SQ (无损)",
             Self::HiRes => "Hi-Res",
+            Self::JvEffect => "高清臻音",
+            Self::Sky => "沉浸环绕声",
+            Self::Dolby => "杜比全景声",
+            Self::JyMaster => "超清母带",
+        }
+    }
+
+    pub fn from_display_name(value: &str) -> Option<Self> {
+        match value {
+            "128kbps" | "Standard" => Some(Self::Standard),
+            "192kbps" | "Higher" => Some(Self::Higher),
+            "320kbps" | "High" | "ExHigh" => Some(Self::High),
+            "SQ (无损)" | "Lossless" => Some(Self::Lossless),
+            "Hi-Res" | "HiRes" => Some(Self::HiRes),
+            "高清臻音" | "JvEffect" | "JyEffect" => Some(Self::JvEffect),
+            "沉浸环绕声" | "Sky" => Some(Self::Sky),
+            "杜比全景声" | "Dolby" => Some(Self::Dolby),
+            "超清母带" | "JyMaster" => Some(Self::JyMaster),
+            _ => None,
         }
     }
 }

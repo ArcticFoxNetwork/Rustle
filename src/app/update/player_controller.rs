@@ -630,6 +630,10 @@ impl App {
         }
 
         let song = self.playback.queue[idx].clone();
+        // Quality belongs to a single song/request generation. Clear it before
+        // resolving a different queue item so stale UI never survives a fast
+        // song switch.
+        self.playback.current_quality = None;
 
         if super::song_resolver::needs_resolution(&song) {
             self.playback.current_index = Some(idx);
@@ -957,6 +961,7 @@ impl App {
         self.stop_audio_output();
         self.playback.current_song = None;
         self.playback.current_artist_id = None;
+        self.playback.current_quality = None;
         self.playback.preload_coordinator.clear_window();
         let released = self.playback.audio_preload_manager.reset();
         self.release_preload_requests(released);
@@ -1396,6 +1401,7 @@ impl App {
                             resolved.cover_path,
                             resolved.shared_buffer,
                             resolved.duration_secs,
+                            resolved.quality,
                             message_context.clone(),
                         )
                     } else {
@@ -1428,6 +1434,7 @@ impl App {
         cover_path: Option<String>,
         shared_buffer: Option<crate::audio::SharedBuffer>,
         duration_secs: Option<u64>,
+        quality: Option<super::song_resolver::ResolvedAudioQuality>,
         context: crate::audio::identity::PlaybackContext,
     ) -> Task<Message> {
         if !self.accepts_audio_context(&context) {
@@ -1446,7 +1453,11 @@ impl App {
             cover_path,
             shared_buffer,
             duration_secs,
+            quality,
         };
+        if self.playback.current_index == Some(idx) {
+            self.playback.current_quality = resolved.quality.clone();
+        }
         let _ = self.apply_resolved_song_to_queue(idx, &resolved);
 
         // Only trigger playback if this is the song we're actually waiting for

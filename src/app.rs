@@ -19,6 +19,7 @@ pub use state::{
     HomePageState, ImageState, LibraryState, PlaybackSessionState, Route, SearchPageState,
     SearchTab, SongEditDialogState, UiState, UserInfo,
 };
+pub use update::song_resolver::ResolvedAudioQuality;
 
 mod subscription_logic {
     pub fn window_should_throttle(window_hidden: bool) -> bool {

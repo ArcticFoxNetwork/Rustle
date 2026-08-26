@@ -28,6 +28,7 @@ pub fn view(
     is_fm_mode: bool,               // Whether in Personal FM mode
     is_first_song: bool,            // Whether at first song in queue
     current_song_cover: Option<&iced::widget::image::Handle>,
+    current_quality: Option<&crate::app::ResolvedAudioQuality>,
 ) -> Element<'static, Message> {
     let current_time = utils::format_time(position * duration_secs);
     let total_time = utils::format_time(duration_secs);
@@ -103,7 +104,27 @@ pub fn view(
         })
         .on_press_maybe(artist_action);
 
-        let song_details = column![title_btn, artist_btn].spacing(2);
+        let quality_badge: Element<'static, Message> = if let Some(quality) = current_quality {
+            let label = if quality.requested == quality.actual {
+                quality.actual.short_name().to_string()
+            } else {
+                format!(
+                    "{} → {}",
+                    quality.requested.short_name(),
+                    quality.actual.short_name()
+                )
+            };
+            text(label)
+                .size(theme::TEXT_SIZE_CAPTION)
+                .style(|_theme| text::Style {
+                    color: Some(theme::ACCENT),
+                })
+                .into()
+        } else {
+            Space::new().height(0).into()
+        };
+
+        let song_details = column![title_btn, artist_btn, quality_badge].spacing(2);
 
         row![cover_btn, Space::new().width(12), song_details]
             .align_y(Alignment::Center)

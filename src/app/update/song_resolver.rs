@@ -7,6 +7,7 @@
 use std::sync::Arc;
 
 use crate::api::NcmClient;
+use crate::api::{NcmQualityLevel, TrackUrl};
 use crate::audio::identity::PlaybackContext;
 use crate::audio::streaming::{
     SharedBuffer, StreamingEvent, StreamingEventKind, StreamingIdentity, start_buffer_download,
@@ -26,6 +27,29 @@ pub struct ResolvedSong {
     pub shared_buffer: Option<SharedBuffer>,
     /// Duration in seconds (from API)
     pub duration_secs: Option<u64>,
+    /// Quality requested by settings and the quality actually returned by NCM.
+    pub quality: Option<ResolvedAudioQuality>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedAudioQuality {
+    pub requested: NcmQualityLevel,
+    pub actual: NcmQualityLevel,
+    pub bitrate: Option<u32>,
+    pub size: Option<u64>,
+    pub format: Option<String>,
+}
+
+impl From<&TrackUrl> for ResolvedAudioQuality {
+    fn from(url: &TrackUrl) -> Self {
+        Self {
+            requested: url.requested_level,
+            actual: url.level,
+            bitrate: (url.rate > 0).then_some(url.rate),
+            size: url.size,
+            format: url.format.clone(),
+        }
+    }
 }
 
 /// Check if a song needs resolution (NCM song without local file)
@@ -80,13 +104,18 @@ pub async fn resolve_song(
     std::fs::create_dir_all(&song_cache_dir).ok()?;
 
     // Use stem for cache lookup - actual extension determined by format detection
-    let song_stem = ncm_id.to_string();
+    let requested_level = client.current_quality_level();
+    // Quality is part of the cache identity. Keep the old song-id-only stem as
+    // a read-only compatibility candidate for caches created by older builds.
+    let song_stem = format!("{}_{}", ncm_id, requested_level.api_level());
 
     // Cover downloads are handled by app::update::images; song resolution only reuses cache.
     let cover_path = resolve_cover(ncm_id).await;
 
     // Check if song is already fully cached (with any audio extension)
-    if let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &song_stem) {
+    let cached = crate::utils::find_cached_audio(&song_cache_dir, &song_stem)
+        .or_else(|| crate::utils::find_cached_audio(&song_cache_dir, &ncm_id.to_string()));
+    if let Some(cached_path) = cached {
         let file_size = std::fs::metadata(&cached_path)
             .map(|m| m.len())
             .unwrap_or(0);
@@ -119,6 +148,16 @@ pub async fn resolve_song(
                 cover_path,
                 shared_buffer: None,
                 duration_secs: None,
+                quality: Some(ResolvedAudioQuality {
+                    requested: requested_level,
+                    actual: requested_level,
+                    bitrate: None,
+                    size: Some(file_size),
+                    format: cached_path
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .map(ToString::to_string),
+                }),
             });
         }
 
@@ -133,8 +172,8 @@ pub async fn resolve_song(
 
     // Get song URL
     tracing::info!("Downloading song {} from NCM (streaming)", ncm_id);
-    let urls = match client.track_urls(&[ncm_id]).await {
-        Ok(urls) => urls,
+    let url = match client.resolve_track_url(ncm_id, requested_level).await {
+        Ok(url) => url,
         Err(e) => {
             tracing::error!("Failed to get song URL for {}: {}", ncm_id, e);
             let _ = event_tx
@@ -147,19 +186,8 @@ pub async fn resolve_song(
         }
     };
 
-    let song_url = match urls.first() {
-        Some(u) if !u.url.is_empty() => u.url.clone(),
-        _ => {
-            tracing::error!("No valid URL returned for song {}", ncm_id);
-            let _ = event_tx
-                .send(StreamingEvent::new(
-                    identity.clone(),
-                    StreamingEventKind::Error("No URL available".to_string()),
-                ))
-                .await;
-            return None;
-        }
-    };
+    let song_url = url.url.clone();
+    let quality = Some(ResolvedAudioQuality::from(&url));
 
     // Use stem-based path - actual extension will be determined during download
     // The download function will detect format and save with correct extension
@@ -185,6 +213,7 @@ pub async fn resolve_song(
         cover_path,
         shared_buffer: Some(shared_buffer),
         duration_secs: Some(song.duration_secs as u64),
+        quality,
     })
 }
 

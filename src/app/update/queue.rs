@@ -93,6 +93,7 @@ impl App {
                 cover_path,
                 shared_buffer,
                 duration_secs,
+                quality,
                 context,
             ) => Some(self.handle_song_resolved_streaming(
                 *idx,
@@ -100,6 +101,7 @@ impl App {
                 cover_path.clone(),
                 shared_buffer.clone(),
                 *duration_secs,
+                quality.clone(),
                 context.clone(),
             )),
 

@@ -1145,6 +1145,7 @@ pub struct UserInfo {
     pub user_id: u64,
     pub nickname: String,
     pub vip_type: i32,
+    pub vip: crate::api::VipInfo,
     pub like_songs: HashSet<u64>,
 }
 
@@ -1154,8 +1155,13 @@ impl UserInfo {
             user_id,
             nickname,
             vip_type: 0,
+            vip: crate::api::VipInfo::default(),
             like_songs: HashSet::new(),
         }
+    }
+
+    pub fn membership_label(&self) -> String {
+        self.vip.display_label()
     }
 }
 
@@ -1184,6 +1190,9 @@ pub struct PlaybackSessionState {
     pub current_song: Option<DbSong>,
     /// Current playing song's artist id when available from NCM metadata.
     pub current_artist_id: Option<u64>,
+    /// Requested and actual NCM quality for the current playback generation.
+    pub current_quality:
+        Option<crate::app::update::song_resolver::ResolvedAudioQuality>,
     /// Last saved playback snapshot loaded from the database.
     pub saved_state: Option<DbPlaybackState>,
     /// Active playback queue.
@@ -1306,6 +1315,15 @@ pub enum NavigationEntry {
     Route(Route),
 }
 
+impl NavigationEntry {
+    fn should_record(&self) -> bool {
+        // Entering Personal FM starts playback as a route side effect. Keeping
+        // it out of history prevents back/forward navigation from starting a
+        // new FM batch and changing the current song.
+        !matches!(self, Self::Route(Route::Radio))
+    }
+}
+
 /// Navigation history for back/forward functionality
 #[derive(Debug, Default)]
 pub struct NavigationHistory {
@@ -1318,6 +1336,10 @@ pub struct NavigationHistory {
 impl NavigationHistory {
     /// Push a new entry to history, clearing forward history
     pub fn push(&mut self, entry: NavigationEntry) {
+        if !entry.should_record() {
+            return;
+        }
+
         // Don't push if it's the same as current
         if let Some(idx) = self.current_index {
             if idx < self.entries.len() && self.entries[idx] == entry {
@@ -1332,6 +1354,10 @@ impl NavigationHistory {
 
     /// Replace the current history entry without changing stack length
     pub fn replace_current(&mut self, entry: NavigationEntry) {
+        if !entry.should_record() {
+            return;
+        }
+
         if let Some(idx) = self.current_index
             && idx < self.entries.len()
         {
@@ -1374,6 +1400,34 @@ impl NavigationHistory {
         self.current_index
             .map(|idx| idx + 1 < self.entries.len())
             .unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod navigation_history_tests {
+    use super::{NavigationEntry, NavigationHistory, Route};
+
+    #[test]
+    fn personal_fm_is_excluded_from_back_forward_history() {
+        let mut history = NavigationHistory::default();
+        history.push(NavigationEntry::Route(Route::Home));
+        history.push(NavigationEntry::Route(Route::Radio));
+        history.push(NavigationEntry::Route(Route::Downloads));
+
+        assert_eq!(
+            history.entries,
+            vec![
+                NavigationEntry::Route(Route::Home),
+                NavigationEntry::Route(Route::Downloads),
+            ]
+        );
+
+        assert_eq!(history.go_back(), Some(NavigationEntry::Route(Route::Home)));
+        history.replace_current(NavigationEntry::Route(Route::Radio));
+        assert_eq!(
+            history.go_forward(),
+            Some(NavigationEntry::Route(Route::Downloads))
+        );
     }
 }
 

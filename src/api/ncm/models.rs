@@ -26,6 +26,209 @@ pub struct UserSummary {
     pub id: u64,
     pub nickname: String,
     pub avatar_url: String,
+    #[serde(default)]
+    pub vip: VipInfo,
+}
+
+/// Normalized NCM membership rights shared by account, profile and UI layers.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct VipInfo {
+    pub vip_type: i32,
+    pub red_vip_level: u32,
+    pub annual_count: u32,
+    pub icon_url: String,
+}
+
+impl VipInfo {
+    pub fn is_vip(&self) -> bool {
+        self.vip_type > 0 || self.red_vip_level > 0
+    }
+
+    pub fn is_annual(&self) -> bool {
+        self.annual_count > 0
+    }
+
+    pub fn display_label(&self) -> String {
+        if !self.is_vip() {
+            return "普通用户".to_string();
+        }
+        if self.red_vip_level > 0 {
+            let annual = if self.is_annual() { " 年费" } else { "" };
+            return format!("黑胶 VIP Lv.{}{}", self.red_vip_level, annual);
+        }
+        "黑胶 VIP".to_string()
+    }
+}
+
+/// NCM's complete quality taxonomy. This is the only place that translates
+/// API level strings into product-facing metadata.
+#[derive(
+    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Deserialize, Serialize, PartialOrd, Ord,
+)]
+#[serde(rename_all = "lowercase")]
+pub enum NcmQualityLevel {
+    #[default]
+    Standard,
+    Higher,
+    ExHigh,
+    Lossless,
+    HiRes,
+    JvEffect,
+    Sky,
+    Dolby,
+    JyMaster,
+}
+
+impl NcmQualityLevel {
+    #[allow(dead_code)]
+    pub const ALL: [Self; 9] = [
+        Self::Standard,
+        Self::Higher,
+        Self::ExHigh,
+        Self::Lossless,
+        Self::HiRes,
+        Self::JvEffect,
+        Self::Sky,
+        Self::Dolby,
+        Self::JyMaster,
+    ];
+
+    pub fn api_level(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Higher => "higher",
+            Self::ExHigh => "exhigh",
+            Self::Lossless => "lossless",
+            Self::HiRes => "hires",
+            Self::JvEffect => "jyeffect",
+            Self::Sky => "sky",
+            Self::Dolby => "dolby",
+            Self::JyMaster => "jymaster",
+        }
+    }
+
+    pub fn from_api_level(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "standard" => Some(Self::Standard),
+            "higher" => Some(Self::Higher),
+            "exhigh" | "high" => Some(Self::ExHigh),
+            "lossless" => Some(Self::Lossless),
+            "hires" | "hi-res" => Some(Self::HiRes),
+            "jyeffect" | "jvEffect" => Some(Self::JvEffect),
+            "sky" => Some(Self::Sky),
+            "dolby" => Some(Self::Dolby),
+            "jymaster" | "master" => Some(Self::JyMaster),
+            _ => None,
+        }
+    }
+
+    pub fn from_legacy_rate(value: u32) -> Self {
+        match value {
+            0 => Self::Standard,
+            1 => Self::Higher,
+            2 => Self::ExHigh,
+            3 => Self::Lossless,
+            4 => Self::HiRes,
+            5 => Self::JvEffect,
+            6 => Self::Sky,
+            7 => Self::Dolby,
+            8 => Self::JyMaster,
+            _ => Self::ExHigh,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Standard => "标准音质",
+            Self::Higher => "较高音质",
+            Self::ExHigh => "极高音质",
+            Self::Lossless => "无损音质",
+            Self::HiRes => "Hi-Res",
+            Self::JvEffect => "高清臻音",
+            Self::Sky => "沉浸环绕声",
+            Self::Dolby => "杜比全景声",
+            Self::JyMaster => "超清母带",
+        }
+    }
+
+    pub fn short_name(self) -> &'static str {
+        match self {
+            Self::Standard => "128K",
+            Self::Higher => "192K",
+            Self::ExHigh => "320K",
+            Self::Lossless => "SQ",
+            Self::HiRes => "Hi-Res",
+            Self::JvEffect => "臻音",
+            Self::Sky => "环绕声",
+            Self::Dolby => "Dolby",
+            Self::JyMaster => "母带",
+        }
+    }
+
+    /// Higher values represent a more premium server quality tier.
+    pub fn priority(self) -> u8 {
+        match self {
+            Self::Standard => 0,
+            Self::Higher => 1,
+            Self::ExHigh => 2,
+            Self::Lossless => 3,
+            Self::HiRes => 4,
+            Self::JvEffect => 5,
+            Self::Sky => 6,
+            Self::Dolby => 7,
+            Self::JyMaster => 8,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn is_spatial_or_enhanced(self) -> bool {
+        matches!(
+            self,
+            Self::JvEffect | Self::Sky | Self::Dolby | Self::JyMaster
+        )
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SongQualityOption {
+    pub level: NcmQualityLevel,
+    pub bitrate: Option<u32>,
+    pub size: Option<u64>,
+    pub format: Option<String>,
+    pub sample_rate: Option<u32>,
+    pub bit_depth: Option<u32>,
+    pub channels: Option<u32>,
+}
+
+impl SongQualityOption {
+    #[allow(dead_code)]
+    pub fn description(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(bitrate) = self.bitrate.filter(|value| *value > 0) {
+            parts.push(format!("{} kbps", bitrate / 1000));
+        }
+        if let Some(size) = self.size.filter(|value| *value > 0) {
+            parts.push(format!("{:.1} MB", size as f64 / 1024.0 / 1024.0));
+        }
+        parts.join(" · ")
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SongQualityDetail {
+    pub song_id: u64,
+    pub options: Vec<SongQualityOption>,
+    pub highest_available: Option<NcmQualityLevel>,
+}
+
+impl SongQualityDetail {
+    pub fn best_for(&self, requested: NcmQualityLevel) -> Option<&SongQualityOption> {
+        self.options
+            .iter()
+            .find(|option| option.level == requested)
+            .or_else(|| self.options.iter().max_by_key(|option| option.level.priority()))
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -105,6 +308,24 @@ impl TrackAvailability {
             Self::from_fee(fee)
         }
     }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Free => "免费",
+            Self::VipOnly => "VIP",
+            Self::Payment => "EP/购买",
+            Self::VipOnlyHighRate => "高音质 VIP",
+            Self::Unavailable => "不可用",
+            Self::Unknown => "",
+        }
+    }
+
+    pub fn is_restricted(&self) -> bool {
+        matches!(
+            self,
+            Self::VipOnly | Self::Payment | Self::VipOnlyHighRate | Self::Unavailable
+        )
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -118,6 +339,8 @@ pub struct Track {
     pub track_number: Option<u32>,
     pub year: Option<u32>,
     pub genre: Option<String>,
+    #[serde(default)]
+    pub quality_options: Vec<SongQualityOption>,
 }
 
 impl Track {
@@ -152,6 +375,7 @@ impl Default for Track {
             track_number: None,
             year: None,
             genre: None,
+            quality_options: Vec::new(),
         }
     }
 }
@@ -217,13 +441,22 @@ pub struct UserDetail {
     pub followeds: u64,
     pub avatar_url: String,
     pub background_url: String,
+    #[serde(default)]
+    pub vip: VipInfo,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct TrackUrl {
     pub id: u64,
     pub url: String,
+    pub requested_level: NcmQualityLevel,
+    pub level: NcmQualityLevel,
     pub rate: u32,
+    pub size: Option<u64>,
+    pub format: Option<String>,
+    pub sample_rate: Option<u32>,
+    pub bit_depth: Option<u32>,
+    pub channels: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -239,6 +472,8 @@ pub struct LoginInfo {
     pub nickname: String,
     pub avatar_url: String,
     pub vip_type: i32,
+    #[serde(default)]
+    pub vip: VipInfo,
     pub msg: String,
 }
 

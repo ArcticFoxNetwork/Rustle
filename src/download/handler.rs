@@ -243,6 +243,9 @@ impl App {
 
         // Convert to unified metadata once — no manual field extraction
         let meta = SongMetadata::from(&info);
+        let quality = crate::api::NcmQualityLevel::from_legacy_rate(
+            self.core.settings.storage.download_quality.to_api_rate(),
+        );
 
         info!(
             "Fetching download URL for: {} - {} (ncm_id={})",
@@ -251,7 +254,7 @@ impl App {
 
         let url_task = Task::perform(
             async move {
-                match client.track_urls(&[ncm_id]).await {
+                match client.track_urls_for_level(&[ncm_id], quality).await {
                     Ok(urls) => urls
                         .first()
                         .and_then(|u| {
@@ -320,6 +323,9 @@ impl App {
         };
 
         let client = self.core.ncm_client.clone()?;
+        let quality = crate::api::NcmQualityLevel::from_legacy_rate(
+            self.core.settings.storage.download_quality.to_api_rate(),
+        );
         let all_ids: Vec<u64> = tracks.iter().map(|s| s.id).collect();
         let song_data: Vec<(i64, u64, SongMetadata)> = tracks
             .iter()
@@ -328,7 +334,7 @@ impl App {
 
         Some(Task::perform(
             async move {
-                match client.track_urls(&all_ids).await {
+                match client.track_urls_for_level(&all_ids, quality).await {
                     Ok(urls) => {
                         let url_map: Vec<(u64, String)> = urls
                             .into_iter()

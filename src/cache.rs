@@ -9,7 +9,7 @@ use tracing::{info, warn};
 
 use crate::utils::{
     automix_cache_dir, avatars_cache_dir, banners_cache_dir, cache_dir, covers_cache_dir,
-    songs_cache_dir,
+    songs_cache_dir, vip_badges_cache_dir,
 };
 
 /// Directory for serialized remote playlist snapshots.
@@ -124,6 +124,7 @@ pub struct CacheStats {
     pub songs_bytes: u64,
     pub banners_bytes: u64,
     pub avatars_bytes: u64,
+    pub vip_badges_bytes: u64,
     pub playlists_bytes: u64,
 }
 
@@ -134,6 +135,7 @@ fn cache_directories() -> Vec<PathBuf> {
         songs_cache_dir(),
         banners_cache_dir(),
         avatars_cache_dir(),
+        vip_badges_cache_dir(),
         automix_cache_dir(),
         playlists_cache_dir(),
     ]
@@ -206,6 +208,12 @@ pub fn calculate_cache_stats() -> CacheStats {
         stats.file_count += 1;
     }
 
+    // Membership badges
+    for entry in collect_entries(&vip_badges_cache_dir()) {
+        stats.vip_badges_bytes += entry.size;
+        stats.file_count += 1;
+    }
+
     for entry in collect_entries(&playlists_cache_dir()) {
         stats.playlists_bytes += entry.size;
         stats.file_count += 1;
@@ -215,6 +223,7 @@ pub fn calculate_cache_stats() -> CacheStats {
         + stats.songs_bytes
         + stats.banners_bytes
         + stats.avatars_bytes
+        + stats.vip_badges_bytes
         + stats.playlists_bytes;
 
     stats
