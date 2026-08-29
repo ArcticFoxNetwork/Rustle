@@ -150,8 +150,8 @@ where
 {
     /// Create a new fade envelope wrapping a source
     pub fn new(source: S, control: FadeControl) -> Self {
-        let sample_rate = source.sample_rate();
-        let channels = source.channels();
+        let sample_rate = source.sample_rate().get();
+        let channels = source.channels().get();
         let initial_volume = control.target_volume();
         let generation = control.generation();
 
@@ -275,11 +275,11 @@ where
         self.source.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> rodio::ChannelCount {
         self.source.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> rodio::SampleRate {
         self.source.sample_rate()
     }
 
@@ -315,12 +315,12 @@ mod tests {
             Some(self.samples.len())
         }
 
-        fn channels(&self) -> u16 {
-            self.channels
+        fn channels(&self) -> rodio::ChannelCount {
+            rodio::ChannelCount::new(self.channels).expect("test channel count must be non-zero")
         }
 
-        fn sample_rate(&self) -> u32 {
-            self.sample_rate
+        fn sample_rate(&self) -> rodio::SampleRate {
+            rodio::SampleRate::new(self.sample_rate).expect("test sample rate must be non-zero")
         }
 
         fn total_duration(&self) -> Option<Duration> {

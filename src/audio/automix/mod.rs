@@ -767,8 +767,8 @@ where
         .build()
         .map_err(|error| format!("decode {:?}: {error}", path))?;
     let duration = decoder.total_duration().unwrap_or(Duration::ZERO);
-    let sample_rate = decoder.sample_rate();
-    let channels = decoder.channels();
+    let sample_rate = decoder.sample_rate().get();
+    let channels = decoder.channels().get();
     let max_samples = usize::try_from(config.max_seconds)
         .unwrap_or(usize::MAX)
         .saturating_mul(sample_rate as usize)

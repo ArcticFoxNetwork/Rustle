@@ -330,7 +330,8 @@ where
 {
     /// Create a new analyzing source
     pub fn new(source: S, analysis: AudioAnalysisData) -> Self {
-        let processor = AudioAnalysisProcessor::new(source.sample_rate(), source.channels());
+        let processor =
+            AudioAnalysisProcessor::new(source.sample_rate().get(), source.channels().get());
         let last_reset_generation = analysis.reset_generation();
 
         Self {
@@ -378,11 +379,11 @@ where
         self.source.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> rodio::ChannelCount {
         self.source.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> rodio::SampleRate {
         self.source.sample_rate()
     }
 

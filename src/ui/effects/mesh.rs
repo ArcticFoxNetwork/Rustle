@@ -2,7 +2,7 @@
 //!
 //! 用于生成网格渐变背景
 
-use rand::Rng;
+use rand::RngExt;
 
 /// 控制点配置
 #[derive(Debug, Clone, Copy)]

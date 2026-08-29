@@ -38,7 +38,7 @@ pub fn parse_ttml(data: impl BufRead) -> Result<TTMLLyric, String> {
     let mut str_buf = String::with_capacity(256);
     let mut status = ParseStatus::None;
     let mut result = TTMLLyric::default();
-    let mut main_agent: Vec<u8> = Vec::new();
+    let mut main_agent = String::new();
 
     loop {
         match reader.read_event_into(&mut buf) {
@@ -46,39 +46,39 @@ pub fn parse_ttml(data: impl BufRead) -> Result<TTMLLyric, String> {
             Ok(Event::Start(e)) | Ok(Event::Empty(e)) => {
                 let name = e.name();
                 match name.as_ref() {
-                    b"tt" if status == ParseStatus::None => {
+                    "tt" if status == ParseStatus::None => {
                         status = ParseStatus::InTtml;
                     }
-                    b"head" if status == ParseStatus::InTtml => {
+                    "head" if status == ParseStatus::InTtml => {
                         status = ParseStatus::InHead;
                     }
-                    b"metadata" if status == ParseStatus::InHead => {
+                    "metadata" if status == ParseStatus::InHead => {
                         status = ParseStatus::InMetadata;
                     }
-                    b"ttm:agent" if main_agent.is_empty() && status == ParseStatus::InMetadata => {
-                        let mut agent_type = Vec::new();
-                        let mut agent_id = Vec::new();
+                    "ttm:agent" if main_agent.is_empty() && status == ParseStatus::InMetadata => {
+                        let mut agent_type = String::new();
+                        let mut agent_id = String::new();
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
-                                b"type" => agent_type = attr.value.to_vec(),
-                                b"xml:id" => agent_id = attr.value.to_vec(),
+                                "type" => agent_type = attr.value.into_owned(),
+                                "xml:id" => agent_id = attr.value.into_owned(),
                                 _ => {}
                             }
                         }
-                        if agent_type == b"person" {
+                        if agent_type == "person" {
                             main_agent = agent_id;
                         }
                     }
-                    b"amll:meta" if status == ParseStatus::InMetadata => {
+                    "amll:meta" if status == ParseStatus::InMetadata => {
                         let mut meta_key = String::new();
                         let mut meta_value = String::new();
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
-                                b"key" => {
-                                    meta_key = String::from_utf8_lossy(&attr.value).to_string();
+                                "key" => {
+                                    meta_key = attr.value.into_owned();
                                 }
-                                b"value" => {
-                                    meta_value = String::from_utf8_lossy(&attr.value).to_string();
+                                "value" => {
+                                    meta_value = attr.value.into_owned();
                                 }
                                 _ => {}
                             }
@@ -93,25 +93,25 @@ pub fn parse_ttml(data: impl BufRead) -> Result<TTMLLyric, String> {
                             }
                         }
                     }
-                    b"body" if status == ParseStatus::InTtml => {
+                    "body" if status == ParseStatus::InTtml => {
                         status = ParseStatus::InBody;
                     }
-                    b"div" if status == ParseStatus::InBody => {
+                    "div" if status == ParseStatus::InBody => {
                         status = ParseStatus::InDiv;
                     }
-                    b"p" if status == ParseStatus::InDiv => {
+                    "p" if status == ParseStatus::InDiv => {
                         status = ParseStatus::InP;
                         let mut new_line = LyricLineOwned::default();
                         configure_line(&e, &main_agent, &mut new_line);
                         result.lines.push(new_line);
                     }
-                    b"span" => match status {
+                    "span" => match status {
                         ParseStatus::InP => {
                             status = ParseStatus::InSpan;
                             for attr in e.attributes().flatten() {
-                                if attr.key.as_ref() == b"ttm:role" {
+                                if attr.key.as_ref() == "ttm:role" {
                                     match attr.value.as_ref() {
-                                        b"x-bg" => {
+                                        "x-bg" => {
                                             status = ParseStatus::InBackgroundSpan;
                                             let mut new_bg_line = LyricLineOwned {
                                                 is_bg: true,
@@ -126,11 +126,11 @@ pub fn parse_ttml(data: impl BufRead) -> Result<TTMLLyric, String> {
                                             result.lines.push(new_bg_line);
                                             break;
                                         }
-                                        b"x-translation" => {
+                                        "x-translation" => {
                                             status = ParseStatus::InTranslationSpan;
                                             break;
                                         }
-                                        b"x-roman" => {
+                                        "x-roman" => {
                                             status = ParseStatus::InRomanSpan;
                                             break;
                                         }
@@ -149,13 +149,13 @@ pub fn parse_ttml(data: impl BufRead) -> Result<TTMLLyric, String> {
                         ParseStatus::InBackgroundSpan => {
                             status = ParseStatus::InSpanInBackgroundSpan;
                             for attr in e.attributes().flatten() {
-                                if attr.key.as_ref() == b"ttm:role" {
+                                if attr.key.as_ref() == "ttm:role" {
                                     match attr.value.as_ref() {
-                                        b"x-translation" => {
+                                        "x-translation" => {
                                             status = ParseStatus::InTranslationSpanInBackgroundSpan;
                                             break;
                                         }
-                                        b"x-roman" => {
+                                        "x-roman" => {
                                             status = ParseStatus::InRomanSpanInBackgroundSpan;
                                             break;
                                         }
@@ -178,23 +178,23 @@ pub fn parse_ttml(data: impl BufRead) -> Result<TTMLLyric, String> {
                 }
             }
             Ok(Event::End(e)) => match e.name().as_ref() {
-                b"tt" => status = ParseStatus::None,
-                b"head" if status == ParseStatus::InHead => {
+                "tt" => status = ParseStatus::None,
+                "head" if status == ParseStatus::InHead => {
                     status = ParseStatus::InTtml;
                 }
-                b"metadata" if status == ParseStatus::InMetadata => {
+                "metadata" if status == ParseStatus::InMetadata => {
                     status = ParseStatus::InHead;
                 }
-                b"body" if status == ParseStatus::InBody => {
+                "body" if status == ParseStatus::InBody => {
                     status = ParseStatus::InTtml;
                 }
-                b"div" if status == ParseStatus::InDiv => {
+                "div" if status == ParseStatus::InDiv => {
                     status = ParseStatus::InBody;
                 }
-                b"p" if status == ParseStatus::InP => {
+                "p" if status == ParseStatus::InP => {
                     status = ParseStatus::InDiv;
                 }
-                b"span" => match status {
+                "span" => match status {
                     ParseStatus::InSpan => {
                         status = ParseStatus::InP;
                         if let Some(line) = result.lines.last_mut()
@@ -252,7 +252,7 @@ pub fn parse_ttml(data: impl BufRead) -> Result<TTMLLyric, String> {
                 _ => {}
             },
             Ok(Event::Text(e)) => {
-                if let Ok(txt) = e.unescape() {
+                if let Ok(txt) = quick_xml::escape::unescape(e.as_ref()) {
                     match status {
                         ParseStatus::InP => {
                             if let Some(line) = result.lines.iter_mut().rev().find(|l| !l.is_bg) {
@@ -320,20 +320,20 @@ pub fn parse_ttml(data: impl BufRead) -> Result<TTMLLyric, String> {
 
 fn configure_line(
     e: &quick_xml::events::BytesStart<'_>,
-    main_agent: &[u8],
+    main_agent: &str,
     line: &mut LyricLineOwned,
 ) {
     for attr in e.attributes().flatten() {
         match attr.key.as_ref() {
-            b"ttm:agent" => {
+            "ttm:agent" => {
                 line.is_duet = attr.value.as_ref() != main_agent;
             }
-            b"begin" => {
+            "begin" => {
                 if let Some(time) = parse_timestamp(&attr.value) {
                     line.start_time = time;
                 }
             }
-            b"end" => {
+            "end" => {
                 if let Some(time) = parse_timestamp(&attr.value) {
                     line.end_time = time;
                 }
@@ -346,12 +346,12 @@ fn configure_line(
 fn configure_word(e: &quick_xml::events::BytesStart<'_>, word: &mut LyricWordOwned) {
     for attr in e.attributes().flatten() {
         match attr.key.as_ref() {
-            b"begin" => {
+            "begin" => {
                 if let Some(time) = parse_timestamp(&attr.value) {
                     word.start_time = time;
                 }
             }
-            b"end" => {
+            "end" => {
                 if let Some(time) = parse_timestamp(&attr.value) {
                     word.end_time = time;
                 }
@@ -362,9 +362,8 @@ fn configure_word(e: &quick_xml::events::BytesStart<'_>, word: &mut LyricWordOwn
 }
 
 /// Parse TTML timestamp format (HH:MM:SS.MS or MM:SS.MS or SS.MS)
-fn parse_timestamp(data: &[u8]) -> Option<u64> {
-    let s = std::str::from_utf8(data).ok()?;
-    let s = s.trim().trim_end_matches('s');
+fn parse_timestamp(data: &str) -> Option<u64> {
+    let s = data.trim().trim_end_matches('s');
 
     let parts: Vec<&str> = s.split(':').collect();
 

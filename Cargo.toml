@@ -16,56 +16,56 @@ iced = { version = "=0.15.0-dev", features = ["tokio", "advanced", "canvas", "im
 iced_runtime = { version = "=0.15.0-dev" }
 iced_anim = "0.3.1"
 bytemuck = { version = "1.25", features = ["derive"] }
-tokio = { version = "1.50", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "fs", "net", "io-util"] }
-rodio = { version = "0.21.1", features = ["symphonia-all"] }
-spectrum-analyzer = "1.7.0"
+tokio = { version = "1.53", features = ["rt", "rt-multi-thread", "macros", "sync", "time", "fs", "net", "io-util"] }
+rodio = { version = "0.22.2", features = ["symphonia-all"] }
+spectrum-analyzer = "1.8.0"
 
 sqlx = { version = "0.8.6", features = ["sqlite", "runtime-tokio-rustls", "macros"] }
-lofty = "0.22.4"
+lofty = "0.25.1"
 walkdir = "2.5.0"
 directories = "6.0.0"
 
-serde = "1.0.228"
-serde_json = "1.0.149"
+serde = "1.0.229"
+serde_json = "1.0.151"
 tracing = "0.1.44"
 tracing-subscriber = "0.3.23"
-anyhow = "1.0.102"
+anyhow = "1.0.104"
 
 # Local playlist import
-rayon = "1.11.0"
+rayon = "1.12.0"
 encoding_rs = "0.8.35"
 notify = { version = "8.2", features = ["serde"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 interprocess = { version = "2", features = ["tokio"] }
-rfd = "0.15.4"
+rfd = "0.17.2"
 async-stream = "0.3.6"
-rand = "0.9"
-cosmic-text = "0.15.0"
+rand = "0.10.2"
+cosmic-text = "0.19.0"
 parking_lot = "0.12"
 global-hotkey = "0.8"
 
 # SDF text rendering
 ttf-parser = "0.25"
-sdf_glyph_renderer = "1.0"
+sdf_glyph_renderer = "1.1.0"
 ab_glyph = "0.2"
-quick-xml = "0.37.5"
-futures-util = "0.3.32"
+quick-xml = "0.42.0"
+futures-util = "0.3.34"
 discord-rich-presence = "1.1.0"
 
 # Netease Cloud Music API
 ncm-api-rs = { git = "https://github.com/SPlayer-Dev/ncm-api-rs.git" }
-qrcode-generator = "5.0"
+qrcode-generator = "6.0"
 
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "cookies", "json", "gzip", "stream"] }
+reqwest = { version = "0.13", default-features = false, features = ["rustls", "cookies", "json", "gzip", "stream"] }
 
-regex = "1.12"
-chrono = { version = "0.4.44", default-features = false, features = ["clock"] }
+regex = "1.13"
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-mpris-server = "0.9.0"
-ksni = { version = "0.3.3", default-features = false, features = ["tokio"] }
-x11rb = "0.13.2"
+mpris-server = "0.10.0"
+ksni = { version = "0.3.6", default-features = false, features = ["tokio"] }
+x11rb = "0.14.0"
 
 [patch.crates-io]
 iced = { git = "https://github.com/Fei-xiangShi/iced.git", branch = "master" }
@@ -91,7 +91,7 @@ windows-sys = { version = "0.61.2", features = [
 ] }
 
 [target.'cfg(windows)'.build-dependencies]
-winresource = "0.1.30"
+winresource = "0.1.31"
 
 [profile.release]
 lto = true

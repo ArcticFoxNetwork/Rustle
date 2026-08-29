@@ -189,8 +189,8 @@ where
 {
     /// Create a new equalizer wrapping the given source
     pub fn new(source: S, params: EqualizerParams) -> Self {
-        let channels = source.channels();
-        let sample_rate = source.sample_rate();
+        let channels = source.channels().get();
+        let sample_rate = source.sample_rate().get();
 
         // Update params with actual sample rate
         params.set_sample_rate(sample_rate);
@@ -291,11 +291,11 @@ where
         self.source.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> rodio::ChannelCount {
         self.source.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> rodio::SampleRate {
         self.source.sample_rate()
     }
 
@@ -349,12 +349,12 @@ mod tests {
             Some(self.samples.len())
         }
 
-        fn channels(&self) -> u16 {
-            self.channels
+        fn channels(&self) -> rodio::ChannelCount {
+            rodio::ChannelCount::new(self.channels).expect("test channel count must be non-zero")
         }
 
-        fn sample_rate(&self) -> u32 {
-            self.sample_rate
+        fn sample_rate(&self) -> rodio::SampleRate {
+            rodio::SampleRate::new(self.sample_rate).expect("test sample rate must be non-zero")
         }
 
         fn total_duration(&self) -> Option<Duration> {

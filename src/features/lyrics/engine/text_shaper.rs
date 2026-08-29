@@ -204,13 +204,13 @@ impl TextShaper {
         // Create buffer for shaping
         let metrics = Metrics::new(font_size, font_size * 1.4);
         let mut buffer = Buffer::new(&mut font_system, metrics);
-        buffer.set_size(&mut font_system, Some(max_width), None);
+        buffer.set_size(Some(max_width), None);
 
         // Set text with configured font family and weight
         let attrs = Attrs::new()
             .family(self.get_font_family())
             .weight(self.config.font_weight);
-        buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced, None);
+        buffer.set_text(text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut font_system, false);
 
         // Build character to word mapping
@@ -436,12 +436,12 @@ impl TextShaper {
 
         let metrics = Metrics::new(font_size, font_size * SUB_LINE_HEIGHT_MULTIPLIER);
         let mut buffer = Buffer::new(&mut font_system, metrics);
-        buffer.set_size(&mut font_system, Some(max_width), None);
+        buffer.set_size(Some(max_width), None);
 
         let attrs = Attrs::new()
             .family(self.get_font_family())
             .weight(self.config.font_weight);
-        buffer.set_text(&mut font_system, text, &attrs, Shaping::Advanced, None);
+        buffer.set_text(text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut font_system, false);
 
         // Get visual line count from layout_runs (same as shape_line_uncached)

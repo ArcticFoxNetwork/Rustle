@@ -6,6 +6,7 @@
 use anyhow::{Context, Result};
 use lofty::file::{AudioFile, TaggedFileExt};
 use lofty::probe::Probe;
+use lofty::tag::items::Timestamp;
 use lofty::tag::{Accessor, ItemKey, Tag};
 use rodio::{Decoder, Source};
 use std::fs::File;
@@ -96,7 +97,7 @@ pub fn extract_metadata(path: &Path) -> Result<AudioMetadata> {
         metadata.track_number = tag.track().map(|t| t as i64);
 
         // Year
-        metadata.year = tag.year().map(|y| y as i64);
+        metadata.year = tag.date().map(|date| i64::from(date.year));
 
         // Genre with encoding fallback
         if let Some(genre) = tag.genre() {
@@ -150,26 +151,22 @@ pub fn resolve_track_gain(path: &Path) -> Option<f32> {
 }
 
 fn extract_track_gain_from_tag(tag: &Tag) -> Option<f32> {
-    tag.get_string(&ItemKey::ReplayGainTrackGain)
+    tag.get_string(ItemKey::ReplayGainTrackGain)
         .and_then(parse_replaygain_db)
         .map(db_to_linear)
         .or_else(|| {
-            tag.get_string(&ItemKey::ReplayGainAlbumGain)
+            tag.get_string(ItemKey::ReplayGainAlbumGain)
                 .and_then(parse_replaygain_db)
                 .map(db_to_linear)
         })
-        .or_else(|| extract_r128_gain(tag, "R128_TRACK_GAIN"))
-        .or_else(|| extract_r128_gain(tag, "R128_ALBUM_GAIN"))
+        .or_else(|| extract_r128_gain(tag, ItemKey::R128TrackGain))
+        .or_else(|| extract_r128_gain(tag, ItemKey::R128AlbumGain))
 }
 
-fn extract_r128_gain(tag: &Tag, key: &str) -> Option<f32> {
-    tag.items()
-        .find_map(|item| match (item.key(), item.value().text()) {
-            (ItemKey::Unknown(unknown), Some(value)) if unknown.eq_ignore_ascii_case(key) => {
-                parse_r128_db(value).map(db_to_linear)
-            }
-            _ => None,
-        })
+fn extract_r128_gain(tag: &Tag, key: ItemKey) -> Option<f32> {
+    tag.get_string(key)
+        .and_then(parse_r128_db)
+        .map(db_to_linear)
 }
 
 fn parse_replaygain_db(value: &str) -> Option<f32> {
@@ -195,8 +192,8 @@ fn analyze_track_gain(path: &Path) -> Option<f32> {
     let reader = BufReader::new(file);
     let decoder = Decoder::new(reader).ok()?;
 
-    let channels = decoder.channels().max(1) as usize;
-    let sample_rate = decoder.sample_rate().max(1) as usize;
+    let channels = decoder.channels().get() as usize;
+    let sample_rate = decoder.sample_rate().get() as usize;
     let stride = ((sample_rate * channels) / 4_000).max(1);
 
     let mut sum_sq = 0.0_f64;
@@ -359,7 +356,14 @@ pub fn save_metadata(path: &Path, edits: &MetadataEdits) -> Result<(), String> {
             tag.set_track(n);
         }
         if let Some(y) = edits.year {
-            tag.set_year(y);
+            let year = u16::try_from(y)
+                .ok()
+                .filter(|year| *year <= 9999)
+                .ok_or_else(|| format!("年份超出支持范围: {y}"))?;
+            tag.set_date(Timestamp {
+                year,
+                ..Timestamp::default()
+            });
         }
         if let Some(ref g) = edits.genre {
             tag.set_genre(g.clone());
@@ -373,12 +377,10 @@ pub fn save_metadata(path: &Path, edits: &MetadataEdits) -> Result<(), String> {
             } else {
                 MimeType::Jpeg
             };
-            let picture = Picture::new_unchecked(
-                PictureType::CoverFront,
-                Some(mime_type),
-                None::<String>,
-                data.clone(),
-            );
+            let picture = Picture::unchecked(data.clone())
+                .pic_type(PictureType::CoverFront)
+                .mime_type(mime_type)
+                .build();
             // Replace first picture if exists, otherwise push
             if !tag.pictures().is_empty() {
                 tag.set_picture(0, picture);

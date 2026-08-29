@@ -142,7 +142,7 @@ fn extract_embedded_lyrics(audio_path: &Path) -> Option<String> {
         .or_else(|| tagged_file.first_tag())?;
 
     // Try USLT (Unsynchronized Lyrics) first
-    if let Some(lyrics) = tag.get_string(&ItemKey::Lyrics)
+    if let Some(lyrics) = tag.get_string(ItemKey::Lyrics)
         && !lyrics.is_empty()
     {
         return Some(lyrics.to_string());

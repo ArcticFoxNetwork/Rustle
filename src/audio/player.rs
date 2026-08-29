@@ -13,7 +13,10 @@ use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
-use rodio::{Decoder, OutputStream, OutputStreamBuilder, Sink, Source};
+use rodio::{
+    Decoder, DeviceSinkBuilder as OutputStreamBuilder, MixerDeviceSink as OutputStream,
+    Player as Sink, Source,
+};
 
 use super::automix::{TransitionDirective, TransitionKind};
 use super::chain::{AudioProcessingChain, PlaybackProcessingRuntime};
@@ -186,7 +189,7 @@ impl AudioPlayer {
         let stream = if let Some(name) = device_name {
             Self::create_stream_for_device(name)?
         } else {
-            OutputStreamBuilder::open_default_stream()
+            OutputStreamBuilder::open_default_sink()
                 .map_err(|e| format!("Failed to create audio output: {}", e))?
         };
 
@@ -219,16 +222,23 @@ impl AudioPlayer {
         let device = host
             .output_devices()
             .map_err(|e| format!("Failed to enumerate devices: {}", e))?
-            .find(|d| d.name().map(|n| n == device_name).unwrap_or(false))
+            .find(|device| {
+                device
+                    .description()
+                    .map(|description| description.name() == device_name)
+                    .unwrap_or(false)
+            })
             .ok_or_else(|| format!("Device not found: {}", device_name))?;
 
         let config = device
             .default_output_config()
             .map_err(|e| format!("Failed to get device config: {}", e))?;
+        let sample_rate = rodio::SampleRate::new(config.sample_rate())
+            .ok_or_else(|| "Output device reported a zero sample rate".to_string())?;
 
         OutputStreamBuilder::from_device(device)
             .map_err(|e| format!("Failed to create stream builder: {}", e))?
-            .with_sample_rate(config.sample_rate().0)
+            .with_sample_rate(sample_rate)
             .open_stream()
             .map_err(|e| format!("Failed to open stream: {}", e))
     }
@@ -250,7 +260,7 @@ impl AudioPlayer {
         let stream = if let Some(name) = device_name {
             Self::create_stream_for_device(name)?
         } else {
-            OutputStreamBuilder::open_default_stream()
+            OutputStreamBuilder::open_default_sink()
                 .map_err(|e| format!("Failed to create audio output: {}", e))?
         };
 
@@ -1399,7 +1409,8 @@ fn get_cpal_devices() -> Vec<AudioDevice> {
 
     if let Ok(output_devices) = host.output_devices() {
         for device in output_devices {
-            if let Ok(name) = device.name() {
+            if let Ok(description) = device.description() {
+                let name = description.name().to_string();
                 let name_lower = name.to_lowercase();
 
                 if name_lower.contains("jack")

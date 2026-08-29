@@ -262,7 +262,9 @@ impl NcmClient {
             .map(|d| d.as_millis())
             .unwrap_or(0);
         let path = cache_dir.join(format!("qrimage_{}.png", timestamp));
-        qrcode_generator::to_png_to_file(qr_url, qrcode_generator::QrCodeEcc::Low, 200, &path)?;
+        let symbol = qrcode_generator::qr::Encoder::new(qrcode_generator::qr::ErrorCorrection::Low)
+            .encode_text(&qr_url)?;
+        qrcode_generator::Renderer::new(&symbol, 200).save_png(&path)?;
         Ok((path, unikey))
     }
 

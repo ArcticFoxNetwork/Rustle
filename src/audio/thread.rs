@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant};
 
-use rodio::{Sink, Source};
+use rodio::{Player as Sink, Source};
 
 use super::PlaybackStatus;
 use super::chain::{AudioProcessingChain, PlaybackProcessingRuntime};
@@ -2955,7 +2955,10 @@ mod tests {
     fn blocked_streaming_seek_does_not_block_stop_and_cancel_wakes_the_worker() {
         let buffer = SharedBuffer::new(100);
         buffer.set_coordinator_active_for_test(true);
-        let (mixer, _mixer_source) = rodio::mixer::mixer(1, 48_000);
+        let (mixer, _mixer_source) = rodio::mixer::mixer(
+            rodio::ChannelCount::new(1).unwrap(),
+            rodio::SampleRate::new(48_000).unwrap(),
+        );
         let sink = Sink::connect_new(&mixer);
 
         let (seek_result_tx, mut seek_result_rx) =

@@ -62,7 +62,12 @@ pub fn init_audio(
                 Task::none()
             };
 
-            (Some(thread_handle), Some(handle), audio_chain, listener_task)
+            (
+                Some(thread_handle),
+                Some(handle),
+                audio_chain,
+                listener_task,
+            )
         }
         Err(e) => {
             tracing::error!("Failed to spawn audio thread: {}", e);
@@ -216,12 +221,12 @@ fn warm_up_font_cache(font_system: &crate::features::lyrics::engine::SharedFontS
     let mut fs = font_system.lock();
     let metrics = Metrics::new(48.0, 48.0 * 1.4);
     let mut buffer = Buffer::new(&mut fs, metrics);
-    buffer.set_size(&mut fs, Some(800.0), None);
+    buffer.set_size(Some(800.0), None);
 
     let attrs = Attrs::new().family(Family::SansSerif);
 
     for text in warmup_texts {
-        buffer.set_text(&mut fs, text, &attrs, Shaping::Advanced, None);
+        buffer.set_text(text, &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut fs, false);
     }
 

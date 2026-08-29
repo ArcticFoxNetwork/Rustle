@@ -194,7 +194,7 @@ impl AudioProcessingChain {
         S: Source<Item = f32>,
     {
         // Update sample rate from source
-        self.set_sample_rate(source.sample_rate());
+        self.set_sample_rate(source.sample_rate().get());
 
         ProcessedSource::new(source, self.shared.clone(), runtime, track_gain)
     }
@@ -399,11 +399,11 @@ where
         self.inner.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> rodio::ChannelCount {
         self.inner.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> rodio::SampleRate {
         self.inner.sample_rate()
     }
 
@@ -471,11 +471,11 @@ where
         self.source.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> rodio::ChannelCount {
         self.source.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> rodio::SampleRate {
         self.source.sample_rate()
     }
 
@@ -543,11 +543,11 @@ where
         self.source.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> rodio::ChannelCount {
         self.source.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> rodio::SampleRate {
         self.source.sample_rate()
     }
 
@@ -597,11 +597,11 @@ where
         self.source.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> rodio::ChannelCount {
         self.source.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> rodio::SampleRate {
         self.source.sample_rate()
     }
 
@@ -636,8 +636,8 @@ where
     S: Source<Item = f32>,
 {
     fn new(source: S, control: BassAutomationControl) -> Self {
-        let channels = source.channels().max(1) as usize;
-        let sample_rate = source.sample_rate().max(1) as f32;
+        let channels = source.channels().get() as usize;
+        let sample_rate = source.sample_rate().get() as f32;
         let alpha = 1.0 - (-std::f32::consts::TAU * 400.0 / sample_rate).exp();
         let current_mix = f32::from_bits(control.target_bits.load(Ordering::Acquire));
         let generation = control.generation.load(Ordering::Acquire);
@@ -662,8 +662,8 @@ where
             self.generation = generation;
             self.start_mix = self.current_mix;
             let duration_ms = self.control.duration_ms.load(Ordering::Acquire) as u64;
-            let samples_per_second = u64::from(self.source.sample_rate())
-                .saturating_mul(u64::from(self.source.channels().max(1)));
+            let samples_per_second = u64::from(self.source.sample_rate().get())
+                .saturating_mul(u64::from(self.source.channels().get()));
             self.delay_remaining = samples_per_second
                 .saturating_mul(self.control.delay_ms.load(Ordering::Acquire) as u64)
                 .saturating_div(1_000);
@@ -713,11 +713,11 @@ where
         self.source.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> rodio::ChannelCount {
         self.source.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> rodio::SampleRate {
         self.source.sample_rate()
     }
 
@@ -776,11 +776,11 @@ where
         self.source.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> rodio::ChannelCount {
         self.source.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> rodio::SampleRate {
         self.source.sample_rate()
     }
 
@@ -842,11 +842,11 @@ where
         self.source.current_span_len()
     }
 
-    fn channels(&self) -> u16 {
+    fn channels(&self) -> rodio::ChannelCount {
         self.source.channels()
     }
 
-    fn sample_rate(&self) -> u32 {
+    fn sample_rate(&self) -> rodio::SampleRate {
         self.source.sample_rate()
     }
 
@@ -878,7 +878,11 @@ mod tests {
     fn completion_signal_is_set_by_source_exhaustion() {
         let chain = AudioProcessingChain::new();
         let runtime = chain.create_runtime();
-        let source = rodio::buffer::SamplesBuffer::new(1, 1_000, vec![0.1, 0.2]);
+        let source = rodio::buffer::SamplesBuffer::new(
+            rodio::ChannelCount::new(1).unwrap(),
+            rodio::SampleRate::new(1_000).unwrap(),
+            vec![0.1, 0.2],
+        );
         let mut processed = chain.apply(source, 1.0, runtime.clone());
         assert!(!runtime.natural_end_reached());
         assert!(processed.next().is_some());
@@ -890,7 +894,11 @@ mod tests {
     #[test]
     fn invalid_track_gain_is_treated_as_unity() {
         for gain in [0.0, -1.0, f32::NAN, f32::INFINITY] {
-            let source = rodio::buffer::SamplesBuffer::new(1, 1_000, vec![0.25]);
+            let source = rodio::buffer::SamplesBuffer::new(
+                rodio::ChannelCount::new(1).unwrap(),
+                rodio::SampleRate::new(1_000).unwrap(),
+                vec![0.25],
+            );
             let mut gained = TrackGainSource::new(source, gain);
             assert_eq!(gained.next(), Some(0.25));
         }
@@ -902,7 +910,11 @@ mod tests {
         let runtime = chain.create_runtime();
         runtime.set_bass_mix(0.0);
         runtime.set_automix_gain_db(-6.0);
-        let source = rodio::buffer::SamplesBuffer::new(1, 1_000, vec![0.5; 120]);
+        let source = rodio::buffer::SamplesBuffer::new(
+            rodio::ChannelCount::new(1).unwrap(),
+            rodio::SampleRate::new(1_000).unwrap(),
+            vec![0.5; 120],
+        );
         let mut processed = chain.apply(source, 1.0, runtime.clone());
         runtime.automate_bass_mix(1.0, std::time::Duration::from_millis(100));
         let output: Vec<_> = processed.by_ref().collect();
@@ -924,7 +936,11 @@ mod tests {
     #[test]
     fn bass_swap_holds_incoming_bass_until_midpoint_then_releases() {
         let control = BassAutomationControl::new(0.0);
-        let source = rodio::buffer::SamplesBuffer::new(1, 1_000, vec![0.5; 140]);
+        let source = rodio::buffer::SamplesBuffer::new(
+            rodio::ChannelCount::new(1).unwrap(),
+            rodio::SampleRate::new(1_000).unwrap(),
+            vec![0.5; 140],
+        );
         let mut bass = BassSwapSource::new(source, control.clone());
         control.set_after(
             1.0,

@@ -281,10 +281,10 @@ mod tests {
 
         let metrics = Metrics::new(64.0, 64.0 * 1.4);
         let mut buffer = Buffer::new(&mut font_system, metrics);
-        buffer.set_size(&mut font_system, Some(1024.0), None);
+        buffer.set_size(Some(1024.0), None);
 
         let attrs = Attrs::new().family(Family::SansSerif);
-        buffer.set_text(&mut font_system, "A你あ", &attrs, Shaping::Advanced, None);
+        buffer.set_text("A你あ", &attrs, Shaping::Advanced, None);
         buffer.shape_until_scroll(&mut font_system, false);
 
         let generator = SdfGenerator::new(64, 12);

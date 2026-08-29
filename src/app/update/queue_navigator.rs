@@ -27,7 +27,7 @@ impl ShuffleCache {
             return;
         }
 
-        use rand::Rng;
+        use rand::RngExt;
         let mut rng = rand::rng();
         self.next = Some(rng.random_range(0..queue_len));
         self.prev = Some(rng.random_range(0..queue_len));
@@ -83,7 +83,7 @@ impl<'a> QueueNavigator<'a> {
             PlayMode::Shuffle => {
                 // Use cached index if available, otherwise generate new one
                 self.shuffle_cache.next.or_else(|| {
-                    use rand::Rng;
+                    use rand::RngExt;
                     Some(rand::rng().random_range(0..self.queue_len))
                 })
             }
@@ -110,7 +110,7 @@ impl<'a> QueueNavigator<'a> {
             PlayMode::Shuffle => {
                 // Use cached index if available, otherwise generate new one
                 self.shuffle_cache.prev.or_else(|| {
-                    use rand::Rng;
+                    use rand::RngExt;
                     Some(rand::rng().random_range(0..self.queue_len))
                 })
             }
