@@ -255,16 +255,6 @@ pub fn set_mpris_handle(handle: MediaHandle) {
     MPRIS_HANDLE.set(handle).ok();
 }
 
-/// Update tray state with full info including play mode
-pub fn update_tray_state_full(
-    is_playing: bool,
-    title: Option<String>,
-    artist: Option<String>,
-    play_mode: PlayMode,
-) {
-    update_tray_state_with_favorite(is_playing, title, artist, play_mode, None, false);
-}
-
 /// Update tray state with full info including favorite status
 pub fn update_tray_state_with_favorite(
     is_playing: bool,
@@ -273,6 +263,7 @@ pub fn update_tray_state_with_favorite(
     play_mode: PlayMode,
     ncm_song_id: Option<u64>,
     is_favorited: bool,
+    language: crate::i18n::Language,
 ) {
     if let Some(handle) = get_tray_handle() {
         let state = TrayState {
@@ -282,11 +273,9 @@ pub fn update_tray_state_with_favorite(
             play_mode,
             ncm_song_id,
             is_favorited,
+            language,
         };
-        let handle = handle.clone();
-        tokio::spawn(async move {
-            handle.update(state).await;
-        });
+        handle.update(state);
     }
 }
 

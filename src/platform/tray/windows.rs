@@ -1,282 +1,1091 @@
-//! Windows/macOS system tray implementation using tray-icon
+//! Native Windows notification-area implementation.
 
-use super::{TrayCommand, TrayHandle, TrayState, TrayWindowCommand};
+use super::{TrayAvailability, TrayCommand, TrayHandle, TrayState, TrayWindowCommand};
 use crate::features::PlayMode;
+use crate::i18n::{Key, Language, t};
+use anyhow::{Context, anyhow};
+use std::cell::RefCell;
+use std::ffi::c_void;
+use std::marker::PhantomData;
+use std::mem::size_of;
+use std::ptr::{null, null_mut};
+use std::rc::Rc;
 use tokio::sync::mpsc;
-use tray_icon::{
-    MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent,
-    menu::{CheckMenuItem, Menu, MenuId, MenuItem as NativeMenuItem, PredefinedMenuItem, Submenu},
+use windows_sys::Win32::Foundation::{
+    ERROR_CLASS_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM,
+};
+use windows_sys::Win32::Graphics::Gdi::{
+    BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection, DIB_RGB_COLORS,
+    DeleteObject,
+};
+use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
+use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetSystemMetricsForDpi};
+use windows_sys::Win32::UI::Shell::{
+    NIF_GUID, NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
+    NIM_SETVERSION, NIN_SELECT, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
+};
+use windows_sys::Win32::UI::WindowsAndMessaging::{
+    AppendMenuW, CREATESTRUCTW, CreateIconIndirect, CreatePopupMenu, CreateWindowExW,
+    DefWindowProcW, DestroyIcon, DestroyMenu, DestroyWindow, GWLP_USERDATA, GetCursorPos,
+    GetSystemMetrics, GetWindowLongPtrW, HICON, HMENU, ICONINFO, MF_CHECKED, MF_DISABLED,
+    MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, PostMessageW, RegisterClassExW,
+    RegisterWindowMessageW, SM_CXSMICON, SM_CYSMICON, SetForegroundWindow, SetWindowLongPtrW,
+    TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenuEx,
+    UnregisterClassW, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_NCCREATE, WM_NCDESTROY, WM_NULL,
+    WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_POPUP,
+};
+use windows_sys::core::GUID;
+
+const TRAY_ICON_ID: u32 = 1;
+const TRAY_CALLBACK_MESSAGE: u32 = WM_APP + 0x51;
+const NIN_KEYSELECT: u32 = NIN_SELECT | 1;
+
+const CMD_PLAY_PAUSE: u16 = 1001;
+const CMD_PREV_TRACK: u16 = 1002;
+const CMD_NEXT_TRACK: u16 = 1003;
+const CMD_TOGGLE_FAVORITE: u16 = 1004;
+const CMD_SEQUENTIAL: u16 = 1010;
+const CMD_LOOP_ALL: u16 = 1011;
+const CMD_LOOP_ONE: u16 = 1012;
+const CMD_SHUFFLE: u16 = 1013;
+const CMD_TOGGLE_WINDOW: u16 = 1020;
+const CMD_QUIT: u16 = 1030;
+
+const TRAY_GUID: GUID = GUID {
+    data1: 0xd72bd4d9,
+    data2: 0xf218,
+    data3: 0x4ddb,
+    data4: [0x9e, 0x4f, 0xc5, 0x71, 0x83, 0x9a, 0x93, 0x66],
 };
 
-// Menu item IDs
-const PLAY_PAUSE_ID: &str = "play_pause";
-const PREV_TRACK_ID: &str = "prev_track";
-const NEXT_TRACK_ID: &str = "next_track";
-const TOGGLE_FAVORITE_ID: &str = "toggle_favorite";
-const SEQUENTIAL_ID: &str = "sequential";
-const LOOP_ALL_ID: &str = "loop_all";
-const LOOP_ONE_ID: &str = "loop_one";
-const SHUFFLE_ID: &str = "shuffle";
-const TOGGLE_WINDOW_ID: &str = "toggle_window";
-const QUIT_ID: &str = "quit";
-
-/// Wrapper to make menu items Send+Sync (they're only accessed from main thread)
-struct MenuItemsWrapper {
-    play_pause: *const NativeMenuItem,
-    sequential: *const CheckMenuItem,
-    loop_all: *const CheckMenuItem,
-    loop_one: *const CheckMenuItem,
-    shuffle: *const CheckMenuItem,
+thread_local! {
+    /// The native owner is deliberately thread-local: HWND/HMENU/HICON never
+    /// cross the Iced/Winit UI thread boundary.
+    static WINDOWS_TRAY: RefCell<Option<WindowsTray>> = const { RefCell::new(None) };
 }
 
-// SAFETY: Menu items are only accessed from the main thread
-unsafe impl Send for MenuItemsWrapper {}
-unsafe impl Sync for MenuItemsWrapper {}
+pub fn start_windows_tray(
+    language: Language,
+    command_capacity: usize,
+) -> anyhow::Result<(TrayHandle, mpsc::Receiver<TrayCommand>)> {
+    let (command_tx, command_rx) = mpsc::channel(command_capacity);
+    let tray = WindowsTray::new(command_tx, TrayState::new(language))?;
 
-static MENU_ITEMS: std::sync::OnceLock<MenuItemsWrapper> = std::sync::OnceLock::new();
+    WINDOWS_TRAY.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        if slot.is_some() {
+            return Err(anyhow!("Windows system tray is already initialized"));
+        }
+        *slot = Some(tray);
+        Ok(())
+    })?;
 
-/// Update menu items based on current state
-pub fn update_menu_state(state: &TrayState) {
-    if let Some(items) = MENU_ITEMS.get() {
-        // SAFETY: These pointers are valid for the lifetime of the application
+    Ok((TrayHandle { _private: () }, command_rx))
+}
+
+pub fn update_state(state: TrayState) -> anyhow::Result<()> {
+    WINDOWS_TRAY.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let tray = slot
+            .as_mut()
+            .ok_or_else(|| anyhow!("Windows system tray is not initialized"))?;
+        tray.update_state(state)
+    })
+}
+
+pub fn set_language(language: Language) -> anyhow::Result<()> {
+    WINDOWS_TRAY.with(|slot| {
+        let mut slot = slot.borrow_mut();
+        let tray = slot
+            .as_mut()
+            .ok_or_else(|| anyhow!("Windows system tray is not initialized"))?;
+        let mut state = tray.state.state.clone();
+        state.language = language;
+        tray.update_state(state)
+    })
+}
+
+pub fn shutdown() {
+    WINDOWS_TRAY.with(|slot| {
+        let _ = slot.borrow_mut().take();
+    });
+}
+
+pub fn is_available() -> bool {
+    WINDOWS_TRAY.with(|slot| {
+        slot.try_borrow()
+            .ok()
+            .and_then(|slot| slot.as_ref().map(|tray| tray.state.shell_available))
+            .unwrap_or(false)
+    })
+}
+
+struct WindowsTray {
+    state: Box<WindowState>,
+    instance: HINSTANCE,
+    class_name: Vec<u16>,
+    owns_window_class: bool,
+    _thread_bound: PhantomData<Rc<()>>,
+}
+
+impl WindowsTray {
+    fn new(command_tx: mpsc::Sender<TrayCommand>, state: TrayState) -> anyhow::Result<Self> {
+        // SAFETY: All calls in this constructor execute on the active Winit UI
+        // thread. The Box address passed to CreateWindowExW remains stable for
+        // the lifetime of the HWND.
         unsafe {
-            // Update play/pause label
-            let play_label = if state.is_playing { "暂停" } else { "播放" };
-            (*items.play_pause).set_text(play_label);
+            let instance = GetModuleHandleW(null());
+            if instance.is_null() {
+                return Err(last_error("GetModuleHandleW"));
+            }
 
-            // Update play mode checkmarks
-            (*items.sequential).set_checked(matches!(state.play_mode, PlayMode::Sequential));
-            (*items.loop_all).set_checked(matches!(state.play_mode, PlayMode::LoopAll));
-            (*items.loop_one).set_checked(matches!(state.play_mode, PlayMode::LoopOne));
-            (*items.shuffle).set_checked(matches!(state.play_mode, PlayMode::Shuffle));
+            let class_name = wide("Rustle.TrayWindow.1");
+            let owns_window_class = register_window_class(instance, &class_name)?;
+
+            let taskbar_created = RegisterWindowMessageW(wide("TaskbarCreated").as_ptr());
+            if taskbar_created == 0 {
+                let error = last_error("RegisterWindowMessageW(TaskbarCreated)");
+                if owns_window_class {
+                    let _ = UnregisterClassW(class_name.as_ptr(), instance);
+                }
+                return Err(error);
+            }
+
+            let icon = match load_small_icon() {
+                Ok(icon) => icon,
+                Err(error) => {
+                    if owns_window_class {
+                        let _ = UnregisterClassW(class_name.as_ptr(), instance);
+                    }
+                    return Err(error);
+                }
+            };
+            let presentation = TrayPresentation::from_state(&state);
+            let menu = match build_menu(&presentation) {
+                Ok(menu) => menu,
+                Err(error) => {
+                    if icon.owned {
+                        let _ = DestroyIcon(icon.handle);
+                    }
+                    if owns_window_class {
+                        let _ = UnregisterClassW(class_name.as_ptr(), instance);
+                    }
+                    return Err(error);
+                }
+            };
+
+            let mut window_state = Box::new(WindowState {
+                hwnd: null_mut(),
+                menu,
+                pending_menu: null_mut(),
+                menu_tracking: false,
+                icon: icon.handle,
+                icon_owned: icon.owned,
+                icon_registered: false,
+                shell_available: false,
+                taskbar_created,
+                command_tx,
+                command_overflow_warned: false,
+                state,
+                presentation,
+            });
+
+            let hwnd = CreateWindowExW(
+                WS_EX_TOOLWINDOW,
+                class_name.as_ptr(),
+                wide("Rustle System Tray").as_ptr(),
+                WS_POPUP,
+                0,
+                0,
+                0,
+                0,
+                null_mut(),
+                null_mut(),
+                instance,
+                window_state.as_mut() as *mut WindowState as *const c_void,
+            );
+            if hwnd.is_null() {
+                let error = last_error("CreateWindowExW(tray window)");
+                if window_state.icon_owned {
+                    let _ = DestroyIcon(window_state.icon);
+                    window_state.icon_owned = false;
+                }
+                let _ = DestroyMenu(window_state.menu);
+                window_state.menu = null_mut();
+                if owns_window_class {
+                    let _ = UnregisterClassW(class_name.as_ptr(), instance);
+                }
+                return Err(error);
+            }
+            window_state.hwnd = hwnd;
+
+            let mut tray = Self {
+                state: window_state,
+                instance,
+                class_name,
+                owns_window_class,
+                _thread_bound: PhantomData,
+            };
+            if let Err(error) = tray.state.register_icon() {
+                drop(tray);
+                return Err(error);
+            }
+            Ok(tray)
+        }
+    }
+
+    fn update_state(&mut self, state: TrayState) -> anyhow::Result<()> {
+        let presentation = TrayPresentation::from_state(&state);
+        let new_menu = build_menu(&presentation)?;
+        self.state.install_menu(new_menu);
+        self.state.state = state;
+        self.state.presentation = presentation;
+        self.state.sync_icon()
+    }
+}
+
+impl Drop for WindowsTray {
+    fn drop(&mut self) {
+        // SAFETY: WindowsTray is !Send/!Sync and is dropped on its creation
+        // thread. Cleanup order removes the shell registration before
+        // destroying the callback window and its dependent native resources.
+        unsafe {
+            self.state.unregister_icon();
+            if !self.state.menu.is_null() {
+                let _ = DestroyMenu(self.state.menu);
+                self.state.menu = null_mut();
+            }
+            if !self.state.pending_menu.is_null() {
+                let _ = DestroyMenu(self.state.pending_menu);
+                self.state.pending_menu = null_mut();
+            }
+            if !self.state.hwnd.is_null() {
+                SetWindowLongPtrW(self.state.hwnd, GWLP_USERDATA, 0);
+                let _ = DestroyWindow(self.state.hwnd);
+                self.state.hwnd = null_mut();
+            }
+            if self.state.icon_owned && !self.state.icon.is_null() {
+                let _ = DestroyIcon(self.state.icon);
+                self.state.icon_owned = false;
+                self.state.icon = null_mut();
+            }
+            if self.owns_window_class {
+                let _ = UnregisterClassW(self.class_name.as_ptr(), self.instance);
+            }
         }
     }
 }
 
-/// Synchronous version for Windows main thread requirement
-pub fn start_native_tray_sync() -> anyhow::Result<(TrayHandle, mpsc::UnboundedReceiver<TrayCommand>)>
-{
-    let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
-    let (state_tx, mut state_rx) = mpsc::unbounded_channel::<TrayState>();
+struct WindowState {
+    hwnd: HWND,
+    menu: HMENU,
+    pending_menu: HMENU,
+    menu_tracking: bool,
+    icon: HICON,
+    icon_owned: bool,
+    icon_registered: bool,
+    shell_available: bool,
+    taskbar_created: u32,
+    command_tx: mpsc::Sender<TrayCommand>,
+    command_overflow_warned: bool,
+    state: TrayState,
+    presentation: TrayPresentation,
+}
 
-    // Load icon
-    let icon = load_icon()?;
+impl WindowState {
+    unsafe fn register_icon(&mut self) -> anyhow::Result<()> {
+        let mut data = self.notify_data(
+            NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP | NIF_GUID,
+            &self.presentation.tooltip,
+        );
+        // SAFETY: data contains a live callback HWND and HICON owned by self.
+        if unsafe { Shell_NotifyIconW(NIM_ADD, &data) } == 0 {
+            self.shell_available = false;
+            return Err(last_error("Shell_NotifyIconW(NIM_ADD)"));
+        }
+        self.icon_registered = true;
 
-    // Create initial menu with items for updates
-    let (menu, play_pause, sequential, loop_all, loop_one, shuffle) =
-        create_native_menu_with_items(&TrayState::default())?;
+        data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
+        // SAFETY: the icon was just registered using this stable GUID.
+        if unsafe { Shell_NotifyIconW(NIM_SETVERSION, &data) } == 0 {
+            let error = last_error("Shell_NotifyIconW(NIM_SETVERSION)");
+            unsafe {
+                self.unregister_icon();
+            }
+            return Err(error);
+        }
+        self.shell_available = true;
+        Ok(())
+    }
 
-    // Leak menu items and store pointers (only if not already set)
-    let play_pause = Box::leak(Box::new(play_pause));
-    let sequential = Box::leak(Box::new(sequential));
-    let loop_all = Box::leak(Box::new(loop_all));
-    let loop_one = Box::leak(Box::new(loop_one));
-    let shuffle = Box::leak(Box::new(shuffle));
+    unsafe fn unregister_icon(&mut self) {
+        if !self.icon_registered || self.hwnd.is_null() {
+            return;
+        }
+        let data = self.notify_data(NIF_GUID, "");
+        // SAFETY: deletion is idempotently guarded by icon_registered.
+        let _ = unsafe { Shell_NotifyIconW(NIM_DELETE, &data) };
+        self.icon_registered = false;
+        self.shell_available = false;
+    }
 
-    let _ = MENU_ITEMS.set(MenuItemsWrapper {
-        play_pause: play_pause as *const _,
-        sequential: sequential as *const _,
-        loop_all: loop_all as *const _,
-        loop_one: loop_one as *const _,
-        shuffle: shuffle as *const _,
-    });
-
-    // Create tray icon
-    let tray = TrayIconBuilder::new()
-        .with_menu(Box::new(menu))
-        .with_menu_on_left_click(false) // Only show menu on right click
-        .with_tooltip("Rustle Music Player")
-        .with_icon(icon)
-        .build()
-        .map_err(|e| anyhow::anyhow!("Failed to create tray icon: {}", e))?;
-
-    // Leak the tray icon to keep it alive for the lifetime of the application
-    Box::leak(Box::new(tray));
-
-    // Set up event handlers that forward events to our channel
-    let cmd_tx_menu = cmd_tx.clone();
-    tray_icon::menu::MenuEvent::set_event_handler(Some(
-        move |event: tray_icon::menu::MenuEvent| {
-            let id_str = event.id.0.as_str();
-            tracing::info!("Menu event received: {}", id_str);
-            let command = match id_str {
-                PLAY_PAUSE_ID => Some(TrayCommand::PlayPause),
-                PREV_TRACK_ID => Some(TrayCommand::PrevTrack),
-                NEXT_TRACK_ID => Some(TrayCommand::NextTrack),
-                TOGGLE_FAVORITE_ID => Some(TrayCommand::ToggleFavorite),
-                SEQUENTIAL_ID => Some(TrayCommand::SetPlayMode(PlayMode::Sequential)),
-                LOOP_ALL_ID => Some(TrayCommand::SetPlayMode(PlayMode::LoopAll)),
-                LOOP_ONE_ID => Some(TrayCommand::SetPlayMode(PlayMode::LoopOne)),
-                SHUFFLE_ID => Some(TrayCommand::SetPlayMode(PlayMode::Shuffle)),
-                TOGGLE_WINDOW_ID => Some(TrayCommand::Window(TrayWindowCommand::Toggle)),
-                QUIT_ID => Some(TrayCommand::Quit),
-                _ => None,
+    fn sync_icon(&mut self) -> anyhow::Result<()> {
+        if !self.icon_registered {
+            let result = unsafe { self.register_icon() };
+            return match result {
+                Ok(()) => {
+                    self.send_command(TrayCommand::AvailabilityChanged(
+                        TrayAvailability::Available,
+                    ));
+                    Ok(())
+                }
+                Err(error) => {
+                    self.report_unavailable(&error);
+                    Err(error)
+                }
             };
-            if let Some(cmd) = command {
-                tracing::info!("Sending tray command: {:?}", cmd);
-                if let Err(e) = cmd_tx_menu.send(cmd) {
-                    tracing::error!("Failed to send tray command: {}", e);
+        }
+        let data = self.notify_data(NIF_TIP | NIF_SHOWTIP | NIF_GUID, &self.presentation.tooltip);
+        // SAFETY: data points to no borrowed buffers and targets our live HWND/GUID.
+        if unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) } == 0 {
+            let error = last_error("Shell_NotifyIconW(NIM_MODIFY tooltip)");
+            self.report_unavailable(&error);
+            return Err(error);
+        }
+        if !self.shell_available {
+            self.shell_available = true;
+            self.send_command(TrayCommand::AvailabilityChanged(
+                TrayAvailability::Available,
+            ));
+        }
+        Ok(())
+    }
+
+    fn notify_data(&self, flags: u32, tooltip: &str) -> NOTIFYICONDATAW {
+        let mut data = NOTIFYICONDATAW {
+            cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: self.hwnd,
+            uID: TRAY_ICON_ID,
+            uFlags: flags,
+            uCallbackMessage: TRAY_CALLBACK_MESSAGE,
+            hIcon: self.icon,
+            guidItem: TRAY_GUID,
+            ..Default::default()
+        };
+        data.szTip = utf16_array::<128>(tooltip);
+        data
+    }
+
+    fn install_menu(&mut self, new_menu: HMENU) {
+        if self.menu_tracking {
+            if !self.pending_menu.is_null() {
+                // SAFETY: pending_menu is not attached to a window or being tracked.
+                unsafe {
+                    let _ = DestroyMenu(self.pending_menu);
                 }
             }
-        },
-    ));
+            self.pending_menu = new_menu;
+            return;
+        }
 
-    TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| match event {
-        TrayIconEvent::Click {
-            button,
-            button_state,
-            ..
-        } => {
-            tracing::info!("Tray icon clicked: {:?} {:?}", button, button_state);
-            if button == MouseButton::Left && button_state == MouseButtonState::Up {
-                tracing::info!("Sending primary tray activation command");
-                if let Err(e) =
-                    cmd_tx.send(TrayCommand::Window(TrayWindowCommand::PrimaryActivation))
-                {
-                    tracing::error!("Failed to send primary tray activation command: {}", e);
+        let old_menu = std::mem::replace(&mut self.menu, new_menu);
+        if !old_menu.is_null() {
+            // SAFETY: the popup menu is not attached to a window and is not being tracked.
+            unsafe {
+                let _ = DestroyMenu(old_menu);
+            }
+        }
+    }
+
+    fn finish_menu_tracking(&mut self) {
+        self.menu_tracking = false;
+        if !self.pending_menu.is_null() {
+            let pending_menu = std::mem::replace(&mut self.pending_menu, null_mut());
+            self.install_menu(pending_menu);
+        }
+    }
+
+    fn report_unavailable(&mut self, error: &anyhow::Error) {
+        if self.shell_available {
+            self.shell_available = false;
+            self.send_command(TrayCommand::AvailabilityChanged(
+                TrayAvailability::Unavailable(error.to_string()),
+            ));
+        }
+    }
+
+    fn send_command(&mut self, command: TrayCommand) {
+        match self.command_tx.try_send(command) {
+            Ok(()) => self.command_overflow_warned = false,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                if !self.command_overflow_warned {
+                    tracing::warn!("Windows tray command channel is full; dropping input");
+                    self.command_overflow_warned = true;
                 }
             }
-        }
-        _ => {}
-    }));
-
-    // Spawn task to handle state updates
-    std::thread::spawn(move || {
-        let rt = tokio::runtime::Runtime::new().unwrap();
-        rt.block_on(async {
-            while let Some(state) = state_rx.recv().await {
-                tracing::debug!("Tray state updated: {:?}", state);
-                update_menu_state(&state);
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::debug!("Windows tray command receiver is closed");
             }
-        });
-    });
-
-    Ok((TrayHandle { tx: state_tx }, cmd_rx))
-}
-
-fn load_icon() -> anyhow::Result<tray_icon::Icon> {
-    static ICON_DATA: &[u8] = include_bytes!("../../../assets/icons/icon_256.png");
-
-    let img = image::load_from_memory(ICON_DATA)
-        .map_err(|e| anyhow::anyhow!("Failed to load icon: {}", e))?;
-
-    let rgba = img
-        .resize(32, 32, image::imageops::FilterType::Lanczos3)
-        .to_rgba8();
-    let (width, height) = rgba.dimensions();
-
-    tray_icon::Icon::from_rgba(rgba.into_raw(), width, height)
-        .map_err(|e| anyhow::anyhow!("Failed to create icon: {}", e))
-}
-
-fn create_native_menu_with_items(
-    state: &TrayState,
-) -> anyhow::Result<(
-    Menu,
-    NativeMenuItem,
-    CheckMenuItem,
-    CheckMenuItem,
-    CheckMenuItem,
-    CheckMenuItem,
-)> {
-    let menu = Menu::new();
-
-    // Now playing info (disabled item)
-    let now_playing_text = if let Some(title) = &state.title {
-        match &state.artist {
-            Some(artist) => format!("♪ {} - {}", title, artist),
-            None => format!("♪ {}", title),
         }
-    } else {
-        "Rustle Music".to_string()
+    }
+
+    fn send_menu_command(&mut self, id: u16) {
+        if let Some(command) = command_for_menu_id(id) {
+            self.send_command(command);
+        }
+    }
+
+    fn recover_after_explorer_restart(&mut self) {
+        self.icon_registered = false;
+        self.shell_available = false;
+        let result = unsafe { self.register_icon() };
+        match result {
+            Ok(()) => {
+                tracing::info!("Windows tray icon restored after Explorer restart");
+                self.send_command(TrayCommand::AvailabilityChanged(
+                    TrayAvailability::Available,
+                ));
+            }
+            Err(error) => {
+                tracing::warn!(%error, "Failed to restore tray icon after Explorer restart");
+                self.send_command(TrayCommand::AvailabilityChanged(
+                    TrayAvailability::Unavailable(error.to_string()),
+                ));
+            }
+        }
+    }
+}
+
+unsafe extern "system" fn tray_window_proc(
+    hwnd: HWND,
+    message: u32,
+    wparam: WPARAM,
+    lparam: LPARAM,
+) -> LRESULT {
+    if message == WM_NCCREATE {
+        // SAFETY: lparam is a CREATESTRUCTW for WM_NCCREATE and lpCreateParams
+        // is the stable Box<WindowState> address supplied to CreateWindowExW.
+        let create = unsafe { &*(lparam as *const CREATESTRUCTW) };
+        let state_ptr = create.lpCreateParams as *mut WindowState;
+        if state_ptr.is_null() {
+            return 0;
+        }
+        unsafe {
+            (*state_ptr).hwnd = hwnd;
+            SetWindowLongPtrW(hwnd, GWLP_USERDATA, state_ptr as isize);
+        }
+    }
+
+    let state_ptr = unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState };
+    if !state_ptr.is_null() {
+        // Keep every Rust reference to WindowState scoped away from Win32 calls
+        // that can run a nested message loop. WndProc may be re-entered while a
+        // popup menu is being tracked.
+        let taskbar_created = unsafe { (*state_ptr).taskbar_created };
+        if message == taskbar_created {
+            unsafe { (&mut *state_ptr).recover_after_explorer_restart() };
+            return 0;
+        }
+
+        if message == TRAY_CALLBACK_MESSAGE {
+            let packed_callback = lparam as u32;
+            if (packed_callback >> 16) as u16 != TRAY_ICON_ID as u16 {
+                return 0;
+            }
+            let callback = packed_callback & 0xffff;
+            match classify_callback(callback) {
+                TrayCallbackAction::PrimaryActivation => unsafe {
+                    (&mut *state_ptr)
+                        .send_command(TrayCommand::Window(TrayWindowCommand::PrimaryActivation));
+                },
+                TrayCallbackAction::ContextMenu => unsafe {
+                    show_context_menu(state_ptr, wparam);
+                },
+                TrayCallbackAction::Ignore => {}
+            }
+            return 0;
+        }
+
+        match message {
+            WM_COMMAND => {
+                unsafe {
+                    (&mut *state_ptr).send_menu_command((wparam as u32 & 0xffff) as u16);
+                }
+                return 0;
+            }
+            WM_NCDESTROY => unsafe {
+                SetWindowLongPtrW(hwnd, GWLP_USERDATA, 0);
+            },
+            _ => {}
+        }
+    }
+
+    unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+}
+
+unsafe fn show_context_menu(state_ptr: *mut WindowState, packed_position: WPARAM) {
+    // Capture the native handles, then end the Rust borrow before calling
+    // TrackPopupMenuEx because it runs a nested Windows message loop.
+    let (hwnd, menu) = unsafe {
+        let state = &mut *state_ptr;
+        if state.menu_tracking {
+            return;
+        }
+        state.menu_tracking = true;
+        (state.hwnd, state.menu)
     };
 
-    let now_playing =
-        NativeMenuItem::with_id(MenuId::new("now_playing"), now_playing_text, false, None);
-    menu.append(&now_playing).ok();
-
-    // Separator
-    menu.append(&PredefinedMenuItem::separator()).ok();
-
-    // Playback controls
-    let play_label = if state.is_playing { "暂停" } else { "播放" };
-    let play_pause = NativeMenuItem::with_id(MenuId::new(PLAY_PAUSE_ID), play_label, true, None);
-    menu.append(&play_pause).ok();
-
-    let prev_track = NativeMenuItem::with_id(MenuId::new(PREV_TRACK_ID), "上一首", true, None);
-    menu.append(&prev_track).ok();
-
-    let next_track = NativeMenuItem::with_id(MenuId::new(NEXT_TRACK_ID), "下一首", true, None);
-    menu.append(&next_track).ok();
-
-    // Favorite button (only for NCM songs)
-    if state.ncm_song_id.is_some() {
-        let fav_label = if state.is_favorited {
-            "取消收藏"
-        } else {
-            "收藏"
-        };
-        let favorite =
-            NativeMenuItem::with_id(MenuId::new(TOGGLE_FAVORITE_ID), fav_label, true, None);
-        menu.append(&favorite).ok();
+    let mut point = point_from_packed_position(packed_position);
+    if point.x == -1 && point.y == -1 {
+        // SAFETY: GetCursorPos writes one initialized POINT.
+        let _ = unsafe { GetCursorPos(&mut point) };
     }
 
-    // Separator
-    menu.append(&PredefinedMenuItem::separator()).ok();
+    // TPM_RETURNCMD | TPM_NONOTIFY keeps WM_COMMAND out of the nested loop.
+    // WM_NULL is the documented notification-area menu-dismissal handoff.
+    let _ = unsafe { SetForegroundWindow(hwnd) };
+    let selected = unsafe {
+        TrackPopupMenuEx(
+            menu,
+            TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+            point.x,
+            point.y,
+            hwnd,
+            null(),
+        )
+    };
+    let _ = unsafe { PostMessageW(hwnd, WM_NULL, 0, 0) };
 
-    // Play mode submenu
-    let play_mode_menu = Submenu::new("播放模式", true);
+    if unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState } != state_ptr {
+        return;
+    }
 
-    let sequential = CheckMenuItem::with_id(
-        MenuId::new(SEQUENTIAL_ID),
-        "顺序播放",
-        true,
-        matches!(state.play_mode, PlayMode::Sequential),
-        None,
-    );
-    let loop_all = CheckMenuItem::with_id(
-        MenuId::new(LOOP_ALL_ID),
-        "列表循环",
-        true,
-        matches!(state.play_mode, PlayMode::LoopAll),
-        None,
-    );
-    let loop_one = CheckMenuItem::with_id(
-        MenuId::new(LOOP_ONE_ID),
-        "单曲循环",
-        true,
-        matches!(state.play_mode, PlayMode::LoopOne),
-        None,
-    );
-    let shuffle = CheckMenuItem::with_id(
-        MenuId::new(SHUFFLE_ID),
-        "随机播放",
-        true,
-        matches!(state.play_mode, PlayMode::Shuffle),
-        None,
-    );
+    // SAFETY: WindowState remains owned by WindowsTray while its callback
+    // window is live. No reference was held across TrackPopupMenuEx.
+    let state = unsafe { &mut *state_ptr };
+    state.finish_menu_tracking();
+    if selected > 0 {
+        state.send_menu_command(selected as u16);
+    }
+}
 
-    play_mode_menu.append(&sequential).ok();
-    play_mode_menu.append(&loop_all).ok();
-    play_mode_menu.append(&loop_one).ok();
-    play_mode_menu.append(&shuffle).ok();
+unsafe fn register_window_class(instance: HINSTANCE, class_name: &[u16]) -> anyhow::Result<bool> {
+    let class = WNDCLASSEXW {
+        cbSize: size_of::<WNDCLASSEXW>() as u32,
+        lpfnWndProc: Some(tray_window_proc),
+        hInstance: instance,
+        lpszClassName: class_name.as_ptr(),
+        ..Default::default()
+    };
+    // SAFETY: class_name is NUL-terminated and the callback has the required ABI.
+    if unsafe { RegisterClassExW(&class) } == 0 {
+        let error = unsafe { GetLastError() };
+        if error != ERROR_CLASS_ALREADY_EXISTS {
+            return Err(anyhow!(
+                "RegisterClassExW(tray window) failed with Win32 error {error}"
+            ));
+        }
+        return Ok(false);
+    }
+    Ok(true)
+}
 
-    menu.append(&play_mode_menu).ok();
+struct LoadedIcon {
+    handle: HICON,
+    owned: bool,
+}
 
-    // Separator
-    menu.append(&PredefinedMenuItem::separator()).ok();
+unsafe fn load_small_icon() -> anyhow::Result<LoadedIcon> {
+    static ICON_DATA: &[u8] = include_bytes!("../../../assets/icons/icon_256.png");
 
-    // Window control
-    let toggle_window =
-        NativeMenuItem::with_id(MenuId::new(TOGGLE_WINDOW_ID), "显示/隐藏窗口", true, None);
-    menu.append(&toggle_window).ok();
+    let dpi = unsafe { GetDpiForSystem() };
+    let metric = |index| {
+        let scaled = if dpi == 0 {
+            0
+        } else {
+            unsafe { GetSystemMetricsForDpi(index, dpi) }
+        };
+        if scaled > 0 {
+            scaled
+        } else {
+            unsafe { GetSystemMetrics(index) }
+        }
+    };
+    let width = metric(SM_CXSMICON).max(16) as u32;
+    let height = metric(SM_CYSMICON).max(16) as u32;
 
-    // Separator
-    menu.append(&PredefinedMenuItem::separator()).ok();
+    let rgba = image::load_from_memory(ICON_DATA)
+        .context("Failed to decode embedded Windows tray icon")?
+        .resize_exact(width, height, image::imageops::FilterType::Lanczos3)
+        .to_rgba8();
 
-    // Quit
-    let quit = NativeMenuItem::with_id(MenuId::new(QUIT_ID), "退出", true, None);
-    menu.append(&quit).ok();
+    let bitmap_info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: width as i32,
+            // A negative height produces a top-down DIB matching image's row order.
+            biHeight: -(height as i32),
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB,
+            biSizeImage: width * height * 4,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut dib_bits = null_mut();
+    let color_bitmap = unsafe {
+        CreateDIBSection(
+            null_mut(),
+            &bitmap_info,
+            DIB_RGB_COLORS,
+            &mut dib_bits,
+            null_mut(),
+            0,
+        )
+    };
+    if color_bitmap.is_null() || dib_bits.is_null() {
+        let error = last_error("CreateDIBSection(tray icon)");
+        if !color_bitmap.is_null() {
+            unsafe {
+                let _ = DeleteObject(color_bitmap);
+            }
+        }
+        return Err(error);
+    }
 
-    Ok((menu, play_pause, sequential, loop_all, loop_one, shuffle))
+    let target = unsafe {
+        std::slice::from_raw_parts_mut(dib_bits.cast::<u8>(), (width * height * 4) as usize)
+    };
+    target.copy_from_slice(&premultiplied_bgra(rgba.as_raw()));
+
+    let mask_stride = width.div_ceil(16) * 2;
+    let mask_bits = vec![0u8; (mask_stride * height) as usize];
+    let mask_bitmap =
+        unsafe { CreateBitmap(width as i32, height as i32, 1, 1, mask_bits.as_ptr().cast()) };
+    if mask_bitmap.is_null() {
+        let error = last_error("CreateBitmap(tray icon mask)");
+        unsafe {
+            let _ = DeleteObject(color_bitmap);
+        }
+        return Err(error);
+    }
+
+    let icon_info = ICONINFO {
+        fIcon: 1,
+        hbmMask: mask_bitmap,
+        hbmColor: color_bitmap,
+        ..Default::default()
+    };
+    let icon = unsafe { CreateIconIndirect(&icon_info) };
+    let icon_error = icon
+        .is_null()
+        .then(|| last_error("CreateIconIndirect(tray icon)"));
+    unsafe {
+        let _ = DeleteObject(mask_bitmap);
+        let _ = DeleteObject(color_bitmap);
+    }
+    if let Some(error) = icon_error {
+        return Err(error);
+    }
+
+    Ok(LoadedIcon {
+        handle: icon,
+        owned: true,
+    })
+}
+
+fn premultiplied_bgra(rgba: &[u8]) -> Vec<u8> {
+    debug_assert_eq!(rgba.len() % 4, 0);
+    let mut output = Vec::with_capacity(rgba.len());
+    for pixel in rgba.chunks_exact(4) {
+        let alpha = u16::from(pixel[3]);
+        output.push(((u16::from(pixel[2]) * alpha + 127) / 255) as u8);
+        output.push(((u16::from(pixel[1]) * alpha + 127) / 255) as u8);
+        output.push(((u16::from(pixel[0]) * alpha + 127) / 255) as u8);
+        output.push(pixel[3]);
+    }
+    output
+}
+
+struct OwnedMenu(HMENU);
+
+impl OwnedMenu {
+    fn popup(operation: &'static str) -> anyhow::Result<Self> {
+        // SAFETY: CreatePopupMenu has no preconditions.
+        let handle = unsafe { CreatePopupMenu() };
+        if handle.is_null() {
+            Err(last_error(operation))
+        } else {
+            Ok(Self(handle))
+        }
+    }
+
+    fn into_raw(mut self) -> HMENU {
+        let handle = self.0;
+        self.0 = null_mut();
+        handle
+    }
+}
+
+impl Drop for OwnedMenu {
+    fn drop(&mut self) {
+        if !self.0.is_null() {
+            // SAFETY: OwnedMenu uniquely owns this unattached menu.
+            unsafe {
+                let _ = DestroyMenu(self.0);
+            }
+        }
+    }
+}
+
+fn build_menu(presentation: &TrayPresentation) -> anyhow::Result<HMENU> {
+    let root = OwnedMenu::popup("CreatePopupMenu(root)")?;
+    append_text(
+        root.0,
+        MF_STRING | MF_DISABLED | MF_GRAYED,
+        0,
+        &presentation.now_playing,
+    )?;
+    append_separator(root.0)?;
+    append_text(
+        root.0,
+        MF_STRING,
+        CMD_PLAY_PAUSE as usize,
+        presentation.play_pause,
+    )?;
+    append_text(
+        root.0,
+        MF_STRING,
+        CMD_PREV_TRACK as usize,
+        presentation.previous,
+    )?;
+    append_text(
+        root.0,
+        MF_STRING,
+        CMD_NEXT_TRACK as usize,
+        presentation.next,
+    )?;
+    let favorite_flags = if presentation.favorite_enabled {
+        MF_STRING
+    } else {
+        MF_STRING | MF_DISABLED | MF_GRAYED
+    };
+    append_text(
+        root.0,
+        favorite_flags,
+        CMD_TOGGLE_FAVORITE as usize,
+        presentation.favorite,
+    )?;
+    append_separator(root.0)?;
+
+    let modes = OwnedMenu::popup("CreatePopupMenu(play mode)")?;
+    append_check_item(
+        modes.0,
+        CMD_SEQUENTIAL,
+        presentation.sequential,
+        presentation.play_mode == PlayMode::Sequential,
+    )?;
+    append_check_item(
+        modes.0,
+        CMD_LOOP_ALL,
+        presentation.loop_all,
+        presentation.play_mode == PlayMode::LoopAll,
+    )?;
+    append_check_item(
+        modes.0,
+        CMD_LOOP_ONE,
+        presentation.loop_one,
+        presentation.play_mode == PlayMode::LoopOne,
+    )?;
+    append_check_item(
+        modes.0,
+        CMD_SHUFFLE,
+        presentation.shuffle,
+        presentation.play_mode == PlayMode::Shuffle,
+    )?;
+    append_text(
+        root.0,
+        MF_POPUP,
+        modes.0 as usize,
+        presentation.play_mode_label,
+    )?;
+    let _ = modes.into_raw(); // ownership transferred to root by AppendMenuW
+
+    append_separator(root.0)?;
+    append_text(
+        root.0,
+        MF_STRING,
+        CMD_TOGGLE_WINDOW as usize,
+        presentation.toggle_window,
+    )?;
+    append_separator(root.0)?;
+    append_text(root.0, MF_STRING, CMD_QUIT as usize, presentation.quit)?;
+    Ok(root.into_raw())
+}
+
+fn append_check_item(menu: HMENU, id: u16, label: &str, checked: bool) -> anyhow::Result<()> {
+    let flags = MF_STRING | if checked { MF_CHECKED } else { 0 };
+    append_text(menu, flags, id as usize, label)
+}
+
+fn append_separator(menu: HMENU) -> anyhow::Result<()> {
+    // SAFETY: menu is live and MF_SEPARATOR ignores the text pointer.
+    if unsafe { AppendMenuW(menu, MF_SEPARATOR, 0, null()) } == 0 {
+        Err(last_error("AppendMenuW(separator)"))
+    } else {
+        Ok(())
+    }
+}
+
+fn append_text(menu: HMENU, flags: u32, id: usize, label: &str) -> anyhow::Result<()> {
+    let label = wide(label);
+    // SAFETY: AppendMenuW copies the NUL-terminated string during the call.
+    if unsafe { AppendMenuW(menu, flags, id, label.as_ptr()) } == 0 {
+        Err(last_error("AppendMenuW(item)"))
+    } else {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TrayPresentation {
+    now_playing: String,
+    tooltip: String,
+    play_pause: &'static str,
+    previous: &'static str,
+    next: &'static str,
+    favorite: &'static str,
+    favorite_enabled: bool,
+    play_mode_label: &'static str,
+    sequential: &'static str,
+    loop_all: &'static str,
+    loop_one: &'static str,
+    shuffle: &'static str,
+    toggle_window: &'static str,
+    quit: &'static str,
+    play_mode: PlayMode,
+}
+
+impl TrayPresentation {
+    fn from_state(state: &TrayState) -> Self {
+        let language = state.language;
+        let song = now_playing_text(state, t(language, Key::TrayNotPlaying));
+        Self {
+            now_playing: song.clone(),
+            tooltip: format!("Rustle — {song}"),
+            play_pause: t(
+                language,
+                if state.is_playing {
+                    Key::TrayPause
+                } else {
+                    Key::TrayPlay
+                },
+            ),
+            previous: t(language, Key::TrayPrevious),
+            next: t(language, Key::TrayNext),
+            favorite: t(
+                language,
+                if state.is_favorited && state.ncm_song_id.is_some() {
+                    Key::TrayUnfavorite
+                } else {
+                    Key::TrayFavorite
+                },
+            ),
+            favorite_enabled: state.ncm_song_id.is_some(),
+            play_mode_label: t(language, Key::TrayPlayMode),
+            sequential: t(language, Key::TraySequential),
+            loop_all: t(language, Key::TrayLoopAll),
+            loop_one: t(language, Key::TrayLoopOne),
+            shuffle: t(language, Key::TrayShuffle),
+            toggle_window: t(language, Key::TrayToggleWindow),
+            quit: t(language, Key::TrayQuit),
+            play_mode: state.play_mode,
+        }
+    }
+}
+
+fn now_playing_text(state: &TrayState, fallback: &str) -> String {
+    match (&state.title, &state.artist) {
+        (Some(title), Some(artist)) if !artist.is_empty() => format!("♪ {title} — {artist}"),
+        (Some(title), _) => format!("♪ {title}"),
+        _ => fallback.to_string(),
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TrayCallbackAction {
+    PrimaryActivation,
+    ContextMenu,
+    Ignore,
+}
+
+fn classify_callback(code: u32) -> TrayCallbackAction {
+    match code {
+        NIN_SELECT | NIN_KEYSELECT => TrayCallbackAction::PrimaryActivation,
+        WM_CONTEXTMENU => TrayCallbackAction::ContextMenu,
+        _ => TrayCallbackAction::Ignore,
+    }
+}
+
+fn command_for_menu_id(id: u16) -> Option<TrayCommand> {
+    match id {
+        CMD_PLAY_PAUSE => Some(TrayCommand::PlayPause),
+        CMD_PREV_TRACK => Some(TrayCommand::PrevTrack),
+        CMD_NEXT_TRACK => Some(TrayCommand::NextTrack),
+        CMD_TOGGLE_FAVORITE => Some(TrayCommand::ToggleFavorite),
+        CMD_SEQUENTIAL => Some(TrayCommand::SetPlayMode(PlayMode::Sequential)),
+        CMD_LOOP_ALL => Some(TrayCommand::SetPlayMode(PlayMode::LoopAll)),
+        CMD_LOOP_ONE => Some(TrayCommand::SetPlayMode(PlayMode::LoopOne)),
+        CMD_SHUFFLE => Some(TrayCommand::SetPlayMode(PlayMode::Shuffle)),
+        CMD_TOGGLE_WINDOW => Some(TrayCommand::Window(TrayWindowCommand::Toggle)),
+        CMD_QUIT => Some(TrayCommand::Quit),
+        _ => None,
+    }
+}
+
+fn point_from_packed_position(position: WPARAM) -> POINT {
+    let packed = position as u32;
+    POINT {
+        x: (packed as u16 as i16) as i32,
+        y: ((packed >> 16) as u16 as i16) as i32,
+    }
+}
+
+fn wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+fn utf16_array<const N: usize>(value: &str) -> [u16; N] {
+    let mut output = [0; N];
+    if N == 0 {
+        return output;
+    }
+
+    let mut cursor = 0;
+    for character in value.chars() {
+        let mut encoded = [0; 2];
+        let units = character.encode_utf16(&mut encoded);
+        if cursor + units.len() >= N {
+            break;
+        }
+        output[cursor..cursor + units.len()].copy_from_slice(units);
+        cursor += units.len();
+    }
+    output
+}
+
+fn last_error(operation: &'static str) -> anyhow::Error {
+    // SAFETY: GetLastError is thread-local and has no preconditions.
+    let code = unsafe { GetLastError() };
+    anyhow!("{operation} failed with Win32 error {code}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn presentation_localizes_and_projects_dynamic_state() {
+        let state = TrayState {
+            is_playing: true,
+            title: Some("Song".into()),
+            artist: Some("Artist".into()),
+            play_mode: PlayMode::LoopOne,
+            ncm_song_id: Some(42),
+            is_favorited: true,
+            language: Language::English,
+        };
+        let english = TrayPresentation::from_state(&state);
+        assert_eq!(english.now_playing, "♪ Song — Artist");
+        assert_eq!(english.play_pause, "Pause");
+        assert_eq!(english.favorite, "Remove from Favorites");
+        assert!(english.favorite_enabled);
+        assert_eq!(english.play_mode, PlayMode::LoopOne);
+
+        let chinese = TrayPresentation::from_state(&TrayState {
+            language: Language::Chinese,
+            ..state
+        });
+        assert_eq!(chinese.play_pause, "暂停");
+        assert_eq!(chinese.favorite, "取消收藏");
+    }
+
+    #[test]
+    fn favorite_is_visible_but_disabled_without_ncm_identity() {
+        let presentation = TrayPresentation::from_state(&TrayState::default());
+        assert_eq!(presentation.favorite, "Add to Favorites");
+        assert!(!presentation.favorite_enabled);
+    }
+
+    #[test]
+    fn tooltip_truncation_preserves_surrogate_pairs_and_nul_termination() {
+        let long = format!("{}😀", "a".repeat(126));
+        let encoded = utf16_array::<128>(&long);
+        assert_eq!(encoded[126], 0);
+        assert_eq!(encoded[127], 0);
+
+        let exact = format!("{}😀", "a".repeat(125));
+        let encoded = utf16_array::<128>(&exact);
+        assert_ne!(encoded[125], 0);
+        assert_ne!(encoded[126], 0);
+        assert_eq!(encoded[127], 0);
+        assert!(String::from_utf16(&encoded[..127]).is_ok());
+    }
+
+    #[test]
+    fn callback_classification_covers_mouse_keyboard_and_context_menu() {
+        assert_eq!(
+            classify_callback(NIN_SELECT),
+            TrayCallbackAction::PrimaryActivation
+        );
+        assert_eq!(
+            classify_callback(NIN_KEYSELECT),
+            TrayCallbackAction::PrimaryActivation
+        );
+        assert_eq!(
+            classify_callback(WM_CONTEXTMENU),
+            TrayCallbackAction::ContextMenu
+        );
+        assert_eq!(classify_callback(123_456), TrayCallbackAction::Ignore);
+    }
+
+    #[test]
+    fn icon_pixels_are_bgra_and_alpha_premultiplied() {
+        assert_eq!(
+            premultiplied_bgra(&[100, 50, 200, 128, 1, 2, 3, 0]),
+            vec![100, 25, 50, 128, 0, 0, 0, 0]
+        );
+    }
+
+    #[test]
+    fn menu_command_projection_covers_modes_and_window_activation() {
+        assert!(matches!(
+            command_for_menu_id(CMD_LOOP_ALL),
+            Some(TrayCommand::SetPlayMode(PlayMode::LoopAll))
+        ));
+        assert!(matches!(
+            command_for_menu_id(CMD_TOGGLE_WINDOW),
+            Some(TrayCommand::Window(TrayWindowCommand::Toggle))
+        ));
+        assert!(command_for_menu_id(u16::MAX).is_none());
+    }
+
+    #[test]
+    #[ignore = "requires an interactive Windows Explorer notification area"]
+    fn native_shell_registration_update_and_cleanup_smoke_test() {
+        let (_handle, _commands) =
+            start_windows_tray(Language::English, 4).expect("register tray icon");
+        update_state(TrayState {
+            is_playing: true,
+            title: Some("Rustle Tray Smoke Test".into()),
+            artist: Some("Rustle".into()),
+            play_mode: PlayMode::Shuffle,
+            ncm_song_id: Some(1),
+            is_favorited: true,
+            language: Language::English,
+        })
+        .expect("update registered tray icon");
+        shutdown();
+    }
 }

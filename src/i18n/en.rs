@@ -319,6 +319,26 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::ExitDialogExit, "Exit");
     m.insert(Key::ExitDialogMinimize, "Minimize to Tray");
 
+    // System tray
+    m.insert(Key::TrayPlay, "Play");
+    m.insert(Key::TrayPause, "Pause");
+    m.insert(Key::TrayPrevious, "Previous Track");
+    m.insert(Key::TrayNext, "Next Track");
+    m.insert(Key::TrayFavorite, "Add to Favorites");
+    m.insert(Key::TrayUnfavorite, "Remove from Favorites");
+    m.insert(Key::TrayPlayMode, "Playback Mode");
+    m.insert(Key::TraySequential, "Sequential");
+    m.insert(Key::TrayLoopAll, "Repeat All");
+    m.insert(Key::TrayLoopOne, "Repeat One");
+    m.insert(Key::TrayShuffle, "Shuffle");
+    m.insert(Key::TrayToggleWindow, "Show/Hide Rustle");
+    m.insert(Key::TrayQuit, "Quit Rustle");
+    m.insert(Key::TrayNotPlaying, "Not Playing");
+    m.insert(
+        Key::TrayUnavailable,
+        "The system tray is unavailable. Rustle will keep this window visible.",
+    );
+
     // Context Menu
     m.insert(Key::ContextMenuEditTags, "Edit Tags");
 

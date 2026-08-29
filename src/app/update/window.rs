@@ -6,6 +6,7 @@ use iced::Task;
 use crate::app::message::Message;
 use crate::app::state::{App, WindowVisibilityState};
 use crate::features::CloseBehavior;
+use crate::platform::tray::TrayAvailability;
 use crate::platform::window;
 use crate::ui::overlay::{ModalKind, OverlayKind};
 
@@ -30,6 +31,21 @@ impl App {
     }
 
     fn begin_hide_window(&mut self) -> Task<Message> {
+        let backend_available = crate::platform::tray::is_available();
+        if !tray_allows_hiding(&self.core.tray_availability, backend_available) {
+            tracing::warn!(
+                availability = ?self.core.tray_availability,
+                backend_available,
+                "Refusing to hide the last window because the system tray is unavailable"
+            );
+            return Self::toast_warning(
+                self.core
+                    .locale
+                    .get(crate::i18n::Key::TrayUnavailable)
+                    .to_string(),
+            );
+        }
+
         if self.core.window_operation_pending
             || self.core.window_visibility == WindowVisibilityState::Hidden
             || self.core.window_visibility == WindowVisibilityState::Hiding
@@ -260,6 +276,10 @@ impl App {
     }
 }
 
+fn tray_allows_hiding(availability: &TrayAvailability, backend_available: bool) -> bool {
+    availability.is_available() && backend_available
+}
+
 fn finalize_window_visibility(window_mode: iced::window::Mode) -> WindowVisibilityState {
     if window_mode == iced::window::Mode::Hidden {
         WindowVisibilityState::Hidden
@@ -270,8 +290,20 @@ fn finalize_window_visibility(window_mode: iced::window::Mode) -> WindowVisibili
 
 #[cfg(test)]
 mod tests {
-    use super::finalize_window_visibility;
+    use super::{finalize_window_visibility, tray_allows_hiding};
     use crate::app::state::WindowVisibilityState;
+    use crate::platform::tray::TrayAvailability;
+
+    #[test]
+    fn hiding_requires_a_confirmed_tray_recovery_surface() {
+        assert!(!tray_allows_hiding(&TrayAvailability::Starting, true));
+        assert!(!tray_allows_hiding(
+            &TrayAvailability::Unavailable("registration failed".into()),
+            true,
+        ));
+        assert!(!tray_allows_hiding(&TrayAvailability::Available, false));
+        assert!(tray_allows_hiding(&TrayAvailability::Available, true));
+    }
 
     #[test]
     fn finalize_window_operation_visibility() {

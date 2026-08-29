@@ -1,46 +1,55 @@
-//! System tray abstraction
+//! System tray abstraction.
 //!
-//! Provides a unified interface for system tray functionality across platforms.
-//!
-//! - Linux: Uses ksni (freedesktop StatusNotifierItem)
-//! - Windows/macOS: Uses tray-icon
-//! - WASM: No-op (not available)
+//! The platform backends intentionally have different ownership models:
+//! Linux delegates to the StatusNotifierItem service, Windows owns Win32
+//! objects on the Iced/Winit event-loop thread, and macOS owns its status item
+//! on that same UI thread.
 
 use crate::features::PlayMode;
+use crate::i18n::Language;
 use std::sync::OnceLock;
 use tokio::sync::mpsc;
 
-// Platform-specific implementations
 #[cfg(target_os = "linux")]
 mod linux;
-#[cfg(any(target_os = "windows", target_os = "macos"))]
+#[cfg(target_os = "macos")]
+mod macos;
+#[cfg(target_os = "windows")]
 mod windows;
 
-/// Commands that can be sent from the tray to the application
-#[derive(Debug, Clone)]
-pub enum TrayCommand {
-    /// Window visibility/focus action.
-    Window(TrayWindowCommand),
-    /// Toggle play/pause
-    PlayPause,
-    /// Play next track
-    NextTrack,
-    /// Play previous track
-    PrevTrack,
-    /// Set play mode
-    SetPlayMode(PlayMode),
-    /// Toggle favorite status for current song
-    ToggleFavorite,
-    /// Quit the application
-    Quit,
+const COMMAND_CHANNEL_CAPACITY: usize = 32;
+
+/// Runtime availability of the tray recovery surface.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TrayAvailability {
+    Starting,
+    Available,
+    Unavailable(String),
 }
 
-/// Window-related command emitted by tray implementations.
+impl TrayAvailability {
+    pub fn is_available(&self) -> bool {
+        matches!(self, Self::Available)
+    }
+}
+
+/// Commands sent from the native tray to the application.
+#[derive(Debug, Clone)]
+pub enum TrayCommand {
+    Window(TrayWindowCommand),
+    PlayPause,
+    NextTrack,
+    PrevTrack,
+    SetPlayMode(PlayMode),
+    ToggleFavorite,
+    Quit,
+    /// The shell integration disappeared or recovered at runtime.
+    AvailabilityChanged(TrayAvailability),
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum TrayWindowCommand {
-    /// Primary tray activation (left click / activate).
     PrimaryActivation,
-    /// Explicit show/hide menu action.
     Toggle,
 }
 
@@ -63,21 +72,25 @@ fn primary_activation_message<Message>(_show_or_focus: Message, toggle: Message)
     toggle
 }
 
-/// State shared between tray and application
+/// Latest playback snapshot projected by each platform backend.
 #[derive(Debug, Clone)]
 pub struct TrayState {
-    /// Whether music is currently playing
     pub is_playing: bool,
-    /// Current song title
     pub title: Option<String>,
-    /// Current artist
     pub artist: Option<String>,
-    /// Current play mode
     pub play_mode: PlayMode,
-    /// Current song NCM ID (if NCM song, for favorite toggle)
     pub ncm_song_id: Option<u64>,
-    /// Whether current song is favorited
     pub is_favorited: bool,
+    pub language: Language,
+}
+
+impl TrayState {
+    pub fn new(language: Language) -> Self {
+        Self {
+            language,
+            ..Self::default()
+        }
+    }
 }
 
 impl Default for TrayState {
@@ -89,133 +102,169 @@ impl Default for TrayState {
             play_mode: PlayMode::Sequential,
             ncm_song_id: None,
             is_favorited: false,
+            language: Language::default(),
         }
     }
 }
 
-/// Handle to control the tray from the application
+/// Lightweight application-side handle. Native objects never live here.
 #[derive(Clone)]
 pub struct TrayHandle {
     #[cfg(target_os = "linux")]
     handle: ksni::Handle<linux::LinuxTray>,
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
-    tx: mpsc::UnboundedSender<TrayState>,
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    _phantom: (),
+    #[cfg(not(target_os = "linux"))]
+    _private: (),
 }
 
 impl TrayHandle {
-    /// Update the tray state (call when playback state changes)
-    pub async fn update(&self, state: TrayState) {
+    /// Apply the newest state. Intermediate snapshots intentionally are not queued.
+    pub fn update(&self, state: TrayState) {
         #[cfg(target_os = "linux")]
         {
-            let _ = self
-                .handle
-                .update(|tray| {
-                    tray.update_state(state);
-                })
-                .await;
+            let handle = self.handle.clone();
+            tokio::spawn(async move {
+                if let Err(error) = handle.update(|tray| tray.update_state(state)).await {
+                    tracing::warn!(%error, "Failed to update Linux system tray state");
+                }
+            });
         }
 
-        #[cfg(any(target_os = "windows", target_os = "macos"))]
-        {
-            let _ = self.tx.send(state);
+        #[cfg(target_os = "windows")]
+        if let Err(error) = windows::update_state(state) {
+            tracing::warn!(%error, "Failed to update Windows system tray state");
+        }
+
+        #[cfg(target_os = "macos")]
+        if let Err(error) = macos::update_state(state) {
+            tracing::warn!(%error, "Failed to update macOS status item state");
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-        {
-            let _ = state; // Suppress unused warning
-        }
+        let _ = state;
     }
 }
 
-/// Result type for tray initialization
-pub type TrayResult = std::sync::Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<TrayCommand>>>;
+pub type TrayResult = std::sync::Arc<tokio::sync::Mutex<mpsc::Receiver<TrayCommand>>>;
 
-/// Global tray handle for updates
 static TRAY_HANDLE: OnceLock<TrayHandle> = OnceLock::new();
 
-/// Get the global tray handle
 pub fn get_handle() -> Option<&'static TrayHandle> {
     TRAY_HANDLE.get()
 }
 
-/// Start the system tray service
-/// Returns a handle to control the tray and a receiver for commands
-#[cfg(target_os = "linux")]
-async fn start_tray() -> anyhow::Result<(TrayHandle, mpsc::UnboundedReceiver<TrayCommand>)> {
-    linux::start_linux_tray().await
-}
-
-/// Start the system tray service synchronously (Windows/macOS only)
-/// Returns a handle to control the tray and a receiver for commands
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-fn start_tray_sync() -> anyhow::Result<(TrayHandle, mpsc::UnboundedReceiver<TrayCommand>)> {
-    windows::start_native_tray_sync()
-}
-
-/// Initialize tray and store handle globally (Linux - async)
-#[cfg(target_os = "linux")]
-async fn init_tray_internal() -> anyhow::Result<TrayResult> {
-    let (handle, rx) = start_tray().await?;
-    TRAY_HANDLE.set(handle).ok();
-    tracing::info!("System tray started");
-    Ok(std::sync::Arc::new(tokio::sync::Mutex::new(rx)))
-}
-
-/// Initialize tray and store handle globally (Windows/macOS - sync)
-#[cfg(any(target_os = "windows", target_os = "macos"))]
-fn init_tray_internal() -> anyhow::Result<TrayResult> {
-    let (handle, rx) = start_tray_sync()?;
-    TRAY_HANDLE.set(handle).ok();
-    tracing::info!("System tray started");
-    Ok(std::sync::Arc::new(tokio::sync::Mutex::new(rx)))
-}
-
-/// Initialize tray (WASM/unsupported - no-op)
-#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-fn init_tray_internal() -> anyhow::Result<TrayResult> {
-    let (_tx, rx) = mpsc::unbounded_channel();
-    Ok(std::sync::Arc::new(tokio::sync::Mutex::new(rx)))
-}
-
-/// Create an iced Task that initializes the system tray
+/// Confirm that the native recovery surface is currently registered.
 ///
-/// This is the unified entry point - it handles platform differences internally:
-/// - Linux: Uses Task::perform (async)
-/// - Windows/macOS: Uses Task::done (sync, must run on main thread)
-/// - WASM: No-op
-pub fn init_task<F>(on_success: F) -> iced::Task<crate::app::Message>
+/// Application state is still used for diagnostics, but the close-to-tray
+/// path also consults this live value so a delayed/dropped lifecycle event
+/// cannot hide the final window after the shell integration has failed.
+pub fn is_available() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        windows::is_available()
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        macos::is_available()
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        TRAY_HANDLE.get().is_some()
+    }
+
+    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+    {
+        false
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn init_tray_internal(language: Language) -> anyhow::Result<TrayResult> {
+    let (handle, rx) = linux::start_linux_tray(language, COMMAND_CHANNEL_CAPACITY).await?;
+    TRAY_HANDLE
+        .set(handle)
+        .map_err(|_| anyhow::anyhow!("system tray was already initialized"))?;
+    tracing::info!("System tray started");
+    Ok(std::sync::Arc::new(tokio::sync::Mutex::new(rx)))
+}
+
+#[cfg(target_os = "windows")]
+fn init_tray_internal(language: Language) -> anyhow::Result<TrayResult> {
+    let (handle, rx) = windows::start_windows_tray(language, COMMAND_CHANNEL_CAPACITY)?;
+    TRAY_HANDLE
+        .set(handle)
+        .map_err(|_| anyhow::anyhow!("system tray was already initialized"))?;
+    tracing::info!("Windows system tray started");
+    Ok(std::sync::Arc::new(tokio::sync::Mutex::new(rx)))
+}
+
+#[cfg(target_os = "macos")]
+fn init_tray_internal(language: Language) -> anyhow::Result<TrayResult> {
+    let (handle, rx) = macos::start_macos_tray(language, COMMAND_CHANNEL_CAPACITY)?;
+    TRAY_HANDLE
+        .set(handle)
+        .map_err(|_| anyhow::anyhow!("system tray was already initialized"))?;
+    tracing::info!("macOS status item started");
+    Ok(std::sync::Arc::new(tokio::sync::Mutex::new(rx)))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+fn init_tray_internal(_language: Language) -> anyhow::Result<TrayResult> {
+    let (_tx, rx) = mpsc::channel(1);
+    Ok(std::sync::Arc::new(tokio::sync::Mutex::new(rx)))
+}
+
+/// Initialize the native integration after the first window-open event.
+/// That event is the earliest common point at which the Winit loop is active.
+pub fn init_task<F>(language: Language, on_success: F) -> iced::Task<crate::app::Message>
 where
     F: FnOnce(TrayResult) -> crate::app::Message + Send + 'static,
 {
     #[cfg(target_os = "linux")]
     {
-        iced::Task::perform(init_tray_internal(), move |result| match result {
+        iced::Task::perform(init_tray_internal(language), move |result| match result {
             Ok(rx) => on_success(rx),
-            Err(e) => {
-                tracing::warn!("Failed to start system tray: {}", e);
-                crate::app::Message::Noop
+            Err(error) => {
+                tracing::warn!(%error, "Failed to start system tray");
+                crate::app::Message::TrayUnavailable(error.to_string())
             }
         })
     }
 
-    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    #[cfg(not(target_os = "linux"))]
     {
-        iced::Task::done(match init_tray_internal() {
+        iced::Task::done(match init_tray_internal(language) {
             Ok(rx) => on_success(rx),
-            Err(e) => {
-                tracing::warn!("Failed to start system tray: {}", e);
-                crate::app::Message::Noop
+            Err(error) => {
+                tracing::warn!(%error, "Failed to start system tray");
+                crate::app::Message::TrayUnavailable(error.to_string())
             }
         })
     }
+}
 
-    #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
-    {
-        iced::Task::done(match init_tray_internal() {
-            Ok(rx) => on_success(rx),
-            Err(_) => crate::app::Message::Noop,
-        })
+/// Update native labels immediately when the application language changes.
+pub fn set_language(language: Language) {
+    #[cfg(target_os = "windows")]
+    if let Err(error) = windows::set_language(language) {
+        tracing::debug!(%error, "Windows tray language update skipped");
     }
+
+    #[cfg(target_os = "macos")]
+    if let Err(error) = macos::set_language(language) {
+        tracing::debug!(%error, "macOS tray language update skipped");
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let _ = language;
+}
+
+/// Explicitly release native resources while the UI thread is still alive.
+pub fn shutdown() {
+    #[cfg(target_os = "windows")]
+    windows::shutdown();
+
+    #[cfg(target_os = "macos")]
+    macos::shutdown();
 }

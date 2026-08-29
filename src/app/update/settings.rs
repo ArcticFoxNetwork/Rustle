@@ -403,6 +403,7 @@ impl App {
                 let lang = Language::from_code(language).unwrap_or_default();
                 self.core.settings.display.language = lang.code().to_string();
                 self.core.locale = Locale::new(lang);
+                crate::platform::tray::set_language(lang);
                 tracing::info!("Language changed to: {}", lang.code());
                 Some(Task::perform(async { Message::SaveSettings }, |m| m))
             }

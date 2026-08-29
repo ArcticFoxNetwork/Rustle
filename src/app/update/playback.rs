@@ -148,6 +148,7 @@ impl App {
             self.core.settings.play_mode,
             ncm_song_id,
             is_favorited,
+            self.core.locale.language,
         );
         self.update_mpris_state();
     }

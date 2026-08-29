@@ -311,6 +311,23 @@ pub enum Key {
     ExitDialogExit,
     ExitDialogMinimize,
 
+    // System tray
+    TrayPlay,
+    TrayPause,
+    TrayPrevious,
+    TrayNext,
+    TrayFavorite,
+    TrayUnfavorite,
+    TrayPlayMode,
+    TraySequential,
+    TrayLoopAll,
+    TrayLoopOne,
+    TrayShuffle,
+    TrayToggleWindow,
+    TrayQuit,
+    TrayNotPlaying,
+    TrayUnavailable,
+
     // Context Menu
     ContextMenuEditTags,
 

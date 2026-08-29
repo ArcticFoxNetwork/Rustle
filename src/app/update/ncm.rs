@@ -1112,6 +1112,7 @@ impl App {
                         self.core.settings.play_mode,
                         Some(*song_id),
                         *liked,
+                        self.core.locale.language,
                     );
                 }
 

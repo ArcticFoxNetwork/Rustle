@@ -283,6 +283,26 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::ExitDialogExit, "退出");
     m.insert(Key::ExitDialogMinimize, "最小化到托盘");
 
+    // 系统托盘
+    m.insert(Key::TrayPlay, "播放");
+    m.insert(Key::TrayPause, "暂停");
+    m.insert(Key::TrayPrevious, "上一首");
+    m.insert(Key::TrayNext, "下一首");
+    m.insert(Key::TrayFavorite, "收藏");
+    m.insert(Key::TrayUnfavorite, "取消收藏");
+    m.insert(Key::TrayPlayMode, "播放模式");
+    m.insert(Key::TraySequential, "顺序播放");
+    m.insert(Key::TrayLoopAll, "列表循环");
+    m.insert(Key::TrayLoopOne, "单曲循环");
+    m.insert(Key::TrayShuffle, "随机播放");
+    m.insert(Key::TrayToggleWindow, "显示/隐藏 Rustle");
+    m.insert(Key::TrayQuit, "退出 Rustle");
+    m.insert(Key::TrayNotPlaying, "未在播放");
+    m.insert(
+        Key::TrayUnavailable,
+        "系统托盘当前不可用，Rustle 将保持窗口可见。",
+    );
+
     // Context Menu
     m.insert(Key::ContextMenuEditTags, "编辑标签");
 

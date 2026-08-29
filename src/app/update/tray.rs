@@ -3,17 +3,30 @@
 
 use iced::Task;
 
-use crate::app::helpers::update_tray_state_full;
 use crate::app::message::Message;
 use crate::app::state::App;
 use crate::features::TrayCommand;
+use crate::platform::tray::TrayAvailability;
 
 impl App {
     /// Handle tray-related messages
     pub fn handle_tray(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
+            Message::InitializeTray => {
+                if self.core.tray_initialization_requested {
+                    return Some(Task::none());
+                }
+                self.core.tray_initialization_requested = true;
+                Some(crate::platform::tray::init_task(
+                    self.core.locale.language,
+                    Message::TrayStarted,
+                ))
+            }
+
             Message::TrayStarted(rx) => {
                 tracing::info!("Tray service started");
+                self.core.tray_availability = TrayAvailability::Available;
+                self.update_tray_and_mpris_current(self.playback_is_playing());
                 let rx = rx.clone();
                 Some(Task::run(
                     async_stream::stream! {
@@ -28,6 +41,28 @@ impl App {
                     },
                     Message::TrayCommand,
                 ))
+            }
+
+            Message::TrayUnavailable(error) => {
+                let first_failure = !matches!(
+                    self.core.tray_availability,
+                    TrayAvailability::Unavailable(_)
+                );
+                self.core.tray_availability = TrayAvailability::Unavailable(error.clone());
+
+                let mut tasks = Vec::new();
+                if self.core.is_window_hidden() {
+                    tasks.push(self.update(Message::ShowWindow));
+                }
+                if first_failure {
+                    tasks.push(Self::toast_warning(
+                        self.core
+                            .locale
+                            .get(crate::i18n::Key::TrayUnavailable)
+                            .to_string(),
+                    ));
+                }
+                Some(Task::batch(tasks))
             }
 
             Message::TrayCommand(cmd) => {
@@ -54,14 +89,8 @@ impl App {
                         self.cache_shuffle_indices();
                         self.refresh_preload_window();
                         let preload_task = self.preload_adjacent_tracks_with_ncm();
-                        let (title, artist) = self
-                            .playback
-                            .current_song
-                            .as_ref()
-                            .map(|s| (Some(s.title.clone()), Some(s.artist.clone())))
-                            .unwrap_or((None, None));
                         let is_playing = self.playback_is_playing();
-                        update_tray_state_full(is_playing, title, artist, *mode);
+                        self.update_tray_and_mpris_current(is_playing);
                         return Some(preload_task);
                     }
                     TrayCommand::ToggleFavorite => {
@@ -75,6 +104,31 @@ impl App {
                     }
                     TrayCommand::Quit => {
                         return Some(self.update(Message::ConfirmExit));
+                    }
+                    TrayCommand::AvailabilityChanged(availability) => {
+                        let became_unavailable =
+                            matches!(availability, TrayAvailability::Unavailable(_))
+                                && !matches!(
+                                    self.core.tray_availability,
+                                    TrayAvailability::Unavailable(_)
+                                );
+                        self.core.tray_availability = availability.clone();
+
+                        if matches!(availability, TrayAvailability::Unavailable(_)) {
+                            let mut tasks = Vec::new();
+                            if self.core.is_window_hidden() {
+                                tasks.push(self.update(Message::ShowWindow));
+                            }
+                            if became_unavailable {
+                                tasks.push(Self::toast_warning(
+                                    self.core
+                                        .locale
+                                        .get(crate::i18n::Key::TrayUnavailable)
+                                        .to_string(),
+                                ));
+                            }
+                            return Some(Task::batch(tasks));
+                        }
                     }
                 }
                 Some(Task::none())

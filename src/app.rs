@@ -171,7 +171,6 @@ impl App {
                 Ok(cache) => Message::CoverCacheReady(Arc::new(cache)),
                 Err(e) => Message::DatabaseError(format!("Cover cache error: {}", e)),
             }),
-            crate::platform::tray::init_task(Message::TrayStarted),
             Task::perform(helpers::init_font_system(), |font_system| {
                 Message::LyricsFontSystemReady(font_system)
             }),
@@ -285,7 +284,8 @@ impl App {
             iced::Subscription::none()
         };
 
-        // 10. Window resize + shown/focus events
+        // 10. Window lifecycle + resize/focus events
+        let opened_sub = iced::window::open_events().map(|_id| Message::InitializeTray);
         let resize_sub =
             iced::window::resize_events().map(|(_id, size)| Message::WindowResized(size));
         let shown_sub = iced::window::shown_events().map(|_id| Message::WindowShown);
@@ -327,6 +327,7 @@ impl App {
             animation_sub, // Animation updates (vsync rate)
             playback_sub,  // Playback monitoring (100ms intervals)
             carousel_sub,
+            opened_sub,
             resize_sub,
             shown_sub,
             focus_sub,

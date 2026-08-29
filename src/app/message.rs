@@ -489,12 +489,16 @@ pub enum Message {
     ExitDialogRememberChanged(bool),
 
     // ============ System Tray ============
+    /// Initialize the tray after Winit has entered its active event loop.
+    InitializeTray,
     /// Tray service started
     TrayStarted(
         std::sync::Arc<
-            tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<crate::features::TrayCommand>>,
+            tokio::sync::Mutex<tokio::sync::mpsc::Receiver<crate::features::TrayCommand>>,
         >,
     ),
+    /// Tray initialization or runtime recovery failed.
+    TrayUnavailable(String),
     /// Tray command received
     TrayCommand(crate::features::TrayCommand),
 
@@ -1178,6 +1182,8 @@ impl std::fmt::Debug for Message {
             Self::ExitDialogRememberChanged(b) => simple!("ExitDialogRememberChanged", "{}", b),
 
             // Tray
+            Self::InitializeTray => simple!("InitializeTray"),
+            Self::TrayUnavailable(error) => simple!("TrayUnavailable", "{}", error),
             Self::TrayCommand(c) => simple!("TrayCommand", "{:?}", c),
 
             // Media Controls

@@ -2,23 +2,24 @@
 
 use super::{TrayCommand, TrayHandle, TrayState, TrayWindowCommand};
 use crate::features::PlayMode;
+use crate::i18n::Language;
 use ksni::{Icon, MenuItem, Status, ToolTip, Tray as KsniTray, TrayMethods, menu::*};
 use tokio::sync::mpsc;
 
 /// Linux system tray implementation using ksni
 pub struct LinuxTray {
     /// Channel to send commands to the application
-    tx: mpsc::UnboundedSender<TrayCommand>,
+    tx: mpsc::Sender<TrayCommand>,
     /// Current state
     state: TrayState,
 }
 
 impl LinuxTray {
     /// Create a new tray instance
-    pub fn new(tx: mpsc::UnboundedSender<TrayCommand>) -> Self {
+    pub fn new(tx: mpsc::Sender<TrayCommand>, language: Language) -> Self {
         Self {
             tx,
-            state: TrayState::default(),
+            state: TrayState::new(language),
         }
     }
 
@@ -77,14 +78,16 @@ impl KsniTray for LinuxTray {
     fn activate(&mut self, _x: i32, _y: i32) {
         let _ = self
             .tx
-            .send(TrayCommand::Window(TrayWindowCommand::PrimaryActivation));
+            .try_send(TrayCommand::Window(TrayWindowCommand::PrimaryActivation));
     }
 }
 
-pub async fn start_linux_tray() -> anyhow::Result<(TrayHandle, mpsc::UnboundedReceiver<TrayCommand>)>
-{
-    let (tx, rx) = mpsc::unbounded_channel();
-    let tray = LinuxTray::new(tx);
+pub async fn start_linux_tray(
+    language: Language,
+    command_capacity: usize,
+) -> anyhow::Result<(TrayHandle, mpsc::Receiver<TrayCommand>)> {
+    let (tx, rx) = mpsc::channel(command_capacity);
+    let tray = LinuxTray::new(tx, language);
 
     let handle = tray
         .spawn()
@@ -144,10 +147,7 @@ fn create_icon() -> Vec<Icon> {
     }]
 }
 
-fn create_menu(
-    state: &TrayState,
-    _tx: &mpsc::UnboundedSender<TrayCommand>,
-) -> Vec<MenuItem<LinuxTray>> {
+fn create_menu(state: &TrayState, _tx: &mpsc::Sender<TrayCommand>) -> Vec<MenuItem<LinuxTray>> {
     let play_label = if state.is_playing { "暂停" } else { "播放" };
     let play_icon = if state.is_playing {
         "media-playback-pause-symbolic"
@@ -189,7 +189,7 @@ fn create_menu(
             label: play_label.to_string(),
             icon_name: play_icon.to_string(),
             activate: Box::new(|tray: &mut LinuxTray| {
-                let _ = tray.tx.send(TrayCommand::PlayPause);
+                let _ = tray.tx.try_send(TrayCommand::PlayPause);
             }),
             ..Default::default()
         }
@@ -198,7 +198,7 @@ fn create_menu(
             label: "上一首".to_string(),
             icon_name: "media-skip-backward-symbolic".to_string(),
             activate: Box::new(|tray: &mut LinuxTray| {
-                let _ = tray.tx.send(TrayCommand::PrevTrack);
+                let _ = tray.tx.try_send(TrayCommand::PrevTrack);
             }),
             ..Default::default()
         }
@@ -207,7 +207,7 @@ fn create_menu(
             label: "下一首".to_string(),
             icon_name: "media-skip-forward-symbolic".to_string(),
             activate: Box::new(|tray: &mut LinuxTray| {
-                let _ = tray.tx.send(TrayCommand::NextTrack);
+                let _ = tray.tx.try_send(TrayCommand::NextTrack);
             }),
             ..Default::default()
         }
@@ -223,7 +223,7 @@ fn create_menu(
                 label: fav_label.to_string(),
                 icon_name: fav_icon.to_string(),
                 activate: Box::new(|tray: &mut LinuxTray| {
-                    let _ = tray.tx.send(TrayCommand::ToggleFavorite);
+                    let _ = tray.tx.try_send(TrayCommand::ToggleFavorite);
                 }),
                 ..Default::default()
             }
@@ -253,7 +253,7 @@ fn create_menu(
                             3 => PlayMode::Shuffle,
                             _ => PlayMode::Sequential,
                         };
-                        let _ = tray.tx.send(TrayCommand::SetPlayMode(mode));
+                        let _ = tray.tx.try_send(TrayCommand::SetPlayMode(mode));
                     }),
                     options: vec![
                         RadioItem {
@@ -292,7 +292,7 @@ fn create_menu(
             activate: Box::new(|tray: &mut LinuxTray| {
                 let _ = tray
                     .tx
-                    .send(TrayCommand::Window(TrayWindowCommand::Toggle));
+                    .try_send(TrayCommand::Window(TrayWindowCommand::Toggle));
             }),
             ..Default::default()
         }
@@ -303,7 +303,7 @@ fn create_menu(
             label: "退出".to_string(),
             icon_name: "application-exit-symbolic".to_string(),
             activate: Box::new(|tray: &mut LinuxTray| {
-                let _ = tray.tx.send(TrayCommand::Quit);
+                let _ = tray.tx.try_send(TrayCommand::Quit);
             }),
             ..Default::default()
         }

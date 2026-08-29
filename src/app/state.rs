@@ -465,6 +465,8 @@ pub struct CoreState {
     pub mpris_handle: Option<MediaHandle>,
     pub mpris_rx:
         Option<Arc<tokio::sync::Mutex<tokio::sync::mpsc::UnboundedReceiver<MediaCommand>>>>,
+    pub tray_availability: crate::platform::tray::TrayAvailability,
+    pub tray_initialization_requested: bool,
     pub discord_presence: DiscordPresence,
     pub global_hotkeys: Option<crate::platform::global_hotkeys::GlobalHotkeyService>,
     pub window_restore_mode: iced::window::Mode,
@@ -519,6 +521,8 @@ impl CoreState {
             cover_cache: None,
             mpris_handle: None,
             mpris_rx: None,
+            tray_availability: crate::platform::tray::TrayAvailability::Starting,
+            tray_initialization_requested: false,
             discord_presence: DiscordPresence::new(discord_enabled),
             global_hotkeys: None,
             window_restore_mode: iced::window::Mode::Windowed,
@@ -534,6 +538,7 @@ impl CoreState {
 
 impl Drop for CoreState {
     fn drop(&mut self) {
+        crate::platform::tray::shutdown();
         self.audio = None;
         let _ = self.audio_thread.take();
     }
