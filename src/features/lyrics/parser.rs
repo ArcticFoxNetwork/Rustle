@@ -251,38 +251,52 @@ fn line_anchor_time(line: &LyricLineOwned) -> u64 {
         .unwrap_or(line.start_time)
 }
 
+/// Maximum start-time drift accepted when attaching line-level attributes.
+///
+/// SPlayer uses the same tolerance when aligning translations and romanization
+/// with the main lyrics. A small tolerance is necessary because the sources
+/// may round or quantize timestamps differently.
+const LYRIC_ATTR_ALIGN_TOLERANCE_MS: u64 = 300;
+
 fn merge_lrc_attr(main: &mut [LyricLineOwned], attr_lines: &[LyricLineOwned], attr: LyricAttr) {
+    let mut main_index = 0usize;
     let mut attr_index = 0usize;
 
-    for main_line in main.iter_mut() {
-        let Some(attr_line) = attr_lines.get(attr_index) else {
-            break;
-        };
+    // Walk both sorted streams in order. When a timestamp does not match,
+    // advance the earlier stream so an unmatched line cannot block all later
+    // translation/romanization lines.
+    while main_index < main.len() && attr_index < attr_lines.len() {
+        let main_time = line_anchor_time(&main[main_index]);
+        let attr_time = line_anchor_time(&attr_lines[attr_index]);
 
-        if line_anchor_time(attr_line) != line_anchor_time(main_line) {
-            continue;
-        }
+        if main_time.abs_diff(attr_time) <= LYRIC_ATTR_ALIGN_TOLERANCE_MS {
+            let text = attr_lines[attr_index]
+                .words
+                .iter()
+                .map(|w| w.word.as_str())
+                .collect::<Vec<_>>()
+                .join("");
 
-        let text = attr_line
-            .words
-            .iter()
-            .map(|w| w.word.as_str())
-            .collect::<Vec<_>>()
-            .join("");
-
-        if !text.is_empty() {
-            match attr {
-                LyricAttr::Translation if main_line.translated_lyric.is_empty() => {
-                    main_line.translated_lyric = text
+            if !text.is_empty() {
+                let main_line = &mut main[main_index];
+                match attr {
+                    LyricAttr::Translation if main_line.translated_lyric.is_empty() => {
+                        main_line.translated_lyric = text
+                    }
+                    LyricAttr::Romanization if main_line.roman_lyric.is_empty() => {
+                        main_line.roman_lyric = text
+                    }
+                    _ => {}
                 }
-                LyricAttr::Romanization if main_line.roman_lyric.is_empty() => {
-                    main_line.roman_lyric = text
-                }
-                _ => {}
             }
-        }
 
-        attr_index += 1;
+            main_index += 1;
+            attr_index += 1;
+        } else if main_time < attr_time {
+            main_index += 1;
+        } else {
+            attr_index += 1;
+        }
     }
 }
 
@@ -444,5 +458,49 @@ mod tests {
 
         assert_eq!(main[0].translated_lyric, "Inline");
         assert_eq!(main[1].translated_lyric, "Sidecar B");
+    }
+
+    fn test_line(start_time: u64, text: &str) -> LyricLineOwned {
+        LyricLineOwned {
+            start_time,
+            words: vec![LyricWordOwned {
+                start_time,
+                end_time: start_time + 1000,
+                word: text.into(),
+                roman_word: String::new(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn test_merge_translation_allows_timestamp_drift_and_skips_extra_lines() {
+        let mut main = vec![test_line(1000, "Main A"), test_line(2000, "Main B")];
+        let translation = vec![
+            test_line(1200, "Trans A"),
+            test_line(1500, "Extra translation"),
+            test_line(2200, "Trans B"),
+        ];
+
+        merge_translation(&mut main, &translation);
+
+        assert_eq!(main[0].translated_lyric, "Trans A");
+        assert_eq!(main[1].translated_lyric, "Trans B");
+    }
+
+    #[test]
+    fn test_merge_translation_skips_main_lines_without_translation() {
+        let mut main = vec![
+            test_line(1000, "Main A"),
+            test_line(1500, "Main without translation"),
+            test_line(2000, "Main B"),
+        ];
+        let translation = vec![test_line(1000, "Trans A"), test_line(2000, "Trans B")];
+
+        merge_translation(&mut main, &translation);
+
+        assert_eq!(main[0].translated_lyric, "Trans A");
+        assert!(main[1].translated_lyric.is_empty());
+        assert_eq!(main[2].translated_lyric, "Trans B");
     }
 }
