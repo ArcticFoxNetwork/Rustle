@@ -105,16 +105,9 @@ pub fn view(
         .on_press_maybe(artist_action);
 
         let quality_badge: Element<'static, Message> = if let Some(quality) = current_quality {
-            let label = if quality.requested == quality.actual {
-                quality.actual.short_name().to_string()
-            } else {
-                format!(
-                    "{} → {}",
-                    quality.requested.short_name(),
-                    quality.actual.short_name()
-                )
-            };
-            text(label)
+            // The configured preference is internal negotiation context. The
+            // player bar describes this song, so only show its actual quality.
+            text(quality.actual.short_name())
                 .size(theme::TEXT_SIZE_CAPTION)
                 .style(|_theme| text::Style {
                     color: Some(theme::ACCENT),

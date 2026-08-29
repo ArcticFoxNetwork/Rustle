@@ -105,7 +105,7 @@ impl App {
                 context.clone(),
             )),
 
-            Message::SongResolveFailed(context) => {
+            Message::SongResolveFailed(context, reason) => {
                 if !self.accepts_audio_context(context) {
                     tracing::debug!(
                         generation = context.generation.0,
@@ -114,12 +114,15 @@ impl App {
                     return Some(Task::none());
                 }
 
-                tracing::error!("Failed to resolve song");
+                tracing::error!("Failed to resolve song: {}", reason);
                 // Use handle_playback_failure for consistent failure tracking
                 if let Some(idx) = self.playback.current_index {
-                    return Some(self.handle_playback_failure(idx, "Song resolution failed"));
+                    return Some(Task::batch([
+                        Self::toast_error(format!("无法播放：{reason}")),
+                        self.handle_playback_failure(idx, reason),
+                    ]));
                 }
-                Some(Self::toast_error("无法加载歌曲".to_string()))
+                Some(Self::toast_error(format!("无法加载歌曲：{reason}")))
             }
 
             Message::RemoveFromQueue(idx) => {

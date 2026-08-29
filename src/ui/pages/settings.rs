@@ -8,7 +8,7 @@ use iced::widget::{
     Space, button, column, container, image, pick_list, row, scrollable, svg, text, text_input,
     toggler,
 };
-use iced::{Alignment, Background, Border, Color, Element, Fill, Length, Padding};
+use iced::{Alignment, Background, Border, Color, ContentFit, Element, Fill, Length, Padding};
 
 use crate::app::{ImageState, Message, SettingsSection};
 use crate::features::{Action, KeyBindings, Settings, ShortcutScope};
@@ -319,33 +319,24 @@ fn account_section(
                 })
             };
 
-            let vip_text: Element<'static, Message> = if info.vip.is_vip() {
-                let icon = image_state
-                    .get(ImageKind::VipBadge, info.user_id)
-                    .cloned()
-                    .map(|handle| -> Element<'static, Message> {
-                        image(handle).width(18).height(18).into()
-                    })
-                    .unwrap_or_else(|| Space::new().width(0).into());
-                row![
-                    icon,
-                    Space::new().width(4),
-                    text(info.membership_label())
-                        .size(theme::TEXT_SIZE_CAPTION)
-                        .style(|_theme| text::Style {
-                            color: Some(theme::ACCENT_PINK),
-                        }),
-                ]
-                .align_y(Alignment::Center)
-                .into()
-            } else {
-                text(locale.get(Key::FreeAccount))
-                    .size(theme::TEXT_SIZE_CAPTION)
-                    .style(|theme| text::Style {
-                        color: Some(theme::settings_desc(theme)),
-                    })
-                    .into()
-            };
+            let vip_text: Element<'static, Message> = info
+                .vip
+                .badge_url()
+                .and_then(|icon_url| {
+                    let vip_key =
+                        crate::image::vip_badge_key(info.user_id, info.vip.tier(), icon_url);
+                    image_state.get(ImageKind::VipBadge, vip_key).cloned()
+                })
+                .map(|handle| -> Element<'static, Message> {
+                    image(handle)
+                        // Slightly taller than the account text while staying
+                        // subordinate to the 48px avatar. Intrinsic width keeps
+                        // Black Vinyl VIP and SVIP at their own proportions.
+                        .height(theme::TEXT_SIZE_BODY_LARGE + 2.0)
+                        .content_fit(ContentFit::Contain)
+                        .into()
+                })
+                .unwrap_or_else(|| Space::new().width(0).into());
 
             column![
                 setting_row(

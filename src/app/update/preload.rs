@@ -194,9 +194,14 @@ impl App {
     pub fn handle_preload(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
             // Preload ready message
-            Message::PreloadReady(idx, file_path, direction, identity) => {
-                self.handle_preload_complete(*idx, file_path.clone(), *direction, identity.clone())
-            }
+            Message::PreloadReady(idx, file_path, direction, quality, identity) => self
+                .handle_preload_complete(
+                    *idx,
+                    file_path.clone(),
+                    *direction,
+                    quality.clone(),
+                    identity.clone(),
+                ),
 
             // Preload ready with SharedBuffer for streaming playback
             Message::PreloadBufferReady(
@@ -205,6 +210,7 @@ impl App {
                 direction,
                 buffer,
                 duration_secs,
+                quality,
                 identity,
             ) => self.handle_preload_buffer_ready(
                 *idx,
@@ -212,6 +218,7 @@ impl App {
                 *direction,
                 buffer.clone(),
                 *duration_secs,
+                quality.clone(),
                 identity.clone(),
             ),
 
@@ -290,6 +297,7 @@ impl App {
         idx: usize,
         file_path: String,
         direction: PreloadDirection,
+        quality: Option<super::song_resolver::ResolvedAudioQuality>,
         request_identity: PreloadIdentity,
     ) -> Option<Task<Message>> {
         if !self.playback.audio_preload_manager.has_pending_request(
@@ -325,6 +333,9 @@ impl App {
         ) {
             self.release_preload_request(identity);
             return Some(Task::none());
+        }
+        if let Some(slot) = self.playback.audio_preload_manager.slot_mut(direction) {
+            slot.quality = quality;
         }
         if self
             .create_preload_sink_for_file(identity.clone(), PathBuf::from(&file_path), track_gain)
@@ -364,6 +375,7 @@ impl App {
         direction: PreloadDirection,
         buffer: crate::audio::SharedBuffer,
         duration_secs: u64,
+        quality: Option<super::song_resolver::ResolvedAudioQuality>,
         request_identity: PreloadIdentity,
     ) -> Option<Task<Message>> {
         if !self.playback.audio_preload_manager.has_pending_request(
@@ -402,6 +414,9 @@ impl App {
             self.release_preload_request(identity);
             buffer.cancel();
             return Some(Task::none());
+        }
+        if let Some(slot) = self.playback.audio_preload_manager.slot_mut(direction) {
+            slot.quality = quality;
         }
         if self
             .create_preload_sink_for_stream(
@@ -457,6 +472,7 @@ impl App {
         {
             let path = slot.path.clone();
             let buffer = slot.take_buffer();
+            self.playback.current_quality = slot.quality.take();
             tracing::info!(
                 "Using {} preloaded track: idx={}, identity={:?}, path={:?}, streaming_buffer={}",
                 direction,

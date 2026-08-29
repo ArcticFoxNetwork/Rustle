@@ -1392,21 +1392,19 @@ impl App {
                     super::song_resolver::resolve_song(client, &song, resolve_context, event_tx)
                         .await
                         .map(|resolved| (idx, resolved))
+                        .map_err(|error| error.to_string())
                 },
-                move |result| {
-                    if let Some((idx, resolved)) = result {
-                        Message::SongResolvedStreaming(
-                            idx,
-                            resolved.finalized_cache_path,
-                            resolved.cover_path,
-                            resolved.shared_buffer,
-                            resolved.duration_secs,
-                            resolved.quality,
-                            message_context.clone(),
-                        )
-                    } else {
-                        Message::SongResolveFailed(message_context.clone())
-                    }
+                move |result| match result {
+                    Ok((idx, resolved)) => Message::SongResolvedStreaming(
+                        idx,
+                        resolved.finalized_cache_path,
+                        resolved.cover_path,
+                        resolved.shared_buffer,
+                        resolved.duration_secs,
+                        resolved.quality,
+                        message_context.clone(),
+                    ),
+                    Err(error) => Message::SongResolveFailed(message_context.clone(), error),
                 },
             );
 

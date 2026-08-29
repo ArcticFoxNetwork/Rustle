@@ -78,6 +78,7 @@ pub struct AudioPreloadSlot {
     pub pending_request_id: Option<PreloadIdentity>,
     pub duration: Duration,
     pub buffer: Option<SharedBuffer>,
+    pub quality: Option<super::song_resolver::ResolvedAudioQuality>,
 }
 
 impl std::fmt::Debug for AudioPreloadSlot {
@@ -90,6 +91,7 @@ impl std::fmt::Debug for AudioPreloadSlot {
             .field("pending_request_id", &self.pending_request_id)
             .field("duration", &self.duration)
             .field("has_buffer", &self.buffer.is_some())
+            .field("quality", &self.quality)
             .finish()
     }
 }
@@ -104,6 +106,7 @@ impl AudioPreloadSlot {
             pending_request_id: None,
             duration: Duration::ZERO,
             buffer: None,
+            quality: None,
         }
     }
 
@@ -405,11 +408,9 @@ async fn download_audio_streaming(
     }
 
     let requested_level = client.current_quality_level();
-    let song_stem = format!("{}_{}", ncm_id, requested_level.api_level());
+    let requested_stem = format!("{}_{}", ncm_id, requested_level.api_level());
 
-    if let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &song_stem)
-        .or_else(|| crate::utils::find_cached_audio(&song_cache_dir, &ncm_id.to_string()))
-    {
+    if let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &requested_stem) {
         let file_size = std::fs::metadata(&cached_path)
             .map(|m| m.len())
             .unwrap_or(0);
@@ -426,6 +427,21 @@ async fn download_audio_streaming(
                 idx,
                 cached_path.to_string_lossy().to_string(),
                 direction,
+                Some(super::song_resolver::ResolvedAudioQuality {
+                    requested: requested_level,
+                    actual: requested_level,
+                    bitrate: None,
+                    size: Some(file_size),
+                    format: cached_path
+                        .extension()
+                        .and_then(|value| value.to_str())
+                        .map(ToString::to_string),
+                    sample_rate: None,
+                    bit_depth: None,
+                    channels: None,
+                    channel_layout: None,
+                    immerse_type: None,
+                }),
                 identity,
             );
         }
@@ -445,9 +461,28 @@ async fn download_audio_streaming(
         }
     };
 
+    let quality = super::song_resolver::ResolvedAudioQuality::from(&url);
+    let actual_stem = format!("{}_{}", ncm_id, url.level.api_level());
+    if actual_stem != requested_stem
+        && let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &actual_stem)
+    {
+        let file_size = std::fs::metadata(&cached_path)
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        let expected_min_size = estimate_size_from_duration(song.duration_secs as u64);
+        if file_size > 0 && file_size >= expected_min_size * 8 / 10 {
+            return Message::PreloadReady(
+                idx,
+                cached_path.to_string_lossy().to_string(),
+                direction,
+                Some(quality),
+                identity,
+            );
+        }
+        let _ = std::fs::remove_file(cached_path);
+    }
+    let cache_path = song_cache_dir.join(actual_stem);
     let song_url = url.url;
-
-    let cache_path = song_cache_dir.join(&song_stem);
 
     let streaming_identity = StreamingIdentity::Preload(identity.clone());
     let shared_buffer = start_buffer_download(song_url, cache_path, streaming_identity, None);
@@ -467,6 +502,7 @@ async fn download_audio_streaming(
             direction,
             shared_buffer,
             song.duration_secs as u64,
+            Some(quality),
             identity,
         )
     } else {

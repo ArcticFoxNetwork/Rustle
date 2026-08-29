@@ -31,7 +31,7 @@ pub enum ImageKind {
     RadioCover,
     /// User avatar (identified by user id)
     UserAvatar,
-    /// API-provided membership badge (identified by user id)
+    /// API-provided membership badge (identified by a tier-aware badge key)
     VipBadge,
     /// Homepage carousel banner (identified by banner index / target id)
     Banner,
@@ -83,6 +83,51 @@ pub fn song_cover_key(song_id: i64) -> Option<(ImageKind, u64)> {
         u64::try_from(song_id)
             .ok()
             .map(|id| (ImageKind::LocalSongCover, id))
+    }
+}
+
+/// Cache identity for a membership badge. User, semantic tier, and icon URL
+/// are all part of the key so Black Vinyl VIP and SVIP cannot share imagery,
+/// even when the API returns the same URL. FNV-1a keeps the key deterministic
+/// across application restarts.
+pub fn vip_badge_key(user_id: u64, tier: crate::api::VipTier, icon_url: &str) -> u64 {
+    // Version 2 stores the original horizontal API image instead of the old
+    // square CDN derivative. Keep the processing version in the identity so
+    // an already-cached distorted badge cannot survive the behavior change.
+    const CACHE_VERSION: u8 = 2;
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in user_id
+        .to_le_bytes()
+        .into_iter()
+        .chain([tier.cache_discriminant(), CACHE_VERSION])
+        .chain([0xff])
+        .chain(icon_url.as_bytes().iter().copied())
+    {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+#[cfg(test)]
+mod tests {
+    use super::vip_badge_key;
+    use crate::api::VipTier;
+
+    #[test]
+    fn vip_badge_key_includes_membership_tier() {
+        assert_ne!(
+            vip_badge_key(42, VipTier::BlackVinylVip, "https://vip/icon.png"),
+            vip_badge_key(42, VipTier::Svip, "https://vip/icon.png")
+        );
+        assert_ne!(
+            vip_badge_key(42, VipTier::None, "https://vip/icon.png"),
+            vip_badge_key(42, VipTier::BlackVinylVip, "https://vip/icon.png")
+        );
+        assert_ne!(
+            vip_badge_key(42, VipTier::Svip, "https://vip/svip-a.png"),
+            vip_badge_key(42, VipTier::Svip, "https://vip/svip-b.png")
+        );
     }
 }
 

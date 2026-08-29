@@ -82,11 +82,15 @@ impl App {
                     login_info.user_id,
                     &login_info.avatar_url,
                 ));
-                if !login_info.vip.icon_url.is_empty() {
+                if let Some(icon_url) = login_info.vip.badge_url() {
                     refs.push(RemoteImage::global(
                         ImageKind::VipBadge,
-                        login_info.user_id,
-                        &login_info.vip.icon_url,
+                        crate::image::vip_badge_key(
+                            login_info.user_id,
+                            login_info.vip.tier(),
+                            icon_url,
+                        ),
+                        icon_url,
                     ));
                 }
             }
@@ -97,8 +101,7 @@ impl App {
                     RemoteImage::new(ImageKind::Banner, index as u64, &banner.image_url)
                 }));
             }
-            Message::TopPicksLoaded(playlists)
-                | Message::UserPlaylistsLoaded(playlists)
+            Message::TopPicksLoaded(playlists) | Message::UserPlaylistsLoaded(playlists)
                 if matches!(self.ui.current_route, Route::Home | Route::Radio) =>
             {
                 refs.extend(remote_playlist_covers(playlists));
@@ -118,8 +121,7 @@ impl App {
             {
                 refs.extend(remote_track_covers(songs));
             }
-            Message::AddNcmPlaylist(songs, _)
-            | Message::AddNcmPlaylistWithSource(songs, _, _) => {
+            Message::AddNcmPlaylist(songs, _) | Message::AddNcmPlaylistWithSource(songs, _, _) => {
                 refs.extend(remote_track_covers(songs));
             }
             Message::PlayNcmSong(song) => {
@@ -207,8 +209,7 @@ impl App {
                     ));
                 }
             }
-            Message::AlbumDetailLoaded(detail)
-                if matches!(self.ui.current_route, Route::Album(id) if id == detail.id) =>
+            Message::AlbumDetailLoaded(detail) if matches!(self.ui.current_route, Route::Album(id) if id == detail.id) =>
             {
                 refs.push(RemoteImage::new(
                     ImageKind::AlbumCover,
@@ -223,8 +224,7 @@ impl App {
                     ));
                 }
             }
-            Message::ArtistDetailLoaded(detail)
-                if matches!(self.ui.current_route, Route::Artist(id) if id == detail.id) =>
+            Message::ArtistDetailLoaded(detail) if matches!(self.ui.current_route, Route::Artist(id) if id == detail.id) =>
             {
                 refs.push(RemoteImage::new(
                     ImageKind::ArtistCover,
@@ -232,13 +232,11 @@ impl App {
                     &detail.image_url,
                 ));
             }
-            Message::ArtistAlbumsLoaded(artist_id, albums)
-                if matches!(self.ui.current_route, Route::Artist(id) if u64::try_from(*artist_id).ok() == Some(id)) =>
+            Message::ArtistAlbumsLoaded(artist_id, albums) if matches!(self.ui.current_route, Route::Artist(id) if u64::try_from(*artist_id).ok() == Some(id)) =>
             {
                 refs.extend(remote_album_covers(albums));
             }
-            Message::UserPageDetailLoaded(page_id, detail)
-                if matches!(self.ui.current_route, Route::User(id) if u64::try_from(*page_id).ok() == Some(id)) =>
+            Message::UserPageDetailLoaded(page_id, detail) if matches!(self.ui.current_route, Route::User(id) if u64::try_from(*page_id).ok() == Some(id)) =>
             {
                 refs.push(RemoteImage::new(
                     ImageKind::UserAvatar,
@@ -253,8 +251,7 @@ impl App {
                     ));
                 }
             }
-            Message::UserPagePlaylistsLoaded(page_id, playlists)
-                if matches!(self.ui.current_route, Route::User(id) if u64::try_from(*page_id).ok() == Some(id)) =>
+            Message::UserPagePlaylistsLoaded(page_id, playlists) if matches!(self.ui.current_route, Route::User(id) if u64::try_from(*page_id).ok() == Some(id)) =>
             {
                 refs.extend(remote_playlist_covers(playlists));
             }
@@ -292,12 +289,7 @@ impl App {
         let mut tasks = refs
             .into_iter()
             .map(|image| {
-                self.enqueue_image_download_scoped(
-                    image.kind,
-                    image.id,
-                    &image.url,
-                    image.scope,
-                )
+                self.enqueue_image_download_scoped(image.kind, image.id, &image.url, image.scope)
             })
             .collect::<Vec<_>>();
         tasks.push(self.pump_image_downloads());
@@ -411,12 +403,9 @@ impl App {
         if scope == ImageRequestScope::Page {
             self.ui.image_state.enqueue(kind, id, url.to_string());
         } else {
-            self.ui.image_state.enqueue_with_scope(
-                kind,
-                id,
-                url.to_string(),
-                scope,
-            );
+            self.ui
+                .image_state
+                .enqueue_with_scope(kind, id, url.to_string(), scope);
         }
         Task::none()
     }
@@ -674,17 +663,22 @@ fn start_image_download(
         generation,
         scope,
     } = request;
-    let (width, height): (u16, u16) = match kind {
-        ImageKind::Banner => (800, 280),
-        ImageKind::SongCover | ImageKind::LocalSongCover => (200, 200),
-        ImageKind::UserAvatar | ImageKind::VipBadge => (200, 200),
-        _ => (300, 300),
+    let resize = match kind {
+        // Membership artwork is already a compact horizontal badge. Asking
+        // the CDN for a square derivative changes its composition and makes
+        // the visible mark look much smaller inside a contain-fit widget.
+        ImageKind::VipBadge => None,
+        ImageKind::Banner => Some((800, 280)),
+        ImageKind::SongCover | ImageKind::LocalSongCover | ImageKind::UserAvatar => {
+            Some((200, 200))
+        }
+        _ => Some((300, 300)),
     };
 
     Task::perform(
         async move {
             let base_path = kind.cache_dir().join(format!("{}.jpg", kind.file_stem(id)));
-            crate::utils::download_img(&client, &url, base_path, width, height)
+            crate::utils::download_img(&client, &url, base_path, resize)
                 .await
                 .map(|path| ImageResult { kind, id, path })
         },

@@ -9,5 +9,5 @@ pub use ncm::{
     AlbumDetail, AlbumSummary, ArtistDetail, ArtistSummary, Banner, BannerTarget, LoginInfo,
     NcmClient, NcmQualityLevel, PlaylistDetail, PlaylistSummary, RadioSummary, SearchType,
     SongQualityDetail, SongQualityOption, Track, TrackAvailability, TrackUrl, UserDetail,
-    UserSummary, VideoSummary, VipInfo,
+    UserSummary, VideoSummary, VipInfo, VipTier,
 };

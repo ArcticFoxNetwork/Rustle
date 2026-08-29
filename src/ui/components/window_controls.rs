@@ -127,18 +127,17 @@ pub fn view<'a>(
 
     let user_text: Element<'_, Message> = if is_logged_in {
         if let Some(info) = user_info {
-            if info.vip.is_vip() {
-                let vip_badge: Element<'static, Message> = image_state
-                    .get(ImageKind::VipBadge, info.user_id)
-                    .cloned()
-                    .map(|handle| {
-                        image(handle)
-                            .width(18)
-                            .height(18)
-                            .content_fit(ContentFit::Contain)
-                            .into()
-                    })
-                    .unwrap_or_else(|| Space::new().width(0).into());
+            if let Some(icon_url) = info.vip.badge_url()
+                && let Some(handle) = image_state.get(
+                    ImageKind::VipBadge,
+                    crate::image::vip_badge_key(info.user_id, info.vip.tier(), icon_url),
+                )
+            {
+                let vip_badge = image(handle.clone())
+                    // Match the adjacent 16px nickname. Width remains Shrink,
+                    // so Iced derives it from the official image aspect ratio.
+                    .height(theme::TEXT_SIZE_BODY_LARGE)
+                    .content_fit(ContentFit::Contain);
                 row![
                     text(info.nickname.clone())
                         .size(theme::TEXT_SIZE_BODY_LARGE)
@@ -148,12 +147,6 @@ pub fn view<'a>(
                         }),
                     Space::new().width(6),
                     vip_badge,
-                    Space::new().width(4),
-                    text(info.membership_label())
-                        .size(theme::TEXT_SIZE_BODY_LARGE)
-                        .style(|_theme| text::Style {
-                            color: Some(theme::ACCENT_PINK)
-                        }),
                 ]
                 .align_y(Alignment::Center)
                 .into()

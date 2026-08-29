@@ -433,7 +433,8 @@ impl App {
                 .find(|s| s.id == ncm_id)
             {
                 let mut song = Self::ncm_track_to_db_song(info);
-                // Try download dir first, then streaming cache dir
+                // Only downloaded files are treated as local paths. The
+                // quality-scoped streaming cache is not a stable file source.
                 let dl =
                     crate::features::settings::StorageSettings::default().effective_download_dir();
                 let stem = format!(
@@ -446,11 +447,6 @@ impl App {
                     .map(|e| dl.join(format!("{}.{}", stem, e)))
                     .find(|p| p.exists())
                 {
-                    song.file_path = p.to_string_lossy().to_string();
-                } else if let Some(p) = crate::utils::find_cached_audio(
-                    &crate::utils::songs_cache_dir(),
-                    &ncm_id.to_string(),
-                ) {
                     song.file_path = p.to_string_lossy().to_string();
                 }
                 return Some(song);

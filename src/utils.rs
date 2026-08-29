@@ -401,8 +401,7 @@ pub async fn download_img(
     client: &crate::api::NcmClient,
     url: &str,
     base_path: PathBuf,
-    width: u16,
-    height: u16,
+    resize: Option<(u16, u16)>,
 ) -> Option<PathBuf> {
     // Ensure parent directory exists
     if let Some(parent) = base_path.parent()
@@ -424,10 +423,7 @@ pub async fn download_img(
     // Download to a temporary path first to detect format
     let temp_path = parent.join(format!("{}.tmp", stem));
 
-    match client
-        .download_img(url, temp_path.clone(), width, height)
-        .await
-    {
+    match client.download_img(url, temp_path.clone(), resize).await {
         Ok(_) => {
             // Read the file to detect format
             match std::fs::read(&temp_path) {
@@ -497,8 +493,6 @@ pub fn format_time_padded(seconds: f32) -> String {
 pub enum Source {
     /// Local file with absolute path that exists on disk (imported or downloaded)
     Local,
-    /// NCM song cached in cache directory from streaming playback
-    Cached,
     /// NCM song only available online (not downloaded or cached)
     Online,
 }
@@ -507,9 +501,8 @@ pub enum Source {
 ///
 /// Checks in order:
 /// 1. Absolute path exists on disk → Local
-/// 2. NCM song with cached audio in streaming cache → Cached
-/// 3. NCM song with downloaded file in download dir → Local
-/// 4. Otherwise → Online
+/// 2. NCM song with downloaded file in download dir → Local
+/// 3. Otherwise → Online
 pub fn compute_source(
     file_path: &str,
     song_id: i64,
@@ -521,8 +514,8 @@ pub fn compute_source(
         return Source::Local;
     }
     if song_id < 0 {
-        let ncm_id = (-song_id) as u64;
-        // Downloaded file takes priority over streaming cache
+        // Downloaded file is local; quality-scoped streaming cache is not
+        // sufficient to classify a song without the requested quality.
         if let (Some(a), Some(t)) = (artist, title) {
             let dl = crate::features::settings::StorageSettings::default().effective_download_dir();
             let stem = format!("{} - {}", sanitize_filename(a), sanitize_filename(t));
@@ -533,9 +526,6 @@ pub fn compute_source(
             {
                 return Source::Local;
             }
-        }
-        if find_cached_audio(&songs_cache_dir(), &ncm_id.to_string()).is_some() {
-            return Source::Cached;
         }
     }
     Source::Online

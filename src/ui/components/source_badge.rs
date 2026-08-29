@@ -10,14 +10,12 @@ use crate::utils::Source;
 
 /// Colors for source badges
 const EMERALD_400: Color = Color::from_rgb(52.0 / 255.0, 211.0 / 255.0, 153.0 / 255.0);
-const BLUE_400: Color = Color::from_rgb(96.0 / 255.0, 165.0 / 255.0, 250.0 / 255.0);
 const PURPLE_400: Color = Color::from_rgb(192.0 / 255.0, 132.0 / 255.0, 252.0 / 255.0);
 
 /// Build a source badge element (icon + label)
 pub fn source_badge(source: Source) -> Element<'static, Message> {
     let (icon_data, label, color) = match source {
         Source::Local => (crate::ui::icons::HARD_DRIVE, "本地", EMERALD_400),
-        Source::Cached => (crate::ui::icons::DOWNLOAD_CLOUD, "缓存", BLUE_400),
         Source::Online => (crate::ui::icons::CLOUD, "在线", PURPLE_400),
     };
 

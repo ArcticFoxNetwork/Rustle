@@ -227,7 +227,7 @@ pub enum Message {
     /// (queue_index, resolved_result, saved_position_secs, playback_context)
     SongResolvedForRestore(
         usize,
-        Option<crate::app::update::song_resolver::ResolvedSong>,
+        Result<crate::app::update::song_resolver::ResolvedSong, String>,
         f64,
         PlaybackContext,
     ),
@@ -400,7 +400,13 @@ pub enum Message {
     /// Cycle to next play mode
     CyclePlayMode,
     /// Audio preload ready (local file cached) - (queue_index, file_path, direction)
-    PreloadReady(usize, String, PreloadDirection, PreloadIdentity),
+    PreloadReady(
+        usize,
+        String,
+        PreloadDirection,
+        Option<crate::app::update::song_resolver::ResolvedAudioQuality>,
+        PreloadIdentity,
+    ),
     /// Audio preload ready with SharedBuffer for streaming playback
     /// (queue_index, finalized_cache_path, direction, shared_buffer, duration_secs, identity)
     /// `None` means the track is still ring-buffer backed.
@@ -410,6 +416,7 @@ pub enum Message {
         PreloadDirection,
         crate::audio::SharedBuffer,
         u64,
+        Option<crate::app::update::song_resolver::ResolvedAudioQuality>,
         PreloadIdentity,
     ),
     /// Audio preload failed - (queue_index, direction, identity)
@@ -430,8 +437,8 @@ pub enum Message {
         Option<crate::app::update::song_resolver::ResolvedAudioQuality>,
         PlaybackContext,
     ),
-    /// Song resolution failed
-    SongResolveFailed(PlaybackContext),
+    /// Song resolution failed (playback context, explicit reason)
+    SongResolveFailed(PlaybackContext, String),
     /// Remove song from queue by index
     RemoveFromQueue(usize),
     /// Clear the entire queue
@@ -619,7 +626,12 @@ pub enum Message {
         PathBuf,
     ),
     /// Image download failed and should be eligible for retry (generation, scope, kind, id)
-    ImageDownloadFailed(u64, crate::app::state::ImageRequestScope, crate::image::ImageKind, u64),
+    ImageDownloadFailed(
+        u64,
+        crate::app::state::ImageRequestScope,
+        crate::image::ImageKind,
+        u64,
+    ),
     /// Image references entering a virtual list's visible/overscan range.
     ImageViewportChanged(u64, Vec<(crate::image::ImageKind, u64, String)>),
 
@@ -822,7 +834,7 @@ impl std::fmt::Debug for Message {
                     "SongResolvedForRestore",
                     "idx={}, resolved={}, pos={:.1}s, generation={}",
                     idx,
-                    result.is_some(),
+                    result.is_ok(),
                     pos,
                     context.generation.0
                 )
@@ -1122,10 +1134,10 @@ impl std::fmt::Debug for Message {
             Self::SetVolume(v) => simple!("SetVolume", "{:.2}", v),
             Self::ToggleQueue => simple!("ToggleQueue"),
             Self::CyclePlayMode => simple!("CyclePlayMode"),
-            Self::PreloadReady(idx, _, direction, _) => {
+            Self::PreloadReady(idx, _, direction, _, _) => {
                 simple!("PreloadReady", "idx={}, direction={}", idx, direction)
             }
-            Self::PreloadBufferReady(idx, _, direction, buffer, duration, _) => {
+            Self::PreloadBufferReady(idx, _, direction, buffer, duration, _, _) => {
                 simple!(
                     "PreloadBufferReady",
                     "idx={}, direction={}, downloaded={}, duration={}s",
@@ -1150,7 +1162,7 @@ impl std::fmt::Debug for Message {
                     buffer.is_some()
                 )
             }
-            Self::SongResolveFailed(_) => simple!("SongResolveFailed"),
+            Self::SongResolveFailed(_, reason) => simple!("SongResolveFailed", "{}", reason),
             Self::RemoveFromQueue(i) => simple!("RemoveFromQueue", "{}", i),
             Self::ClearQueue => simple!("ClearQueue"),
 

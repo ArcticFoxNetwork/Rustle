@@ -243,9 +243,10 @@ impl App {
 
         // Convert to unified metadata once — no manual field extraction
         let meta = SongMetadata::from(&info);
-        let quality = crate::api::NcmQualityLevel::from_legacy_rate(
+        let quality = crate::api::NcmQualityLevel::from_api_rate(
             self.core.settings.storage.download_quality.to_api_rate(),
-        );
+        )
+        .expect("download quality setting must map to a canonical NCM level");
 
         info!(
             "Fetching download URL for: {} - {} (ncm_id={})",
@@ -254,21 +255,13 @@ impl App {
 
         let url_task = Task::perform(
             async move {
-                match client.track_urls_for_level(&[ncm_id], quality).await {
-                    Ok(urls) => urls
-                        .first()
-                        .and_then(|u| {
-                            if u.url.is_empty() {
-                                None
-                            } else {
-                                Some(u.url.clone())
-                            }
-                        })
-                        .unwrap_or_default(),
+                match client.resolve_track_url(ncm_id, quality).await {
+                    Ok(url) if !url.url.is_empty() => url.url,
                     Err(e) => {
                         tracing::error!("Failed to get song URL for {}: {}", ncm_id, e);
                         String::new()
                     }
+                    _ => String::new(),
                 }
             },
             move |url| {
@@ -323,9 +316,10 @@ impl App {
         };
 
         let client = self.core.ncm_client.clone()?;
-        let quality = crate::api::NcmQualityLevel::from_legacy_rate(
+        let quality = crate::api::NcmQualityLevel::from_api_rate(
             self.core.settings.storage.download_quality.to_api_rate(),
-        );
+        )
+        .expect("download quality setting must map to a canonical NCM level");
         let all_ids: Vec<u64> = tracks.iter().map(|s| s.id).collect();
         let song_data: Vec<(i64, u64, SongMetadata)> = tracks
             .iter()
@@ -334,7 +328,7 @@ impl App {
 
         Some(Task::perform(
             async move {
-                match client.track_urls_for_level(&all_ids, quality).await {
+                match client.resolve_track_urls(&all_ids, quality).await {
                     Ok(urls) => {
                         let url_map: Vec<(u64, String)> = urls
                             .into_iter()

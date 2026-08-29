@@ -132,9 +132,7 @@ impl ImageState {
     ) -> bool {
         self.inflight
             .get(&(kind, id))
-            .is_some_and(|request| {
-                request.generation == generation && request.scope == scope
-            })
+            .is_some_and(|request| request.generation == generation && request.scope == scope)
     }
 
     pub fn is_inflight(&self, kind: crate::image::ImageKind, id: u64) -> bool {
@@ -190,15 +188,14 @@ impl ImageState {
         handle: iced::task::Handle,
     ) {
         self.queued.remove(&(kind, id));
-        self.inflight
-            .insert(
-                (kind, id),
-                ImageInFlight {
-                    generation,
-                    handle,
-                    scope,
-                },
-            );
+        self.inflight.insert(
+            (kind, id),
+            ImageInFlight {
+                generation,
+                handle,
+                scope,
+            },
+        );
     }
 
     /// Cancel requests owned by the previous virtual-list range while leaving
@@ -279,22 +276,12 @@ mod image_state_tests {
             handle,
         );
 
-        assert!(state.is_current_inflight(
-            request.kind,
-            request.id,
-            0,
-            request.scope
-        ));
+        assert!(state.is_current_inflight(request.kind, request.id, 0, request.scope));
         state.cancel_pending_and_inflight();
 
         assert!(observer.is_aborted());
         assert_eq!(state.generation, 1);
-        assert!(!state.is_current_inflight(
-            request.kind,
-            request.id,
-            0,
-            request.scope
-        ));
+        assert!(!state.is_current_inflight(request.kind, request.id, 0, request.scope));
     }
 
     #[test]
@@ -332,12 +319,7 @@ mod image_state_tests {
         state.cancel_pending_and_inflight();
 
         assert!(!observer.is_aborted());
-        assert!(state.is_current_inflight(
-            key.0,
-            key.1,
-            0,
-            ImageRequestScope::Global,
-        ));
+        assert!(state.is_current_inflight(key.0, key.1, 0, ImageRequestScope::Global,));
     }
 
     #[test]
@@ -395,7 +377,10 @@ mod image_state_tests {
             ImageRequestScope::Viewport,
         ));
         assert_eq!(
-            state.pop_pending().expect("replacement viewport request").generation,
+            state
+                .pop_pending()
+                .expect("replacement viewport request")
+                .generation,
             1
         );
     }
@@ -1159,10 +1144,6 @@ impl UserInfo {
             like_songs: HashSet::new(),
         }
     }
-
-    pub fn membership_label(&self) -> String {
-        self.vip.display_label()
-    }
 }
 
 /// Business Logic Data
@@ -1191,8 +1172,7 @@ pub struct PlaybackSessionState {
     /// Current playing song's artist id when available from NCM metadata.
     pub current_artist_id: Option<u64>,
     /// Requested and actual NCM quality for the current playback generation.
-    pub current_quality:
-        Option<crate::app::update::song_resolver::ResolvedAudioQuality>,
+    pub current_quality: Option<crate::app::update::song_resolver::ResolvedAudioQuality>,
     /// Last saved playback snapshot loaded from the database.
     pub saved_state: Option<DbPlaybackState>,
     /// Active playback queue.

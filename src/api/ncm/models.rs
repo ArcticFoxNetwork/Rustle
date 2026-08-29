@@ -36,27 +36,48 @@ pub struct VipInfo {
     pub vip_type: i32,
     pub red_vip_level: u32,
     pub annual_count: u32,
-    pub icon_url: String,
+    /// The Black Vinyl VIP badge returned by the membership endpoint.
+    #[serde(default)]
+    pub black_vinyl_icon_url: String,
+    /// The SVIP/redplus badge returned by the membership endpoint.
+    #[serde(default)]
+    pub svip_icon_url: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub enum VipTier {
+    None,
+    BlackVinylVip,
+    Svip,
 }
 
 impl VipInfo {
-    pub fn is_vip(&self) -> bool {
-        self.vip_type > 0 || self.red_vip_level > 0
+    pub fn tier(&self) -> VipTier {
+        if self.vip_type >= 11 {
+            VipTier::Svip
+        } else if self.vip_type > 0 || self.red_vip_level > 0 {
+            VipTier::BlackVinylVip
+        } else {
+            VipTier::None
+        }
     }
 
-    pub fn is_annual(&self) -> bool {
-        self.annual_count > 0
+    pub fn badge_url(&self) -> Option<&str> {
+        let url: &str = match self.tier() {
+            VipTier::None => "",
+            VipTier::BlackVinylVip => self.black_vinyl_icon_url.as_str(),
+            VipTier::Svip => self.svip_icon_url.as_str(),
+        };
+        (!url.is_empty()).then_some(url)
     }
 
-    pub fn display_label(&self) -> String {
-        if !self.is_vip() {
-            return "普通用户".to_string();
-        }
-        if self.red_vip_level > 0 {
-            let annual = if self.is_annual() { " 年费" } else { "" };
-            return format!("黑胶 VIP Lv.{}{}", self.red_vip_level, annual);
-        }
-        "黑胶 VIP".to_string()
+    /// Remove all badge URLs when the authoritative membership projection is
+    /// unavailable. Tier metadata remains useful, but no legacy image may be
+    /// rendered as a fallback.
+    pub fn without_badges(mut self) -> Self {
+        self.black_vinyl_icon_url.clear();
+        self.svip_icon_url.clear();
+        self
     }
 }
 
@@ -73,6 +94,7 @@ pub enum NcmQualityLevel {
     ExHigh,
     Lossless,
     HiRes,
+    #[serde(rename = "jyeffect")]
     JvEffect,
     Sky,
     Dolby,
@@ -107,23 +129,39 @@ impl NcmQualityLevel {
         }
     }
 
-    pub fn from_api_level(value: &str) -> Option<Self> {
-        match value.trim().to_ascii_lowercase().as_str() {
-            "standard" => Some(Self::Standard),
-            "higher" => Some(Self::Higher),
-            "exhigh" | "high" => Some(Self::ExHigh),
-            "lossless" => Some(Self::Lossless),
-            "hires" | "hi-res" => Some(Self::HiRes),
-            "jyeffect" | "jvEffect" => Some(Self::JvEffect),
-            "sky" => Some(Self::Sky),
-            "dolby" => Some(Self::Dolby),
-            "jymaster" | "master" => Some(Self::JyMaster),
+    /// Parse only the documented compact fields from the quality-detail API.
+    pub fn from_api_field(value: &str) -> Option<Self> {
+        match value {
+            "l" => Some(Self::Standard),
+            "m" => Some(Self::Higher),
+            "h" => Some(Self::ExHigh),
+            "sq" => Some(Self::Lossless),
+            "hr" => Some(Self::HiRes),
+            "je" => Some(Self::JvEffect),
+            "sk" => Some(Self::Sky),
+            "db" => Some(Self::Dolby),
+            "jm" => Some(Self::JyMaster),
             _ => None,
         }
     }
 
-    pub fn from_legacy_rate(value: u32) -> Self {
+    pub fn from_api_level(value: &str) -> Option<Self> {
         match value {
+            "standard" => Some(Self::Standard),
+            "higher" => Some(Self::Higher),
+            "exhigh" => Some(Self::ExHigh),
+            "lossless" => Some(Self::Lossless),
+            "hires" => Some(Self::HiRes),
+            "jyeffect" => Some(Self::JvEffect),
+            "sky" => Some(Self::Sky),
+            "dolby" => Some(Self::Dolby),
+            "jymaster" => Some(Self::JyMaster),
+            _ => None,
+        }
+    }
+
+    pub fn from_api_rate(value: u32) -> Option<Self> {
+        Some(match value {
             0 => Self::Standard,
             1 => Self::Higher,
             2 => Self::ExHigh,
@@ -133,8 +171,8 @@ impl NcmQualityLevel {
             6 => Self::Sky,
             7 => Self::Dolby,
             8 => Self::JyMaster,
-            _ => Self::ExHigh,
-        }
+            _ => return None,
+        })
     }
 
     #[allow(dead_code)]
@@ -190,15 +228,21 @@ impl NcmQualityLevel {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 pub struct SongQualityOption {
     pub level: NcmQualityLevel,
     pub bitrate: Option<u32>,
     pub size: Option<u64>,
     pub format: Option<String>,
+    /// Source file identifier (`fid`) from `/song/music/detail/get`.
+    pub file_id: Option<u64>,
     pub sample_rate: Option<u32>,
     pub bit_depth: Option<u32>,
     pub channels: Option<u32>,
+    /// Loudness/volume delta (`vd`) when the API provides it.
+    pub volume_delta: Option<f64>,
+    /// Spatial codec/effect marker (`it`) for enhanced levels.
+    pub effect_type: Option<String>,
 }
 
 impl SongQualityOption {
@@ -215,7 +259,7 @@ impl SongQualityOption {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
 pub struct SongQualityDetail {
     pub song_id: u64,
     pub options: Vec<SongQualityOption>,
@@ -224,10 +268,75 @@ pub struct SongQualityDetail {
 
 impl SongQualityDetail {
     pub fn best_for(&self, requested: NcmQualityLevel) -> Option<&SongQualityOption> {
-        self.options
-            .iter()
-            .find(|option| option.level == requested)
-            .or_else(|| self.options.iter().max_by_key(|option| option.level.priority()))
+        self.options.iter().find(|option| option.level == requested)
+    }
+}
+
+impl VipTier {
+    pub fn cache_discriminant(self) -> u8 {
+        match self {
+            Self::None => 0,
+            Self::BlackVinylVip => 1,
+            Self::Svip => 2,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NcmQualityLevel, SongQualityDetail, SongQualityOption, VipInfo, VipTier};
+
+    #[test]
+    fn quality_level_parser_accepts_only_canonical_api_values() {
+        assert_eq!(
+            NcmQualityLevel::from_api_level("exhigh"),
+            Some(NcmQualityLevel::ExHigh)
+        );
+        assert_eq!(NcmQualityLevel::from_api_level("hi-res"), None);
+        assert_eq!(NcmQualityLevel::from_api_level(" HIGH "), None);
+        assert_eq!(NcmQualityLevel::from_api_level("master"), None);
+    }
+
+    #[test]
+    fn quality_detail_selection_is_exact_for_dolby_negotiation() {
+        let detail = SongQualityDetail {
+            song_id: 1,
+            options: vec![SongQualityOption {
+                level: NcmQualityLevel::ExHigh,
+                ..Default::default()
+            }],
+            highest_available: Some(NcmQualityLevel::ExHigh),
+        };
+        assert!(detail.best_for(NcmQualityLevel::Lossless).is_none());
+        assert_eq!(
+            detail.best_for(NcmQualityLevel::ExHigh).unwrap().level,
+            NcmQualityLevel::ExHigh
+        );
+    }
+
+    #[test]
+    fn vip_tiers_distinguish_black_vinyl_and_svip() {
+        assert_eq!(
+            VipInfo {
+                vip_type: 10,
+                ..Default::default()
+            }
+            .tier(),
+            VipTier::BlackVinylVip
+        );
+        assert_eq!(
+            VipInfo {
+                vip_type: 11,
+                ..Default::default()
+            }
+            .tier(),
+            VipTier::Svip
+        );
+        assert_eq!(VipInfo::default().tier(), VipTier::None);
+        assert_ne!(
+            VipTier::BlackVinylVip.cache_discriminant(),
+            VipTier::Svip.cache_discriminant()
+        );
     }
 }
 
@@ -457,6 +566,8 @@ pub struct TrackUrl {
     pub sample_rate: Option<u32>,
     pub bit_depth: Option<u32>,
     pub channels: Option<u32>,
+    pub channel_layout: Option<String>,
+    pub immerse_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

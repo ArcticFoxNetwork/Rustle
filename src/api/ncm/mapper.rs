@@ -75,12 +75,29 @@ fn normalized_https_url(value: &str) -> String {
     }
 }
 
+/// Normalize the CDN URL returned by NCM's playback endpoint before it is
+/// handed to the range streamer. These are URL identity rewrites only: the
+/// requested quality and the server-selected track are never changed.
+fn normalized_audio_url(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        return String::new();
+    }
+
+    let value = value
+        .strip_prefix("http://")
+        .map(|rest| format!("https://{rest}"))
+        .unwrap_or_else(|| value.to_string());
+
+    value
+        .replace("m804.music.126.net", "m801.music.126.net")
+        .replace("m704.music.126.net", "m701.music.126.net")
+}
+
 fn vip_info_from_nodes(profile: Option<&Value>, root: Option<&Value>) -> VipInfo {
     let root = root.unwrap_or(&Value::Null);
     let profile = profile.unwrap_or(root);
-    let rights = root
-        .get("vipRights")
-        .or_else(|| profile.get("vipRights"));
+    let rights = root.get("vipRights").or_else(|| profile.get("vipRights"));
     let associator = rights.and_then(|value| value.get("associator"));
 
     let vip_type = profile
@@ -103,20 +120,53 @@ fn vip_info_from_nodes(profile: Option<&Value>, root: Option<&Value>) -> VipInfo
         .or_else(|| profile.get("annualCount"))
         .and_then(as_u32)
         .unwrap_or_default();
-    let icon_url = associator
+    let black_vinyl_icon_url = associator
         .and_then(|value| value.get("iconUrl"))
         .or_else(|| profile.get("vipIconUrl"))
         .or_else(|| root.get("vipIconUrl"))
         .and_then(Value::as_str)
         .map(normalized_https_url)
         .unwrap_or_default();
-
     VipInfo {
         vip_type,
         red_vip_level,
         annual_count,
-        icon_url,
+        black_vinyl_icon_url,
+        svip_icon_url: String::new(),
     }
+}
+
+/// Merge the official membership image payload into the account projection.
+/// The front VIP endpoint is authoritative for badge imagery: associator is
+/// Black Vinyl VIP and redplus is SVIP. Missing imagery stays missing; no text
+/// or legacy URL is synthesized.
+pub fn merge_membership_vip(base: &VipInfo, value: &Value) -> Result<VipInfo> {
+    if !code_ok(value) {
+        return Err(anyhow!("VIP membership request failed"));
+    }
+    let data = value
+        .get("data")
+        .ok_or_else(|| anyhow!("VIP membership payload missing data"))?;
+    let icon_url = |section: &str| {
+        data.get(section)
+            .and_then(|node| node.get("iconUrl"))
+            .and_then(Value::as_str)
+            .map(normalized_https_url)
+            .unwrap_or_default()
+    };
+
+    let mut info = base.clone();
+    info.red_vip_level = data
+        .get("redVipLevel")
+        .and_then(as_u32)
+        .unwrap_or(info.red_vip_level);
+    info.annual_count = data
+        .get("redVipAnnualCount")
+        .and_then(as_u32)
+        .unwrap_or(info.annual_count);
+    info.black_vinyl_icon_url = icon_url("associator");
+    info.svip_icon_url = icon_url("redplus");
+    Ok(info)
 }
 
 fn timestamp_to_year(ts_ms: u64) -> Option<u32> {
@@ -161,22 +211,14 @@ fn user_summary_from_value(value: Option<&Value>) -> UserSummary {
         .unwrap_or_default()
 }
 
-fn quality_option_from_value(
-    level: NcmQualityLevel,
-    value: &Value,
-) -> Option<SongQualityOption> {
+fn quality_option_from_value(level: NcmQualityLevel, value: &Value) -> Option<SongQualityOption> {
     if value.is_null() || value.as_bool() == Some(false) {
         return None;
     }
 
-    let bitrate = value
-        .get("br")
-        .or_else(|| value.get("bitrate"))
-        .and_then(as_u32)
-        .filter(|value| *value > 0);
+    let bitrate = value.get("br").and_then(as_u32).filter(|value| *value > 0);
     let size = value
         .get("size")
-        .or_else(|| value.get("fileSize"))
         .and_then(as_u64)
         .filter(|value| *value > 0);
     if bitrate.is_none() && size.is_none() {
@@ -187,12 +229,9 @@ fn quality_option_from_value(
         level,
         bitrate,
         size,
-        format: optional_string(value, &["format", "type", "encodeType"]),
-        sample_rate: value
-            .get("sr")
-            .or_else(|| value.get("sampleRate"))
-            .and_then(as_u32)
-            .filter(|value| *value > 0),
+        format: optional_string(value, &["format"]),
+        file_id: value.get("fid").and_then(as_u64).filter(|value| *value > 0),
+        sample_rate: value.get("sr").and_then(as_u32).filter(|value| *value > 0),
         bit_depth: value
             .get("bitDepth")
             .or_else(|| value.get("depth"))
@@ -200,30 +239,21 @@ fn quality_option_from_value(
             .filter(|value| *value > 0),
         channels: value
             .get("channel")
-            .or_else(|| value.get("channels"))
-            .or_else(|| value.get("channelCount"))
             .and_then(as_u32)
             .filter(|value| *value > 0),
+        volume_delta: value.get("vd").and_then(Value::as_f64),
+        effect_type: optional_string(value, &["it"]),
     })
 }
 
 fn quality_options_from_object(value: &Value) -> Vec<SongQualityOption> {
-    let aliases = [
-        (NcmQualityLevel::Standard, &["standard", "l"][..]),
-        (NcmQualityLevel::Higher, &["higher", "m"][..]),
-        (NcmQualityLevel::ExHigh, &["exhigh", "h"][..]),
-        (NcmQualityLevel::Lossless, &["lossless", "sq"][..]),
-        (NcmQualityLevel::HiRes, &["hires", "hr"][..]),
-        (NcmQualityLevel::JvEffect, &["jyeffect"][..]),
-        (NcmQualityLevel::Sky, &["sky"][..]),
-        (NcmQualityLevel::Dolby, &["dolby"][..]),
-        (NcmQualityLevel::JyMaster, &["jymaster"][..]),
-    ];
-    let mut options = aliases
+    let fields = ["l", "m", "h", "sq", "hr", "je", "sk", "db", "jm"];
+    let mut options = fields
         .into_iter()
-        .filter_map(|(level, keys)| {
-            keys.iter()
-                .find_map(|key| value.get(*key))
+        .filter_map(|field| {
+            let level = NcmQualityLevel::from_api_field(field)?;
+            value
+                .get(field)
                 .and_then(|node| quality_option_from_value(level, node))
         })
         .collect::<Vec<_>>();
@@ -360,40 +390,35 @@ pub fn track_urls(value: &Value, requested_level: NcmQualityLevel) -> Result<Vec
         .into_iter()
         .flatten()
         .filter_map(|item| {
-            let url = item.get("url").and_then(Value::as_str).unwrap_or_default();
+            let id = item.get("id").and_then(as_u64)?;
+            let url = item
+                .get("url")
+                .and_then(Value::as_str)
+                .map(normalized_audio_url)
+                .unwrap_or_default();
+            let level = item
+                .get("level")
+                .and_then(Value::as_str)
+                .and_then(NcmQualityLevel::from_api_level)?;
             (!url.is_empty()).then(|| TrackUrl {
-                id: item.get("id").and_then(as_u64).unwrap_or_default(),
-                url: url.to_string(),
+                id,
+                url,
                 requested_level,
-                level: item
-                    .get("level")
-                    .and_then(Value::as_str)
-                    .and_then(NcmQualityLevel::from_api_level)
-                    .unwrap_or(requested_level),
-                rate: item
-                    .get("br")
-                    .or_else(|| item.get("rate"))
-                    .and_then(as_u32)
-                    .unwrap_or_default(),
-                size: item
-                    .get("size")
-                    .and_then(as_u64)
-                    .filter(|value| *value > 0),
-                format: optional_string(item, &["type", "format", "encodeType"]),
-                sample_rate: item
-                    .get("sr")
-                    .or_else(|| item.get("sampleRate"))
-                    .and_then(as_u32)
-                    .filter(|value| *value > 0),
+                level,
+                rate: item.get("br").and_then(as_u32).unwrap_or_default(),
+                size: item.get("size").and_then(as_u64).filter(|value| *value > 0),
+                format: optional_string(item, &["type"]),
+                sample_rate: item.get("sr").and_then(as_u32).filter(|value| *value > 0),
                 bit_depth: item
                     .get("bitDepth")
                     .and_then(as_u32)
                     .filter(|value| *value > 0),
                 channels: item
                     .get("channel")
-                    .or_else(|| item.get("channelCount"))
                     .and_then(as_u32)
                     .filter(|value| *value > 0),
+                channel_layout: optional_string(item, &["channelLayout"]),
+                immerse_type: optional_string(item, &["immerseType"]),
             })
         })
         .collect())
@@ -405,29 +430,6 @@ pub fn song_quality_detail(value: &Value, song_id: u64) -> Result<SongQualityDet
     }
     let data = value.get("data").unwrap_or(value);
     let mut options = quality_options_from_object(data);
-
-    if let Some(items) = data
-        .get("levels")
-        .or_else(|| data.get("qualities"))
-        .and_then(Value::as_array)
-    {
-        for item in items {
-            let Some(level) = item
-                .get("level")
-                .and_then(Value::as_str)
-                .and_then(NcmQualityLevel::from_api_level)
-            else {
-                continue;
-            };
-            if let Some(option) = quality_option_from_value(level, item)
-                && let Some(existing) = options.iter_mut().find(|entry| entry.level == level)
-            {
-                *existing = option;
-            } else if let Some(option) = quality_option_from_value(level, item) {
-                options.push(option);
-            }
-        }
-    }
 
     options.sort_by_key(|option| option.level.priority());
     options.dedup_by_key(|option| option.level);
@@ -516,10 +518,56 @@ mod lyric_tests {
     }
 }
 
+/// Parse the legacy `/song/url` response used by SPlayer for Dolby playback.
+/// The endpoint does not return a semantic quality level, so its requested
+/// Dolby level is also the server-declared actual level for this API path.
+pub fn legacy_track_urls(value: &Value, requested_level: NcmQualityLevel) -> Result<Vec<TrackUrl>> {
+    if !code_ok(value) {
+        return Err(anyhow!("legacy track url request failed"));
+    }
+    Ok(value
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| {
+            let id = item.get("id").and_then(as_u64)?;
+            let url = item
+                .get("url")
+                .and_then(Value::as_str)
+                .map(normalized_audio_url)
+                .unwrap_or_default();
+            (!url.is_empty()).then(|| TrackUrl {
+                id,
+                url,
+                requested_level,
+                level: requested_level,
+                rate: item.get("br").and_then(as_u32).unwrap_or_default(),
+                size: item.get("size").and_then(as_u64).filter(|value| *value > 0),
+                format: optional_string(item, &["type"]),
+                sample_rate: item.get("sr").and_then(as_u32).filter(|value| *value > 0),
+                bit_depth: item
+                    .get("bitDepth")
+                    .and_then(as_u32)
+                    .filter(|value| *value > 0),
+                channels: item
+                    .get("channel")
+                    .and_then(as_u32)
+                    .filter(|value| *value > 0),
+                channel_layout: optional_string(item, &["channelLayout"]),
+                immerse_type: optional_string(item, &["immerseType"]),
+            })
+        })
+        .collect())
+}
+
 #[cfg(test)]
 mod quality_tests {
-    use super::{login_info, song_quality_detail, track_urls};
-    use crate::api::ncm::models::NcmQualityLevel;
+    use super::{
+        legacy_track_urls, login_info, merge_membership_vip, normalized_audio_url,
+        song_quality_detail, track_urls,
+    };
+    use crate::api::ncm::models::{NcmQualityLevel, VipTier};
     use serde_json::json;
 
     #[test]
@@ -527,15 +575,15 @@ mod quality_tests {
         let value = json!({
             "code": 200,
             "data": {
-                "standard": {"br": 128000, "size": 1000},
-                "higher": {"br": 192000, "size": 2000},
-                "exhigh": {"br": 320000, "size": 3000},
-                "lossless": {"br": 999000, "size": 4000},
-                "hires": {"br": 1900000, "size": 5000},
-                "jyeffect": {"br": 2000000, "size": 6000},
-                "sky": {"br": 2100000, "size": 7000},
-                "dolby": {"br": 2200000, "size": 8000},
-                "jymaster": {"br": 2400000, "size": 9000}
+                "l": {"br": 128000, "size": 1000},
+                "m": {"br": 192000, "size": 2000},
+                "h": {"br": 320000, "size": 3000},
+                "sq": {"br": 999000, "size": 4000},
+                "hr": {"br": 1900000, "size": 5000},
+                "je": {"br": 2000000, "size": 6000},
+                "sk": {"br": 2100000, "size": 7000},
+                "db": {"br": 2200000, "size": 8000},
+                "jm": {"br": 2400000, "size": 9000}
             }
         });
         let detail = song_quality_detail(&value, 42).expect("quality detail");
@@ -551,13 +599,13 @@ mod quality_tests {
     }
 
     #[test]
-    fn ignores_empty_quality_and_preserves_server_downgrade() {
+    fn ignores_empty_quality_and_preserves_server_negotiation() {
         let detail = song_quality_detail(
             &json!({
                 "code": 200,
                 "data": {
-                    "lossless": {"br": 0, "size": 0},
-                    "exhigh": {"br": 320000, "size": 1234}
+                    "sq": {"br": 0, "size": 0},
+                    "h": {"br": 320000, "size": 1234}
                 }
             }),
             7,
@@ -573,8 +621,61 @@ mod quality_tests {
             NcmQualityLevel::Lossless,
         )
         .expect("url response");
+        assert_eq!(urls.len(), 1);
         assert_eq!(urls[0].requested_level, NcmQualityLevel::Lossless);
         assert_eq!(urls[0].level, NcmQualityLevel::ExHigh);
+
+        let non_wire_fields = song_quality_detail(
+            &json!({
+                "code": 200,
+                "data": {"lossless": {"br": 128000}, "master": {"br": 999000}}
+            }),
+            8,
+        )
+        .expect("quality detail");
+        assert!(non_wire_fields.options.is_empty());
+    }
+
+    #[test]
+    fn rejects_failed_quality_detail_and_unidentified_url() {
+        assert!(song_quality_detail(&json!({"code": 500}), 7).is_err());
+
+        let urls = track_urls(
+            &json!({
+                "code": 200,
+                "data": [{"url": "https://cdn/song.mp3", "level": "exhigh"}]
+            }),
+            NcmQualityLevel::ExHigh,
+        )
+        .expect("url response");
+        assert!(urls.is_empty());
+    }
+
+    #[test]
+    fn normalizes_ncm_stream_cdn_without_changing_quality_contract() {
+        assert_eq!(
+            normalized_audio_url("http://m804.music.126.net/path/file.flac?auth=1"),
+            "https://m801.music.126.net/path/file.flac?auth=1"
+        );
+        assert_eq!(
+            normalized_audio_url("https://m704.music.126.net/path/file.flac"),
+            "https://m701.music.126.net/path/file.flac"
+        );
+    }
+
+    #[test]
+    fn parses_legacy_dolby_urls_without_a_level_field() {
+        let urls = legacy_track_urls(
+            &json!({
+                "code": 200,
+                "data": [{"id": 42, "url": "http://m7.music.126.net/song.flac", "br": 999000}]
+            }),
+            NcmQualityLevel::Dolby,
+        )
+        .expect("legacy url response");
+        assert_eq!(urls[0].requested_level, NcmQualityLevel::Dolby);
+        assert_eq!(urls[0].level, NcmQualityLevel::Dolby);
+        assert_eq!(urls[0].url, "https://m7.music.126.net/song.flac");
     }
 
     #[test]
@@ -596,8 +697,34 @@ mod quality_tests {
         .expect("login info");
         assert_eq!(login.vip.red_vip_level, 7);
         assert_eq!(login.vip.annual_count, 1);
-        assert_eq!(login.vip.icon_url, "https://vip/icon.png");
-        assert!(login.vip.is_vip());
+        assert_eq!(login.vip.black_vinyl_icon_url, "https://vip/icon.png");
+        assert_eq!(login.vip.tier(), VipTier::Svip);
+    }
+
+    #[test]
+    fn maps_membership_images_to_black_vinyl_and_svip_tiers() {
+        let base = login_info(&json!({
+            "code": 200,
+            "profile": {"userId": 9, "vipType": 11}
+        }))
+        .expect("login info")
+        .vip;
+        let merged = merge_membership_vip(
+            &base,
+            &json!({
+                "code": 200,
+                "data": {
+                    "redVipLevel": 7,
+                    "associator": {"iconUrl": "http://vip/black.png"},
+                    "redplus": {"iconUrl": "http://vip/svip.png"}
+                }
+            }),
+        )
+        .expect("membership info");
+        assert_eq!(merged.tier(), VipTier::Svip);
+        assert_eq!(merged.black_vinyl_icon_url, "https://vip/black.png");
+        assert_eq!(merged.svip_icon_url, "https://vip/svip.png");
+        assert_eq!(merged.badge_url(), Some("https://vip/svip.png"));
     }
 }
 

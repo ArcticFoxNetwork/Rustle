@@ -349,7 +349,19 @@ impl App {
                 self.playback.pending_resolution_index = None;
                 self.playback.startup_restore.in_progress = false;
 
-                if let Some(resolved) = result {
+                let resolved = match result {
+                    Ok(resolved) => resolved,
+                    Err(error) => {
+                        tracing::warn!(
+                            "Failed to resolve NCM song for restore at index {}: {}",
+                            idx,
+                            error
+                        );
+                        self.finish_startup_restore();
+                        return Some(Task::none());
+                    }
+                };
+                {
                     tracing::info!(
                         "NCM song resolved for restore: finalized_cache_path={:?}",
                         resolved.finalized_cache_path
@@ -400,8 +412,6 @@ impl App {
 
                         return Some(Task::none());
                     }
-                } else {
-                    tracing::warn!("Failed to resolve NCM song for restore at index {}", idx);
                 }
                 self.finish_startup_restore();
                 Some(Task::none())

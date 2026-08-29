@@ -15,6 +15,16 @@ const COOKIE_FILE: &str = "cookies.json";
 const DEFAULT_QUALITY: u32 = 2;
 const PLAYLIST_DETAIL_CHUNK_SIZE: usize = 500;
 
+fn image_download_url(url: String, resize: Option<(u16, u16)>) -> String {
+    resize.map_or_else(
+        || url.clone(),
+        |(width, height)| {
+            let separator = if url.contains('?') { '&' } else { '?' };
+            format!("{url}{separator}param={width}y{height}")
+        },
+    )
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct PersistedSession {
     cookie: String,
@@ -157,13 +167,13 @@ impl NcmClient {
             6 => "sky",
             7 => "dolby",
             8 => "jymaster",
-            _ => "exhigh",
+            _ => "invalid",
         }
     }
 
     pub fn current_quality_level(&self) -> NcmQualityLevel {
-        NcmQualityLevel::from_api_level(Self::quality_to_level(self.quality()))
-            .unwrap_or(NcmQualityLevel::ExHigh)
+        NcmQualityLevel::from_api_rate(self.quality())
+            .expect("NCM quality setting must be one of the canonical API rates")
     }
 
     fn query(&self) -> Query {
@@ -285,6 +295,19 @@ impl NcmClient {
             login.vip_type = account.vip_type;
             login.vip = account.vip;
         }
+        if login.code == 200 && login.user_id > 0 {
+            match self.membership_info(login.user_id, &login.vip).await {
+                Ok(vip) => login.vip = vip,
+                Err(error) => {
+                    tracing::warn!(
+                        user_id = login.user_id,
+                        "Authoritative NCM membership image request failed: {}; hiding badge",
+                        error
+                    );
+                    login.vip = login.vip.without_badges();
+                }
+            }
+        }
         Ok(login)
     }
 
@@ -292,6 +315,15 @@ impl NcmClient {
         let response = self.client.user_account(&self.query()).await?;
         self.remember_cookies(response.cookie);
         mapper::account_info(&response.body)
+    }
+
+    /// Fetch the official membership image projection. Account/status
+    /// endpoints do not reliably include badge URLs on current NCM accounts.
+    pub async fn membership_info(&self, user_id: u64, base: &VipInfo) -> Result<VipInfo> {
+        let query = self.query().param("uid", &user_id.to_string());
+        let response = self.client.vip_info(&query).await?;
+        self.remember_cookies(response.cookie);
+        mapper::merge_membership_vip(base, &response.body)
     }
 
     pub async fn logout(&self) {
@@ -422,13 +454,7 @@ impl NcmClient {
         mapper::user_detail(&response.body)
     }
 
-    #[allow(dead_code)]
-    pub async fn track_urls(&self, ids: &[u64]) -> Result<Vec<TrackUrl>> {
-        self.track_urls_for_level(ids, self.current_quality_level())
-            .await
-    }
-
-    pub async fn track_urls_for_level(
+    async fn track_urls_for_level(
         &self,
         ids: &[u64],
         level: NcmQualityLevel,
@@ -442,42 +468,125 @@ impl NcmClient {
         mapper::track_urls(&response.body, level)
     }
 
+    async fn legacy_dolby_urls(&self, ids: &[u64]) -> Result<Vec<TrackUrl>> {
+        let id_values = ids.iter().map(u64::to_string).collect::<Vec<_>>();
+        let id_json = serde_json::to_string(&id_values)?;
+        let query = self
+            .query()
+            .param("id", &id_values.join(","))
+            .param("br", "999000")
+            .param("immerseType", "c51");
+        let response = self
+            .client
+            .request(
+                "/api/song/enhance/player/url",
+                json!({
+                    "ids": id_json,
+                    "br": 999000,
+                    "immerseType": "c51",
+                }),
+                Self::request_options(&query),
+            )
+            .await?;
+        self.remember_cookies(response.cookie);
+        mapper::legacy_track_urls(&response.body, NcmQualityLevel::Dolby)
+    }
+
     pub async fn song_quality(&self, song_id: u64) -> Result<SongQualityDetail> {
         let query = self.query().param("id", &song_id.to_string());
         let response = self.client.song_music_detail(&query).await?;
         mapper::song_quality_detail(&response.body, song_id)
     }
 
-    /// Resolve one playable URL while preserving requested and actual quality.
-    /// If the detail endpoint is unavailable, the normal URL endpoint remains
-    /// a compatibility fallback. Empty/unauthorized URLs are never success.
+    /// Resolve a batch of URLs using SPlayer's quality negotiation policy:
+    /// regular levels ask `/song/url/v1` and preserve the server-returned
+    /// level, while Dolby uses the legacy endpoint and the documented
+    /// hires/lossless/exhigh adaptation ladder when Dolby is unavailable.
+    pub async fn resolve_track_urls(
+        &self,
+        ids: &[u64],
+        requested: NcmQualityLevel,
+    ) -> Result<Vec<TrackUrl>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        if requested == NcmQualityLevel::Dolby {
+            let results = stream::iter(ids.iter().copied().map(|song_id| {
+                let client = self.clone();
+                async move { client.resolve_track_url(song_id, requested).await }
+            }))
+            .buffered(3)
+            .collect::<Vec<_>>()
+            .await;
+            return results.into_iter().collect();
+        }
+
+        let urls = self.track_urls_for_level(ids, requested).await?;
+        ids.iter()
+            .map(|song_id| {
+                urls.iter()
+                    .find(|url| url.id == *song_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        anyhow!(
+                            "official URL response omitted song {} for quality preference {}",
+                            song_id,
+                            requested.api_level()
+                        )
+                    })
+            })
+            .collect()
+    }
+
+    /// Resolve one playable URL while preserving both the requested and actual
+    /// quality. This follows SPlayer's policy: only Dolby preflights the
+    /// compact quality detail response; other levels accept the server's
+    /// returned level from `/song/url/v1`.
     pub async fn resolve_track_url(
         &self,
         song_id: u64,
         requested: NcmQualityLevel,
     ) -> Result<TrackUrl> {
-        let selected = match self.song_quality(song_id).await {
-            Ok(detail) => detail
-                .best_for(requested)
-                .map(|option| option.level)
-                .unwrap_or(requested),
-            Err(error) => {
-                tracing::warn!(
-                    "Failed to fetch quality detail for song {}: {}; using direct URL request",
-                    song_id,
-                    error
-                );
-                requested
-            }
-        };
-        self.track_urls_for_level(&[song_id], selected)
+        if requested == NcmQualityLevel::Dolby {
+            let detail = self.song_quality(song_id).await?;
+            let selected = if detail.best_for(NcmQualityLevel::Dolby).is_some() {
+                NcmQualityLevel::Dolby
+            } else {
+                [
+                    NcmQualityLevel::HiRes,
+                    NcmQualityLevel::Lossless,
+                    NcmQualityLevel::ExHigh,
+                ]
+                .into_iter()
+                .find(|level| detail.best_for(*level).is_some())
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Dolby and the SPlayer adaptation ladder are unavailable for song {song_id}"
+                    )
+                })?
+            };
+
+            let mut urls = if selected == NcmQualityLevel::Dolby {
+                self.legacy_dolby_urls(&[song_id]).await?
+            } else {
+                self.track_urls_for_level(&[song_id], selected).await?
+            };
+            let mut url = urls
+                .drain(..)
+                .find(|track| track.id == song_id)
+                .ok_or_else(|| anyhow!("no playable URL for song {song_id}"))?;
+            url.requested_level = requested;
+            return Ok(url);
+        }
+
+        self.track_urls_for_level(&[song_id], requested)
             .await?
             .into_iter()
-            .find(|track| track.id == song_id || track.id == 0)
+            .find(|track| track.id == song_id)
             .ok_or_else(|| {
                 anyhow!(
-                    "no playable URL for song {} at requested quality {}",
-                    song_id,
+                    "official URL response omitted song {song_id} for quality preference {}",
                     requested.api_level()
                 )
             })
@@ -569,16 +678,13 @@ impl NcmClient {
         &self,
         url: I,
         path: PathBuf,
-        width: u16,
-        height: u16,
+        resize: Option<(u16, u16)>,
     ) -> Result<()>
     where
         I: Into<String>,
     {
         if !path.exists() {
-            let url = url.into();
-            let separator = if url.contains('?') { '&' } else { '?' };
-            let image_url = format!("{}{}param={}y{}", url, separator, width, height);
+            let image_url = image_download_url(url.into(), resize);
             let response = reqwest::Client::new().get(&image_url).send().await?;
             if response.status().is_success() {
                 let bytes = response.bytes().await?;
@@ -654,4 +760,19 @@ fn cookie_pair(raw: &str) -> Option<(String, String)> {
         return None;
     }
     Some((name.to_string(), value.trim().to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::image_download_url;
+
+    #[test]
+    fn image_download_url_preserves_original_when_resize_is_absent() {
+        let original = "https://p1.music.126.net/vip.png?auth=1";
+        assert_eq!(image_download_url(original.to_string(), None), original);
+        assert_eq!(
+            image_download_url(original.to_string(), Some((200, 200))),
+            "https://p1.music.126.net/vip.png?auth=1&param=200y200"
+        );
+    }
 }

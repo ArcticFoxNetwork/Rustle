@@ -160,21 +160,11 @@ pub fn needs_ncm_download(song: &DbSong) -> bool {
         return false;
     }
 
-    // Check if already cached
-    let ncm_id = if song.id < 0 {
-        (-song.id) as u64
-    } else if song.file_path.starts_with("ncm://") {
-        song.file_path
-            .trim_start_matches("ncm://")
-            .parse()
-            .unwrap_or(0)
-    } else {
-        return false;
-    };
-
-    let song_cache_dir = crate::utils::songs_cache_dir();
-    let stem = ncm_id.to_string();
-    crate::utils::find_cached_audio(&song_cache_dir, &stem).is_none()
+    // Streaming cache entries are quality-specific and cannot determine the
+    // official level for the current preference. Let URL negotiation decide.
+    song.file_path.is_empty()
+        || song.file_path.starts_with("ncm://")
+        || !std::path::Path::new(&song.file_path).exists()
 }
 
 /// Skip to next playable track, handling failures
@@ -214,18 +204,13 @@ pub fn get_local_path(song: &DbSong) -> Option<std::path::PathBuf> {
     let is_ncm = song.id < 0 || song.file_path.is_empty() || song.file_path.starts_with("ncm://");
 
     if is_ncm {
-        // For NCM songs, check cache with any audio extension
-        let ncm_id = if song.id < 0 {
-            (-song.id) as u64
-        } else if song.file_path.starts_with("ncm://") {
-            song.file_path.trim_start_matches("ncm://").parse().ok()?
-        } else {
-            return None;
-        };
-
-        let song_cache_dir = crate::utils::songs_cache_dir();
-        let stem = ncm_id.to_string();
-        return crate::utils::find_cached_audio(&song_cache_dir, &stem);
+        // Quality-scoped streaming cache files are not local-library paths.
+        // Only an explicit downloaded file can be opened as a local source.
+        let path = std::path::PathBuf::from(&song.file_path);
+        return path
+            .is_absolute()
+            .then_some(path)
+            .filter(|path| path.exists());
     }
 
     // For local songs, check if file exists

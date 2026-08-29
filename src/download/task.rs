@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use tracing::{info, warn};
 
-use crate::utils::{detect_audio_format, find_cached_audio, sanitize_filename, songs_cache_dir};
+use crate::utils::{detect_audio_format, sanitize_filename};
 
 /// Verify downloaded audio file integrity using lofty
 pub fn verify_integrity(path: &Path) -> Result<(), String> {
@@ -35,43 +35,6 @@ pub fn verify_integrity(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Try to reuse a cached audio file by copying it to the download directory
-fn reuse_cache(
-    ncm_id: u64,
-    download_dir: &Path,
-    artist: &str,
-    title: &str,
-) -> Result<Option<PathBuf>, String> {
-    let cached = match find_cached_audio(&songs_cache_dir(), &ncm_id.to_string()) {
-        Some(p) => p,
-        None => return Ok(None),
-    };
-
-    let ext = cached.extension().and_then(|e| e.to_str()).unwrap_or("mp3");
-
-    let filename = format!(
-        "{} - {}.{}",
-        sanitize_filename(artist),
-        sanitize_filename(title),
-        ext
-    );
-    let dest = download_dir.join(&filename);
-
-    if dest.exists() {
-        info!("Download file already exists: {:?}", dest);
-        return Ok(Some(dest));
-    }
-
-    fs::copy(&cached, &dest).map_err(|e| format!("Failed to copy cached file: {}", e))?;
-
-    info!(
-        "Reused cached audio: {:?} -> {:?}",
-        cached.file_name().unwrap_or_default(),
-        dest.file_name().unwrap_or_default()
-    );
-    Ok(Some(dest))
-}
-
 /// Download a song from URL, verify it, and write metadata tags.
 ///
 /// `on_progress(downloaded, total)` is called with byte counts during download.
@@ -82,16 +45,11 @@ pub async fn download_song(
     meta: &crate::metadata::SongMetadata,
     on_progress: impl Fn(u64, u64),
 ) -> Result<PathBuf, String> {
-    // 1. Try cache reuse first
-    if let Some(path) = reuse_cache(ncm_id, download_dir, &meta.artist, &meta.title)? {
-        return Ok(path);
-    }
-
-    // 2. Ensure download directory exists
+    // Ensure the download directory exists.
     fs::create_dir_all(download_dir)
         .map_err(|e| format!("Failed to create download dir: {}", e))?;
 
-    // 3. Build filename and paths
+    // Build filename and paths.
     let stem = format!(
         "{} - {}",
         sanitize_filename(&meta.artist),
@@ -109,7 +67,7 @@ pub async fn download_song(
         }
     }
 
-    // 4. Download audio stream
+    // Download audio stream.
     let client = reqwest::Client::new();
     let response = client
         .get(song_url)
@@ -143,7 +101,7 @@ pub async fn download_song(
         return Err("Downloaded 0 bytes".to_string());
     }
 
-    // 5. Detect format from magic bytes, then rename
+    // Detect format from magic bytes, then rename.
     let ext = {
         let mut buf = [0u8; 16];
         let mut f = fs::File::open(&tmp)
@@ -156,13 +114,13 @@ pub async fn download_song(
     let dest = download_dir.join(format!("{}.{}", stem, ext));
     fs::rename(&tmp, &dest).map_err(|e| format!("Failed to rename temp file: {}", e))?;
 
-    // 6. Verify the final file is playable
+    // Verify the final file is playable.
     if let Err(e) = verify_integrity(&dest) {
         let _ = fs::remove_file(&dest);
         return Err(format!("Downloaded file is corrupt: {}", e));
     }
 
-    // 7. Write metadata tags, reusing the unified image cache when available
+    // Write metadata tags, reusing the unified image cache when available.
     let mut edits = meta.to_metadata_edits();
     if edits.cover_data.is_none()
         && let Some(path) = crate::image::resolve_cached(crate::image::ImageKind::SongCover, ncm_id)
