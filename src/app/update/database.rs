@@ -485,7 +485,7 @@ impl App {
                     total_duration,
                     like_count: String::new(),
                     songs: song_views,
-                    palette: crate::utils::ColorPalette::default(), // Use default colors
+                    palette: None,
                     is_local: true,
                     is_subscribed: false,
                     watched_folder_path: None,

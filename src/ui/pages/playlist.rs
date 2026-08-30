@@ -44,7 +44,7 @@ pub struct PlaylistView {
     pub like_count: String,
     pub songs: Vec<PlaylistSongView>,
     /// Extracted color palette from cover
-    pub palette: ColorPalette,
+    pub palette: Option<ColorPalette>,
     /// Whether this is a local playlist (no like count, no download)
     pub is_local: bool,
     /// Whether the current user has subscribed to this playlist
@@ -89,7 +89,6 @@ pub fn view<'a>(
     current_playing_id: Option<i64>,
     description_expanded: bool,
 ) -> Element<'a, Message> {
-    let palette = playlist.palette.clone();
     let header = build_header(playlist, image_state, locale, description_expanded);
     let controls = build_controls(
         playlist,
@@ -107,30 +106,28 @@ pub fn view<'a>(
     // Content with gradient that extends through controls
     let header_and_controls = column![header, controls,].spacing(0).width(Fill);
 
-    // Wrap header+controls in gradient container
-    // Use the extracted palette colors directly for a more vibrant look
-    let primary = palette.primary;
-    // The skeleton page uses `ColorPalette::default()` until its cover is
-    // available. Do not paint that placeholder palette into the gradient:
-    // while the cover is loading, the page should blend into the theme's
-    // actual background instead of flashing the default pink/purple color.
-    let has_background_cover = playlist_page_cover_handle(playlist, image_state).is_some();
-    // Apply slight boost for brighter gradient
-    let top_r = (primary.r * 1.1 + 0.05).min(1.0);
-    let top_g = (primary.g * 1.05 + 0.03).min(1.0);
-    let top_b = (primary.b * 1.08 + 0.04).min(1.0);
+    // Use the extracted palette only after color extraction succeeds. While
+    // extraction is pending, or if it fails, keep the theme background.
+    let gradient_top = playlist.palette.as_ref().map(|palette| {
+        let primary = palette.primary;
+        (
+            (primary.r * 1.1 + 0.05).min(1.0),
+            (primary.g * 1.05 + 0.03).min(1.0),
+            (primary.b * 1.08 + 0.04).min(1.0),
+        )
+    });
 
     let gradient_section = container(header_and_controls)
         .width(Fill)
         .style(move |theme| {
             // Get the bottom color based on theme (black for dark, white for light)
             let bottom_color = theme::background(theme);
-            if !has_background_cover {
+            let Some((top_r, top_g, top_b)) = gradient_top else {
                 return iced::widget::container::Style {
                     background: Some(iced::Background::Color(bottom_color)),
                     ..Default::default()
                 };
-            }
+            };
             let is_light = !theme::is_dark_theme(theme);
 
             // For light mode: make colors brighter and less saturated

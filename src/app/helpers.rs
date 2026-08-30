@@ -420,8 +420,7 @@ pub async fn load_playlist_view(
     let palette = playlist
         .cover_path
         .as_ref()
-        .map(|p| crate::utils::ColorPalette::from_image_path(std::path::Path::new(p)))
-        .unwrap_or_default();
+        .and_then(|p| crate::utils::ColorPalette::from_image_path(std::path::Path::new(p)));
 
     let view = pages::PlaylistView {
         kind: pages::playlist::DetailPageKind::Playlist,

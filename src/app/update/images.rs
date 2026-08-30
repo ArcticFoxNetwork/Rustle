@@ -795,6 +795,7 @@ fn set_detail_cover(
     path: &std::path::Path,
     path_string: String,
 ) {
+    let palette = crate::utils::ColorPalette::from_image_path(path);
     page.cover_path = Some(path_string);
-    page.palette = crate::utils::ColorPalette::from_image_path(path);
+    page.palette = palette;
 }

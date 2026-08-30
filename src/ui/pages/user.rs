@@ -33,10 +33,15 @@ pub fn view<'a>(
     let header = build_header(user, image_state, description_expanded, locale);
     let body = build_playlist_grid(user, image_state, content_width);
 
-    let palette = user.palette.clone();
-    let primary = palette.primary;
+    let primary = user.palette.as_ref().map(|palette| palette.primary);
     let gradient_section = container(header).width(Fill).style(move |theme| {
         let bottom_color = theme::background(theme);
+        let Some(primary) = primary else {
+            return iced::widget::container::Style {
+                background: Some(iced::Background::Color(bottom_color)),
+                ..Default::default()
+            };
+        };
         iced::widget::container::Style {
             background: Some(iced::Background::Gradient(iced::Gradient::Linear(
                 iced::gradient::Linear::new(iced::Radians(std::f32::consts::PI))

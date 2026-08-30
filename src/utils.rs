@@ -38,17 +38,9 @@ pub struct ColorPalette {
     pub primary: Color,
 }
 
-impl Default for ColorPalette {
-    fn default() -> Self {
-        Self {
-            primary: Color::from_rgb(0.4, 0.2, 0.5),
-        }
-    }
-}
-
 impl ColorPalette {
     /// Extract dominant color from an image file
-    pub fn from_image_path(path: &Path) -> Self {
+    pub fn from_image_path(path: &Path) -> Option<Self> {
         match DominantColors::extract_from_path(path) {
             Some(colors) => {
                 tracing::debug!(
@@ -58,13 +50,13 @@ impl ColorPalette {
                     colors.primary.g,
                     colors.primary.b
                 );
-                Self {
+                Some(Self {
                     primary: colors.primary,
-                }
+                })
             }
             None => {
-                tracing::warn!("Failed to extract colors from {:?}, using default", path);
-                Self::default()
+                tracing::warn!("Failed to extract colors from {:?}", path);
+                None
             }
         }
     }
@@ -587,6 +579,17 @@ pub fn sanitize_filename(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn color_palette_returns_none_when_extraction_fails() {
+        let missing = std::env::temp_dir().join(format!(
+            "rustle-missing-palette-source-{}.png",
+            std::process::id()
+        ));
+
+        assert!(!missing.exists());
+        assert!(ColorPalette::from_image_path(&missing).is_none());
+    }
 
     #[test]
     fn truncate_utf8_to_bytes_never_splits_a_character() {

@@ -47,7 +47,7 @@ impl App {
             total_duration: String::new(),
             like_count: String::new(),
             songs: Vec::new(),
-            palette: crate::utils::ColorPalette::default(),
+            palette: None,
             is_local: true,
             is_subscribed: false,
             watched_folder_path: None,
