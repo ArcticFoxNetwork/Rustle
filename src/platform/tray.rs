@@ -123,8 +123,12 @@ impl TrayHandle {
         {
             let handle = self.handle.clone();
             tokio::spawn(async move {
-                if let Err(error) = handle.update(|tray| tray.update_state(state)).await {
-                    tracing::warn!(%error, "Failed to update Linux system tray state");
+                if handle
+                    .update(|tray| tray.update_state(state))
+                    .await
+                    .is_none()
+                {
+                    tracing::warn!("Linux system tray service stopped before state update");
                 }
             });
         }

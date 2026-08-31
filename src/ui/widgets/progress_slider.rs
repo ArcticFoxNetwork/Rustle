@@ -87,8 +87,8 @@ pub fn volume_slider(volume: f32) -> Element<'static, Message> {
     slider(0.0..=1.0, volume, Message::SetVolume)
         .width(100)
         .height(4)
-        .step(0.01)
-        .shift_step(0.05)
+        .step(0.01_f32)
+        .shift_step(0.05_f32)
         .style(|iced_theme, status| {
             let handle_radius = match status {
                 slider::Status::Hovered | slider::Status::Dragged => 6.0,

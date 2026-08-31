@@ -252,7 +252,7 @@ fn audio_visualization_section(
             color: Some(theme::settings_desc(theme)),
         });
     let decay_slider = slider(0.0..=0.95, decay, Message::UpdateSpectrumDecay)
-        .step(0.01)
+        .step(0.01_f32)
         .width(Length::Fixed(120.0));
 
     column![

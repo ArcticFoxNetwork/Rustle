@@ -1316,14 +1316,23 @@ pub struct NavigationHistory {
     pub entries: Vec<NavigationEntry>,
     /// Current position in history (index)
     pub current_index: Option<usize>,
+    /// The visible route is intentionally outside the recorded history.
+    ///
+    /// Personal FM is a playback action with route side effects. Tracking the
+    /// transient state separately keeps the history cursor aligned with the
+    /// last recorded route without making FM replayable through back/forward.
+    current_is_transient: bool,
 }
 
 impl NavigationHistory {
     /// Push a new entry to history, clearing forward history
     pub fn push(&mut self, entry: NavigationEntry) {
         if !entry.should_record() {
+            self.current_is_transient = true;
             return;
         }
+
+        self.current_is_transient = false;
 
         // Don't push if it's the same as current
         if let Some(idx) = self.current_index {
@@ -1340,8 +1349,11 @@ impl NavigationHistory {
     /// Replace the current history entry without changing stack length
     pub fn replace_current(&mut self, entry: NavigationEntry) {
         if !entry.should_record() {
+            self.current_is_transient = true;
             return;
         }
+
+        self.current_is_transient = false;
 
         if let Some(idx) = self.current_index
             && idx < self.entries.len()
@@ -1355,6 +1367,13 @@ impl NavigationHistory {
 
     /// Go back in history, returns the entry to navigate to
     pub fn go_back(&mut self) -> Option<NavigationEntry> {
+        if self.current_is_transient {
+            self.current_is_transient = false;
+            return self
+                .current_index
+                .and_then(|idx| self.entries.get(idx).cloned());
+        }
+
         if let Some(idx) = self.current_index
             && idx > 0
         {
@@ -1369,6 +1388,7 @@ impl NavigationHistory {
         if let Some(idx) = self.current_index
             && idx + 1 < self.entries.len()
         {
+            self.current_is_transient = false;
             self.current_index = Some(idx + 1);
             return self.entries.get(idx + 1).cloned();
         }
@@ -1377,7 +1397,8 @@ impl NavigationHistory {
 
     /// Check if can go back
     pub fn can_go_back(&self) -> bool {
-        self.current_index.map(|idx| idx > 0).unwrap_or(false)
+        self.current_is_transient && self.current_index.is_some()
+            || self.current_index.map(|idx| idx > 0).unwrap_or(false)
     }
 
     /// Check if can go forward
@@ -1396,8 +1417,10 @@ mod navigation_history_tests {
     fn personal_fm_is_excluded_from_back_forward_history() {
         let mut history = NavigationHistory::default();
         history.push(NavigationEntry::Route(Route::Home));
-        history.push(NavigationEntry::Route(Route::Radio));
         history.push(NavigationEntry::Route(Route::Downloads));
+        assert_eq!(history.go_back(), Some(NavigationEntry::Route(Route::Home)));
+
+        history.push(NavigationEntry::Route(Route::Radio));
 
         assert_eq!(
             history.entries,
@@ -1405,6 +1428,21 @@ mod navigation_history_tests {
                 NavigationEntry::Route(Route::Home),
                 NavigationEntry::Route(Route::Downloads),
             ]
+        );
+        assert_eq!(history.current_index, Some(0));
+        assert!(history.can_go_back());
+        assert!(history.can_go_forward());
+
+        // Back exits the transient FM route to the route that was current
+        // before FM, without stepping past it in recorded history.
+        assert_eq!(history.go_back(), Some(NavigationEntry::Route(Route::Home)));
+        assert_eq!(history.current_index, Some(0));
+
+        // Forward continues through the pre-existing history. FM is never a
+        // target and therefore cannot restart playback as a route side effect.
+        assert_eq!(
+            history.go_forward(),
+            Some(NavigationEntry::Route(Route::Downloads))
         );
 
         assert_eq!(history.go_back(), Some(NavigationEntry::Route(Route::Home)));
