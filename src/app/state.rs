@@ -1833,11 +1833,9 @@ mod smooth_scroll_animation_tests {
         let now = Instant::now();
         let mut state = UiState::new();
 
-        state.smooth_scroll.request_wheel(
-            SmoothScrollTarget::Native("test_scroll"),
-            60.0,
-            now,
-        );
+        state
+            .smooth_scroll
+            .request_wheel(SmoothScrollTarget::Native("test_scroll"), 60.0, now);
 
         assert!(state.has_active_animations(now));
     }

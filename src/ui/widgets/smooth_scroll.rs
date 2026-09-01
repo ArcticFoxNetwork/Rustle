@@ -217,9 +217,9 @@ fn cancels_smooth_scroll(event: &Event, bounds: Rectangle, cursor: Cursor) -> bo
         Event::Mouse(mouse::Event::WheelScrolled {
             delta: mouse::ScrollDelta::Pixels { .. },
         })
-        | Event::Mouse(mouse::Event::ButtonPressed(
-            mouse::Button::Left | mouse::Button::Middle,
-        )) => cursor.is_over(bounds),
+        | Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left | mouse::Button::Middle)) => {
+            cursor.is_over(bounds)
+        }
         Event::Touch(iced::touch::Event::FingerPressed { position, .. }) => {
             bounds.contains(*position)
         }

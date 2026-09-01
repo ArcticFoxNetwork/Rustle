@@ -125,11 +125,7 @@ pub fn view<'a>(
                                         })
                                         .into()
                                 };
-                            let badges = row![
-                                quality_badge,
-                                availability_badge,
-                            ]
-                            .spacing(6);
+                            let badges = row![quality_badge, availability_badge,].spacing(6);
 
                             let song_row = button(
                                 row![

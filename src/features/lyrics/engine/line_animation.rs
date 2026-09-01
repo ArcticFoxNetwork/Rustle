@@ -850,11 +850,7 @@ impl LineAnimationManager {
             // Background vocals have a separate wrapper spring in AMLL. Rustle's
             // flattened line list uses the default post-position direction.
             let target_bg_slide_y = if anim.is_bg {
-                if is_active || !is_playing {
-                    0.0
-                } else {
-                    -80.0
-                }
+                if is_active || !is_playing { 0.0 } else { -80.0 }
             } else {
                 0.0
             };

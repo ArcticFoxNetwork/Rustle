@@ -492,8 +492,7 @@ fn playback_section(settings: &Settings, locale: Locale) -> Element<'static, Mes
             locale.get(Key::SettingsMusicQuality),
             Some(locale.get(Key::SettingsMusicQualityDesc)),
             styled_pick_list(quality_options, Some(current_quality), |value| {
-                let quality = MusicQuality::from_display_name(&value)
-                    .unwrap_or(MusicQuality::High);
+                let quality = MusicQuality::from_display_name(&value).unwrap_or(MusicQuality::High);
                 Message::UpdateMusicQuality(quality)
             },)
         ),
