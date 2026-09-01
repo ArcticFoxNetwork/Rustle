@@ -22,6 +22,17 @@ pub use state::{
 pub use update::song_resolver::ResolvedAudioQuality;
 
 mod subscription_logic {
+    pub(super) fn mouse_button_release_message(
+        button: iced::mouse::Button,
+    ) -> Option<super::Message> {
+        match button {
+            iced::mouse::Button::Left => Some(super::Message::MouseReleased),
+            iced::mouse::Button::Back => Some(super::Message::NavigateBack),
+            iced::mouse::Button::Forward => Some(super::Message::NavigateForward),
+            _ => None,
+        }
+    }
+
     pub fn window_should_throttle(window_hidden: bool) -> bool {
         window_hidden
     }
@@ -291,9 +302,9 @@ impl App {
         // 10. Mouse events for sidebar resize, context menus, and volume scroll
         let mouse_sub = if !window_hidden {
             iced::event::listen().filter_map(|event| match event {
-                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
-                    iced::mouse::Button::Left,
-                )) => Some(Message::MouseReleased),
+                iced::Event::Mouse(iced::mouse::Event::ButtonReleased(button)) => {
+                    subscription_logic::mouse_button_release_message(button)
+                }
                 iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
                     Some(Message::MouseMoved(position))
                 }
@@ -337,6 +348,26 @@ impl Default for App {
 #[cfg(test)]
 mod tests {
     use super::subscription_logic::*;
+    use crate::app::Message;
+    use iced::mouse::Button;
+
+    #[test]
+    fn side_mouse_buttons_map_to_navigation_history() {
+        assert!(matches!(
+            mouse_button_release_message(Button::Back),
+            Some(Message::NavigateBack)
+        ));
+        assert!(matches!(
+            mouse_button_release_message(Button::Forward),
+            Some(Message::NavigateForward)
+        ));
+    }
+
+    #[test]
+    fn unrelated_mouse_buttons_do_not_trigger_navigation() {
+        assert!(mouse_button_release_message(Button::Right).is_none());
+        assert!(mouse_button_release_message(Button::Middle).is_none());
+    }
 
     #[test]
     fn unfocused_visible_window_is_not_throttled() {
