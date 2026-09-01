@@ -68,8 +68,8 @@ impl App {
                 self.core.mouse_position = *position;
                 // Update sidebar width if dragging
                 if self.ui.sidebar_dragging {
-                    const MIN_WIDTH: f32 = 200.0;
-                    const MAX_WIDTH: f32 = 400.0;
+                    const MIN_WIDTH: f32 = 240.0;
+                    const MAX_WIDTH: f32 = 440.0;
                     let old_sidebar_width = self.ui.sidebar_width;
                     self.ui.sidebar_width = position.x.clamp(MIN_WIDTH, MAX_WIDTH);
                     let delta = old_sidebar_width - self.ui.sidebar_width;

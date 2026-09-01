@@ -151,7 +151,7 @@ pub enum CoverSize {
 impl CoverSize {
     pub fn px(&self) -> f32 {
         match self {
-            CoverSize::Tiny => 40.0,
+            CoverSize::Tiny => 48.0,
             CoverSize::Picker => 40.0,
             CoverSize::Medium => 56.0,
             CoverSize::Large => 200.0,
@@ -161,7 +161,7 @@ impl CoverSize {
 
     pub fn radius(&self) -> f32 {
         match self {
-            CoverSize::Tiny => 4.0,
+            CoverSize::Tiny => 6.0,
             CoverSize::Picker => 8.0,
             CoverSize::Medium => 8.0,
             CoverSize::Large => 12.0,

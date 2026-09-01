@@ -131,16 +131,16 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
             iced::widget::svg(iced::widget::svg::Handle::from_memory(
                 crate::ui::icons::CHECK.as_bytes(),
             ))
-            .width(18)
-            .height(18)
+            .width(22)
+            .height(22)
             .style(|_theme, _status| iced::widget::svg::Style {
                 color: Some(theme::ACCENT_PINK),
             }),
         )
-        .width(18)
-        .height(18)
-        .center_x(18)
-        .center_y(18)
+        .width(22)
+        .height(22)
+        .center_x(22)
+        .center_y(22)
         .into()
     } else {
         // Show progress ring with percentage during import
@@ -151,19 +151,20 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
 
         container(
             column![
-                view_progress_ring_styled(progress_ring, 28.0),
+                view_progress_ring_styled(progress_ring, 32.0),
                 text(format!("{}%", percentage))
-                    .size(theme::TEXT_SIZE_MICRO)
+                    .size(theme::TEXT_SIZE_CAPTION)
                     .style(|theme| text::Style {
                         color: Some(theme::text_muted(theme))
                     })
+                    .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT))
             ]
             .align_x(Alignment::Center)
-            .spacing(1),
+            .spacing(2),
         )
-        .width(32)
-        .center_x(32)
-        .center_y(32)
+        .width(38)
+        .center_x(38)
+        .center_y(38)
         .into()
     };
 
@@ -184,46 +185,51 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
     let completed = playlist.completed;
     let mut info = column![
         text(name)
-            .size(theme::TEXT_SIZE_LABEL)
+            .size(theme::TEXT_SIZE_BODY_LARGE)
             .style(move |theme| text::Style {
                 color: Some(if completed {
                     theme::text_primary(theme)
                 } else {
                     theme::text_secondary(theme)
                 })
-            }),
+            })
+            .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT)),
         text(status_text)
-            .size(theme::TEXT_SIZE_CAPTION)
+            .size(theme::TEXT_SIZE_BODY)
             .style(|theme| text::Style {
                 color: Some(theme::text_muted(theme))
             })
+            .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT))
     ];
     if let Some(detail) = skip_detail {
         info = info.push(
             text(detail)
-                .size(theme::TEXT_SIZE_MICRO)
-                .style(|theme| text::Style {
-                    color: Some(theme::text_muted(theme)),
-                }),
-        );
-    }
-    let info = info.spacing(2);
-
-    let trailing: Element<'static, Message> = if !playlist.completed {
-        if playlist.cancelling {
-            text("取消中")
                 .size(theme::TEXT_SIZE_CAPTION)
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme)),
                 })
+                .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT)),
+        );
+    }
+    let info = info.spacing(3);
+
+    let trailing: Element<'static, Message> = if !playlist.completed {
+        if playlist.cancelling {
+            text("取消中")
+                .size(theme::TEXT_SIZE_BODY)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_muted(theme)),
+                })
+                .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT))
                 .into()
         } else {
             button(
                 text("取消")
-                    .size(theme::TEXT_SIZE_CAPTION)
+                    .size(theme::TEXT_SIZE_BODY)
                     .style(|theme| text::Style {
                         color: Some(theme::text_muted(theme)),
-                    }),
+                    })
+                    .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT)),
             )
             .style(theme::text_button)
             .on_press(Message::CancelScan)
@@ -235,13 +241,13 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
 
     let content = row![
         progress_indicator,
-        Space::new().width(12),
+        Space::new().width(14),
         info,
         Space::new().width(Fill),
         trailing,
     ]
     .align_y(Alignment::Center)
-    .padding(Padding::new(10.0).left(14.0).right(14.0));
+    .padding(Padding::new(12.0).left(16.0).right(16.0));
 
     // Make it a button only if completed
     if playlist.completed {

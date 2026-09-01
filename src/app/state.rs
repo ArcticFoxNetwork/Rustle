@@ -1677,7 +1677,7 @@ impl UiState {
             last_mpris_sync: None,
             importing_playlist: None,
             sidebar_animations: Default::default(),
-            sidebar_width: 280.0,
+            sidebar_width: 300.0,
             sidebar_dragging: false,
             cache_stats: None,
             context_menu: None,
