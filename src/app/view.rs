@@ -112,6 +112,8 @@ impl App {
             &self.ui.image_state,
             &self.ui.sidebar_animations,
             self.ui.sidebar_width,
+            self.ui.my_playlists_expanded,
+            self.ui.collected_playlists_expanded,
         );
 
         // Sidebar resize handle (draggable divider)

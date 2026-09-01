@@ -227,6 +227,16 @@ impl App {
                 Some(Task::none())
             }
 
+            Message::ToggleMyPlaylistsSection => {
+                self.ui.my_playlists_expanded = !self.ui.my_playlists_expanded;
+                Some(Task::none())
+            }
+
+            Message::ToggleCollectedPlaylistsSection => {
+                self.ui.collected_playlists_expanded = !self.ui.collected_playlists_expanded;
+                Some(Task::none())
+            }
+
             Message::AnimationTick(now) => {
                 // Update audio state
                 self.update_audio_tick();

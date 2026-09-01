@@ -1590,6 +1590,10 @@ pub struct UiState {
     pub sidebar_width: f32,
     /// Whether the sidebar resize handle is being dragged
     pub sidebar_dragging: bool,
+    /// Whether the owned cloud playlists section is expanded
+    pub my_playlists_expanded: bool,
+    /// Whether the collected cloud playlists section is expanded
+    pub collected_playlists_expanded: bool,
 
     // Cache statistics
     pub cache_stats: Option<crate::cache::CacheStats>,
@@ -1679,8 +1683,10 @@ impl UiState {
             last_mpris_sync: None,
             importing_playlist: None,
             sidebar_animations: Default::default(),
-            sidebar_width: 300.0,
+            sidebar_width: 280.0,
             sidebar_dragging: false,
+            my_playlists_expanded: true,
+            collected_playlists_expanded: true,
             cache_stats: None,
             context_menu: None,
             song_edit_dialog: None,

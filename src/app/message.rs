@@ -303,6 +303,10 @@ pub enum Message {
     HoverIcon(Option<IconId>),
     /// Hover over a sidebar item
     HoverSidebar(Option<SidebarId>),
+    /// Toggle the "My Playlists" sidebar section
+    ToggleMyPlaylistsSection,
+    /// Toggle the "Collected Playlists" sidebar section
+    ToggleCollectedPlaylistsSection,
     /// Animation tick
     AnimationTick(Instant),
     /// Smooth-scroll input from a native or virtual scroll surface.
@@ -1058,6 +1062,10 @@ impl std::fmt::Debug for Message {
             Self::HoverSong(id) => simple!("HoverSong", "{:?}", id),
             Self::HoverIcon(id) => simple!("HoverIcon", "{:?}", id),
             Self::HoverSidebar(id) => simple!("HoverSidebar", "{:?}", id),
+            Self::ToggleMyPlaylistsSection => simple!("ToggleMyPlaylistsSection"),
+            Self::ToggleCollectedPlaylistsSection => {
+                simple!("ToggleCollectedPlaylistsSection")
+            }
             Self::TogglePlaylistSearch => simple!("TogglePlaylistSearch"),
             Self::PlaylistSearchChanged(_) => simple!("PlaylistSearchChanged"),
             Self::PlaylistSearchSubmit => simple!("PlaylistSearchSubmit"),

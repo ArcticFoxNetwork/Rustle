@@ -11,10 +11,10 @@ use crate::ui::animation::{HoverAnimations, SmoothScrollTarget};
 use crate::ui::components::importing_card::{self, ImportingPlaylist};
 use crate::ui::theme::{self, BOLD_WEIGHT};
 
-const SIDEBAR_TEXT_SIZE: f32 = 18.0;
-const SIDEBAR_HEADER_TEXT_SIZE: f32 = 15.0;
-const SIDEBAR_ICON_SIZE: f32 = 28.0;
-const SIDEBAR_ITEM_SPACING: f32 = 6.0;
+const SIDEBAR_TEXT_SIZE: f32 = 16.0;
+const SIDEBAR_HEADER_TEXT_SIZE: f32 = 14.0;
+const SIDEBAR_ICON_SIZE: f32 = 24.0;
+const SIDEBAR_ITEM_SPACING: f32 = 4.0;
 
 /// Navigation menu items
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -79,6 +79,8 @@ pub fn view(
     image_state: &ImageState,
     sidebar_animations: &HoverAnimations<SidebarId>,
     sidebar_width: f32,
+    my_playlists_expanded: bool,
+    collected_playlists_expanded: bool,
 ) -> Element<'static, Message> {
     // Logo section
     let logo_content = row![
@@ -87,22 +89,22 @@ pub fn view(
             svg(svg::Handle::from_memory(
                 crate::ui::icons::MUSIC_LOGO.as_bytes()
             ))
-            .width(34)
-            .height(34)
+            .width(30)
+            .height(30)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::ACCENT_PINK),
             })
         ),
-        Space::new().width(14),
+        Space::new().width(12),
         text(locale.get(Key::AppName))
-            .size(theme::TEXT_SIZE_TITLE_LARGE)
+            .size(theme::TEXT_SIZE_TITLE)
             .style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
             })
             .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
     ]
     .align_y(Alignment::Center)
-    .padding(Padding::new(26.0).bottom(38.0));
+    .padding(Padding::new(22.0).bottom(32.0));
 
     let logo = mouse_area(logo_content).on_press(Message::WindowDrag);
 
@@ -233,53 +235,43 @@ pub fn view(
                 )
             };
 
-        scrollable_items.push(Space::new().height(24).into());
+        scrollable_items.push(Space::new().height(18).into());
 
         // "My Playlists" section (owned)
-        let my_header = text(locale.get(Key::CloudPlaylistsTitle))
-            .size(SIDEBAR_HEADER_TEXT_SIZE)
-            .style(|theme| text::Style {
-                color: Some(theme::text_muted(theme)),
-            })
-            .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
-            .width(Fill);
-        scrollable_items.push(
-            container(my_header)
-                .padding(Padding::new(0.0).left(16.0).bottom(10.0))
-                .into(),
-        );
-        let my_items: Vec<Element<'static, Message>> = owned_playlists
-            .into_iter()
-            .map(render_playlist_btn)
-            .collect();
-        scrollable_items.push(column(my_items).spacing(SIDEBAR_ITEM_SPACING).into());
-
-        // "Collected Playlists" section
-        if !collected_playlists.is_empty() {
-            scrollable_items.push(Space::new().height(24).into());
-            let collected_header = text(locale.get(Key::CollectedPlaylistsTitle))
-                .size(SIDEBAR_HEADER_TEXT_SIZE)
-                .style(|theme| text::Style {
-                    color: Some(theme::text_muted(theme)),
-                })
-                .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
-                .width(Fill);
-            scrollable_items.push(
-                container(collected_header)
-                    .padding(Padding::new(0.0).left(16.0).bottom(10.0))
-                    .into(),
-            );
-            let collected_items: Vec<Element<'static, Message>> = collected_playlists
+        scrollable_items.push(collapsible_section_header(
+            locale.get(Key::CloudPlaylistsTitle).to_string(),
+            my_playlists_expanded,
+            Message::ToggleMyPlaylistsSection,
+        ));
+        if my_playlists_expanded {
+            let my_items: Vec<Element<'static, Message>> = owned_playlists
                 .into_iter()
                 .map(render_playlist_btn)
                 .collect();
-            scrollable_items.push(column(collected_items).spacing(SIDEBAR_ITEM_SPACING).into());
+            scrollable_items.push(column(my_items).spacing(SIDEBAR_ITEM_SPACING).into());
+        }
+
+        // "Collected Playlists" section
+        if !collected_playlists.is_empty() {
+            scrollable_items.push(Space::new().height(18).into());
+            scrollable_items.push(collapsible_section_header(
+                locale.get(Key::CollectedPlaylistsTitle).to_string(),
+                collected_playlists_expanded,
+                Message::ToggleCollectedPlaylistsSection,
+            ));
+            if collected_playlists_expanded {
+                let collected_items: Vec<Element<'static, Message>> = collected_playlists
+                    .into_iter()
+                    .map(render_playlist_btn)
+                    .collect();
+                scrollable_items.push(column(collected_items).spacing(SIDEBAR_ITEM_SPACING).into());
+            }
         }
     }
 
     // Scrollable area for library and cloud playlists only (hidden scrollbar)
     let scrollable_content = crate::ui::widgets::smooth_scroll(
-        scrollable(column(scrollable_items).padding(Padding::new(0.0).bottom(18.0)))
+        scrollable(column(scrollable_items).padding(Padding::new(0.0).bottom(14.0)))
             .height(Fill)
             .id(iced::widget::Id::new("sidebar_scroll"))
             .style(|_theme, _status| scrollable::Style {
@@ -313,8 +305,8 @@ pub fn view(
         Message::SmoothScroll,
     );
 
-    let top_content = column![logo, nav_menu, Space::new().height(28), scrollable_content,]
-        .padding(Padding::new(18.0).bottom(0.0))
+    let top_content = column![logo, nav_menu, Space::new().height(22), scrollable_content,]
+        .padding(Padding::new(16.0).bottom(0.0))
         .width(sidebar_width)
         .height(Fill);
 
@@ -328,6 +320,56 @@ pub fn view(
 
     mouse_area(sidebar_container)
         .on_exit(Message::HoverSidebar(None))
+        .into()
+}
+
+/// Create a compact clickable header for a collapsible cloud playlist section.
+fn collapsible_section_header(
+    label: String,
+    is_expanded: bool,
+    on_press: Message,
+) -> Element<'static, Message> {
+    let chevron = if is_expanded {
+        crate::ui::icons::CHEVRON_DOWN
+    } else {
+        crate::ui::icons::CHEVRON_RIGHT
+    };
+
+    let content = row![
+        text(label)
+            .size(SIDEBAR_HEADER_TEXT_SIZE)
+            .style(|theme| text::Style {
+                color: Some(theme::text_muted(theme)),
+            })
+            .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
+            .width(Fill),
+        svg(svg::Handle::from_memory(chevron.as_bytes()))
+            .width(16)
+            .height(16)
+            .style(|theme, _status| svg::Style {
+                color: Some(theme::text_muted(theme)),
+            }),
+    ]
+    .align_y(Alignment::Center);
+
+    button(content)
+        .width(Fill)
+        .padding(Padding::new(6.0).left(16.0).right(12.0))
+        .style(|theme, status| iced::widget::button::Style {
+            background: match status {
+                iced::widget::button::Status::Hovered => {
+                    Some(iced::Background::Color(theme::hover_bg_alpha(theme, 0.06)))
+                }
+                _ => None,
+            },
+            border: iced::Border {
+                radius: 8.0.into(),
+                ..Default::default()
+            },
+            text_color: theme::text_muted(theme),
+            ..Default::default()
+        })
+        .on_press(on_press)
         .into()
 }
 
@@ -387,9 +429,9 @@ fn sidebar_button_animated_opt_cover(
         })
         .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
-    let content = row![icon, Space::new().width(14), label_text]
+    let content = row![icon, Space::new().width(16), label_text]
         .align_y(Alignment::Center)
-        .padding(Padding::new(14.0).left(16.0).right(16.0));
+        .padding(Padding::new(10.0).left(14.0).right(14.0));
 
     // Use button for proper click feedback and cursor
     let btn = button(content)
@@ -406,7 +448,7 @@ fn sidebar_button_animated_opt_cover(
                     theme, bg_alpha,
                 ))),
                 border: iced::Border {
-                    radius: 10.0.into(),
+                    radius: 8.0.into(),
                     ..Default::default()
                 },
                 text_color: theme::text_primary(theme),
