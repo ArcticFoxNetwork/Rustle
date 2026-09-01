@@ -660,14 +660,26 @@ pub fn animated_brightness(theme: &Theme, progress: f32) -> Color {
     }
 }
 
-/// Close button hover (red)
-pub fn close_button_hover() -> Color {
-    Color::from_rgb(0.8, 0.2, 0.2)
+/// Close button hover (muted red adapted to the active theme)
+pub fn close_button_hover(theme: &Theme) -> Color {
+    let mut color = if is_dark(theme) {
+        color!(0x4a3032)
+    } else {
+        color!(0xead6d7)
+    };
+    color.a = 0.72;
+    color
 }
 
-/// Close button pressed (darker red)
-pub fn close_button_pressed() -> Color {
-    Color::from_rgb(0.6, 0.15, 0.15)
+/// Close button pressed (slightly stronger muted red)
+pub fn close_button_pressed(theme: &Theme) -> Color {
+    let mut color = if is_dark(theme) {
+        color!(0x5c3638)
+    } else {
+        color!(0xdfc0c2)
+    };
+    color.a = 0.82;
+    color
 }
 
 /// Spectrum meter colors

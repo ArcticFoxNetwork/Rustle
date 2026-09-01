@@ -1,7 +1,6 @@
 //! Window control buttons and navigation bar
 //! Positioned at top of the application with navigation on left, search in center, and controls on right
 
-use iced::border::Radius;
 use iced::widget::{Space, button, container, image, mouse_area, row, stack, svg, text, tooltip};
 use iced::{Alignment, ContentFit, Element, Fill, Length, Padding};
 
@@ -43,7 +42,7 @@ pub fn view<'a>(
         )
         .width(button_size)
         .height(button_size)
-        .style(move |theme, status| nav_button_style(theme, status, can_go_back, false))
+        .style(move |theme, status| nav_button_style(theme, status, can_go_back))
         .on_press_maybe(if can_go_back {
             Some(Message::NavigateBack)
         } else {
@@ -68,7 +67,7 @@ pub fn view<'a>(
         )
         .width(button_size)
         .height(button_size)
-        .style(move |theme, status| nav_button_style(theme, status, can_go_forward, true))
+        .style(move |theme, status| nav_button_style(theme, status, can_go_forward))
         .on_press_maybe(if can_go_forward {
             Some(Message::NavigateForward)
         } else {
@@ -78,24 +77,13 @@ pub fn view<'a>(
         tooltip::Position::Bottom,
     );
 
-    // Vertical divider between back and forward buttons (full height)
-    let divider = container(Space::new().width(1).height(Fill)).style(|theme: &iced::Theme| {
-        container::Style {
-            background: Some(iced::Background::Color(theme::border_color(theme))),
-            ..Default::default()
-        }
-    });
-
-    // Navigation buttons group with border container
-    let nav_group = container(
-        row![back_btn, divider, forward_btn,]
-            .align_y(Alignment::Center)
-            .height(button_size),
+    // Keep back and forward as separate circular controls.
+    let nav_buttons = container(
+        row![back_btn, forward_btn]
+            .spacing(8)
+            .align_y(Alignment::Center),
     )
-    .style(nav_group_container);
-
-    // Add left margin to move buttons away from edge
-    let nav_buttons = container(nav_group).padding(Padding::new(12.0).left(16.0));
+    .padding(Padding::new(12.0).left(16.0));
 
     // User info (avatar + username + API-backed membership badge)
     let avatar_size = 28.0;
@@ -304,39 +292,17 @@ pub fn view<'a>(
         .into()
 }
 
-/// Navigation group container style (rounded border)
-fn nav_group_container(theme: &iced::Theme) -> container::Style {
-    container::Style {
-        background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-        border: iced::Border {
-            radius: 8.0.into(),
-            width: 1.0,
-            color: theme::border_color(theme),
-        },
-        ..Default::default()
-    }
-}
-
 /// Navigation button style (back/forward)
-fn nav_button_style(
-    theme: &iced::Theme,
-    status: button::Status,
-    enabled: bool,
-    btn_type: bool,
-) -> button::Style {
+fn nav_button_style(theme: &iced::Theme, status: button::Status, enabled: bool) -> button::Style {
     let base = button::Style {
-        background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
+        background: Some(iced::Background::Color(theme::hover_bg_alpha(theme, 0.08))),
         text_color: if enabled {
             theme::text_secondary(theme)
         } else {
             theme::TEXT_DISABLED
         },
         border: iced::Border {
-            radius: if btn_type {
-                Radius::default().right(6.0)
-            } else {
-                Radius::default().left(6.0)
-            },
+            radius: 18.0.into(),
             ..Default::default()
         },
         shadow: iced::Shadow::default(),
@@ -349,12 +315,12 @@ fn nav_button_style(
 
     match status {
         button::Status::Hovered => button::Style {
-            background: Some(iced::Background::Color(theme::surface(theme))),
+            background: Some(iced::Background::Color(theme::hover_bg_alpha(theme, 0.14))),
             text_color: theme::text_primary(theme),
             ..base
         },
         button::Status::Pressed => button::Style {
-            background: Some(iced::Background::Color(theme::border_color(theme))),
+            background: Some(iced::Background::Color(theme::hover_bg_alpha(theme, 0.18))),
             ..base
         },
         _ => base,
@@ -367,7 +333,7 @@ fn window_button_style(theme: &iced::Theme, status: button::Status) -> button::S
         background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
         text_color: theme::text_secondary(theme),
         border: iced::Border {
-            radius: 6.0.into(),
+            radius: 18.0.into(),
             ..Default::default()
         },
         shadow: iced::Shadow::default(),
@@ -376,12 +342,12 @@ fn window_button_style(theme: &iced::Theme, status: button::Status) -> button::S
 
     match status {
         button::Status::Hovered => button::Style {
-            background: Some(iced::Background::Color(theme::surface(theme))),
+            background: Some(iced::Background::Color(theme::hover_bg_alpha(theme, 0.14))),
             text_color: theme::text_primary(theme),
             ..base
         },
         button::Status::Pressed => button::Style {
-            background: Some(iced::Background::Color(theme::border_color(theme))),
+            background: Some(iced::Background::Color(theme::hover_bg_alpha(theme, 0.18))),
             ..base
         },
         _ => base,
@@ -394,7 +360,7 @@ fn close_button_style(theme: &iced::Theme, status: button::Status) -> button::St
         background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
         text_color: theme::text_secondary(theme),
         border: iced::Border {
-            radius: 6.0.into(),
+            radius: 18.0.into(),
             ..Default::default()
         },
         shadow: iced::Shadow::default(),
@@ -403,12 +369,12 @@ fn close_button_style(theme: &iced::Theme, status: button::Status) -> button::St
 
     match status {
         button::Status::Hovered => button::Style {
-            background: Some(iced::Background::Color(theme::close_button_hover())),
+            background: Some(iced::Background::Color(theme::close_button_hover(theme))),
             text_color: theme::text_primary(theme),
             ..base
         },
         button::Status::Pressed => button::Style {
-            background: Some(iced::Background::Color(theme::close_button_pressed())),
+            background: Some(iced::Background::Color(theme::close_button_pressed(theme))),
             text_color: theme::text_primary(theme),
             ..base
         },
