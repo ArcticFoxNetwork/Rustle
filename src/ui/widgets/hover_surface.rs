@@ -10,11 +10,12 @@ use iced::advanced::Shell;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::overlay;
 use iced::advanced::renderer;
+use iced::advanced::svg;
 use iced::advanced::widget::{Operation, Tree, Widget, tree};
 use iced::mouse::{self, Cursor};
 use iced::time::Instant;
 use iced::widget::container;
-use iced::{Element, Event, Length, Rectangle, Size, Vector};
+use iced::{Color, Element, Event, Length, Rectangle, Size, Vector};
 
 const DEFAULT_DURATION: Duration = Duration::from_millis(160);
 type StyleFn<'a, Theme> = Box<dyn Fn(&Theme, f32) -> container::Style + 'a>;
@@ -28,6 +29,14 @@ where
     style: StyleFn<'a, Theme>,
     duration: Duration,
     enabled: bool,
+    svg_overlay: Option<SvgOverlay>,
+}
+
+#[derive(Debug, Clone)]
+struct SvgOverlay {
+    handle: svg::Handle,
+    size: Size<f32>,
+    color: Color,
 }
 
 impl<'a, Message, Theme, Renderer> HoverSurface<'a, Message, Theme, Renderer>
@@ -41,6 +50,7 @@ where
             style: Box::new(|_, _| container::Style::default()),
             duration: DEFAULT_DURATION,
             enabled: true,
+            svg_overlay: None,
         }
     }
 
@@ -62,6 +72,18 @@ where
     #[must_use]
     pub fn duration(mut self, duration: Duration) -> Self {
         self.duration = duration;
+        self
+    }
+
+    /// Draws a fixed-size SVG centered above the content, using the same
+    /// progress value as the hover background for its native opacity.
+    #[must_use]
+    pub fn svg_overlay(mut self, handle: svg::Handle, size: Size<f32>, color: Color) -> Self {
+        self.svg_overlay = Some(SvgOverlay {
+            handle,
+            size,
+            color,
+        });
         self
     }
 }
@@ -121,7 +143,7 @@ impl State {
 impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
     for HoverSurface<'_, Message, Theme, Renderer>
 where
-    Renderer: renderer::Renderer,
+    Renderer: renderer::Renderer + svg::Renderer,
 {
     fn tag(&self) -> tree::Tag {
         tree::Tag::of::<State>()
@@ -237,6 +259,22 @@ where
             cursor,
             &clipped_viewport,
         );
+
+        if let Some(overlay) = &self.svg_overlay {
+            let overlay_bounds = Rectangle {
+                x: bounds.center_x() - overlay.size.width / 2.0,
+                y: bounds.center_y() - overlay.size.height / 2.0,
+                width: overlay.size.width,
+                height: overlay.size.height,
+            };
+            renderer.draw_svg(
+                svg::Svg::new(overlay.handle.clone())
+                    .color(overlay.color)
+                    .opacity(state.progress),
+                overlay_bounds,
+                clipped_viewport,
+            );
+        }
     }
 
     fn mouse_interaction(
@@ -279,7 +317,7 @@ impl<'a, Message, Theme, Renderer> From<HoverSurface<'a, Message, Theme, Rendere
 where
     Message: 'a,
     Theme: 'a,
-    Renderer: renderer::Renderer + 'a,
+    Renderer: renderer::Renderer + svg::Renderer + 'a,
 {
     fn from(surface: HoverSurface<'a, Message, Theme, Renderer>) -> Self {
         Element::new(surface)
@@ -291,7 +329,7 @@ pub fn hover_surface<'a, Message, Theme, Renderer>(
     content: impl Into<Element<'a, Message, Theme, Renderer>>,
 ) -> HoverSurface<'a, Message, Theme, Renderer>
 where
-    Renderer: renderer::Renderer,
+    Renderer: renderer::Renderer + svg::Renderer,
 {
     HoverSurface::new(content)
 }

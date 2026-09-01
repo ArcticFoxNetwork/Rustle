@@ -1,8 +1,5 @@
 //! Bottom player bar component
 
-use std::cell::Cell;
-use std::rc::Rc;
-
 use iced::widget::{Space, button, column, container, opaque, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
@@ -17,8 +14,8 @@ use crate::utils;
 /// Player bar height
 pub const PLAYER_BAR_HEIGHT: f32 = 80.0;
 
-const COVER_EXPAND_CHEVRON: &str = r#"<svg viewBox="0 0 28 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M3 8.5L14 4.5L25 8.5"/>
+const COVER_EXPAND_CHEVRON: &str = r#"<svg viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M4 8.5L12 5L20 8.5"/>
 </svg>"#;
 
 /// Build the player bar
@@ -59,38 +56,26 @@ pub fn view(
 
         let cover_size = s.px();
         let cover_radius = s.radius();
-        let expand_progress = Rc::new(Cell::new(0.0));
-        let icon_progress = Rc::clone(&expand_progress);
-        let expand_overlay = widgets::hover_surface(
-            container(
-                svg(svg::Handle::from_memory(COVER_EXPAND_CHEVRON.as_bytes()))
-                    .width(28)
-                    .height(12)
-                    .style(move |_theme, _status| svg::Style {
-                        color: Some(Color::from_rgba(1.0, 1.0, 1.0, icon_progress.get())),
-                    }),
-            )
-            .width(cover_size)
-            .height(cover_size)
-            .center_x(cover_size)
-            .center_y(cover_size),
-        )
-        .style(move |_theme, progress| {
-            expand_progress.set(progress);
-            iced::widget::container::Style {
-                background: Some(iced::Background::Color(Color::from_rgba(
-                    0.0,
-                    0.0,
-                    0.0,
-                    0.58 * progress,
-                ))),
-                border: iced::Border {
-                    radius: cover_radius.into(),
+        let expand_overlay =
+            widgets::hover_surface(Space::new().width(cover_size).height(cover_size))
+                .style(move |_theme, progress| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(Color::from_rgba(
+                        0.0,
+                        0.0,
+                        0.0,
+                        0.58 * progress,
+                    ))),
+                    border: iced::Border {
+                        radius: cover_radius.into(),
+                        ..Default::default()
+                    },
                     ..Default::default()
-                },
-                ..Default::default()
-            }
-        });
+                })
+                .svg_overlay(
+                    svg::Handle::from_memory(COVER_EXPAND_CHEVRON.as_bytes()),
+                    iced::Size::new(24.0, 12.0),
+                    Color::WHITE,
+                );
 
         let cover_btn = button(iced::widget::stack![cover_content, expand_overlay])
             .padding(0)
