@@ -7,7 +7,10 @@ use iced::widget::{Space, button, container, row, svg};
 use iced::{Alignment, Color, Element, Padding};
 
 use crate::app::Message;
+use crate::features::PlayMode;
 use crate::ui::{icons, theme};
+
+use super::play_mode_button::{self, ButtonSize as PlayModeButtonSize};
 
 /// Size variant for playback controls
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -28,7 +31,7 @@ impl ControlSize {
 
     fn play_icon_size(&self) -> f32 {
         match self {
-            Self::Small => 18.0,
+            Self::Small => 20.0,
             Self::Large => 28.0,
         }
     }
@@ -210,6 +213,91 @@ pub fn next_button(size: ControlSize) -> Element<'static, Message> {
         }
     })
     .on_press(Message::NextSong)
+    .into()
+}
+
+/// Build the favorite button used by the player bar.
+///
+/// `favorite` contains the NCM song ID and current favorite state. Local songs
+/// and an empty player pass `None`, which keeps the button visible but disabled.
+pub fn favorite_button(
+    size: ControlSize,
+    favorite: Option<(u64, bool)>,
+) -> Element<'static, Message> {
+    let icon_size = size.skip_icon_size();
+    let padding = size.skip_button_padding();
+    let radius = size.skip_button_radius();
+    let is_liked = favorite.is_some_and(|(_, is_liked)| is_liked);
+    let enabled = favorite.is_some();
+    let heart_icon = if is_liked {
+        icons::HEART
+    } else {
+        icons::HEART_OUTLINE
+    };
+
+    let btn = button(
+        svg(svg::Handle::from_memory(heart_icon.as_bytes()))
+            .width(icon_size)
+            .height(icon_size)
+            .style(move |theme, _status| svg::Style {
+                color: Some(if !enabled {
+                    theme::icon_muted(theme)
+                } else if is_liked {
+                    theme::ACCENT_PINK
+                } else {
+                    theme::text_secondary(theme)
+                }),
+            }),
+    )
+    .padding(padding)
+    .style(move |theme, status| {
+        let bg = if enabled && matches!(status, button::Status::Hovered) {
+            theme::hover_bg(theme)
+        } else {
+            Color::TRANSPARENT
+        };
+        button::Style {
+            background: Some(iced::Background::Color(bg)),
+            border: iced::Border {
+                radius: radius.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    });
+
+    if let Some((song_id, _)) = favorite {
+        btn.on_press(Message::ToggleFavorite(song_id)).into()
+    } else {
+        btn.into()
+    }
+}
+
+/// Build the player bar controls, including play mode and favorite actions.
+pub fn view_player_bar(
+    is_playing: bool,
+    is_buffering: bool,
+    size: ControlSize,
+    is_fm_mode: bool,
+    is_first_song: bool,
+    play_mode: PlayMode,
+    favorite: Option<(u64, bool)>,
+) -> Element<'static, Message> {
+    let spacing = size.spacing();
+    let prev_disabled = is_fm_mode && is_first_song;
+
+    row![
+        play_mode_button::view(play_mode, PlayModeButtonSize::Small, is_fm_mode),
+        Space::new().width(spacing),
+        prev_button(size, prev_disabled),
+        Space::new().width(spacing),
+        play_button_with_buffering(is_playing, is_buffering, size),
+        Space::new().width(spacing),
+        next_button(size),
+        Space::new().width(spacing),
+        favorite_button(size, favorite),
+    ]
+    .align_y(Alignment::Center)
     .into()
 }
 

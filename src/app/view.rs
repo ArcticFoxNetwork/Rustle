@@ -344,6 +344,28 @@ impl App {
             self.ui.image_state.get(kind, id)
         });
 
+        let current_favorite = self.playback.current_song.as_ref().and_then(|song| {
+            (song.id < 0).then(|| {
+                let ncm_id = (-song.id) as u64;
+                let is_liked = self
+                    .core
+                    .user_info
+                    .as_ref()
+                    .is_some_and(|user| user.like_songs.contains(&ncm_id));
+                (ncm_id, is_liked)
+            })
+        });
+
+        let progress_colors = self.playback.current_song.as_ref().and_then(|song| {
+            self.playback
+                .preload_coordinator
+                .background_colors(song.id)
+                .map(|colors| {
+                    let to_color = |[r, g, b, a]: [f32; 4]| iced::Color::from_rgba(r, g, b, a);
+                    [to_color(colors.0), to_color(colors.1), to_color(colors.2)]
+                })
+        });
+
         let player_bar = components::player_bar::view(
             self.playback.current_song.as_ref(),
             self.current_song_artist_id(),
@@ -352,6 +374,8 @@ impl App {
             duration,
             volume,
             self.core.settings.play_mode,
+            current_favorite,
+            progress_colors,
             is_buffering,
             self.playback_buffer_progress(),
             is_fm_mode,

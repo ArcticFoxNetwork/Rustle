@@ -271,7 +271,7 @@ pub fn view(
 
     // Scrollable area for library and cloud playlists only (hidden scrollbar)
     let scrollable_content =
-        scrollable(column(scrollable_items))
+        scrollable(column(scrollable_items).padding(Padding::new(0.0).bottom(16.0)))
             .height(Fill)
             .style(|_theme, _status| scrollable::Style {
                 container: iced::widget::container::Style::default(),
@@ -302,7 +302,7 @@ pub fn view(
             });
 
     let top_content = column![logo, nav_menu, Space::new().height(24), scrollable_content,]
-        .padding(16)
+        .padding(Padding::new(16.0).bottom(0.0))
         .width(sidebar_width)
         .height(Fill);
 

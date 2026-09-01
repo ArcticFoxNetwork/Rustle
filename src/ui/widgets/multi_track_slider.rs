@@ -279,20 +279,32 @@ where
         // 2. Downloaded but not played (secondary color) - from playback to download position
         // 3. Not downloaded (background color) - from download position to end
 
-        // Part 1: Played portion (primary track)
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds: Rectangle {
-                    x: bounds.x,
-                    y: rail_y - style.rail.width / 2.0,
-                    width: offset + handle_width / 2.0,
-                    height: style.rail.width,
-                },
-                border: style.rail.border,
-                ..renderer::Quad::default()
-            },
-            style.rail.backgrounds.0,
-        );
+        // Part 1: Played portion (primary track). Draw the background at the
+        // full rail width and reveal it through a progress-sized clip. This
+        // keeps gradients anchored to the full timeline instead of squeezing
+        // the complete gradient into the played portion.
+        let full_rail_bounds = Rectangle {
+            x: bounds.x,
+            y: rail_y - style.rail.width / 2.0,
+            width: bounds.width,
+            height: style.rail.width,
+        };
+        let played_clip_bounds = Rectangle {
+            width: offset + handle_width / 2.0,
+            ..full_rail_bounds
+        };
+        if played_clip_bounds.width > 0.0 {
+            renderer.with_layer(played_clip_bounds, |renderer| {
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: full_rail_bounds,
+                        border: style.rail.border,
+                        ..renderer::Quad::default()
+                    },
+                    style.rail.backgrounds.0,
+                );
+            });
+        }
 
         // Part 2 & 3: Handle secondary track if present
         if let Some(sec_offset) = secondary_offset {

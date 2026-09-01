@@ -226,6 +226,16 @@ impl PreloadCoordinator {
         slot.texture_ready = true;
     }
 
+    /// Return the extracted cover colors once they are ready for this song.
+    pub fn background_colors(&self, song_id: i64) -> Option<([f32; 4], [f32; 4], [f32; 4])> {
+        let slot = self.background_slots.get(&song_id)?;
+        if !slot.colors_ready {
+            return None;
+        }
+
+        Some((slot.primary?, slot.secondary?, slot.tertiary?))
+    }
+
     /// Background is ready only if colors + texture are done AND slot exists with matching cover.
     pub fn is_background_ready(&self, song_id: i64, cover_path: Option<&str>) -> bool {
         self.background_slots.get(&song_id).is_some_and(|s| {
@@ -295,5 +305,43 @@ impl PreloadCoordinator {
             slot.content_width = content_width;
             slot.font_size = font_size;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PreloadCoordinator;
+
+    #[test]
+    fn background_colors_are_bound_to_the_current_cover() {
+        let mut coordinator = PreloadCoordinator::default();
+        let primary = [0.8, 0.2, 0.3, 1.0];
+        let secondary = [0.3, 0.6, 0.9, 1.0];
+        let tertiary = [0.5, 0.2, 0.8, 1.0];
+
+        coordinator.ensure_background_slot(1, Some("first.png".to_string()));
+        coordinator.store_background_colors(
+            1,
+            "other.png".to_string(),
+            primary,
+            secondary,
+            tertiary,
+        );
+        assert_eq!(coordinator.background_colors(1), None);
+
+        coordinator.store_background_colors(
+            1,
+            "first.png".to_string(),
+            primary,
+            secondary,
+            tertiary,
+        );
+        assert_eq!(
+            coordinator.background_colors(1),
+            Some((primary, secondary, tertiary))
+        );
+
+        coordinator.ensure_background_slot(1, Some("second.png".to_string()));
+        assert_eq!(coordinator.background_colors(1), None);
     }
 }

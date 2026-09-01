@@ -7,7 +7,7 @@ use crate::app::Message;
 use crate::database::DbSong;
 use crate::features::PlayMode;
 use crate::ui::theme::MEDIUM_WEIGHT;
-use crate::ui::widgets::{self, ControlSize, PlayModeButtonSize, SliderSize};
+use crate::ui::widgets::{self, ControlSize, SliderSize};
 use crate::ui::{icons, theme};
 use crate::utils;
 
@@ -23,6 +23,8 @@ pub fn view(
     duration_secs: f32,
     volume: f32, // 0.0 to 1.0
     play_mode: PlayMode,
+    current_favorite: Option<(u64, bool)>,
+    progress_colors: Option<[Color; 3]>,
     is_buffering: bool,             // Whether streaming is buffering
     download_progress: Option<f32>, // Download progress 0.0 to 1.0 (None if not streaming)
     is_fm_mode: bool,               // Whether in Personal FM mode
@@ -170,58 +172,43 @@ pub fn view(
         .width(LEFT_SECTION_WIDTH)
         .align_y(Alignment::Center);
 
-    // Center section: Playback controls + progress (using unified widgets)
-    let controls = widgets::playback_controls::view(
+    // Center section: Playback controls (using unified widgets)
+    let controls = widgets::playback_controls::view_player_bar(
         is_playing,
         is_buffering,
         ControlSize::Small,
         is_fm_mode,
         is_first_song,
+        play_mode,
+        current_favorite,
     );
 
-    let progress_slider =
-        widgets::progress_slider::view(position, download_progress, SliderSize::Standard);
+    let progress_slider = widgets::progress_slider::view_with_gradient(
+        position,
+        download_progress,
+        SliderSize::Edge,
+        progress_colors,
+    );
 
-    let progress_row = row![
-        text(current_time)
-            .size(theme::TEXT_SIZE_CAPTION)
-            .style(|theme| text::Style {
-                color: Some(theme::text_muted(theme))
-            }),
-        Space::new().width(8),
-        progress_slider,
-        Space::new().width(8),
-        text(total_time)
-            .size(theme::TEXT_SIZE_CAPTION)
-            .style(|theme| text::Style {
-                color: Some(theme::text_muted(theme))
-            }),
-    ]
-    .align_y(Alignment::Center);
-
-    let center_section = column![controls, Space::new().height(4), progress_row,]
-        .align_x(Alignment::Center)
-        .width(Length::Fill);
+    let center_section = container(controls)
+        .width(Length::Fill)
+        .align_x(Alignment::Center);
 
     // Right section: Volume control (using unified widgets)
     let volume_icon = svg(svg::Handle::from_memory(icons::VOLUME.as_bytes()))
-        .width(18)
-        .height(18)
+        .width(20)
+        .height(20)
         .style(|_theme, _status| svg::Style {
             color: Some(theme::text_secondary(_theme)),
         });
 
     let volume_slider = widgets::progress_slider::volume_slider(volume);
 
-    // Play mode button (using unified widget with FM mode support)
-    let play_mode_btn =
-        widgets::play_mode_button::view(play_mode, PlayModeButtonSize::Small, is_fm_mode);
-
     // Queue button
     let queue_btn = button(
         svg(svg::Handle::from_memory(icons::QUEUE.as_bytes()))
-            .width(18)
-            .height(18)
+            .width(20)
+            .height(20)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::text_secondary(_theme)),
             }),
@@ -235,7 +222,7 @@ pub fn view(
         button::Style {
             background: Some(iced::Background::Color(bg)),
             border: iced::Border {
-                radius: 4.0.into(),
+                radius: 18.0.into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -244,19 +231,19 @@ pub fn view(
     .on_press(Message::ToggleQueue);
 
     let volume_area = iced::widget::mouse_area(
-        row![
-            volume_icon,
-            Space::new().width(8),
-            volume_slider,
-        ]
-        .align_y(Alignment::Center)
-        .width(Length::Shrink),
+        row![volume_icon, Space::new().width(8), volume_slider,]
+            .align_y(Alignment::Center)
+            .width(Length::Shrink),
     )
     .on_enter(Message::VolumeSliderHovered(true))
     .on_exit(Message::VolumeSliderHovered(false));
 
     let right_section = row![
-        play_mode_btn,
+        text(format!("{current_time} / {total_time}"))
+            .size(theme::TEXT_SIZE_CAPTION)
+            .style(|theme| text::Style {
+                color: Some(theme::text_muted(theme))
+            }),
         Space::new().width(8),
         volume_area,
         Space::new().width(12),
@@ -269,26 +256,30 @@ pub fn view(
     let content = row![left_section, center_section, right_section,]
         .spacing(16)
         .align_y(Alignment::Center)
-        .padding(Padding::new(12.0).left(16.0).right(16.0));
+        .padding(Padding::new(0.0).left(16.0).right(16.0));
 
-    // Top border line
-    let top_border = container(Space::new().height(0))
+    const PROGRESS_BAR_HEIGHT: f32 = 8.0;
+    let top_progress = container(progress_slider)
         .width(Fill)
-        .height(1)
-        .style(|theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(theme::player_bar_border(theme))),
-            ..Default::default()
-        });
-
-    let main_content = container(content)
-        .width(Fill)
-        .height(PLAYER_BAR_HEIGHT - 1.0)
+        .height(PROGRESS_BAR_HEIGHT)
         .style(|theme| iced::widget::container::Style {
             background: Some(iced::Background::Color(theme::player_bar_bg(theme))),
             ..Default::default()
         });
 
-    let bar = column![top_border, main_content]
+    let main_content = container(content)
+        .width(Fill)
+        .height(PLAYER_BAR_HEIGHT)
+        .padding(Padding::new(0.0).top(PROGRESS_BAR_HEIGHT))
+        .align_y(Alignment::Center)
+        .style(|theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(theme::player_bar_bg(theme))),
+            ..Default::default()
+        });
+
+    // Draw the progress slider after the player bar body so its hover handle
+    // can extend below the rail without being covered by the body background.
+    let bar = iced::widget::stack![main_content, top_progress]
         .width(Fill)
         .height(PLAYER_BAR_HEIGHT);
 

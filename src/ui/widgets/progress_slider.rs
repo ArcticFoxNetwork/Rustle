@@ -13,10 +13,10 @@ use crate::ui::theme;
 /// Size variant for progress slider
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum SliderSize {
-    /// Standard size for player bar (400px width)
-    Standard,
     /// Full width for lyrics page
     Full,
+    /// Full-width edge progress for the top of the player bar
+    Edge,
 }
 
 /// Build the progress slider with optional download progress indicator
@@ -30,11 +30,24 @@ pub fn view(
     download_progress: Option<f32>,
     size: SliderSize,
 ) -> Element<'static, Message> {
-    let clamped_position = position.clamp(0.0, 1.0);
+    view_with_gradient(position, download_progress, size, None)
+}
 
-    let width = match size {
-        SliderSize::Standard => Length::Fixed(400.0),
-        SliderSize::Full => Length::Fill,
+/// Build a progress slider whose played track can use cover-derived colors.
+pub fn view_with_gradient(
+    position: f32,
+    download_progress: Option<f32>,
+    size: SliderSize,
+    played_gradient: Option<[Color; 3]>,
+) -> Element<'static, Message> {
+    let clamped_position = position.clamp(0.0, 1.0);
+    let played_gradient = played_gradient.map(colors_light_to_dark);
+
+    let width = Length::Fill;
+
+    let height = match size {
+        SliderSize::Edge => 8,
+        SliderSize::Full => 16,
     };
 
     // Use multi-track slider for download progress display
@@ -42,9 +55,27 @@ pub fn view(
         .secondary(download_progress)
         .on_release(Message::SeekRelease)
         .width(width)
-        .height(16)
+        .height(height)
         .step(0.001)
         .style(move |iced_theme, status| {
+            let fallback_color = if size == SliderSize::Full {
+                Color::WHITE
+            } else {
+                theme::ACCENT_PINK
+            };
+            let played_background = played_gradient.map_or(
+                iced::Background::Color(fallback_color),
+                |[light, middle, dark]| {
+                    iced::Background::Gradient(iced::Gradient::Linear(
+                        iced::gradient::Linear::new(std::f32::consts::FRAC_PI_2)
+                            .add_stop(0.0, light)
+                            .add_stop(0.5, middle)
+                            .add_stop(1.0, dark),
+                    ))
+                },
+            );
+            let handle_color = played_gradient.map_or(fallback_color, |[light, _, _]| light);
+            let rail_radius = if size == SliderSize::Edge { 0.0 } else { 2.0 };
             let handle_radius = match status {
                 multi_track_slider::Status::Hovered | multi_track_slider::Status::Dragged => 6.0,
                 _ => 0.0, // Hide handle when not interacting
@@ -52,8 +83,12 @@ pub fn view(
             multi_track_slider::Style {
                 rail: multi_track_slider::Rail {
                     backgrounds: (
-                        iced::Background::Color(theme::ACCENT_PINK),
-                        iced::Background::Color(theme::divider(iced_theme)),
+                        played_background,
+                        iced::Background::Color(if size == SliderSize::Edge {
+                            theme::player_bar_border(iced_theme)
+                        } else {
+                            theme::divider(iced_theme)
+                        }),
                     ),
                     // Downloaded but not played - slightly brighter than background
                     secondary_background: Some(iced::Background::Color(Color::from_rgba(
@@ -61,7 +96,7 @@ pub fn view(
                     ))),
                     width: 4.0,
                     border: iced::Border {
-                        radius: 2.0.into(),
+                        radius: rail_radius.into(),
                         width: 0.0,
                         color: Color::TRANSPARENT,
                     },
@@ -70,13 +105,24 @@ pub fn view(
                     shape: multi_track_slider::HandleShape::Circle {
                         radius: handle_radius,
                     },
-                    background: iced::Background::Color(theme::ACCENT_PINK),
+                    background: iced::Background::Color(handle_color),
                     border_width: 0.0,
                     border_color: Color::TRANSPARENT,
                 },
             }
         })
         .into()
+}
+
+fn colors_light_to_dark(mut colors: [Color; 3]) -> [Color; 3] {
+    colors.sort_by(|left, right| {
+        perceived_brightness(*right).total_cmp(&perceived_brightness(*left))
+    });
+    colors
+}
+
+fn perceived_brightness(color: Color) -> f32 {
+    color.r * 0.299 + color.g * 0.587 + color.b * 0.114
 }
 
 /// Build a volume slider
@@ -118,4 +164,22 @@ pub fn volume_slider(volume: f32) -> Element<'static, Message> {
             }
         })
         .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{colors_light_to_dark, perceived_brightness};
+    use iced::Color;
+
+    #[test]
+    fn gradient_colors_are_ordered_from_light_to_dark() {
+        let colors = colors_light_to_dark([
+            Color::from_rgb(0.1, 0.1, 0.1),
+            Color::from_rgb(0.9, 0.9, 0.9),
+            Color::from_rgb(0.5, 0.5, 0.5),
+        ]);
+
+        assert!(perceived_brightness(colors[0]) > perceived_brightness(colors[1]));
+        assert!(perceived_brightness(colors[1]) > perceived_brightness(colors[2]));
+    }
 }

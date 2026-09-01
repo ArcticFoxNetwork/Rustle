@@ -22,7 +22,7 @@ pub enum ButtonSize {
 impl ButtonSize {
     fn icon_size(&self) -> f32 {
         match self {
-            Self::Small => 18.0,
+            Self::Small => 20.0,
             Self::Large => 22.0,
         }
     }
@@ -35,10 +35,7 @@ impl ButtonSize {
     }
 
     fn radius(&self) -> f32 {
-        match self {
-            Self::Small => 4.0,
-            Self::Large => 21.0,
-        }
+        (self.icon_size() + self.padding() * 2.0) / 2.0
     }
 }
 
@@ -107,4 +104,15 @@ pub fn view(play_mode: PlayMode, size: ButtonSize, is_fm_mode: bool) -> Element<
         ..Default::default()
     })
     .into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ButtonSize;
+
+    #[test]
+    fn hover_backgrounds_are_circular_at_every_size() {
+        assert_eq!(ButtonSize::Small.radius(), 18.0);
+        assert_eq!(ButtonSize::Large.radius(), 21.0);
+    }
 }
