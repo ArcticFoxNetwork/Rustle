@@ -1699,14 +1699,14 @@ impl UiState {
                     std::time::Duration::from_millis(450),
                 ),
                 gradient_palette_key: None,
+                gradient_source: None,
+                retained_gradient: None,
                 scroll_state: std::rc::Rc::new(std::cell::RefCell::new(
                     crate::ui::widgets::VirtualListState::default(),
                 )),
                 load_state: Default::default(),
                 content_width: 904.0,
                 description_expanded: false,
-                gradient_source: None,
-                retained_gradient: None,
                 ncm_cache_baseline: None,
                 ncm_replace_songs_on_chunk: false,
                 ncm_load_generation: 0,
@@ -1891,12 +1891,12 @@ impl Default for PlaylistPageState {
                 std::time::Duration::from_millis(450),
             ),
             gradient_palette_key: None,
+            gradient_source: None,
+            retained_gradient: None,
             scroll_state: std::rc::Rc::new(std::cell::RefCell::new(
                 crate::ui::widgets::VirtualListState::default(),
             )),
             load_state: Default::default(),
-            gradient_source: None,
-            retained_gradient: None,
             content_width: 904.0,
             description_expanded: false,
             ncm_cache_baseline: None,
@@ -1921,10 +1921,6 @@ impl PlaylistPageState {
         self.sync_gradient_target(palette_key, target, power_saving);
     }
 
-        if palette_key != self.gradient_palette_key {
-            self.gradient_palette_key = palette_key;
-            self.gradient_animation.settle_at(0.0);
-
     fn sync_gradient_target(
         &mut self,
         palette_key: Option<(
@@ -1935,12 +1931,16 @@ impl PlaylistPageState {
         target: Option<crate::ui::pages::playlist::DetailGradientSnapshot>,
         power_saving: bool,
     ) {
+        if palette_key != self.gradient_palette_key {
+            self.gradient_palette_key = palette_key;
+            self.gradient_source = self.retained_gradient;
+            self.gradient_animation.settle_at(0.0);
+
             if let Some(target) = target {
                 let unchanged = self.gradient_source == Some(target);
                 self.retained_gradient = Some(target);
 
                 if power_saving || unchanged {
-            self.gradient_source = self.retained_gradient;
                     self.gradient_animation.settle_at(1.0);
                 } else {
                     self.gradient_animation.start();
@@ -1952,14 +1952,10 @@ impl PlaylistPageState {
     }
 
     pub fn reset_gradient_animation(&mut self) {
+        self.gradient_source = self.retained_gradient;
         self.gradient_palette_key = None;
         self.gradient_animation.settle_at(0.0);
     }
-}
-        self.gradient_source = self.retained_gradient;
-
-pub struct LyricsState {
-    pub is_open: bool,
 
     pub fn gradient_source(&self) -> Option<crate::ui::pages::playlist::DetailGradientSnapshot> {
         self.gradient_source
@@ -2005,6 +2001,10 @@ mod detail_gradient_state_tests {
         assert_eq!(state.retained_gradient, Some(second));
         assert!(state.gradient_animation.is_animating());
     }
+}
+
+pub struct LyricsState {
+    pub is_open: bool,
     pub animation: SingleHoverAnimation,
     /// Song currently displayed in the lyrics page.
     pub displayed_song_id: Option<i64>,

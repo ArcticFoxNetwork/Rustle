@@ -154,9 +154,9 @@ impl App {
                         current_user_id,
                         current_playing_id,
                         self.ui.playlist_page.description_expanded,
+                        self.ui.playlist_page.gradient_source(),
                         self.ui.playlist_page.gradient_animation.progress(),
                     )
-                        self.ui.playlist_page.gradient_source(),
                 } else {
                     pages::playlist::gradient_placeholder(self.ui.playlist_page.gradient_source())
                 }
@@ -178,9 +178,9 @@ impl App {
                         current_playing_id,
                         self.ui.playlist_page.content_width,
                         self.ui.playlist_page.description_expanded,
+                        self.ui.playlist_page.gradient_source(),
                         self.ui.playlist_page.gradient_animation.progress(),
                     )
-                        self.ui.playlist_page.gradient_source(),
                 } else {
                     pages::playlist::gradient_placeholder(self.ui.playlist_page.gradient_source())
                 }
@@ -202,9 +202,9 @@ impl App {
                         current_playing_id,
                         self.ui.playlist_page.content_width,
                         self.ui.playlist_page.description_expanded,
+                        self.ui.playlist_page.gradient_source(),
                         self.ui.playlist_page.gradient_animation.progress(),
                     )
-                        self.ui.playlist_page.gradient_source(),
                 } else {
                     pages::playlist::gradient_placeholder(self.ui.playlist_page.gradient_source())
                 }
