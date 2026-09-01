@@ -20,6 +20,7 @@ pub fn view<'a>(
     user_info: Option<&UserInfo>,
     image_state: &ImageState,
     show_background: bool,
+    is_maximized: bool,
 ) -> Element<'a, Message> {
     let button_size = 36;
     let icon_size = 16;
@@ -219,18 +220,24 @@ pub fn view<'a>(
 
     let maximize_btn = tooltip(
         button(
-            svg(svg::Handle::from_memory(MAXIMIZE_ICON.as_bytes()))
-                .width(icon_size)
-                .height(icon_size)
-                .style(|theme, _status| svg::Style {
-                    color: Some(theme::text_secondary(theme)),
-                }),
+            svg(svg::Handle::from_memory(
+                crate::ui::icons::maximize_restore(is_maximized).as_bytes(),
+            ))
+            .width(icon_size)
+            .height(icon_size)
+            .style(|theme, _status| svg::Style {
+                color: Some(theme::text_secondary(theme)),
+            }),
         )
         .width(button_size)
         .height(button_size)
         .style(window_button_style)
         .on_press(Message::WindowMaximize),
-        locale.get(Key::Maximize),
+        locale.get(if is_maximized {
+            Key::Restore
+        } else {
+            Key::Maximize
+        }),
         tooltip::Position::Bottom,
     );
 
@@ -423,10 +430,6 @@ const FORWARD_ICON: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="curre
 // Window control icons
 const MINIMIZE_ICON: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
     <line x1="5" y1="12" x2="19" y2="12"/>
-</svg>"#;
-
-const MAXIMIZE_ICON: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <rect x="4" y="4" width="16" height="16" rx="2"/>
 </svg>"#;
 
 const CLOSE_ICON: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">

@@ -106,6 +106,7 @@ pub enum Key {
     // Window Controls
     Minimize,
     Maximize,
+    Restore,
     Close,
     Settings,
 

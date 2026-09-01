@@ -125,6 +125,8 @@ pub enum Message {
     WindowMinimize,
     /// Maximize window
     WindowMaximize,
+    /// Actual maximized state reported by the window system
+    WindowMaximized(bool),
     /// Start dragging the window
     WindowDrag,
     /// Start resizing the window from a border/corner
@@ -966,6 +968,7 @@ impl std::fmt::Debug for Message {
             // Window
             Self::WindowMinimize => simple!("WindowMinimize"),
             Self::WindowMaximize => simple!("WindowMaximize"),
+            Self::WindowMaximized(maximized) => simple!("WindowMaximized", "{}", maximized),
             Self::WindowDrag => simple!("WindowDrag"),
             Self::WindowResize(direction) => simple!("WindowResize", "{:?}", direction),
             Self::MouseReleased => simple!("MouseReleased"),

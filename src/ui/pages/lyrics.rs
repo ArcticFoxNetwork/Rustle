@@ -28,6 +28,7 @@ use crate::ui::widgets::{self, ControlSize, PlayModeButtonSize, SliderSize};
 /// `is_liked`: Whether the current song is in user's favorites
 /// `download_progress`: Download progress for streaming songs (0.0 to 1.0)
 /// `is_fm_mode`: Whether in Personal FM mode
+/// `is_maximized`: Whether the application window is currently maximized
 pub fn view<'a>(
     song: &'a DbSong,
     image_state: &'a ImageState,
@@ -47,6 +48,7 @@ pub fn view<'a>(
     is_liked: bool,
     download_progress: Option<f32>,
     is_fm_mode: bool,
+    is_maximized: bool,
 ) -> Element<'a, Message> {
     let left_panel = build_left_panel(
         song,
@@ -219,12 +221,14 @@ pub fn view<'a>(
     .on_press(Message::WindowMinimize);
 
     let maximize_btn = button(
-        svg(svg::Handle::from_memory(icons::MAXIMIZE.as_bytes()))
-            .width(WINDOW_ICON_SIZE)
-            .height(WINDOW_ICON_SIZE)
-            .style(|_theme, _status| svg::Style {
-                color: Some(theme::text_primary(_theme)),
-            }),
+        svg(svg::Handle::from_memory(
+            icons::maximize_restore(is_maximized).as_bytes(),
+        ))
+        .width(WINDOW_ICON_SIZE)
+        .height(WINDOW_ICON_SIZE)
+        .style(|_theme, _status| svg::Style {
+            color: Some(theme::text_primary(_theme)),
+        }),
     )
     .width(WINDOW_BUTTON_SIZE)
     .height(WINDOW_BUTTON_SIZE)

@@ -123,7 +123,10 @@ impl App {
                     (available_width - DETAIL_GRID_PADDING).max(200.0);
                 self.ui.search.content_width = (available_width - GRID_PADDING).max(200.0);
 
-                Some(self.request_lyrics_shaping_for_current_viewport())
+                Some(Task::batch([
+                    self.request_lyrics_shaping_for_current_viewport(),
+                    Self::sync_window_maximized_task(),
+                ]))
             }
 
             // Handle async FontSystem initialization

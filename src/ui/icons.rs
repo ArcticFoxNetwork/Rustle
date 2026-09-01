@@ -189,6 +189,17 @@ pub const MAXIMIZE: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="curre
     <rect x="4" y="4" width="16" height="16" rx="2"/>
 </svg>"#;
 
+/// Restore-down icon shown while the window is maximized
+pub const RESTORE: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M9 8V5h10v10h-3"/>
+    <rect x="5" y="8" width="11" height="11" rx="1"/>
+</svg>"#;
+
+/// Return the correct maximize control icon for the current window state.
+pub fn maximize_restore(is_maximized: bool) -> &'static str {
+    if is_maximized { RESTORE } else { MAXIMIZE }
+}
+
 /// Refresh icon (filled)
 pub const REFRESH: &str = r#"<svg viewBox="0 0 24 24" fill="currentColor">
     <path d="M17.65 6.35C16.2 4.9 14.21 4 12 4c-4.42 0-7.99 3.58-7.99 8s3.57 8 7.99 8c3.73 0 6.84-2.55 7.73-6h-2.08c-.82 2.33-3.04 4-5.65 4-3.31 0-6-2.69-6-6s2.69-6 6-6c1.66 0 3.14.69 4.22 1.78L13 11h7V4l-2.35 2.35z"/>
@@ -244,3 +255,14 @@ pub const HARD_DRIVE: &str = r#"<svg viewBox="0 0 24 24" fill="currentColor">
 pub const CLOUD: &str = r#"<svg viewBox="0 0 24 24" fill="currentColor">
     <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96z"/>
 </svg>"#;
+
+#[cfg(test)]
+mod tests {
+    use super::{MAXIMIZE, RESTORE, maximize_restore};
+
+    #[test]
+    fn maximize_control_icon_follows_window_state() {
+        assert_eq!(maximize_restore(false), MAXIMIZE);
+        assert_eq!(maximize_restore(true), RESTORE);
+    }
+}

@@ -92,6 +92,7 @@ impl App {
                         },
                         self.playback_buffer_progress(),
                         self.is_fm_mode(),
+                        self.core.window_maximized,
                     )
                 } else {
                     Space::new().width(0).height(0).into()
@@ -260,6 +261,7 @@ impl App {
             self.core.user_info.as_ref(),
             &self.ui.image_state,
             !self.ui.current_route.has_gradient_background(),
+            self.core.window_maximized,
         );
         let controls_overlay = container(top_bar).width(Fill).padding(0);
 

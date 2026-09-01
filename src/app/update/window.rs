@@ -11,6 +11,11 @@ use crate::platform::window;
 use crate::ui::overlay::{ModalKind, OverlayKind};
 
 impl App {
+    pub(super) fn sync_window_maximized_task() -> Task<Message> {
+        iced::window::latest()
+            .and_then(|id| iced::window::is_maximized(id).map(Message::WindowMaximized))
+    }
+
     fn is_window_hidden(&self) -> bool {
         self.core.is_window_hidden()
     }
@@ -182,8 +187,13 @@ impl App {
                 Some(iced::window::latest().and_then(|id| iced::window::minimize(id, true)))
             }
 
-            Message::WindowMaximize => {
-                Some(iced::window::latest().and_then(iced::window::toggle_maximize))
+            Message::WindowMaximize => Some(iced::window::latest().and_then(|id| {
+                iced::window::toggle_maximize(id).chain(Self::sync_window_maximized_task())
+            })),
+
+            Message::WindowMaximized(maximized) => {
+                self.core.window_maximized = *maximized;
+                Some(Task::none())
             }
 
             Message::WindowDrag => Some(iced::window::latest().and_then(iced::window::drag)),
@@ -217,14 +227,20 @@ impl App {
             }
 
             Message::WindowShown => {
-                if self.core.window_visibility == WindowVisibilityState::Showing
+                let visibility_task = if self.core.window_visibility
+                    == WindowVisibilityState::Showing
                     && self.core.window_operation_pending
                     && window::is_wayland_backend()
                 {
-                    Some(Task::done(Message::WindowOperationComplete))
+                    Task::done(Message::WindowOperationComplete)
                 } else {
-                    Some(Task::none())
-                }
+                    Task::none()
+                };
+
+                Some(Task::batch([
+                    visibility_task,
+                    Self::sync_window_maximized_task(),
+                ]))
             }
 
             Message::WindowFocused => {

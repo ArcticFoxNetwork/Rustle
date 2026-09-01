@@ -59,6 +59,7 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     // Window Controls
     m.insert(Key::Minimize, "最小化");
     m.insert(Key::Maximize, "最大化");
+    m.insert(Key::Restore, "向下还原");
     m.insert(Key::Close, "关闭");
     m.insert(Key::Settings, "设置");
 
