@@ -702,8 +702,6 @@ pub enum Message {
     // ============ Context Menu ============
     /// Show context menu for a local song (triggered by right-click)
     RightClickSong(i64),
-    /// Show context menu for an NCM/online song
-    RightClickNcmSong(Track),
     /// Close context menu
     CloseContextMenu,
     /// Context menu item selected
@@ -1344,7 +1342,6 @@ impl std::fmt::Debug for Message {
 
             // Context Menu
             Self::RightClickSong(id) => simple!("RightClickSong", "{}", id),
-            Self::RightClickNcmSong(info) => simple!("RightClickNcmSong", "{}", info.id),
             Self::CloseContextMenu => simple!("CloseContextMenu"),
             Self::ContextMenuAction(action, id) => {
                 simple!("ContextMenuAction", "{:?}, {}", action, id)

@@ -44,6 +44,7 @@ pub enum TrayCommand {
     ToggleFavorite,
     Quit,
     /// The shell integration disappeared or recovered at runtime.
+    #[cfg(target_os = "windows")]
     AvailabilityChanged(TrayAvailability),
 }
 

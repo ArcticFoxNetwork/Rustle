@@ -2,7 +2,7 @@
 
 use super::{TrayCommand, TrayHandle, TrayState, TrayWindowCommand};
 use crate::features::PlayMode;
-use crate::i18n::Language;
+use crate::i18n::{Key, Language, t};
 use ksni::{Icon, MenuItem, Status, ToolTip, Tray as KsniTray, TrayMethods, menu::*};
 use tokio::sync::mpsc;
 
@@ -148,7 +148,15 @@ fn create_icon() -> Vec<Icon> {
 }
 
 fn create_menu(state: &TrayState, _tx: &mpsc::Sender<TrayCommand>) -> Vec<MenuItem<LinuxTray>> {
-    let play_label = if state.is_playing { "暂停" } else { "播放" };
+    let language = state.language;
+    let play_label = t(
+        language,
+        if state.is_playing {
+            Key::TrayPause
+        } else {
+            Key::TrayPlay
+        },
+    );
     let play_icon = if state.is_playing {
         "media-playback-pause-symbolic"
     } else {
@@ -195,7 +203,7 @@ fn create_menu(state: &TrayState, _tx: &mpsc::Sender<TrayCommand>) -> Vec<MenuIt
         }
         .into(),
         StandardItem {
-            label: "上一首".to_string(),
+            label: t(language, Key::TrayPrevious).to_string(),
             icon_name: "media-skip-backward-symbolic".to_string(),
             activate: Box::new(|tray: &mut LinuxTray| {
                 let _ = tray.tx.try_send(TrayCommand::PrevTrack);
@@ -204,7 +212,7 @@ fn create_menu(state: &TrayState, _tx: &mpsc::Sender<TrayCommand>) -> Vec<MenuIt
         }
         .into(),
         StandardItem {
-            label: "下一首".to_string(),
+            label: t(language, Key::TrayNext).to_string(),
             icon_name: "media-skip-forward-symbolic".to_string(),
             activate: Box::new(|tray: &mut LinuxTray| {
                 let _ = tray.tx.try_send(TrayCommand::NextTrack);
@@ -215,9 +223,9 @@ fn create_menu(state: &TrayState, _tx: &mpsc::Sender<TrayCommand>) -> Vec<MenuIt
         // Favorite button
         if state.ncm_song_id.is_some() {
             let (fav_label, fav_icon) = if state.is_favorited {
-                ("取消收藏", "starred-symbolic")
+                (t(language, Key::TrayUnfavorite), "starred-symbolic")
             } else {
-                ("收藏", "non-starred-symbolic")
+                (t(language, Key::TrayFavorite), "non-starred-symbolic")
             };
             StandardItem {
                 label: fav_label.to_string(),
@@ -230,7 +238,7 @@ fn create_menu(state: &TrayState, _tx: &mpsc::Sender<TrayCommand>) -> Vec<MenuIt
             .into()
         } else {
             StandardItem {
-                label: "收藏".to_string(),
+                label: t(language, Key::TrayFavorite).to_string(),
                 icon_name: "non-starred-symbolic".to_string(),
                 enabled: false,
                 ..Default::default()
@@ -240,7 +248,7 @@ fn create_menu(state: &TrayState, _tx: &mpsc::Sender<TrayCommand>) -> Vec<MenuIt
         MenuItem::Separator,
         // Play mode submenu
         SubMenu {
-            label: "播放模式".to_string(),
+            label: t(language, Key::TrayPlayMode).to_string(),
             icon_name: "media-playlist-consecutive-symbolic".to_string(),
             submenu: vec![
                 RadioGroup {
@@ -257,22 +265,22 @@ fn create_menu(state: &TrayState, _tx: &mpsc::Sender<TrayCommand>) -> Vec<MenuIt
                     }),
                     options: vec![
                         RadioItem {
-                            label: "顺序播放".to_string(),
+                            label: t(language, Key::TraySequential).to_string(),
                             icon_name: "media-playlist-consecutive-symbolic".to_string(),
                             ..Default::default()
                         },
                         RadioItem {
-                            label: "列表循环".to_string(),
+                            label: t(language, Key::TrayLoopAll).to_string(),
                             icon_name: "media-playlist-repeat-symbolic".to_string(),
                             ..Default::default()
                         },
                         RadioItem {
-                            label: "单曲循环".to_string(),
+                            label: t(language, Key::TrayLoopOne).to_string(),
                             icon_name: "media-playlist-repeat-song-symbolic".to_string(),
                             ..Default::default()
                         },
                         RadioItem {
-                            label: "随机播放".to_string(),
+                            label: t(language, Key::TrayShuffle).to_string(),
                             icon_name: "media-playlist-shuffle-symbolic".to_string(),
                             ..Default::default()
                         },
@@ -287,7 +295,7 @@ fn create_menu(state: &TrayState, _tx: &mpsc::Sender<TrayCommand>) -> Vec<MenuIt
         MenuItem::Separator,
         // Window control
         StandardItem {
-            label: "显示/隐藏窗口".to_string(),
+            label: t(language, Key::TrayToggleWindow).to_string(),
             icon_name: "view-restore-symbolic".to_string(),
             activate: Box::new(|tray: &mut LinuxTray| {
                 let _ = tray
@@ -300,7 +308,7 @@ fn create_menu(state: &TrayState, _tx: &mpsc::Sender<TrayCommand>) -> Vec<MenuIt
         MenuItem::Separator,
         // Quit
         StandardItem {
-            label: "退出".to_string(),
+            label: t(language, Key::TrayQuit).to_string(),
             icon_name: "application-exit-symbolic".to_string(),
             activate: Box::new(|tray: &mut LinuxTray| {
                 let _ = tray.tx.try_send(TrayCommand::Quit);

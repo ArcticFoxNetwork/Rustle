@@ -47,37 +47,6 @@ impl App {
                 });
                 Some(Task::none())
             }
-            Message::RightClickNcmSong(info) => {
-                let pos = self.core.mouse_position;
-                let id = -(info.id as i64);
-                let song = self.find_song_anywhere(id);
-                let (source, is_liked) = song
-                    .as_ref()
-                    .map(|s| {
-                        let src = crate::utils::compute_source(
-                            &s.file_path,
-                            s.id,
-                            Some(&s.artist),
-                            Some(&s.title),
-                        );
-                        let liked = self
-                            .core
-                            .user_info
-                            .as_ref()
-                            .map(|u| u.like_songs.contains(&info.id))
-                            .unwrap_or(false);
-                        (src, liked)
-                    })
-                    .unwrap_or((crate::utils::Source::Online, true));
-                self.ui.context_menu = Some(crate::app::state::ContextMenuState {
-                    song_id: id,
-                    x: pos.x,
-                    y: pos.y,
-                    source,
-                    is_liked,
-                });
-                Some(Task::none())
-            }
             Message::CloseContextMenu => {
                 self.ui.context_menu = None;
                 Some(Task::none())

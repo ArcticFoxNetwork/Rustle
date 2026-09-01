@@ -105,6 +105,7 @@ impl App {
                     TrayCommand::Quit => {
                         return Some(self.update(Message::ConfirmExit));
                     }
+                    #[cfg(target_os = "windows")]
                     TrayCommand::AvailabilityChanged(availability) => {
                         let became_unavailable =
                             matches!(availability, TrayAvailability::Unavailable(_))
