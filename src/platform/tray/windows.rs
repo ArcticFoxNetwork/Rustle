@@ -57,7 +57,17 @@ const CMD_TOGGLE_WINDOW: u16 = 1020;
 const CMD_QUIT: u16 = 1030;
 
 #[cfg(any(feature = "windows-installed", test))]
-const TRAY_GUID: GUID = GUID {
+// V2 identity: the legacy GUID was first registered by a development binary.
+// The replacement must be registered first from the stable MSI install path.
+const INSTALLED_TRAY_GUID: GUID = GUID {
+    data1: 0x96be4116,
+    data2: 0x7f67,
+    data3: 0x46d9,
+    data4: [0x9d, 0x5e, 0x36, 0xb7, 0xab, 0xcf, 0x5b, 0xbe],
+};
+
+#[cfg(test)]
+const LEGACY_PATH_BOUND_TRAY_GUID: GUID = GUID {
     data1: 0xd72bd4d9,
     data2: 0xf218,
     data3: 0x4ddb,
@@ -79,7 +89,7 @@ enum TrayIdentity {
 fn default_tray_identity() -> TrayIdentity {
     #[cfg(feature = "windows-installed")]
     {
-        TrayIdentity::Guid(TRAY_GUID)
+        TrayIdentity::Guid(INSTALLED_TRAY_GUID)
     }
 
     #[cfg(not(feature = "windows-installed"))]
@@ -1163,7 +1173,7 @@ mod tests {
 
     #[test]
     fn callback_classification_covers_mouse_keyboard_and_context_menu() {
-        let guid_identity = TrayIdentity::Guid(TRAY_GUID);
+        let guid_identity = TrayIdentity::Guid(INSTALLED_TRAY_GUID);
         assert_eq!(
             classify_callback(guid_identity, NIN_SELECT as LPARAM),
             TrayCallbackAction::PrimaryActivation
@@ -1200,10 +1210,10 @@ mod tests {
         assert!(matches!(
             default_tray_identity(),
             TrayIdentity::Guid(guid)
-                if guid.data1 == TRAY_GUID.data1
-                    && guid.data2 == TRAY_GUID.data2
-                    && guid.data3 == TRAY_GUID.data3
-                    && guid.data4 == TRAY_GUID.data4
+                if guid.data1 == INSTALLED_TRAY_GUID.data1
+                    && guid.data2 == INSTALLED_TRAY_GUID.data2
+                    && guid.data3 == INSTALLED_TRAY_GUID.data3
+                    && guid.data4 == INSTALLED_TRAY_GUID.data4
         ));
 
         #[cfg(not(feature = "windows-installed"))]
@@ -1214,6 +1224,16 @@ mod tests {
     }
 
     #[test]
+    fn installed_guid_is_rotated_away_from_legacy_development_path_binding() {
+        assert!(
+            INSTALLED_TRAY_GUID.data1 != LEGACY_PATH_BOUND_TRAY_GUID.data1
+                || INSTALLED_TRAY_GUID.data2 != LEGACY_PATH_BOUND_TRAY_GUID.data2
+                || INSTALLED_TRAY_GUID.data3 != LEGACY_PATH_BOUND_TRAY_GUID.data3
+                || INSTALLED_TRAY_GUID.data4 != LEGACY_PATH_BOUND_TRAY_GUID.data4
+        );
+    }
+
+    #[test]
     fn notification_identity_populates_every_native_identifier_consistently() {
         let mut numeric = NOTIFYICONDATAW::default();
         TrayIdentity::WindowId(TRAY_ICON_ID).apply_to_notify_data(&mut numeric);
@@ -1221,15 +1241,15 @@ mod tests {
         assert_eq!(numeric.uFlags & NIF_GUID, 0);
 
         let mut guid_data = NOTIFYICONDATAW::default();
-        TrayIdentity::Guid(TRAY_GUID).apply_to_notify_data(&mut guid_data);
+        TrayIdentity::Guid(INSTALLED_TRAY_GUID).apply_to_notify_data(&mut guid_data);
         assert_eq!(guid_data.uID, 0);
         assert_ne!(guid_data.uFlags & NIF_GUID, 0);
-        assert_eq!(guid_data.guidItem.data1, TRAY_GUID.data1);
+        assert_eq!(guid_data.guidItem.data1, INSTALLED_TRAY_GUID.data1);
 
         let numeric_identifier = TrayIdentity::WindowId(TRAY_ICON_ID).identifier(null_mut());
         assert_eq!(numeric_identifier.uID, TRAY_ICON_ID);
-        let guid_identifier = TrayIdentity::Guid(TRAY_GUID).identifier(null_mut());
-        assert_eq!(guid_identifier.guidItem.data4, TRAY_GUID.data4);
+        let guid_identifier = TrayIdentity::Guid(INSTALLED_TRAY_GUID).identifier(null_mut());
+        assert_eq!(guid_identifier.guidItem.data4, INSTALLED_TRAY_GUID.data4);
     }
 
     #[test]
