@@ -252,7 +252,8 @@ impl App {
             {
                 refs.extend(remote_album_covers(albums));
             }
-            Message::UserPageDetailLoaded(page_id, detail) if matches!(self.ui.current_route, Route::User(id) if u64::try_from(*page_id).ok() == Some(id)) =>
+            Message::UserPageDetailLoaded(page_id, detail)
+                if user_route_matches_page_id(&self.ui.current_route, *page_id) =>
             {
                 refs.push(RemoteImage::new(
                     ImageKind::UserAvatar,
@@ -267,7 +268,8 @@ impl App {
                     ));
                 }
             }
-            Message::UserPagePlaylistsLoaded(page_id, playlists) if matches!(self.ui.current_route, Route::User(id) if u64::try_from(*page_id).ok() == Some(id)) =>
+            Message::UserPagePlaylistsLoaded(page_id, playlists)
+                if user_route_matches_page_id(&self.ui.current_route, *page_id) =>
             {
                 refs.extend(remote_playlist_covers(playlists));
             }
@@ -830,6 +832,14 @@ fn album_page_id(id: u64) -> i64 {
     (i64::MIN / 4) + id as i64
 }
 
+fn user_page_id(id: u64) -> i64 {
+    (i64::MIN / 2) + id as i64
+}
+
+fn user_route_matches_page_id(route: &Route, page_id: i64) -> bool {
+    matches!(route, Route::User(id) if user_page_id(*id) == page_id)
+}
+
 fn set_detail_cover(
     page: &mut crate::ui::pages::PlaylistView,
     path: &std::path::Path,
@@ -838,4 +848,26 @@ fn set_detail_cover(
     let palette = crate::utils::ColorPalette::from_image_path(path);
     page.cover_path = Some(path_string);
     page.palette = palette;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn user_route_matches_encoded_page_id() {
+        let user_id = 123_456_789;
+        let page_id = user_page_id(user_id);
+
+        assert!(page_id < 0);
+        assert!(user_route_matches_page_id(&Route::User(user_id), page_id));
+        assert!(!user_route_matches_page_id(
+            &Route::User(user_id + 1),
+            page_id
+        ));
+        assert!(!user_route_matches_page_id(
+            &Route::Artist(user_id),
+            page_id
+        ));
+    }
 }
