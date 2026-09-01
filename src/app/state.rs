@@ -1312,6 +1312,60 @@ impl Route {
             | Self::Search { .. } => None,
         }
     }
+
+    /// Whether the page supplies its own cover-derived background gradient.
+    ///
+    /// These routes render underneath the top-bar overlay, so adding another
+    /// themed surface there would hide the gradient instead of letting it
+    /// continue through the controls area.
+    pub fn has_gradient_background(&self) -> bool {
+        matches!(
+            self,
+            Self::Playlist(_)
+                | Self::NcmPlaylist(_)
+                | Self::User(_)
+                | Self::Artist(_)
+                | Self::Album(_)
+                | Self::RecentlyPlayed
+        )
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use super::{DiscoverViewMode, Route, SearchTab, SettingsSection};
+
+    #[test]
+    fn detail_routes_with_cover_gradients_are_identified() {
+        let routes = [
+            Route::Playlist(1),
+            Route::NcmPlaylist(2),
+            Route::User(3),
+            Route::Artist(4),
+            Route::Album(5),
+            Route::RecentlyPlayed,
+        ];
+
+        assert!(routes.iter().all(Route::has_gradient_background));
+    }
+
+    #[test]
+    fn ordinary_routes_keep_the_top_bar_background() {
+        let routes = [
+            Route::Discover(DiscoverViewMode::Overview),
+            Route::Radio,
+            Route::Downloads,
+            Route::Settings(SettingsSection::Display),
+            Route::AudioEngine,
+            Route::Search {
+                keyword: String::new(),
+                tab: SearchTab::Songs,
+                page: 1,
+            },
+        ];
+
+        assert!(routes.iter().all(|route| !route.has_gradient_background()));
+    }
 }
 
 /// Navigation history entry
@@ -1639,6 +1693,10 @@ impl UiState {
                 search_expanded: false,
                 search_query: String::new(),
                 search_animation: Default::default(),
+                gradient_animation: SingleHoverAnimation::with_duration(
+                    std::time::Duration::from_millis(450),
+                ),
+                gradient_palette_key: None,
                 scroll_state: std::rc::Rc::new(std::cell::RefCell::new(
                     crate::ui::widgets::VirtualListState::default(),
                 )),
@@ -1716,6 +1774,7 @@ impl UiState {
             || self.playlist_page.song_animations.is_animating()
             || self.playlist_page.icon_animations.is_animating()
             || self.playlist_page.search_animation.is_animating()
+            || self.playlist_page.gradient_animation.is_animating()
             || self.lyrics.animation.is_animating()
             || self.discover.card_animations.is_animating()
             || self.search.song_animations.is_animating()
@@ -1731,6 +1790,7 @@ impl UiState {
         self.playlist_page.song_animations.tick(now);
         self.playlist_page.icon_animations.tick(now);
         self.playlist_page.search_animation.tick(now);
+        self.playlist_page.gradient_animation.tick(now);
         self.lyrics.animation.tick(now);
         self.discover.card_animations.tick(now);
         self.search.song_animations.tick(now);
@@ -1781,6 +1841,10 @@ pub struct PlaylistPageState {
     pub search_expanded: bool,
     pub search_query: String,
     pub search_animation: SingleHoverAnimation,
+    /// Fade-in animation for cover-derived detail-page gradients.
+    pub gradient_animation: SingleHoverAnimation,
+    /// Palette identity already installed into the gradient animation.
+    pub gradient_palette_key: Option<(i64, Option<String>)>,
     /// Virtual list scroll state for efficient rendering
     pub scroll_state: std::rc::Rc<std::cell::RefCell<crate::ui::widgets::VirtualListState>>,
     /// Loading state for async playlist loading
@@ -1810,6 +1874,10 @@ impl Default for PlaylistPageState {
             search_expanded: false,
             search_query: String::new(),
             search_animation: Default::default(),
+            gradient_animation: SingleHoverAnimation::with_duration(
+                std::time::Duration::from_millis(450),
+            ),
+            gradient_palette_key: None,
             scroll_state: std::rc::Rc::new(std::cell::RefCell::new(
                 crate::ui::widgets::VirtualListState::default(),
             )),
@@ -1820,6 +1888,37 @@ impl Default for PlaylistPageState {
             ncm_replace_songs_on_chunk: false,
             ncm_load_generation: 0,
         }
+    }
+}
+
+impl PlaylistPageState {
+    /// Synchronize the gradient fade with the current page palette.
+    pub fn sync_gradient_animation(&mut self, power_saving: bool) {
+        let palette_key = self.current.as_ref().and_then(|page| {
+            page.palette
+                .as_ref()
+                .map(|_| (page.id, page.cover_path.clone()))
+        });
+
+        if palette_key != self.gradient_palette_key {
+            self.gradient_palette_key = palette_key;
+            self.gradient_animation.settle_at(0.0);
+
+            if self.gradient_palette_key.is_some() {
+                if power_saving {
+                    self.gradient_animation.settle_at(1.0);
+                } else {
+                    self.gradient_animation.start();
+                }
+            }
+        } else if power_saving && self.gradient_animation.is_animating() {
+            self.gradient_animation.settle_at(1.0);
+        }
+    }
+
+    pub fn reset_gradient_animation(&mut self) {
+        self.gradient_palette_key = None;
+        self.gradient_animation.settle_at(0.0);
     }
 }
 

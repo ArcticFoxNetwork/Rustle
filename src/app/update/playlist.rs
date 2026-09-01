@@ -2,7 +2,6 @@
 //! Playlist page and edit dialog message handlers
 
 use iced::Task;
-use iced::time::Instant;
 
 use crate::app::helpers::{load_playlist_view, load_watched_folders};
 use crate::app::message::Message;
@@ -75,6 +74,7 @@ impl App {
         self.ui.playlist_page.ncm_replace_songs_on_chunk = false;
         self.ui.playlist_page.scroll_state.borrow_mut().jump_to(0.0);
         self.ui.clear_playlist_animations();
+        self.ui.playlist_page.reset_gradient_animation();
 
         if self.ui.lyrics.is_open {
             self.ui.lyrics.is_open = false;
@@ -227,9 +227,7 @@ impl App {
                 Some(Task::none())
             }
 
-            Message::AnimationTick => {
-                let now = Instant::now();
-
+            Message::AnimationTick(now) => {
                 // Update audio state
                 self.update_audio_tick();
 
@@ -242,10 +240,10 @@ impl App {
                 }
 
                 // 清理已完成的淡出动画
-                self.ui.cleanup_animations(now);
+                self.ui.cleanup_animations(*now);
 
                 let lyrics_viewport_task = self.flush_pending_lyrics_viewport_after_animation();
-                let smooth_scroll_task = self.advance_smooth_scroll(now);
+                let smooth_scroll_task = self.advance_smooth_scroll(*now);
 
                 Some(Task::batch([lyrics_viewport_task, smooth_scroll_task]))
             }

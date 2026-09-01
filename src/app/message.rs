@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use iced::keyboard::{Key, Modifiers};
+use iced::time::Instant;
 
 use crate::api::{
     AlbumDetail, AlbumSummary, ArtistDetail, ArtistSummary, LoginInfo, PlaylistDetail,
@@ -301,7 +302,7 @@ pub enum Message {
     /// Hover over a sidebar item
     HoverSidebar(Option<SidebarId>),
     /// Animation tick
-    AnimationTick,
+    AnimationTick(Instant),
     /// Smooth-scroll input from a native or virtual scroll surface.
     SmoothScroll(SmoothScrollEvent),
     /// Toggle playlist search input expansion
@@ -813,7 +814,7 @@ impl std::fmt::Debug for Message {
 
         match self {
             // High-frequency messages - keep minimal (no data)
-            Self::AnimationTick => simple!("AnimationTick"),
+            Self::AnimationTick(_) => simple!("AnimationTick"),
             Self::SmoothScroll(_) => simple!("SmoothScroll"),
             Self::PlaybackTick => simple!("PlaybackTick"),
             Self::Noop => simple!("Noop"),

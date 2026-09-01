@@ -89,6 +89,7 @@ pub fn view<'a>(
     current_user_id: Option<u64>,
     current_playing_id: Option<i64>,
     description_expanded: bool,
+    gradient_progress: f32,
 ) -> Element<'a, Message> {
     let header = build_header(playlist, image_state, locale, description_expanded);
     let controls = build_controls(
@@ -146,19 +147,27 @@ pub fn view<'a>(
                 (top_r, top_g, top_b)
             };
 
+            let top_color = fade_gradient_color(
+                Color::from_rgb(adj_r, adj_g, adj_b),
+                bottom_color,
+                gradient_progress,
+            );
+            let middle_color = fade_gradient_color(
+                Color::from_rgb(
+                    adj_r * 0.6 + bottom_color.r * 0.4,
+                    adj_g * 0.55 + bottom_color.g * 0.4,
+                    adj_b * 0.58 + bottom_color.b * 0.4,
+                ),
+                bottom_color,
+                gradient_progress,
+            );
+
             iced::widget::container::Style {
                 background: Some(iced::Background::Gradient(iced::Gradient::Linear(
                     // Top to bottom gradient with palette colors
                     iced::gradient::Linear::new(iced::Radians(std::f32::consts::PI))
-                        .add_stop(0.0, Color::from_rgb(adj_r, adj_g, adj_b))
-                        .add_stop(
-                            0.55,
-                            Color::from_rgb(
-                                adj_r * 0.6 + bottom_color.r * 0.4,
-                                adj_g * 0.55 + bottom_color.g * 0.4,
-                                adj_b * 0.58 + bottom_color.b * 0.4,
-                            ),
-                        )
+                        .add_stop(0.0, top_color)
+                        .add_stop(0.55, middle_color)
                         .add_stop(1.0, bottom_color),
                 ))),
                 ..Default::default()
@@ -190,6 +199,42 @@ pub fn view<'a>(
         .width(Fill);
 
     content.into()
+}
+
+pub(crate) fn fade_gradient_color(target: Color, background: Color, progress: f32) -> Color {
+    let progress = progress.clamp(0.0, 1.0);
+    Color::from_rgba(
+        background.r + (target.r - background.r) * progress,
+        background.g + (target.g - background.g) * progress,
+        background.b + (target.b - background.b) * progress,
+        background.a + (target.a - background.a) * progress,
+    )
+}
+
+#[cfg(test)]
+mod gradient_tests {
+    use super::*;
+
+    fn assert_color_close(actual: Color, expected: Color) {
+        const EPSILON: f32 = 0.000_001;
+        assert!((actual.r - expected.r).abs() < EPSILON);
+        assert!((actual.g - expected.g).abs() < EPSILON);
+        assert!((actual.b - expected.b).abs() < EPSILON);
+        assert!((actual.a - expected.a).abs() < EPSILON);
+    }
+
+    #[test]
+    fn gradient_fade_starts_at_background_and_ends_at_target() {
+        let background = Color::from_rgb(0.1, 0.2, 0.3);
+        let target = Color::from_rgb(0.7, 0.6, 0.5);
+
+        assert_color_close(fade_gradient_color(target, background, 0.0), background);
+        assert_color_close(fade_gradient_color(target, background, 1.0), target);
+        assert_color_close(
+            fade_gradient_color(target, background, 0.5),
+            Color::from_rgb(0.4, 0.4, 0.4),
+        );
+    }
 }
 
 /// Build the playlist header

@@ -11,7 +11,7 @@ use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::cover_image;
-use crate::ui::pages::playlist::PlaylistView;
+use crate::ui::pages::playlist::{self, PlaylistView};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{theme, widgets};
 
@@ -30,6 +30,7 @@ pub fn view<'a>(
     _current_playing_id: Option<i64>,
     content_width: f32,
     description_expanded: bool,
+    gradient_progress: f32,
 ) -> Element<'a, Message> {
     let header = build_header(user, image_state, description_expanded, locale);
     let body = build_playlist_grid(user, image_state, content_width);
@@ -43,25 +44,29 @@ pub fn view<'a>(
                 ..Default::default()
             };
         };
+        let top_color = playlist::fade_gradient_color(
+            Color::from_rgb(
+                (primary.r * 1.08 + 0.04).min(1.0),
+                (primary.g * 1.06 + 0.03).min(1.0),
+                (primary.b * 1.08 + 0.04).min(1.0),
+            ),
+            bottom_color,
+            gradient_progress,
+        );
+        let middle_color = playlist::fade_gradient_color(
+            Color::from_rgb(
+                primary.r * 0.58 + bottom_color.r * 0.42,
+                primary.g * 0.58 + bottom_color.g * 0.42,
+                primary.b * 0.58 + bottom_color.b * 0.42,
+            ),
+            bottom_color,
+            gradient_progress,
+        );
         iced::widget::container::Style {
             background: Some(iced::Background::Gradient(iced::Gradient::Linear(
                 iced::gradient::Linear::new(iced::Radians(std::f32::consts::PI))
-                    .add_stop(
-                        0.0,
-                        Color::from_rgb(
-                            (primary.r * 1.08 + 0.04).min(1.0),
-                            (primary.g * 1.06 + 0.03).min(1.0),
-                            (primary.b * 1.08 + 0.04).min(1.0),
-                        ),
-                    )
-                    .add_stop(
-                        0.58,
-                        Color::from_rgb(
-                            primary.r * 0.58 + bottom_color.r * 0.42,
-                            primary.g * 0.58 + bottom_color.g * 0.42,
-                            primary.b * 0.58 + bottom_color.b * 0.42,
-                        ),
-                    )
+                    .add_stop(0.0, top_color)
+                    .add_stop(0.58, middle_color)
                     .add_stop(1.0, bottom_color),
             ))),
             ..Default::default()

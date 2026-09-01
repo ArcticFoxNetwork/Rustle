@@ -14,6 +14,7 @@ use crate::ui::widgets::{self, section_header};
 const DAILY_FEATURE_ID: u64 = 0;
 const PERSONAL_FM_FEATURE_ID: u64 = u64::MAX;
 const FEATURE_ROW_BREAKPOINT: f32 = 760.0;
+const TOP_OVERLAY_SAFE_AREA: f32 = theme::TOP_BAR_HEIGHT + 10.0;
 
 fn personal_fm_action() -> Message {
     Message::Navigate(crate::ui::components::NavItem::Radio)
@@ -69,6 +70,7 @@ fn view_overview<'a>(
     );
 
     let content = column![
+        Space::new().height(TOP_OVERLAY_SAFE_AREA),
         feature_row,
         Space::new().height(40),
         section_header::view(
@@ -248,6 +250,7 @@ fn view_all_playlists<'a>(
     playlists: &'a [crate::api::PlaylistSummary],
 ) -> Element<'a, Message> {
     let content = column![
+        Space::new().height(TOP_OVERLAY_SAFE_AREA),
         text(locale.get(title)).size(theme::TEXT_SIZE_TITLE),
         Space::new().height(24),
         playlist_grid::view(

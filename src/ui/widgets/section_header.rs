@@ -25,7 +25,7 @@ pub fn view<'a, Message: Clone + 'a>(
     on_see_all: Option<Message>,
 ) -> Element<'a, Message> {
     let title_text = text(title)
-        .size(theme::TEXT_SIZE_TITLE - 2.0)
+        .size(theme::TEXT_SIZE_TITLE_LARGE)
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         })

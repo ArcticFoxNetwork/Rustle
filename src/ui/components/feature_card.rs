@@ -1,12 +1,17 @@
 //! Wide home feature card used by Daily Recommend, Private Radar and FM.
 
 use iced::widget::{Space, button, column, container, image, mouse_area, row, svg, text};
-use iced::{Alignment, Color, Element, Fill, Length};
+use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
 use crate::ui::{icons, theme};
 
-const CARD_HEIGHT: f32 = 154.0;
+const CARD_HEIGHT: f32 = 172.0;
 const CARD_RADIUS: f32 = 14.0;
+const PLAY_BUTTON_SIZE: f32 = 42.0;
+const PLAY_BUTTON_START_OFFSET: f32 = 12.0;
+const PLAY_BUTTON_END_OFFSET: f32 = 6.0;
+const PLAY_ICON_SIZE: f32 = 19.0;
+const HOVER_IMAGE_SCALE: f32 = 1.04;
 
 #[allow(clippy::too_many_arguments)]
 pub fn view<'a, Message: Clone + 'a>(
@@ -29,6 +34,7 @@ pub fn view<'a, Message: Clone + 'a>(
             .height(CARD_HEIGHT)
             .content_fit(iced::ContentFit::Cover)
             .border_radius(CARD_RADIUS)
+            .scale(background_image_scale(hover_progress))
             .into()
     } else {
         container(Space::new())
@@ -66,23 +72,38 @@ pub fn view<'a, Message: Clone + 'a>(
         );
     }
 
-    let play = button(
-        container(
-            svg(svg::Handle::from_memory(icons::PLAY.as_bytes()))
-                .width(19)
-                .height(19)
-                .style(|_theme, _status| svg::Style {
-                    color: Some(Color::WHITE),
-                }),
+    let play: Element<'a, Message> = if hover_progress > 0.001 {
+        let opacity = hover_progress.clamp(0.0, 1.0);
+        let icon_size = play_icon_size(opacity);
+        let play_button = button(
+            container(
+                svg(svg::Handle::from_memory(icons::PLAY.as_bytes()))
+                    .width(icon_size)
+                    .height(icon_size)
+                    .style(move |_theme, _status| svg::Style {
+                        color: Some(Color::from_rgba(1.0, 1.0, 1.0, opacity)),
+                    }),
+            )
+            .width(PLAY_BUTTON_SIZE)
+            .height(PLAY_BUTTON_SIZE)
+            .center_x(PLAY_BUTTON_SIZE)
+            .center_y(PLAY_BUTTON_SIZE),
         )
-        .width(42)
-        .height(42)
-        .center_x(42)
-        .center_y(42),
-    )
-    .padding(0)
-    .style(play_button_style)
-    .on_press(on_play);
+        .padding(0)
+        .style(move |_theme, status| play_button_style(opacity, status))
+        .on_press(on_play);
+
+        container(play_button)
+            .width(PLAY_BUTTON_SIZE)
+            .height(PLAY_BUTTON_SIZE + PLAY_BUTTON_START_OFFSET)
+            .padding(Padding::new(0.0).top(play_button_offset(opacity)))
+            .into()
+    } else {
+        Space::new()
+            .width(PLAY_BUTTON_SIZE)
+            .height(PLAY_BUTTON_SIZE + PLAY_BUTTON_START_OFFSET)
+            .into()
+    };
 
     let bottom = row![
         text(subtitle)
@@ -165,15 +186,29 @@ fn shadow_style(hover_progress: f32) -> iced::widget::container::Style {
     }
 }
 
+fn play_button_offset(hover_progress: f32) -> f32 {
+    let progress = hover_progress.clamp(0.0, 1.0);
+    PLAY_BUTTON_START_OFFSET + (PLAY_BUTTON_END_OFFSET - PLAY_BUTTON_START_OFFSET) * progress
+}
+
+fn play_icon_size(hover_progress: f32) -> f32 {
+    PLAY_ICON_SIZE * hover_progress.clamp(0.0, 1.0)
+}
+
+fn background_image_scale(hover_progress: f32) -> f32 {
+    1.0 + (HOVER_IMAGE_SCALE - 1.0) * hover_progress.clamp(0.0, 1.0)
+}
+
 fn play_button_style(
-    _theme: &iced::Theme,
+    opacity: f32,
     status: iced::widget::button::Status,
 ) -> iced::widget::button::Style {
-    let alpha = match status {
+    let status_alpha = match status {
         iced::widget::button::Status::Hovered => 0.98,
         iced::widget::button::Status::Pressed => 0.72,
         _ => 0.86,
     };
+    let alpha = status_alpha * opacity;
     iced::widget::button::Style {
         background: Some(iced::Background::Color(Color::from_rgba(
             theme::ACCENT_PINK.r,
@@ -186,10 +221,37 @@ fn play_button_style(
             ..Default::default()
         },
         shadow: iced::Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.26),
+            color: Color::from_rgba(0.0, 0.0, 0.0, 0.26 * opacity),
             offset: iced::Vector::new(0.0, 3.0),
             blur_radius: 8.0,
         },
         ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        HOVER_IMAGE_SCALE, PLAY_BUTTON_END_OFFSET, PLAY_BUTTON_START_OFFSET, PLAY_ICON_SIZE,
+        background_image_scale, play_button_offset, play_icon_size,
+    };
+
+    #[test]
+    fn feature_play_button_moves_up_as_hover_progresses() {
+        assert_eq!(play_button_offset(0.0), PLAY_BUTTON_START_OFFSET);
+        assert_eq!(
+            play_button_offset(0.5),
+            (PLAY_BUTTON_START_OFFSET + PLAY_BUTTON_END_OFFSET) / 2.0
+        );
+        assert_eq!(play_button_offset(1.0), PLAY_BUTTON_END_OFFSET);
+    }
+
+    #[test]
+    fn feature_icon_and_background_animate_with_hover() {
+        assert_eq!(play_icon_size(0.0), 0.0);
+        assert_eq!(play_icon_size(0.5), PLAY_ICON_SIZE / 2.0);
+        assert_eq!(play_icon_size(1.0), PLAY_ICON_SIZE);
+        assert_eq!(background_image_scale(0.0), 1.0);
+        assert_eq!(background_image_scale(1.0), HOVER_IMAGE_SCALE);
     }
 }

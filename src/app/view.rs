@@ -153,6 +153,7 @@ impl App {
                         current_user_id,
                         current_playing_id,
                         self.ui.playlist_page.description_expanded,
+                        self.ui.playlist_page.gradient_animation.progress(),
                     )
                 } else {
                     Space::new().width(Fill).height(Fill).into()
@@ -175,6 +176,7 @@ impl App {
                         current_playing_id,
                         self.ui.playlist_page.content_width,
                         self.ui.playlist_page.description_expanded,
+                        self.ui.playlist_page.gradient_animation.progress(),
                     )
                 } else {
                     Space::new().width(Fill).height(Fill).into()
@@ -197,6 +199,7 @@ impl App {
                         current_playing_id,
                         self.ui.playlist_page.content_width,
                         self.ui.playlist_page.description_expanded,
+                        self.ui.playlist_page.gradient_animation.progress(),
                     )
                 } else {
                     Space::new().width(Fill).height(Fill).into()
@@ -248,30 +251,6 @@ impl App {
             ),
         };
 
-        let needs_top_padding = !matches!(
-            self.ui.current_route,
-            Route::Settings(_)
-                | Route::AudioEngine
-                | Route::Downloads
-                | Route::Playlist(_)
-                | Route::NcmPlaylist(_)
-                | Route::User(_)
-                | Route::Artist(_)
-                | Route::Album(_)
-                | Route::RecentlyPlayed
-                | Route::Search { .. }
-        );
-
-        let main_content = if needs_top_padding {
-            container(main_content)
-                .padding(iced::Padding::new(0.0).top(70.0))
-                .width(Fill)
-                .height(Fill)
-                .into()
-        } else {
-            main_content
-        };
-
         let top_bar = components::window_controls::view(
             self.core.locale,
             self.ui.nav_history.can_go_back(),
@@ -280,6 +259,7 @@ impl App {
             self.core.is_logged_in,
             self.core.user_info.as_ref(),
             &self.ui.image_state,
+            !self.ui.current_route.has_gradient_background(),
         );
         let controls_overlay = container(top_bar).width(Fill).padding(0);
 

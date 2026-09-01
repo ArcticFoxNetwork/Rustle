@@ -19,9 +19,8 @@ pub fn view<'a>(
     is_logged_in: bool,
     user_info: Option<&UserInfo>,
     image_state: &ImageState,
+    show_background: bool,
 ) -> Element<'a, Message> {
-    const TITLE_BAR_HEIGHT: f32 = 60.0;
-
     let button_size = 36;
     let icon_size = 16;
     let nav_icon_size = 18;
@@ -258,7 +257,7 @@ pub fn view<'a>(
     let drag_region = mouse_area(
         container(Space::new())
             .width(Fill)
-            .height(Length::Fixed(TITLE_BAR_HEIGHT)),
+            .height(Length::Fixed(theme::TOP_BAR_HEIGHT)),
     )
     .on_press(Message::WindowDrag);
 
@@ -281,15 +280,45 @@ pub fn view<'a>(
         .align_y(Alignment::Center),
     )
     .width(Fill)
-    .height(Length::Fixed(TITLE_BAR_HEIGHT))
+    .height(Length::Fixed(theme::TOP_BAR_HEIGHT))
     .padding(Padding::new(0.0).right(12.0));
+
+    // Native Iced scrollbars do not support a top-only track inset. Cover the
+    // scrollbar gutter inside the window chrome so the scroll thumb starts
+    // visually below the top bar while page content can still pass underneath.
+    let scrollbar_gutter: Element<'a, Message> = if show_background {
+        container(
+            container(Space::new())
+                .width(theme::TOP_BAR_SCROLLBAR_GUTTER_WIDTH)
+                .height(Fill)
+                .style(|active_theme| container::Style {
+                    background: Some(iced::Background::Color(theme::background(active_theme))),
+                    ..Default::default()
+                }),
+        )
+        .width(Fill)
+        .height(Length::Fixed(theme::TOP_BAR_HEIGHT))
+        .align_x(Alignment::End)
+        .into()
+    } else {
+        Space::new().into()
+    };
 
     // Complete top bar layout: nav + search on left, user info + window controls on right.
     // The bottom layer provides dragging only in empty space; controls stay interactive above it.
-    stack![drag_region, controls]
-        .width(Fill)
-        .height(Length::Fixed(TITLE_BAR_HEIGHT))
-        .into()
+    container(
+        stack![drag_region, controls, scrollbar_gutter]
+            .width(Fill)
+            .height(Length::Fixed(theme::TOP_BAR_HEIGHT)),
+    )
+    .width(Fill)
+    .height(Length::Fixed(theme::TOP_BAR_HEIGHT))
+    .style(move |active_theme| container::Style {
+        background: show_background
+            .then(|| iced::Background::Color(theme::top_bar_background(active_theme))),
+        ..Default::default()
+    })
+    .into()
 }
 
 /// Navigation button style (back/forward)

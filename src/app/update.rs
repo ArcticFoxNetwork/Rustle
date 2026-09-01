@@ -81,6 +81,10 @@ impl App {
     }
 
     fn with_image_tasks(&mut self, message: &Message, task: Task<Message>) -> Task<Message> {
-        Task::batch([task, self.collect_image_tasks_after_message(message)])
+        let image_tasks = self.collect_image_tasks_after_message(message);
+        self.ui
+            .playlist_page
+            .sync_gradient_animation(self.core.settings.display.power_saving_mode);
+        Task::batch([task, image_tasks])
     }
 }

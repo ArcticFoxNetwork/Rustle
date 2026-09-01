@@ -157,11 +157,6 @@ pub struct SingleHoverAnimation {
     animation: Animated<f32>,
 }
 
-/// Create single hover easing with custom duration
-fn single_hover_easing() -> Easing {
-    Easing::EASE.with_duration(HOVER_DURATION)
-}
-
 impl Default for SingleHoverAnimation {
     fn default() -> Self {
         Self::new()
@@ -171,8 +166,13 @@ impl Default for SingleHoverAnimation {
 impl SingleHoverAnimation {
     /// Create a new single hover animation
     pub fn new() -> Self {
+        Self::with_duration(HOVER_DURATION)
+    }
+
+    /// Create a single animation with a custom transition duration.
+    pub fn with_duration(duration: Duration) -> Self {
         Self {
-            animation: Animated::transition(0.0, single_hover_easing()),
+            animation: Animated::transition(0.0, Easing::EASE.with_duration(duration)),
         }
     }
 

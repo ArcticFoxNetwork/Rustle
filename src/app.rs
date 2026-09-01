@@ -261,7 +261,7 @@ impl App {
             lyrics_needs_frames,
             audio_engine_needs_frames,
         ) {
-            iced::time::every(Duration::from_micros(8333)).map(|_| Message::AnimationTick)
+            iced::window::frames().map(Message::AnimationTick)
         } else {
             iced::Subscription::none()
         };

@@ -24,6 +24,15 @@ pub const TEXT_SIZE_DISPLAY: f32 = 48.0;
 pub const TEXT_SIZE_DISPLAY_LARGE: f32 = 72.0;
 
 // ============================================================================
+// Layout
+// ============================================================================
+
+pub const TOP_BAR_HEIGHT: f32 = 60.0;
+pub const TOP_BAR_BACKGROUND_ALPHA: f32 = 0.78;
+/// Width of Iced's default vertical scrollbar at the right edge.
+pub const TOP_BAR_SCROLLBAR_GUTTER_WIDTH: f32 = 10.0;
+
+// ============================================================================
 // Color Palette - Dynamic based on theme
 // ============================================================================
 
@@ -86,6 +95,13 @@ pub fn background(theme: &Theme) -> Color {
     } else {
         light::BACKGROUND
     }
+}
+
+/// Translucent background used by the fixed top-bar overlay.
+pub fn top_bar_background(theme: &Theme) -> Color {
+    let mut color = background(theme);
+    color.a = TOP_BAR_BACKGROUND_ALPHA;
+    color
 }
 
 /// Get sidebar color based on theme

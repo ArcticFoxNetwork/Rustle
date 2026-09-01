@@ -1,7 +1,7 @@
 //! Connected playlist card with a cover-derived blurred metadata footer.
 
 use iced::widget::{Space, button, column, container, image, mouse_area, svg, text};
-use iced::{Color, Element};
+use iced::{Color, Element, Padding};
 
 use crate::ui::icons;
 use crate::ui::theme::{self, MEDIUM_WEIGHT};
@@ -10,6 +10,12 @@ pub const CARD_WIDTH: f32 = 160.0;
 const COVER_SIZE: f32 = CARD_WIDTH;
 const FOOTER_HEIGHT: f32 = 56.0;
 const CARD_RADIUS: f32 = 10.0;
+const PLAY_BUTTON_SIZE: f32 = 48.0;
+const PLAY_BUTTON_START_OFFSET: f32 = 10.0;
+const PLAY_BUTTON_END_OFFSET: f32 = 4.0;
+const PLAY_ICON_SIZE: f32 = 24.0;
+const HOVER_MASK_MAX_ALPHA: f32 = 0.24;
+const HOVER_IMAGE_SCALE: f32 = 1.04;
 
 #[allow(clippy::too_many_arguments)]
 pub fn view<'a, Message: Clone + 'a>(
@@ -28,6 +34,7 @@ pub fn view<'a, Message: Clone + 'a>(
             .height(COVER_SIZE)
             .content_fit(iced::ContentFit::Cover)
             .border_radius(cover_image_radius())
+            .scale(cover_image_scale(hover_progress))
             .into()
     } else {
         container(
@@ -48,30 +55,40 @@ pub fn view<'a, Message: Clone + 'a>(
 
     let play_overlay: Element<'a, Message> = if hover_progress > 0.01 {
         let opacity = hover_progress;
+        let mask = container(Space::new())
+            .width(COVER_SIZE)
+            .height(COVER_SIZE)
+            .style(move |_theme| cover_hover_mask_style(opacity));
+        let icon_size = play_icon_size(opacity);
         let play_btn = button(
             container(
                 svg(svg::Handle::from_memory(icons::PLAY.as_bytes()))
-                    .width(24)
-                    .height(24)
+                    .width(icon_size)
+                    .height(icon_size)
                     .style(move |_theme, _status| svg::Style {
                         color: Some(Color::from_rgba(1.0, 1.0, 1.0, opacity)),
                     }),
             )
-            .width(48)
-            .height(48)
-            .center_x(48)
-            .center_y(48),
+            .width(PLAY_BUTTON_SIZE)
+            .height(PLAY_BUTTON_SIZE)
+            .center_x(PLAY_BUTTON_SIZE)
+            .center_y(PLAY_BUTTON_SIZE),
         )
         .padding(0)
         .style(move |_theme, status| play_button_style(opacity, status))
         .on_press(on_play);
 
-        container(play_btn)
+        let play_btn = container(play_btn)
+            .width(PLAY_BUTTON_SIZE)
+            .height(PLAY_BUTTON_SIZE + PLAY_BUTTON_START_OFFSET)
+            .padding(Padding::new(0.0).top(play_button_offset(opacity)));
+        let play_btn = container(play_btn)
             .width(COVER_SIZE)
             .height(COVER_SIZE)
             .center_x(COVER_SIZE)
-            .center_y(COVER_SIZE)
-            .into()
+            .center_y(COVER_SIZE);
+
+        iced::widget::stack![mask, play_btn].into()
     } else {
         Space::new().width(0).height(0).into()
     };
@@ -166,6 +183,39 @@ fn card_shadow_style(hover_progress: f32) -> iced::widget::container::Style {
     }
 }
 
+fn cover_hover_mask_style(hover_progress: f32) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(iced::Background::Color(Color::from_rgba(
+            0.0,
+            0.0,
+            0.0,
+            hover_mask_alpha(hover_progress),
+        ))),
+        border: iced::Border {
+            radius: iced::border::top(CARD_RADIUS),
+            ..Default::default()
+        },
+        ..Default::default()
+    }
+}
+
+fn hover_mask_alpha(hover_progress: f32) -> f32 {
+    HOVER_MASK_MAX_ALPHA * hover_progress.clamp(0.0, 1.0)
+}
+
+fn play_button_offset(hover_progress: f32) -> f32 {
+    let progress = hover_progress.clamp(0.0, 1.0);
+    PLAY_BUTTON_START_OFFSET + (PLAY_BUTTON_END_OFFSET - PLAY_BUTTON_START_OFFSET) * progress
+}
+
+fn play_icon_size(hover_progress: f32) -> f32 {
+    PLAY_ICON_SIZE * hover_progress.clamp(0.0, 1.0)
+}
+
+fn cover_image_scale(hover_progress: f32) -> f32 {
+    1.0 + (HOVER_IMAGE_SCALE - 1.0) * hover_progress.clamp(0.0, 1.0)
+}
+
 fn placeholder_style(theme: &iced::Theme, hover_progress: f32) -> iced::widget::container::Style {
     iced::widget::container::Style {
         background: Some(iced::Background::Color(theme::surface_container(theme))),
@@ -238,7 +288,11 @@ pub fn play_button_style(
 
 #[cfg(test)]
 mod tests {
-    use super::{CARD_RADIUS, cover_image_radius, footer_image_radius};
+    use super::{
+        CARD_RADIUS, HOVER_IMAGE_SCALE, HOVER_MASK_MAX_ALPHA, PLAY_BUTTON_END_OFFSET,
+        PLAY_BUTTON_START_OFFSET, PLAY_ICON_SIZE, cover_image_radius, cover_image_scale,
+        footer_image_radius, hover_mask_alpha, play_button_offset, play_icon_size,
+    };
 
     #[test]
     fn image_radius_workaround_keeps_the_visual_join_square() {
@@ -253,5 +307,23 @@ mod tests {
         assert_eq!(footer.top_right, CARD_RADIUS);
         assert_eq!(footer.bottom_left, 0.0);
         assert_eq!(footer.bottom_right, 0.0);
+    }
+
+    #[test]
+    fn hover_layers_fade_and_move_continuously() {
+        assert_eq!(hover_mask_alpha(0.0), 0.0);
+        assert_eq!(hover_mask_alpha(0.5), HOVER_MASK_MAX_ALPHA / 2.0);
+        assert_eq!(hover_mask_alpha(1.0), HOVER_MASK_MAX_ALPHA);
+        assert_eq!(play_button_offset(0.0), PLAY_BUTTON_START_OFFSET);
+        assert_eq!(
+            play_button_offset(0.5),
+            (PLAY_BUTTON_START_OFFSET + PLAY_BUTTON_END_OFFSET) / 2.0
+        );
+        assert_eq!(play_button_offset(1.0), PLAY_BUTTON_END_OFFSET);
+        assert_eq!(play_icon_size(0.0), 0.0);
+        assert_eq!(play_icon_size(0.5), PLAY_ICON_SIZE / 2.0);
+        assert_eq!(play_icon_size(1.0), PLAY_ICON_SIZE);
+        assert_eq!(cover_image_scale(0.0), 1.0);
+        assert_eq!(cover_image_scale(1.0), HOVER_IMAGE_SCALE);
     }
 }

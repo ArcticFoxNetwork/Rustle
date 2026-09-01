@@ -227,7 +227,8 @@ pub fn process_image_for_background(image: &DynamicImage, target_size: u32) -> P
 /// Processing a bounded footer-sized buffer keeps the work cheap while the
 /// repeated box blur produces a Gaussian-like result suitable for text.
 pub fn process_image_for_playlist_footer(image: &DynamicImage) -> ProcessedImage {
-    let resized = image.resize_to_fill(
+    let flipped = image.flipv();
+    let resized = flipped.resize_to_fill(
         PLAYLIST_FOOTER_WIDTH,
         PLAYLIST_FOOTER_HEIGHT,
         image::imageops::FilterType::Triangle,
@@ -251,9 +252,9 @@ mod playlist_footer_tests {
 
     #[test]
     fn playlist_footer_has_expected_dimensions_and_blended_pixels() {
-        let mut source = RgbaImage::new(32, 32);
-        for (x, _y, pixel) in source.enumerate_pixels_mut() {
-            *pixel = if x < 16 {
+        let mut source = RgbaImage::new(PLAYLIST_FOOTER_WIDTH, PLAYLIST_FOOTER_HEIGHT);
+        for (_x, y, pixel) in source.enumerate_pixels_mut() {
+            *pixel = if y < PLAYLIST_FOOTER_HEIGHT / 2 {
                 Rgba([255, 32, 32, 255])
             } else {
                 Rgba([32, 32, 255, 255])
@@ -270,5 +271,12 @@ mod playlist_footer_tests {
         assert!(processed.data[center] > 20);
         assert!(processed.data[center + 2] > 20);
         assert_eq!(processed.data[center + 3], 255);
+
+        let top = ((10 * PLAYLIST_FOOTER_WIDTH + PLAYLIST_FOOTER_WIDTH / 2) * 4) as usize;
+        let bottom = (((PLAYLIST_FOOTER_HEIGHT - 10) * PLAYLIST_FOOTER_WIDTH
+            + PLAYLIST_FOOTER_WIDTH / 2)
+            * 4) as usize;
+        assert!(processed.data[top + 2] > processed.data[top]);
+        assert!(processed.data[bottom] > processed.data[bottom + 2]);
     }
 }
