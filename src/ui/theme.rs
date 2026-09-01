@@ -668,8 +668,12 @@ pub fn animated_text(theme: &Theme, progress: f32) -> Color {
 /// Animated brightness for sidebar items
 pub fn animated_brightness(theme: &Theme, progress: f32) -> Color {
     if is_dark(theme) {
-        let brightness = 0.5 + 0.5 * progress;
-        Color::from_rgb(brightness, brightness, brightness)
+        let idle = color!(0x99a1af);
+        Color::from_rgb(
+            idle.r + (1.0 - idle.r) * progress,
+            idle.g + (1.0 - idle.g) * progress,
+            idle.b + (1.0 - idle.b) * progress,
+        )
     } else {
         let brightness = 0.5 - 0.3 * progress;
         Color::from_rgb(brightness, brightness, brightness)
