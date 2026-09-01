@@ -352,9 +352,9 @@ fn collapsible_section_header(
     ]
     .align_y(Alignment::Center);
 
-    button(content)
+    let header = button(content)
         .width(Fill)
-        .padding(Padding::new(6.0).left(16.0).right(12.0))
+        .padding(Padding::new(4.0).left(16.0).right(12.0))
         .style(|theme, status| iced::widget::button::Style {
             background: match status {
                 iced::widget::button::Status::Hovered => {
@@ -369,7 +369,13 @@ fn collapsible_section_header(
             text_color: theme::text_muted(theme),
             ..Default::default()
         })
-        .on_press(on_press)
+        .on_press(on_press);
+
+    // Keep the section rhythm while moving 2 px per side outside the hover
+    // surface, so the highlighted area itself is less tall.
+    container(header)
+        .width(Fill)
+        .padding(Padding::new(2.0).left(0.0).right(0.0))
         .into()
 }
 
