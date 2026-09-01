@@ -567,8 +567,7 @@ impl App {
             }
         }
 
-        if self.ui.lyrics.is_open
-            && let Some(song) = self.playback.current_song.clone()
+        if let Some(song) = self.playback.current_song.clone()
             && song.id == song_id
         {
             return self.update_lyrics_background(&song);

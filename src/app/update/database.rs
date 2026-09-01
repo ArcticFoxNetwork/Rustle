@@ -168,13 +168,16 @@ impl App {
 
         self.playback.current_index = Some(idx);
         self.playback.current_song = Some(song.clone());
+        self.cache_shuffle_indices();
+        self.refresh_preload_window();
+        let background_task = self.update_lyrics_background(&song);
         self.update_tray_and_mpris_current(false);
 
         if self.playback.pending_playback_request.is_some()
             || self.playback.pending_resolution_index == Some(idx)
         {
             self.playback.startup_restore.in_progress = true;
-            return Task::none();
+            return background_task;
         }
 
         self.playback.startup_restore.in_progress = true;
@@ -191,7 +194,7 @@ impl App {
                     Err(error) => {
                         tracing::warn!("Failed to begin NCM startup resolution: {error}");
                         self.finish_startup_restore();
-                        return Task::none();
+                        return background_task;
                     }
                 };
 
@@ -199,7 +202,7 @@ impl App {
 
                 let context_for_task = context.clone();
 
-                return Task::perform(
+                let resolve_task = Task::perform(
                     async move {
                         // Startup restore does not surface streaming progress. Drain
                         // the resolver channel so strict Range startup can reach its
@@ -218,11 +221,13 @@ impl App {
                         Message::SongResolvedForRestore(idx, result, saved_position, context)
                     },
                 );
+
+                return Task::batch([resolve_task, background_task]);
             }
 
             tracing::warn!("NCM client not available for song restoration");
             self.finish_startup_restore();
-            return Task::none();
+            return background_task;
         }
 
         let path_buf = std::path::PathBuf::from(&song.file_path);
@@ -232,7 +237,7 @@ impl App {
                 song.file_path
             );
             self.finish_startup_restore();
-            return Task::none();
+            return background_task;
         }
 
         let position = std::time::Duration::from_secs_f64(state.position_secs);
@@ -244,7 +249,7 @@ impl App {
             self.finish_startup_restore();
         }
 
-        Task::none()
+        background_task
     }
 
     /// Handle database-related messages
