@@ -392,23 +392,29 @@ impl App {
             Task::perform(
                 async move {
                     match client.recommend_tracks().await {
-                        Ok(tracks) => Ok(crate::api::PlaylistDetail {
-                            id: 0,
-                            name,
-                            cover_url: String::new(),
-                            description: desc,
-                            create_time: 0,
-                            track_update_time: 0,
-                            creator: crate::api::UserSummary {
+                        Ok(tracks) => {
+                            let cover_url = tracks
+                                .first()
+                                .map(|track| track.cover_url().to_string())
+                                .unwrap_or_default();
+                            Ok(crate::api::PlaylistDetail {
                                 id: 0,
-                                nickname: creator,
-                                avatar_url: String::new(),
-                                vip: crate::api::VipInfo::default(),
-                            },
-                            track_count: tracks.len() as u64,
-                            subscribed: false,
-                            tracks,
-                        }),
+                                name,
+                                cover_url,
+                                description: desc,
+                                create_time: 0,
+                                track_update_time: 0,
+                                creator: crate::api::UserSummary {
+                                    id: 0,
+                                    nickname: creator,
+                                    avatar_url: String::new(),
+                                    vip: crate::api::VipInfo::default(),
+                                },
+                                track_count: tracks.len() as u64,
+                                subscribed: false,
+                                tracks,
+                            })
+                        }
                         Err(e) => {
                             error!("Failed to load daily recommend: {:?}", e);
                             Err("加载每日推荐失败".to_string())

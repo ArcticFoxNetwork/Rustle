@@ -462,6 +462,19 @@ impl App {
                     format!("{} 分钟", total_mins)
                 };
 
+                // Recently played has no playlist-owned cover. Reuse the
+                // first available song cover so the detail header can derive
+                // the same gradient as ordinary playlist pages.
+                let cover_path = songs.iter().find_map(|song| {
+                    song.cover_path
+                        .as_deref()
+                        .filter(|path| crate::image::is_valid_local_path(path))
+                        .map(str::to_owned)
+                });
+                let palette = cover_path.as_deref().and_then(|path| {
+                    crate::utils::ColorPalette::from_image_path(std::path::Path::new(path))
+                });
+
                 // Create playlist view with special ID for recently played
                 let playlist_view = pages::PlaylistView {
                     kind: pages::playlist::DetailPageKind::Playlist,
@@ -481,7 +494,7 @@ impl App {
                     artist_tab: pages::playlist::ArtistPageTab::TopSongs,
                     artist_albums: Vec::new(),
                     user_playlists: Vec::new(),
-                    cover_path: None,
+                    cover_path,
                     owner: "本地".to_string(),
                     owner_artist_id: None,
                     owner_avatar_path: None,
@@ -490,7 +503,7 @@ impl App {
                     total_duration,
                     like_count: String::new(),
                     songs: song_views,
-                    palette: None,
+                    palette,
                     is_local: true,
                     is_subscribed: false,
                     watched_folder_path: None,
