@@ -367,24 +367,34 @@ where
             );
         }
 
-        // Draw handle
-        renderer.fill_quad(
-            renderer::Quad {
-                bounds: Rectangle {
-                    x: bounds.x + offset,
-                    y: rail_y - handle_height / 2.0,
-                    width: handle_width,
-                    height: handle_height,
-                },
-                border: Border {
-                    radius: handle_border_radius,
-                    width: style.handle.border_width,
-                    color: style.handle.border_color,
-                },
-                ..renderer::Quad::default()
-            },
-            style.handle.background,
-        );
+        // The played gradient is recorded in its own clipped layer above. iced
+        // renders that layer after the base layer, regardless of the order of
+        // these draw calls, so a handle left in the base layer would be covered
+        // by the rail. Record the visible handle in a final layer to keep it on
+        // top of every rail segment.
+        if handle_width > 0.0 && handle_height > 0.0 {
+            let handle_bounds = Rectangle {
+                x: bounds.x + offset,
+                y: rail_y - handle_height / 2.0,
+                width: handle_width,
+                height: handle_height,
+            };
+
+            renderer.with_layer(handle_bounds, |renderer| {
+                renderer.fill_quad(
+                    renderer::Quad {
+                        bounds: handle_bounds,
+                        border: Border {
+                            radius: handle_border_radius,
+                            width: style.handle.border_width,
+                            color: style.handle.border_color,
+                        },
+                        ..renderer::Quad::default()
+                    },
+                    style.handle.background,
+                );
+            });
+        }
     }
 
     fn mouse_interaction(
