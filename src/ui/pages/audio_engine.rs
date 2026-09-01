@@ -18,6 +18,7 @@ use crate::audio::{
 };
 use crate::features::{EqualizerPreset, Settings};
 use crate::i18n::{Key, Locale};
+use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::theme;
 use crate::ui::widgets::vertical_slider;
 
@@ -111,13 +112,18 @@ pub fn view(
     .spacing(0)
     .width(Fill);
 
-    let scrollable_content = scrollable(
-        container(content)
-            .width(Fill)
-            .padding(Padding::new(20.0).right(32.0).bottom(60.0).left(32.0)),
-    )
-    .width(Fill)
-    .height(Fill);
+    let scrollable_content = crate::ui::widgets::smooth_scroll(
+        scrollable(
+            container(content)
+                .width(Fill)
+                .padding(Padding::new(20.0).right(32.0).bottom(60.0).left(32.0)),
+        )
+        .width(Fill)
+        .height(Fill)
+        .id(iced::widget::Id::new("audio_engine_scroll")),
+        SmoothScrollTarget::Native("audio_engine_scroll"),
+        Message::SmoothScroll,
+    );
 
     container(
         column![header_container, scrollable_content,]

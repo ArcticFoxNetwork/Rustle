@@ -18,6 +18,7 @@ use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
 use crate::app::{ImageState, Message};
 use crate::i18n::{Key, Locale};
+use crate::ui::animation::{SmoothScrollEvent, SmoothScrollTarget};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::widgets::{VirtualList, VirtualListState};
 use crate::ui::{icons, theme};
@@ -339,6 +340,15 @@ pub fn build_list<'a>(
             let song_id = songs.get(song_index).map(|s| s.id);
             Message::HoverSong(song_id)
         })
+        .on_smooth_scroll(|delta| {
+            Message::SmoothScroll(SmoothScrollEvent::Requested {
+                target: SmoothScrollTarget::PlaylistSongs,
+                delta,
+            })
+        })
+        .on_smooth_scroll_cancel(Message::SmoothScroll(SmoothScrollEvent::Cancelled {
+            target: SmoothScrollTarget::PlaylistSongs,
+        }))
         .on_visible_range(move |(start, end)| {
             let mut images = Vec::new();
             for index in start..end {

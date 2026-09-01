@@ -15,6 +15,7 @@ use crate::audio::identity::{PlaybackContext, PreloadIdentity};
 use crate::database::{Database, DbPlaybackState, DbPlaylist, DbSong, DbWatchedFolder};
 use crate::features::Action;
 use crate::features::import::{CoverCache, ScanProgress, WatchEvent};
+use crate::ui::animation::SmoothScrollEvent;
 use crate::ui::components::{LibraryItem, NavItem};
 use crate::ui::pages;
 
@@ -301,6 +302,8 @@ pub enum Message {
     HoverSidebar(Option<SidebarId>),
     /// Animation tick
     AnimationTick,
+    /// Smooth-scroll input from a native or virtual scroll surface.
+    SmoothScroll(SmoothScrollEvent),
     /// Toggle playlist search input expansion
     TogglePlaylistSearch,
     /// Playlist search query changed
@@ -811,6 +814,7 @@ impl std::fmt::Debug for Message {
         match self {
             // High-frequency messages - keep minimal (no data)
             Self::AnimationTick => simple!("AnimationTick"),
+            Self::SmoothScroll(_) => simple!("SmoothScroll"),
             Self::PlaybackTick => simple!("PlaybackTick"),
             Self::Noop => simple!("Noop"),
             Self::NoOp => simple!("NoOp"),

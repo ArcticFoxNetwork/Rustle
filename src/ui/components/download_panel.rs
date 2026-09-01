@@ -7,6 +7,7 @@ use crate::app::{DownloadTab, ImageState, Message};
 use crate::download::{DownloadManager, DownloadStatus, DownloadTask};
 use crate::i18n::{Key, Locale};
 use crate::image::{CoverSize, ImageKind};
+use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::cover_image;
 use crate::ui::theme;
 
@@ -128,13 +129,18 @@ pub fn download_panel(
     });
 
     // Scrollable body — matches settings scrollable_content
-    let scrollable_content = scrollable(
-        container(body)
-            .width(Length::Fill)
-            .padding(Padding::new(20.0).right(32.0).bottom(60.0).left(32.0)),
-    )
-    .width(Length::Fill)
-    .height(Length::Fill);
+    let scrollable_content = crate::ui::widgets::smooth_scroll(
+        scrollable(
+            container(body)
+                .width(Length::Fill)
+                .padding(Padding::new(20.0).right(32.0).bottom(60.0).left(32.0)),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .id(iced::widget::Id::new("downloads_scroll")),
+        SmoothScrollTarget::Native("downloads_scroll"),
+        Message::SmoothScroll,
+    );
 
     container(
         column![header_container, scrollable_content]

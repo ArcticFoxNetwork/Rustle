@@ -3,6 +3,9 @@
 use iced::widget::{Sensor, container, scrollable};
 use iced::{Element, Fill};
 
+use crate::ui::animation::{SmoothScrollEvent, SmoothScrollTarget};
+use crate::ui::widgets::smooth_scroll;
+
 /// Derive usable content width from a measured container size.
 pub fn usable_content_width(size: iced::Size, horizontal_padding: f32) -> f32 {
     (size.width - horizontal_padding).max(200.0)
@@ -28,6 +31,7 @@ pub fn measured_scrollable<'a, Message, F>(
     content: impl Into<Element<'a, Message>>,
     scroll_id: &'static str,
     on_resize: F,
+    on_scroll_event: impl Fn(SmoothScrollEvent) -> Message + 'a,
 ) -> Element<'a, Message>
 where
     Message: Clone + 'a,
@@ -37,12 +41,16 @@ where
         .on_show(on_resize.clone())
         .on_resize(on_resize);
 
-    scrollable(measured_content)
-        .width(Fill)
-        .height(Fill)
-        .id(iced::widget::Id::new(scroll_id))
-        .style(crate::ui::theme::dark_scrollable)
-        .into()
+    smooth_scroll(
+        scrollable(measured_content)
+            .width(Fill)
+            .height(Fill)
+            .id(iced::widget::Id::new(scroll_id))
+            .style(crate::ui::theme::dark_scrollable),
+        SmoothScrollTarget::Native(scroll_id),
+        on_scroll_event,
+    )
+    .into()
 }
 
 #[cfg(test)]

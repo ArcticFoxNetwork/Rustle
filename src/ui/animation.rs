@@ -4,5 +4,7 @@
 //! hover animation management.
 //!
 mod hover;
+mod scroll;
 
 pub use hover::{HoverAnimations, SingleHoverAnimation};
+pub use scroll::{SmoothScrollEvent, SmoothScrollState, SmoothScrollTarget};

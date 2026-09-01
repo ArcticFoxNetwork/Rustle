@@ -493,6 +493,7 @@ impl App {
                 };
 
                 self.ui.playlist_page.current = Some(playlist_view);
+                self.ui.playlist_page.scroll_state.borrow_mut().jump_to(0.0);
 
                 Some(Task::none())
             }

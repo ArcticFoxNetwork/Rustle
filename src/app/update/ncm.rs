@@ -1068,7 +1068,12 @@ impl App {
                 if let Some(playlist) = &mut self.ui.playlist_page.current {
                     playlist.artist_tab = *tab;
                 }
-                Some(Task::none())
+                self.ui.smooth_scroll.cancel_all();
+                self.ui.playlist_page.scroll_state.borrow_mut().jump_to(0.0);
+                Some(iced::widget::operation::snap_to(
+                    iced::widget::Id::new("playlist_scroll"),
+                    iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
+                ))
             }
 
             Message::OpenArtistByName(name) => {
@@ -1435,10 +1440,8 @@ impl App {
                 }
 
                 if *is_last {
-                    Some(iced::widget::operation::snap_to(
-                        iced::widget::Id::new("playlist_scroll"),
-                        iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
-                    ))
+                    self.ui.playlist_page.scroll_state.borrow_mut().jump_to(0.0);
+                    Some(Task::none())
                 } else {
                     Some(Task::none())
                 }
@@ -1470,11 +1473,8 @@ impl App {
                     crate::app::update::page_loader::PlaylistLoadState::Ready;
 
                 // Scroll to top
-                let tasks = vec![iced::widget::operation::snap_to(
-                    iced::widget::Id::new("playlist_scroll"),
-                    iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
-                )];
-                Some(Task::batch(tasks))
+                self.ui.playlist_page.scroll_state.borrow_mut().jump_to(0.0);
+                Some(Task::none())
             }
 
             Message::AlbumDetailLoaded(detail) => {

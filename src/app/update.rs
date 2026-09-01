@@ -26,6 +26,7 @@ mod protocol;
 mod queue;
 pub mod queue_navigator;
 mod router;
+mod scroll;
 mod search;
 mod settings;
 pub mod song_resolver;
@@ -57,6 +58,7 @@ impl App {
         handle!(handle_toast);
         handle!(handle_download);
         handle!(handle_playback);
+        handle!(handle_scroll);
         handle!(handle_playlist);
         handle!(handle_queue);
         handle!(handle_settings);

@@ -16,6 +16,7 @@ use iced::{Alignment, Color, Element, Fill, Padding};
 
 use crate::app::{ImageState, Message};
 use crate::i18n::{Key, Locale};
+use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::playlist_view::{self, PlaylistColumns, SongItem};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::widgets::VirtualListState;
@@ -249,17 +250,22 @@ fn build_header(
         if is_long {
             if description_expanded {
                 // Expanded: scrollable description with "收起" button
-                let scrollable_desc = scrollable(
-                    container(desc_widget)
-                        .width(Fill)
-                        .padding(Padding::new(4.0).left(0.0)),
-                )
-                .direction(scrollable::Direction::Vertical(
-                    iced::widget::scrollable::Scrollbar::new()
-                        .width(4)
-                        .scroller_width(4),
-                ))
-                .height(150);
+                let scrollable_desc = crate::ui::widgets::smooth_scroll(
+                    scrollable(
+                        container(desc_widget)
+                            .width(Fill)
+                            .padding(Padding::new(4.0).left(0.0)),
+                    )
+                    .direction(scrollable::Direction::Vertical(
+                        iced::widget::scrollable::Scrollbar::new()
+                            .width(4)
+                            .scroller_width(4),
+                    ))
+                    .height(150)
+                    .id(iced::widget::Id::new("playlist_description_scroll")),
+                    SmoothScrollTarget::Native("playlist_description_scroll"),
+                    Message::SmoothScroll,
+                );
 
                 let collapse_btn = button(
                     text(locale.get(Key::CollapseDescription))

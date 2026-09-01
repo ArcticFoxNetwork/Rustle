@@ -8,6 +8,7 @@ use iced::{Alignment, Color, Element, Fill, Length, Padding};
 use crate::app::Message;
 use crate::database::DbSong;
 use crate::i18n::{Key, Locale};
+use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::{icons, theme};
 
 /// Queue popup width
@@ -118,13 +119,17 @@ pub fn view(
         .center_x(Fill)
         .into()
     } else {
-        scrollable(
-            column(song_items)
-                .spacing(2)
-                .padding(Padding::new(0.0).left(8.0).right(8.0).bottom(8.0)),
+        crate::ui::widgets::smooth_scroll(
+            scrollable(
+                column(song_items)
+                    .spacing(2)
+                    .padding(Padding::new(0.0).left(8.0).right(8.0).bottom(8.0)),
+            )
+            .id(iced::widget::Id::new(QUEUE_SCROLLABLE_ID))
+            .height(Length::Fixed(QUEUE_PANEL_HEIGHT - 60.0)),
+            SmoothScrollTarget::Native(QUEUE_SCROLLABLE_ID),
+            Message::SmoothScroll,
         )
-        .id(iced::widget::Id::new(QUEUE_SCROLLABLE_ID))
-        .height(Length::Fixed(QUEUE_PANEL_HEIGHT - 60.0))
         .into()
     };
 

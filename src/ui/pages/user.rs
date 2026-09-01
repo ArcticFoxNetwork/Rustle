@@ -9,6 +9,7 @@ use iced::{Alignment, Color, Element, Fill, Length, Padding};
 use crate::app::{ContentWidthTarget, ImageState, Message};
 use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
+use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::cover_image;
 use crate::ui::pages::playlist::PlaylistView;
 use crate::ui::theme::BOLD_WEIGHT;
@@ -130,17 +131,22 @@ fn build_header(
 
         if has_description && is_long {
             if description_expanded {
-                let scrollable_desc = scrollable(
-                    container(desc_widget)
-                        .width(Fill)
-                        .padding(Padding::new(4.0).left(0.0)),
-                )
-                .direction(scrollable::Direction::Vertical(
-                    iced::widget::scrollable::Scrollbar::new()
-                        .width(4)
-                        .scroller_width(4),
-                ))
-                .height(150);
+                let scrollable_desc = crate::ui::widgets::smooth_scroll(
+                    scrollable(
+                        container(desc_widget)
+                            .width(Fill)
+                            .padding(Padding::new(4.0).left(0.0)),
+                    )
+                    .direction(scrollable::Direction::Vertical(
+                        iced::widget::scrollable::Scrollbar::new()
+                            .width(4)
+                            .scroller_width(4),
+                    ))
+                    .height(150)
+                    .id(iced::widget::Id::new("user_description_scroll")),
+                    SmoothScrollTarget::Native("user_description_scroll"),
+                    Message::SmoothScroll,
+                );
 
                 let collapse_btn = button(
                     text(locale.get(Key::CollapseDescription))
@@ -251,6 +257,7 @@ fn build_playlist_grid<'a>(
         column![rows, Space::new().height(32)],
         "playlist_scroll",
         |size| Message::ContentWidthResized(ContentWidthTarget::PlaylistDetail, size),
+        Message::SmoothScroll,
     )
 }
 

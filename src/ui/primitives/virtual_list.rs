@@ -118,6 +118,19 @@ impl VirtualListState {
     pub fn max_scroll(&self) -> f32 {
         (self.total_height() - self.viewport_height).max(0.0)
     }
+
+    /// Applies a relative pixel offset immediately and returns the distance
+    /// that was actually consumed after clamping.
+    pub fn scroll_by_immediate(&mut self, delta: f32) -> f32 {
+        let previous = self.scroll_offset;
+        self.jump_to(previous + delta);
+        self.scroll_offset - previous
+    }
+
+    /// Jumps to an absolute pixel offset, clamped to the current content.
+    pub fn jump_to(&mut self, offset: f32) {
+        self.scroll_offset = offset.clamp(0.0, self.max_scroll());
+    }
 }
 
 #[cfg(test)]
@@ -140,6 +153,21 @@ mod tests {
         let state = VirtualListState::new(100, 50.0);
 
         assert_eq!(state.visible_range(), (0, 18));
+    }
+
+    #[test]
+    fn immediate_scrolling_and_jumps_are_clamped() {
+        let mut state = VirtualListState::new(20, 50.0);
+        state.update(20, 50.0, 200.0);
+
+        assert_eq!(state.scroll_by_immediate(120.0), 120.0);
+        assert_eq!(state.scroll_offset, 120.0);
+
+        assert_eq!(state.scroll_by_immediate(-500.0), -120.0);
+        assert_eq!(state.scroll_offset, 0.0);
+
+        state.jump_to(f32::MAX);
+        assert_eq!(state.scroll_offset, 800.0);
     }
 }
 
@@ -171,6 +199,10 @@ where
     on_item_hover: Option<Box<dyn Fn(usize) -> Message + 'a>>,
     /// Function to create a message when the visible range changes.
     on_visible_range: Option<Box<dyn Fn((usize, usize)) -> Message + 'a>>,
+    /// Optional callback used instead of directly applying line-wheel input.
+    on_smooth_scroll: Option<Box<dyn Fn(f32) -> Message + 'a>>,
+    /// Message emitted before immediate pixel or scrollbar movement.
+    on_smooth_scroll_cancel: Option<Message>,
     /// Optional owner token used to force a fresh range notification when a
     /// page reuses the same widget tree with different image ownership.
     visible_range_token: Option<u64>,
@@ -198,6 +230,8 @@ where
             on_empty_area: None,
             on_item_hover: None,
             on_visible_range: None,
+            on_smooth_scroll: None,
+            on_smooth_scroll_cancel: None,
             visible_range_token: None,
         }
     }
@@ -265,6 +299,21 @@ where
         self
     }
 
+    /// Routes vertical line-wheel input through an application callback.
+    pub fn on_smooth_scroll<F>(mut self, f: F) -> Self
+    where
+        F: Fn(f32) -> Message + 'a,
+    {
+        self.on_smooth_scroll = Some(Box::new(f));
+        self
+    }
+
+    /// Sets the message emitted when immediate input takes over scrolling.
+    pub fn on_smooth_scroll_cancel(mut self, message: Message) -> Self {
+        self.on_smooth_scroll_cancel = Some(message);
+        self
+    }
+
     /// Set an owner token for visible-range notifications. A changed token
     /// emits the current range again even when the numeric range is unchanged.
     pub fn visible_range_token(mut self, token: u64) -> Self {
@@ -293,6 +342,8 @@ where
             on_empty_area: self.on_empty_area,
             on_item_hover: self.on_item_hover,
             on_visible_range: self.on_visible_range,
+            on_smooth_scroll: self.on_smooth_scroll,
+            on_smooth_scroll_cancel: self.on_smooth_scroll_cancel,
             visible_range_token: self.visible_range_token,
         }
     }
@@ -581,6 +632,9 @@ where
                     && let Some(sb_bounds) = scrollbar_bounds
                     && sb_bounds.contains(position)
                 {
+                    if let Some(message) = &self.on_smooth_scroll_cancel {
+                        shell.publish(message.clone());
+                    }
                     internal_state.scrollbar_dragging = true;
                     internal_state.drag_start_offset = position.y - sb_bounds.y;
                     shell.capture_event();
@@ -672,20 +726,34 @@ where
             && let Some(position) = cursor.position()
             && bounds.contains(position)
         {
-            let delta_y = match delta {
-                mouse::ScrollDelta::Lines { y, .. } => y * 50.0,
-                mouse::ScrollDelta::Pixels { y, .. } => *y,
-            };
-
-            let mut state = self.state.borrow_mut();
-            let max_scroll = state.max_scroll();
-            let new_offset = (state.scroll_offset - delta_y).clamp(0.0, max_scroll);
-
-            if (new_offset - state.scroll_offset).abs() > 0.01 {
-                state.scroll_offset = new_offset;
-                shell.invalidate_layout();
-                drop(state);
-                self.publish_visible_range(internal_state, shell);
+            match delta {
+                mouse::ScrollDelta::Lines { y, .. } if self.on_smooth_scroll.is_some() => {
+                    let delta = -*y * 50.0;
+                    if delta.abs() > f32::EPSILON
+                        && let Some(on_smooth_scroll) = &self.on_smooth_scroll
+                    {
+                        shell.publish(on_smooth_scroll(delta));
+                    }
+                }
+                mouse::ScrollDelta::Lines { y, .. } => {
+                    let mut state = self.state.borrow_mut();
+                    if state.scroll_by_immediate(-*y * 50.0).abs() > 0.01 {
+                        shell.invalidate_layout();
+                        drop(state);
+                        self.publish_visible_range(internal_state, shell);
+                    }
+                }
+                mouse::ScrollDelta::Pixels { y, .. } => {
+                    if let Some(message) = &self.on_smooth_scroll_cancel {
+                        shell.publish(message.clone());
+                    }
+                    let mut state = self.state.borrow_mut();
+                    if state.scroll_by_immediate(-*y).abs() > 0.01 {
+                        shell.invalidate_layout();
+                        drop(state);
+                        self.publish_visible_range(internal_state, shell);
+                    }
+                }
             }
             shell.capture_event();
         }

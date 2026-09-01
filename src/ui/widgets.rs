@@ -23,6 +23,7 @@ pub mod playlist_card;
 pub mod progress_slider;
 pub mod responsive;
 pub mod section_header;
+mod smooth_scroll;
 mod toast;
 mod vertical_slider;
 
@@ -39,5 +40,6 @@ pub use responsive::{
     calculate_grid_columns, calculate_grid_columns_clamped, measured_scrollable,
     usable_content_width,
 };
+pub use smooth_scroll::smooth_scroll;
 pub use toast::{Toast, view_toast};
 pub use vertical_slider::vertical_slider;

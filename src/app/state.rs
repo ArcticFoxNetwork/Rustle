@@ -18,7 +18,7 @@ use crate::features::import::{CoverCache, FolderWatcher, ScanHandle, ScanProgres
 use crate::i18n::Locale;
 use crate::platform::discord::DiscordPresence;
 use crate::platform::media_controls::{MediaCommand, MediaHandle};
-use crate::ui::animation::{HoverAnimations, SingleHoverAnimation};
+use crate::ui::animation::{HoverAnimations, SingleHoverAnimation, SmoothScrollState};
 use crate::ui::components::{ImportingPlaylist, NavItem};
 use crate::ui::effects::background::LyricsBackgroundProgram;
 use crate::ui::effects::textured_background::TexturedBackgroundProgram;
@@ -1508,6 +1508,10 @@ pub struct UiState {
     pub section_positions: Vec<(SettingsSection, f32)>,
     /// Whether section positions have been measured from the actual widget tree
     pub positions_measured: bool,
+    /// Latest absolute offset reported by the settings page scrollable.
+    pub settings_scroll_offset: f32,
+    /// Shared motion state for native and virtual smooth scrolling.
+    pub smooth_scroll: SmoothScrollState,
     /// Whether the mouse is hovering over the volume slider area
     pub is_volume_slider_hovered: bool,
     pub editing_keybinding: Option<(crate::features::Action, crate::features::ShortcutScope)>,
@@ -1607,6 +1611,8 @@ impl UiState {
                 (SettingsSection::About, 1965.0),
             ],
             positions_measured: false,
+            settings_scroll_offset: 0.0,
+            smooth_scroll: SmoothScrollState::default(),
             is_volume_slider_hovered: false,
             editing_keybinding: None,
             global_hotkey_seen_while_recording: None,
@@ -1714,6 +1720,7 @@ impl UiState {
             || self.discover.card_animations.is_animating()
             || self.search.song_animations.is_animating()
             || self.search.card_animations.is_animating()
+            || self.smooth_scroll.is_animating()
     }
 
     /// Clean up completed animations to prevent memory leaks
@@ -1742,6 +1749,27 @@ impl UiState {
     pub fn clear_playlist_animations(&mut self) {
         self.playlist_page.song_animations.clear();
         self.playlist_page.icon_animations.clear();
+    }
+}
+
+#[cfg(test)]
+mod smooth_scroll_animation_tests {
+    use super::UiState;
+    use crate::ui::animation::SmoothScrollTarget;
+    use iced::time::Instant;
+
+    #[test]
+    fn smooth_scroll_requests_participate_in_animation_frames() {
+        let now = Instant::now();
+        let mut state = UiState::new();
+
+        state.smooth_scroll.request_wheel(
+            SmoothScrollTarget::Native("test_scroll"),
+            60.0,
+            now,
+        );
+
+        assert!(state.has_active_animations(now));
     }
 }
 

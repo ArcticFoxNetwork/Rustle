@@ -14,6 +14,7 @@ use crate::app::{ImageState, Message, SettingsSection};
 use crate::features::{Action, KeyBindings, Settings, ShortcutScope};
 use crate::i18n::{Key, Language, Locale};
 use crate::image::ImageKind;
+use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::theme;
 
 /// Settings page view with fixed header and all sections on one scrollable page
@@ -68,18 +69,22 @@ pub fn view(
         cache_stats,
     );
 
-    let scrollable_content = scrollable(
-        container(all_sections)
-            .width(Fill)
-            .padding(Padding::new(20.0).right(32.0).bottom(60.0).left(32.0)),
-    )
-    .width(Fill)
-    .height(Fill)
-    .id(iced::widget::Id::new("settings_scroll"))
-    .on_scroll(|viewport| {
-        let offset = viewport.absolute_offset();
-        Message::SettingsScrolled(offset.y)
-    });
+    let scrollable_content = crate::ui::widgets::smooth_scroll(
+        scrollable(
+            container(all_sections)
+                .width(Fill)
+                .padding(Padding::new(20.0).right(32.0).bottom(60.0).left(32.0)),
+        )
+        .width(Fill)
+        .height(Fill)
+        .id(iced::widget::Id::new("settings_scroll"))
+        .on_scroll(|viewport| {
+            let offset = viewport.absolute_offset();
+            Message::SettingsScrolled(offset.y)
+        }),
+        SmoothScrollTarget::Native("settings_scroll"),
+        Message::SmoothScroll,
+    );
 
     // Combine fixed header + scrollable content
     container(

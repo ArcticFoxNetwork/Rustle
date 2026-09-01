@@ -9,6 +9,7 @@ use iced::{Alignment, Background, Border, Element, Fill, Length, Padding};
 use crate::app::{ContentWidthTarget, ImageState, Message, SearchPageState, SearchTab};
 use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
+use crate::ui::animation::{SmoothScrollEvent, SmoothScrollTarget};
 use crate::ui::components::cover_image;
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{theme, widgets};
@@ -198,6 +199,17 @@ pub fn view<'a>(
                             }
                         })
                         .on_empty_area(Message::HoverSearchSong(None))
+                        .on_smooth_scroll(|delta| {
+                            Message::SmoothScroll(SmoothScrollEvent::Requested {
+                                target: SmoothScrollTarget::SearchSongs,
+                                delta,
+                            })
+                        })
+                        .on_smooth_scroll_cancel(Message::SmoothScroll(
+                            SmoothScrollEvent::Cancelled {
+                                target: SmoothScrollTarget::SearchSongs,
+                            },
+                        ))
                         .height(Length::Fill);
 
                     let list_section = column![
@@ -250,9 +262,12 @@ pub fn view<'a>(
                     col.padding(Padding::new(32.0).top(0.0)).into()
                 };
 
-                widgets::measured_scrollable(content, "search_scroll", |size| {
-                    Message::ContentWidthResized(ContentWidthTarget::Search, size)
-                })
+                widgets::measured_scrollable(
+                    content,
+                    "search_scroll",
+                    |size| Message::ContentWidthResized(ContentWidthTarget::Search, size),
+                    Message::SmoothScroll,
+                )
             }
         }
     };

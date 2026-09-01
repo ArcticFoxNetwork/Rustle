@@ -73,6 +73,7 @@ impl App {
         self.ui.playlist_page.viewing_recently_played = false;
         self.ui.playlist_page.ncm_cache_baseline = None;
         self.ui.playlist_page.ncm_replace_songs_on_chunk = false;
+        self.ui.playlist_page.scroll_state.borrow_mut().jump_to(0.0);
         self.ui.clear_playlist_animations();
 
         if self.ui.lyrics.is_open {
@@ -201,10 +202,8 @@ impl App {
                 self.ui.playlist_page.load_state =
                     crate::app::update::page_loader::PlaylistLoadState::Ready;
                 // Reset scroll position for playlist page
-                Some(iced::widget::operation::snap_to(
-                    iced::widget::Id::new("playlist_scroll"),
-                    iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
-                ))
+                self.ui.playlist_page.scroll_state.borrow_mut().jump_to(0.0);
+                Some(Task::none())
             }
 
             Message::HoverSong(id) => {
@@ -246,8 +245,9 @@ impl App {
                 self.ui.cleanup_animations(now);
 
                 let lyrics_viewport_task = self.flush_pending_lyrics_viewport_after_animation();
+                let smooth_scroll_task = self.advance_smooth_scroll(now);
 
-                Some(lyrics_viewport_task)
+                Some(Task::batch([lyrics_viewport_task, smooth_scroll_task]))
             }
 
             Message::EditPlaylist(id) => {

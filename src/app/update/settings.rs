@@ -10,7 +10,10 @@ use iced::Rectangle;
 use iced::Task;
 use iced::advanced::widget::operation::{self as widget_op, Operation, Outcome, Scrollable};
 use iced::keyboard::Key;
+use iced::time::Instant;
 use iced::widget::Id;
+
+use crate::ui::animation::SmoothScrollTarget;
 
 fn match_section(id: &Id) -> Option<SettingsSection> {
     let all = [
@@ -441,6 +444,12 @@ impl App {
                 self.sync_audio_analysis_state();
                 tracing::info!("Power saving mode: {}", enabled);
 
+                let smooth_scroll_task = if *enabled {
+                    self.settle_smooth_scroll()
+                } else {
+                    Task::none()
+                };
+
                 let lyrics_viewport_task = if *enabled {
                     if self.ui.lyrics.is_open {
                         self.ui.lyrics.animation.settle_at(1.0);
@@ -453,6 +462,7 @@ impl App {
                 Some(Task::batch([
                     Task::perform(async { Message::SaveSettings }, |m| m),
                     lyrics_viewport_task,
+                    smooth_scroll_task,
                 ]))
             }
             Message::UpdateMaxCacheMb(size_mb) => {
@@ -612,15 +622,20 @@ impl App {
             Message::ScrollToSection(section) => {
                 self.sync_settings_section_route(*section);
                 let target_y = self.section_scroll_position(*section);
-                Some(iced::widget::operation::scroll_to(
-                    iced::widget::Id::new("settings_scroll"),
-                    iced::widget::scrollable::AbsoluteOffset {
-                        x: Some(0.0),
-                        y: Some(target_y),
-                    },
-                ))
+                let delta = target_y - self.ui.settings_scroll_offset;
+                let target = SmoothScrollTarget::Native("settings_scroll");
+
+                if self.core.settings.display.power_saving_mode {
+                    Some(self.apply_smooth_scroll_delta(target, delta))
+                } else {
+                    self.ui
+                        .smooth_scroll
+                        .request_programmatic(target, delta, Instant::now());
+                    Some(Task::none())
+                }
             }
             Message::SettingsScrolled(y_offset) => {
+                self.ui.settings_scroll_offset = *y_offset;
                 // Only update active tab highlight — do NOT overwrite measured positions
                 let section = self.section_at_position(*y_offset);
                 self.sync_settings_section_route(section);

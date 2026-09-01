@@ -43,6 +43,7 @@ impl App {
 
         if previous_route != *route {
             self.ui.image_state.cancel_pending_and_inflight();
+            self.ui.smooth_scroll.cancel_all();
         }
 
         if matches!(previous_route, Route::Search { .. }) && !matches!(route, Route::Search { .. })
@@ -92,6 +93,7 @@ impl App {
                 self.ui.search.keyword.clear();
                 self.ui.playlist_page.current = None;
                 self.ui.playlist_page.viewing_recently_played = true;
+                self.ui.playlist_page.scroll_state.borrow_mut().jump_to(0.0);
             }
             Route::Search { keyword, tab, page } => {
                 self.clear_playlist_route_markers();
@@ -142,7 +144,10 @@ impl App {
                 self.collect_discover_image_tasks(),
                 self.start_personal_fm_route(),
             ]),
-            Route::Downloads => Task::none(),
+            Route::Downloads => iced::widget::operation::snap_to(
+                iced::widget::Id::new("downloads_scroll"),
+                iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
+            ),
             Route::Settings(section) => {
                 self.refresh_cache_stats();
                 let target_y = self.section_scroll_position(*section);
@@ -154,7 +159,9 @@ impl App {
                     },
                 );
                 // Always re-measure on entry in case content changed (login state, etc.)
-                Task::batch([scroll, Task::done(Message::MeasureSectionPositions)])
+                scroll
+                    .chain(self.settings_scroll_offset_task())
+                    .chain(Task::done(Message::MeasureSectionPositions))
             }
             Route::AudioEngine => iced::widget::operation::snap_to(
                 iced::widget::Id::new("audio_engine_scroll"),
@@ -162,7 +169,13 @@ impl App {
             ),
             Route::Playlist(id) => self.open_local_playlist_route(*id),
             Route::NcmPlaylist(id) => self.open_ncm_playlist_route(*id),
-            Route::User(id) => self.open_user_route(*id),
+            Route::User(id) => Task::batch([
+                iced::widget::operation::snap_to(
+                    iced::widget::Id::new("playlist_scroll"),
+                    iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
+                ),
+                self.open_user_route(*id),
+            ]),
             Route::Artist(id) => self.open_artist_route(*id),
             Route::Album(id) => self.open_album_route(*id),
             Route::RecentlyPlayed => {
@@ -185,6 +198,7 @@ impl App {
                 }
             }
             Route::Search { keyword, tab, page } => {
+                self.ui.search.scroll_state.borrow_mut().jump_to(0.0);
                 let fetch_task = if should_reload_search {
                     self.fetch_results(keyword.clone(), *tab, *page)
                 } else {

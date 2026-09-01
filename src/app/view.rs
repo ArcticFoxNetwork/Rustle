@@ -10,6 +10,7 @@ use iced::{Alignment, Color, Element, Fill, Length};
 use super::message::Message;
 use super::{App, Route};
 use crate::image::{CoverSize, ImageKind};
+use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::cover_image;
 use crate::ui::overlay::{self, ModalKind, OverlayKind};
 use crate::ui::theme;
@@ -654,9 +655,16 @@ impl App {
                                                 )),
                                             );
                                         }
-                                        scrollable(container(col).width(Fill))
-                                            .height(Length::Fixed(300.0))
-                                            .into()
+                                        widgets::smooth_scroll(
+                                            scrollable(container(col).width(Fill))
+                                                .height(Length::Fixed(300.0))
+                                                .id(iced::widget::Id::new(
+                                                    "playlist_picker_scroll",
+                                                )),
+                                            SmoothScrollTarget::Native("playlist_picker_scroll"),
+                                            Message::SmoothScroll,
+                                        )
+                                        .into()
                                     }
                                     _ => {
                                         let playlists = self.library.playlists.clone();
@@ -725,9 +733,18 @@ impl App {
                                                     )),
                                                 );
                                             }
-                                            scrollable(container(col).width(Fill))
-                                                .height(Length::Fixed(300.0))
-                                                .into()
+                                            widgets::smooth_scroll(
+                                                scrollable(container(col).width(Fill))
+                                                    .height(Length::Fixed(300.0))
+                                                    .id(iced::widget::Id::new(
+                                                        "playlist_picker_scroll",
+                                                    )),
+                                                SmoothScrollTarget::Native(
+                                                    "playlist_picker_scroll",
+                                                ),
+                                                Message::SmoothScroll,
+                                            )
+                                            .into()
                                         }
                                     }
                                 };

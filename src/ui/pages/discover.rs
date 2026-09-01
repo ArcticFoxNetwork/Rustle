@@ -117,6 +117,7 @@ fn view_overview<'a>(
         content,
         "discover_scroll",
         |size| Message::ContentWidthResized(ContentWidthTarget::Discover, size),
+        Message::SmoothScroll,
     ))
     .width(Fill)
     .height(Fill)
@@ -264,6 +265,7 @@ fn view_all_playlists<'a>(
         content,
         "discover_scroll",
         |size| Message::ContentWidthResized(ContentWidthTarget::Discover, size),
+        Message::SmoothScroll,
     ))
     .width(Fill)
     .height(Fill)

@@ -7,7 +7,7 @@ use iced::{Alignment, Color, Element, Fill, Padding};
 use crate::app::{ImageState, Message, Route, SidebarId};
 use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
-use crate::ui::animation::HoverAnimations;
+use crate::ui::animation::{HoverAnimations, SmoothScrollTarget};
 use crate::ui::components::importing_card::{self, ImportingPlaylist};
 use crate::ui::theme::{self, BOLD_WEIGHT};
 
@@ -270,9 +270,10 @@ pub fn view(
     }
 
     // Scrollable area for library and cloud playlists only (hidden scrollbar)
-    let scrollable_content =
+    let scrollable_content = crate::ui::widgets::smooth_scroll(
         scrollable(column(scrollable_items).padding(Padding::new(0.0).bottom(16.0)))
             .height(Fill)
+            .id(iced::widget::Id::new("sidebar_scroll"))
             .style(|_theme, _status| scrollable::Style {
                 container: iced::widget::container::Style::default(),
                 vertical_rail: scrollable::Rail {
@@ -299,7 +300,10 @@ pub fn view(
                     shadow: iced::Shadow::default(),
                     icon: Color::TRANSPARENT,
                 },
-            });
+            }),
+        SmoothScrollTarget::Native("sidebar_scroll"),
+        Message::SmoothScroll,
+    );
 
     let top_content = column![logo, nav_menu, Space::new().height(24), scrollable_content,]
         .padding(Padding::new(16.0).bottom(0.0))
