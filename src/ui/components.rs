@@ -15,12 +15,12 @@
 //! - **Widgets** (`crate::ui::widgets`): Composable UI patterns (no business logic)
 //! - **Components** (this module): Business-specific UI with Message handling
 
-pub mod carousel_banner;
 pub mod context_menu;
 pub mod cover_image;
 pub mod download_panel;
 pub mod edit_dialog;
 pub mod exit_dialog;
+pub mod feature_card;
 pub mod importing_card;
 pub mod login_popup;
 pub mod player_bar;
@@ -32,7 +32,6 @@ pub mod sidebar;
 pub mod sidebar_resize_handle;
 pub mod song_info_dialog;
 pub mod source_badge;
-pub mod trending_list;
 pub mod window_controls;
 pub mod window_resize_handles;
 

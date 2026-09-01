@@ -134,7 +134,6 @@ impl App {
             .home
             .current_ncm_playlist_songs
             .iter()
-            .chain(self.ui.home.trending_songs.iter())
             .chain(self.ui.search.tracks.iter())
             .find(|song| song.id == ncm_id && crate::image::is_remote_url(song.cover_url()))
             .map(|song| song.cover_url().to_string())

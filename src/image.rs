@@ -33,8 +33,6 @@ pub enum ImageKind {
     UserAvatar,
     /// API-provided membership badge (identified by a tier-aware badge key)
     VipBadge,
-    /// Homepage carousel banner (identified by banner index / target id)
-    Banner,
 }
 
 impl ImageKind {
@@ -51,7 +49,6 @@ impl ImageKind {
             | Self::RadioCover => crate::utils::covers_cache_dir(),
             Self::UserAvatar => crate::utils::avatars_cache_dir(),
             Self::VipBadge => crate::utils::vip_badges_cache_dir(),
-            Self::Banner => crate::utils::banners_cache_dir(),
         }
     }
 
@@ -68,7 +65,6 @@ impl ImageKind {
             Self::RadioCover => format!("radio_{}", id),
             Self::UserAvatar => format!("avatar_{}", id),
             Self::VipBadge => format!("vip_{}", id),
-            Self::Banner => format!("banner_{}", id),
         }
     }
 }

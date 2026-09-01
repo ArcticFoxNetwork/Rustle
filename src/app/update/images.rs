@@ -94,32 +94,48 @@ impl App {
                     ));
                 }
             }
-            Message::BannersLoaded(banners)
-                if matches!(self.ui.current_route, Route::Home | Route::Radio) =>
-            {
-                refs.extend(banners.iter().enumerate().map(|(index, banner)| {
-                    RemoteImage::new(ImageKind::Banner, index as u64, &banner.image_url)
-                }));
-            }
-            Message::TopPicksLoaded(playlists) | Message::UserPlaylistsLoaded(playlists)
-                if matches!(self.ui.current_route, Route::Home | Route::Radio) =>
+            Message::UserPlaylistsLoaded(playlists)
+                if matches!(self.ui.current_route, Route::Discover(_) | Route::Radio) =>
             {
                 refs.extend(remote_playlist_covers(playlists));
             }
-            Message::RecommendedPlaylistsLoaded(playlists)
-                if matches!(self.ui.current_route, Route::Discover(_)) =>
+            Message::RecommendedPlaylistsLoaded(generation, playlists)
+                if *generation == self.ui.discover.load_generation
+                    && matches!(self.ui.current_route, Route::Discover(_) | Route::Radio) =>
             {
                 refs.extend(remote_playlist_covers(playlists));
             }
-            Message::HotPlaylistsLoaded(playlists, _)
-                if matches!(self.ui.current_route, Route::Discover(_)) =>
+            Message::DailyRecommendPreviewLoaded(generation, Some(track))
+                if *generation == self.ui.discover.load_generation
+                    && matches!(self.ui.current_route, Route::Discover(_) | Route::Radio) =>
+            {
+                refs.extend(remote_track_covers(std::slice::from_ref(track)));
+            }
+            Message::PersonalFmPreviewLoaded(generation, tracks)
+                if *generation == self.ui.discover.load_generation
+                    && matches!(self.ui.current_route, Route::Discover(_) | Route::Radio) =>
+            {
+                if let Some(track) = tracks.first() {
+                    refs.extend(remote_track_covers(std::slice::from_ref(track)));
+                }
+            }
+            Message::HotPlaylistsLoaded(generation, playlists)
+                if *generation == self.ui.discover.load_generation
+                    && matches!(self.ui.current_route, Route::Discover(_) | Route::Radio) =>
             {
                 refs.extend(remote_playlist_covers(playlists));
             }
-            Message::TrendingSongsLoaded(songs)
-                if matches!(self.ui.current_route, Route::Home | Route::Radio) =>
+            Message::OfficialPlaylistsLoaded(generation, playlists)
+                if *generation == self.ui.discover.load_generation
+                    && matches!(self.ui.current_route, Route::Discover(_) | Route::Radio) =>
             {
-                refs.extend(remote_track_covers(songs));
+                refs.extend(remote_playlist_covers(playlists));
+            }
+            Message::PrivateRadarLoaded(generation, Some(playlist))
+                if *generation == self.ui.discover.load_generation
+                    && matches!(self.ui.current_route, Route::Discover(_) | Route::Radio) =>
+            {
+                refs.extend(remote_playlist_covers(std::slice::from_ref(playlist)));
             }
             Message::AddNcmPlaylist(songs, _) | Message::AddNcmPlaylistWithSource(songs, _, _) => {
                 refs.extend(remote_track_covers(songs));
@@ -331,6 +347,32 @@ impl App {
 
         self.register_cached_image(kind, id)
             .unwrap_or_else(Task::none)
+    }
+
+    /// Re-register discover covers after a route transition cancelled page-scoped work.
+    pub(super) fn collect_discover_image_tasks(&mut self) -> Task<Message> {
+        let mut refs =
+            remote_playlist_covers(&self.ui.discover.recommended_playlists).collect::<Vec<_>>();
+        refs.extend(remote_playlist_covers(&self.ui.discover.hot_playlists));
+        refs.extend(remote_playlist_covers(&self.ui.discover.official_playlists));
+        if let Some(playlist) = &self.ui.discover.private_radar {
+            refs.extend(remote_playlist_covers(std::slice::from_ref(playlist)));
+        }
+        if let Some(track) = &self.ui.discover.daily_recommend_preview {
+            refs.extend(remote_track_covers(std::slice::from_ref(track)));
+        }
+        if let Some(track) = &self.ui.discover.personal_fm_preview {
+            refs.extend(remote_track_covers(std::slice::from_ref(track)));
+        }
+
+        let mut tasks = refs
+            .into_iter()
+            .map(|image| {
+                self.enqueue_image_download_scoped(image.kind, image.id, &image.url, image.scope)
+            })
+            .collect::<Vec<_>>();
+        tasks.push(self.pump_image_downloads());
+        Task::batch(tasks)
     }
 
     /// Return the already available local cover file for a song, using the
@@ -668,7 +710,6 @@ fn start_image_download(
         // the CDN for a square derivative changes its composition and makes
         // the visible mark look much smaller inside a contain-fit widget.
         ImageKind::VipBadge => None,
-        ImageKind::Banner => Some((800, 280)),
         ImageKind::SongCover | ImageKind::LocalSongCover | ImageKind::UserAvatar => {
             Some((200, 200))
         }

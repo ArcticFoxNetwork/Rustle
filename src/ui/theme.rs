@@ -198,24 +198,6 @@ pub fn sidebar(theme: &Theme) -> container::Style {
     }
 }
 
-/// Hero banner container
-pub fn hero_banner(theme: &Theme) -> container::Style {
-    let bg = if is_dark(theme) {
-        color!(0x1a1a2e)
-    } else {
-        color!(0xe8e8f0)
-    };
-    container::Style {
-        background: Some(Background::Color(bg)),
-        text_color: Some(text_primary(theme)),
-        border: Border {
-            radius: 16.0.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    }
-}
-
 /// Login popup container
 pub fn login_popup(theme: &Theme) -> container::Style {
     container::Style {
@@ -280,108 +262,6 @@ pub fn secondary_button(theme: &Theme, status: button::Status) -> button::Style 
                 color: text_muted(theme),
                 ..base.border
             },
-            ..base
-        },
-        _ => base,
-    }
-}
-
-/// Icon button (circular)
-pub fn icon_button(theme: &Theme, status: button::Status) -> button::Style {
-    let base = button::Style {
-        background: Some(Background::Color(Color::TRANSPARENT)),
-        text_color: text_secondary(theme),
-        border: Border {
-            radius: 50.0.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    match status {
-        button::Status::Hovered => button::Style {
-            background: Some(Background::Color(surface(theme))),
-            text_color: text_primary(theme),
-            ..base
-        },
-        _ => base,
-    }
-}
-
-/// Carousel navigation button (semi-transparent)
-pub fn carousel_nav_button(_theme: &Theme, status: button::Status) -> button::Style {
-    let base = button::Style {
-        background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.3))),
-        text_color: Color::WHITE,
-        border: Border {
-            radius: 24.0.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    match status {
-        button::Status::Hovered => button::Style {
-            background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.5))),
-            ..base
-        },
-        button::Status::Pressed => button::Style {
-            background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.7))),
-            ..base
-        },
-        _ => base,
-    }
-}
-
-/// Glass icon button for banner (circular, semi-transparent dark)
-pub fn glass_icon_button(_theme: &Theme, status: button::Status) -> button::Style {
-    let base = button::Style {
-        background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.3))),
-        text_color: Color::WHITE,
-        border: Border {
-            radius: 50.0.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    };
-
-    match status {
-        button::Status::Hovered => button::Style {
-            background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.5))),
-            ..base
-        },
-        button::Status::Pressed => button::Style {
-            background: Some(Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.6))),
-            ..base
-        },
-        _ => base,
-    }
-}
-
-/// Banner Play button (White pill with black text)
-pub fn banner_play_button(_theme: &Theme, status: button::Status) -> button::Style {
-    let base = button::Style {
-        background: Some(Background::Color(Color::WHITE)),
-        text_color: Color::BLACK,
-        border: Border {
-            radius: 24.0.into(),
-            ..Default::default()
-        },
-        shadow: Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.3),
-            offset: Vector::new(0.0, 4.0),
-            blur_radius: 8.0,
-        },
-        ..Default::default()
-    };
-
-    match status {
-        button::Status::Hovered => button::Style {
-            background: Some(Background::Color(color!(0xe0e0e0))),
-            ..base
-        },
-        button::Status::Pressed => button::Style {
-            background: Some(Background::Color(color!(0xcccccc))),
             ..base
         },
         _ => base,
@@ -790,16 +670,6 @@ pub fn close_button_pressed() -> Color {
     Color::from_rgb(0.6, 0.15, 0.15)
 }
 
-/// Rank colors for trending list
-pub fn rank_color(rank: usize, theme: &Theme) -> Color {
-    match rank {
-        1 => Color::from_rgb(1.0, 0.4, 0.4), // Red for #1
-        2 => Color::from_rgb(1.0, 0.6, 0.2), // Orange for #2
-        3 => Color::from_rgb(0.9, 0.7, 0.1), // Yellow for #3
-        _ => text_muted(theme),
-    }
-}
-
 /// Spectrum meter colors
 pub fn spectrum_green() -> Color {
     Color::from_rgb(0.2, 0.8, 0.4)
@@ -914,28 +784,5 @@ pub fn shortcut_bg(theme: &Theme) -> Color {
         Color::from_rgb(0.2, 0.2, 0.2)
     } else {
         Color::from_rgb(0.9, 0.9, 0.9)
-    }
-}
-
-/// Banner placeholder background
-pub fn banner_placeholder(theme: &Theme) -> Color {
-    if is_dark(theme) {
-        Color::from_rgb(0.1, 0.05, 0.2)
-    } else {
-        Color::from_rgb(0.9, 0.85, 0.95)
-    }
-}
-
-/// Banner gradient bottom
-pub fn banner_gradient_bottom() -> Color {
-    Color::from_rgba(0.0, 0.0, 0.0, 0.8)
-}
-
-/// Indicator dot inactive color
-pub fn indicator_inactive(theme: &Theme) -> Color {
-    if is_dark(theme) {
-        Color::from_rgba(1.0, 1.0, 1.0, 0.4)
-    } else {
-        Color::from_rgba(0.0, 0.0, 0.0, 0.3)
     }
 }

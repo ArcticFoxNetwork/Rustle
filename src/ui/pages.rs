@@ -4,7 +4,6 @@
 pub mod artist;
 pub mod audio_engine;
 pub mod discover;
-pub mod home;
 pub mod lyrics;
 pub mod playlist;
 pub mod search;

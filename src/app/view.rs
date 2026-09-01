@@ -122,6 +122,16 @@ impl App {
 
         let current_playing_id = self.playback.current_song.as_ref().map(|s| s.id);
 
+        let active_personal_fm_cover = if self.is_fm_mode() {
+            self.playback
+                .current_song
+                .as_ref()
+                .and_then(|song| crate::image::song_cover_key(song.id))
+                .and_then(|(kind, id)| self.ui.image_state.get(kind, id))
+        } else {
+            None
+        };
+
         let main_content = match &self.ui.current_route {
             Route::Playlist(_)
             | Route::NcmPlaylist(_)
@@ -194,28 +204,20 @@ impl App {
             Route::Search { .. } => {
                 pages::search::view(&self.ui.search, &self.ui.image_state, self.core.locale)
             }
-            Route::Home => pages::home::view(
-                &self.ui.search_query,
-                &self.ui.home,
-                &self.ui.image_state,
-                self.core.locale,
-                self.core.is_logged_in,
-            ),
             Route::Discover(mode) => {
                 let _ = mode;
                 pages::discover::view(
                     &self.ui.discover,
                     &self.ui.image_state,
                     self.core.locale,
-                    self.core.is_logged_in,
+                    active_personal_fm_cover,
                 )
             }
-            Route::Radio => pages::home::view(
-                &self.ui.search_query,
-                &self.ui.home,
+            Route::Radio => pages::discover::view(
+                &self.ui.discover,
                 &self.ui.image_state,
                 self.core.locale,
-                self.core.is_logged_in,
+                active_personal_fm_cover,
             ),
             Route::Downloads => crate::ui::components::download_panel::download_panel(
                 self.core.locale,

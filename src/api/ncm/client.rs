@@ -645,17 +645,35 @@ impl NcmClient {
         ))
     }
 
-    pub async fn top_playlists(
+    pub async fn high_quality_playlists(
         &self,
         cat: &str,
-        order: &str,
+        before: Option<u64>,
+        limit: u16,
+    ) -> Result<Vec<PlaylistSummary>> {
+        let mut query = self
+            .query()
+            .param("cat", cat)
+            .param("limit", &limit.to_string());
+        let before_value;
+        if let Some(before) = before {
+            before_value = before.to_string();
+            query = query.param("before", &before_value);
+        }
+        let response = self.client.top_playlist_highquality(&query).await?;
+        mapper::playlist_summaries(&response.body, PlaylistSource::Top)
+    }
+
+    pub async fn hot_playlists(
+        &self,
+        cat: &str,
         offset: u16,
         limit: u16,
     ) -> Result<Vec<PlaylistSummary>> {
         let query = self
             .query()
             .param("cat", cat)
-            .param("order", order)
+            .param("order", "hot")
             .param("offset", &offset.to_string())
             .param("limit", &limit.to_string());
         let response = self.client.top_playlist(&query).await?;
@@ -669,11 +687,6 @@ impl NcmClient {
             .param("like", if like { "true" } else { "false" });
         self.client.like(&query).await?;
         Ok(())
-    }
-
-    pub async fn banners(&self) -> Result<Vec<Banner>> {
-        let response = self.client.banner(&self.query()).await?;
-        mapper::banners(&response.body)
     }
 
     pub async fn download_img<I>(

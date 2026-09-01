@@ -9,8 +9,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::api::{
-    AlbumSummary, ArtistSummary, Banner, NcmClient, PlaylistSummary, RadioSummary, Track,
-    VideoSummary,
+    AlbumSummary, ArtistSummary, NcmClient, PlaylistSummary, RadioSummary, Track, VideoSummary,
 };
 use crate::app::SettingsSection;
 use crate::audio::{AudioAnalysisData, AudioProcessingChain, PlaybackInfo, PlaybackStatus};
@@ -56,6 +55,7 @@ pub struct ImageState {
 pub struct ImageEntry {
     pub path: PathBuf,
     pub handle: iced::widget::image::Handle,
+    pub playlist_footer_handle: Option<iced::widget::image::Handle>,
     pub dimensions: Option<(u32, u32)>,
 }
 
@@ -91,6 +91,12 @@ impl ImageState {
         self.entries.get(&(kind, id)).map(|entry| &entry.handle)
     }
 
+    pub fn get_playlist_footer(&self, id: u64) -> Option<&iced::widget::image::Handle> {
+        self.entries
+            .get(&(crate::image::ImageKind::PlaylistCover, id))
+            .and_then(|entry| entry.playlist_footer_handle.as_ref())
+    }
+
     pub fn image_data(
         &self,
         kind: crate::image::ImageKind,
@@ -105,11 +111,27 @@ impl ImageState {
     pub fn insert_path(&mut self, kind: crate::image::ImageKind, id: u64, path: PathBuf) {
         let dimensions = image_dimensions(&path);
         let handle = iced::widget::image::Handle::from_path(path.clone());
+        let playlist_footer_handle = if kind == crate::image::ImageKind::PlaylistCover {
+            image::open(&path).ok().map(|source| {
+                let processed =
+                    crate::ui::effects::image_processing::process_image_for_playlist_footer(
+                        &source,
+                    );
+                iced::widget::image::Handle::from_rgba(
+                    processed.width,
+                    processed.height,
+                    processed.data,
+                )
+            })
+        } else {
+            None
+        };
         self.entries.insert(
             (kind, id),
             ImageEntry {
                 path,
                 handle,
+                playlist_footer_handle,
                 dimensions,
             },
         );
@@ -1255,7 +1277,6 @@ pub struct PendingPlaybackRequest {
 /// Unified route model for page rendering and navigation history
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Route {
-    Home,
     Discover(DiscoverViewMode),
     Radio,
     Downloads,
@@ -1277,8 +1298,7 @@ pub enum Route {
 impl Route {
     pub fn nav_item(&self) -> Option<NavItem> {
         match self {
-            Self::Home => Some(NavItem::Home),
-            Self::Discover(_) => Some(NavItem::Discover),
+            Self::Discover(_) => Some(NavItem::Home),
             Self::Radio => Some(NavItem::Radio),
             Self::Downloads => Some(NavItem::Downloads),
             Self::Settings(_) => Some(NavItem::Settings),
@@ -1411,21 +1431,25 @@ impl NavigationHistory {
 
 #[cfg(test)]
 mod navigation_history_tests {
-    use super::{NavigationEntry, NavigationHistory, Route};
+    use super::{DiscoverViewMode, NavigationEntry, NavigationHistory, Route};
 
     #[test]
     fn personal_fm_is_excluded_from_back_forward_history() {
         let mut history = NavigationHistory::default();
-        history.push(NavigationEntry::Route(Route::Home));
+        let home = Route::Discover(DiscoverViewMode::Overview);
+        history.push(NavigationEntry::Route(home.clone()));
         history.push(NavigationEntry::Route(Route::Downloads));
-        assert_eq!(history.go_back(), Some(NavigationEntry::Route(Route::Home)));
+        assert_eq!(
+            history.go_back(),
+            Some(NavigationEntry::Route(home.clone()))
+        );
 
         history.push(NavigationEntry::Route(Route::Radio));
 
         assert_eq!(
             history.entries,
             vec![
-                NavigationEntry::Route(Route::Home),
+                NavigationEntry::Route(home.clone()),
                 NavigationEntry::Route(Route::Downloads),
             ]
         );
@@ -1435,7 +1459,10 @@ mod navigation_history_tests {
 
         // Back exits the transient FM route to the route that was current
         // before FM, without stepping past it in recorded history.
-        assert_eq!(history.go_back(), Some(NavigationEntry::Route(Route::Home)));
+        assert_eq!(
+            history.go_back(),
+            Some(NavigationEntry::Route(home.clone()))
+        );
         assert_eq!(history.current_index, Some(0));
 
         // Forward continues through the pre-existing history. FM is never a
@@ -1445,7 +1472,7 @@ mod navigation_history_tests {
             Some(NavigationEntry::Route(Route::Downloads))
         );
 
-        assert_eq!(history.go_back(), Some(NavigationEntry::Route(Route::Home)));
+        assert_eq!(history.go_back(), Some(NavigationEntry::Route(home)));
         history.replace_current(NavigationEntry::Route(Route::Radio));
         assert_eq!(
             history.go_forward(),
@@ -1556,14 +1583,16 @@ pub struct SongEditDialogState {
 impl UiState {
     pub fn new() -> Self {
         Self {
-            current_route: Route::Home,
+            current_route: Route::Discover(DiscoverViewMode::Overview),
             search_query: String::new(),
             toast: None,
             toast_visible: false,
             overlay_stack: Vec::new(),
             nav_history: {
                 let mut history = NavigationHistory::default();
-                history.push(NavigationEntry::Route(Route::Home));
+                history.push(NavigationEntry::Route(Route::Discover(
+                    DiscoverViewMode::Overview,
+                )));
                 history
             },
             active_settings_section: SettingsSection::Account,
@@ -1653,20 +1682,12 @@ impl UiState {
             dialogs: DialogState { import_open: false },
 
             home: HomePageState {
-                banners: Vec::new(),
-                current_banner: 0,
-                top_picks: Vec::new(),
-                trending_songs: Vec::new(),
                 login_popup_open: false,
                 qr_code_path: None,
                 qr_unikey: None,
                 qr_status: None,
                 user_playlists: Vec::new(),
                 current_ncm_playlist_songs: Vec::new(),
-                song_hover_animations: Default::default(),
-                last_banner: 0,
-                carousel_animation: iced::animation::Animation::new(false),
-                carousel_direction: 1,
             },
 
             discover: DiscoverPageState::default(),
@@ -1690,8 +1711,6 @@ impl UiState {
             || self.playlist_page.icon_animations.is_animating()
             || self.playlist_page.search_animation.is_animating()
             || self.lyrics.animation.is_animating()
-            || self.home.carousel_animation.is_animating(_now)
-            || self.home.song_hover_animations.is_animating()
             || self.discover.card_animations.is_animating()
             || self.search.song_animations.is_animating()
             || self.search.card_animations.is_animating()
@@ -1706,7 +1725,6 @@ impl UiState {
         self.playlist_page.icon_animations.tick(now);
         self.playlist_page.search_animation.tick(now);
         self.lyrics.animation.tick(now);
-        self.home.song_hover_animations.tick(now);
         self.discover.card_animations.tick(now);
         self.search.song_animations.tick(now);
         self.search.card_animations.tick(now);
@@ -1715,7 +1733,6 @@ impl UiState {
         self.sidebar_animations.cleanup_completed();
         self.playlist_page.song_animations.cleanup_completed();
         self.playlist_page.icon_animations.cleanup_completed();
-        self.home.song_hover_animations.cleanup_completed();
         self.discover.card_animations.cleanup_completed();
         self.search.song_animations.cleanup_completed();
         self.search.card_animations.cleanup_completed();
@@ -1842,13 +1859,15 @@ pub struct DialogState {
 /// Discover page view mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DiscoverViewMode {
-    /// Default view showing both sections with limited items
+    /// Default view showing all home sections with single-row limits
     #[default]
     Overview,
     /// Full view of recommended playlists
     AllRecommended,
-    /// Full view of hot playlists with infinite scroll
+    /// Full view of ordinary hot playlists
     AllHot,
+    /// Full view of official high-quality playlists
+    AllOfficial,
 }
 
 /// Search tab types
@@ -1939,20 +1958,32 @@ impl Default for SearchPageState {
 pub struct DiscoverPageState {
     /// Current view mode
     pub view_mode: DiscoverViewMode,
+    /// Identity of the latest discover-page request batch.
+    pub load_generation: u64,
     /// Recommended playlists (for logged-in users)
     pub recommended_playlists: Vec<PlaylistSummary>,
-    /// Hot playlists (for all users)
+    /// First Daily Recommend track used as the feature-card cover.
+    pub daily_recommend_preview: Option<Track>,
+    /// First prefetched Personal FM track used as the feature-card cover.
+    pub personal_fm_preview: Option<Track>,
+    /// Prefetched Personal FM batch consumed by the next Radio-route activation.
+    pub personal_fm_prefetched_tracks: Vec<Track>,
+    /// SPlayer-compatible Private Radar playlist metadata.
+    pub private_radar: Option<PlaylistSummary>,
+    /// Ordinary hot playlists (for all users).
     pub hot_playlists: Vec<PlaylistSummary>,
+    /// Official high-quality playlists (for all users).
+    pub official_playlists: Vec<PlaylistSummary>,
     /// Hover animations for playlist cards
     pub card_animations: HoverAnimations<u64>,
     /// Loading state for recommended playlists
     pub recommended_loading: bool,
-    /// Loading state for hot playlists
+    /// Loading state for the Private Radar feature card.
+    pub private_radar_loading: bool,
+    /// Loading state for ordinary hot playlists.
     pub hot_loading: bool,
-    /// Pagination offset for hot playlists
-    pub hot_offset: u16,
-    /// Whether more hot playlists are available
-    pub hot_has_more: bool,
+    /// Loading state for official high-quality playlists.
+    pub official_loading: bool,
     /// Whether data has been loaded (to avoid re-fetching)
     pub data_loaded: bool,
     /// Content area width for dynamic grid column calculation
@@ -1963,31 +1994,29 @@ impl Default for DiscoverPageState {
     fn default() -> Self {
         Self {
             view_mode: DiscoverViewMode::default(),
+            load_generation: 0,
             recommended_playlists: Vec::new(),
+            daily_recommend_preview: None,
+            personal_fm_preview: None,
+            personal_fm_prefetched_tracks: Vec::new(),
+            private_radar: None,
             hot_playlists: Vec::new(),
+            official_playlists: Vec::new(),
             card_animations: Default::default(),
             recommended_loading: false,
+            private_radar_loading: false,
             hot_loading: false,
-            hot_offset: 0,
-            hot_has_more: true,
+            official_loading: false,
             data_loaded: false,
             // Default width, will be updated from WindowResized/Sensor
-            // Assumes window width ~1280, sidebar 280, padding 64
-            content_width: 936.0,
+            // Assumes window width ~1480, sidebar 280, padding 64
+            content_width: 1136.0,
         }
     }
 }
 
 /// Homepage state for NCM data
 pub struct HomePageState {
-    // Carousel banners
-    pub banners: Vec<Banner>,
-    pub current_banner: usize,
-
-    // Content sections
-    pub top_picks: Vec<PlaylistSummary>,
-    pub trending_songs: Vec<Track>,
-
     // Login popup
     pub login_popup_open: bool,
     pub qr_code_path: Option<PathBuf>,
@@ -1997,12 +2026,4 @@ pub struct HomePageState {
     pub user_playlists: Vec<PlaylistSummary>,
     /// Current NCM playlist songs (for playback)
     pub current_ncm_playlist_songs: Vec<Track>,
-
-    // Hover animations for song list
-    pub song_hover_animations: HoverAnimations<u64>,
-
-    // Carousel animation
-    pub last_banner: usize,
-    pub carousel_animation: iced::animation::Animation<bool>,
-    pub carousel_direction: i32,
 }

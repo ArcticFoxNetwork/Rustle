@@ -15,7 +15,6 @@ use crate::ui::theme::{self, BOLD_WEIGHT};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NavItem {
     Home,
-    Discover,
     Radio,
     Downloads,
     Settings,
@@ -26,7 +25,6 @@ impl NavItem {
     pub fn i18n_key(&self) -> Key {
         match self {
             NavItem::Home => Key::NavHome,
-            NavItem::Discover => Key::NavDiscover,
             NavItem::Radio => Key::NavRadio,
             NavItem::Downloads => Key::NavDownloads,
             NavItem::Settings => Key::NavSettings,
@@ -37,7 +35,6 @@ impl NavItem {
     pub fn icon_svg(&self) -> &'static str {
         match self {
             NavItem::Home => crate::ui::icons::HOME,
-            NavItem::Discover => crate::ui::icons::BROWSE,
             NavItem::Radio => crate::ui::icons::RADIO,
             NavItem::Downloads => crate::ui::icons::DOWNLOAD,
             NavItem::Settings => crate::ui::icons::SETTINGS,
@@ -105,12 +102,7 @@ pub fn view(
     let logo = mouse_area(logo_content).on_press(Message::WindowDrag);
 
     // Main navigation menu with hover animations
-    let nav_items = [
-        NavItem::Home,
-        NavItem::Discover,
-        NavItem::Radio,
-        NavItem::Downloads,
-    ];
+    let nav_items = [NavItem::Home, NavItem::Radio, NavItem::Downloads];
     let nav_menu = column(nav_items.into_iter().enumerate().map(|(idx, item)| {
         let is_active = matches!(current_route.nav_item(), Some(active) if active == item);
         let hover_progress = sidebar_animations.get_progress(&SidebarId::Nav(idx));

@@ -245,6 +245,7 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     // Discover Page
     m.insert(Key::DiscoverRecommended, "Recommended Playlists");
     m.insert(Key::DiscoverHot, "Hot Playlists");
+    m.insert(Key::DiscoverOfficialPicks, "Official Picks");
     m.insert(Key::DiscoverSeeAll, "See All");
     m.insert(Key::DiscoverDailyRecommend, "Daily Recommend");
     m.insert(
@@ -252,6 +253,16 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
         "Personalized for you, updated daily at 6:00",
     );
     m.insert(Key::DiscoverDailyRecommendCreator, "NetEase Music");
+    m.insert(Key::DiscoverPrivateRadar, "Private Radar");
+    m.insert(
+        Key::DiscoverPrivateRadarDesc,
+        "A playlist tuned to your recent taste",
+    );
+    m.insert(Key::DiscoverPersonalFm, "Personal FM");
+    m.insert(
+        Key::DiscoverPersonalFmDesc,
+        "Start a stream selected just for you",
+    );
     m.insert(Key::DiscoverLoadFailed, "Failed to load daily recommend");
     m.insert(Key::DiscoverPlaylistLoadFailed, "Failed to load playlist");
 

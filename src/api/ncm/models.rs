@@ -588,31 +588,6 @@ pub struct LoginInfo {
     pub msg: String,
 }
 
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub struct Banner {
-    pub image_url: String,
-    pub target_id: u64,
-    pub target: BannerTarget,
-    pub title: String,
-}
-
-#[derive(Debug, Deserialize, Serialize, Clone)]
-pub enum BannerTarget {
-    Song,
-    Album,
-    Unknown,
-}
-
-impl From<i32> for BannerTarget {
-    fn from(t: i32) -> Self {
-        match t {
-            1 => Self::Song,
-            10 => Self::Album,
-            _ => Self::Unknown,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SearchType {
     Songs,

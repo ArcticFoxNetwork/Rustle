@@ -247,10 +247,15 @@ pub enum Key {
     // Discover Page
     DiscoverRecommended,
     DiscoverHot,
+    DiscoverOfficialPicks,
     DiscoverSeeAll,
     DiscoverDailyRecommend,
     DiscoverDailyRecommendDesc,
     DiscoverDailyRecommendCreator,
+    DiscoverPrivateRadar,
+    DiscoverPrivateRadarDesc,
+    DiscoverPersonalFm,
+    DiscoverPersonalFmDesc,
     DiscoverLoadFailed,
     DiscoverPlaylistLoadFailed,
 

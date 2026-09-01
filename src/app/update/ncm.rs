@@ -4,11 +4,13 @@ use iced::Task;
 use std::time::Duration;
 use tracing::{debug, error, info};
 
-use crate::api::{LoginInfo, NcmClient};
+use crate::api::{LoginInfo, NcmClient, PRIVATE_RADAR_PLAYLIST_ID, PlaylistSummary};
 use crate::app::message::QrLoginStatus;
 use crate::app::state::UserInfo;
 use crate::app::{App, Message, Route};
 use crate::i18n::Key;
+
+use super::discover::is_login_only_feature_playlist;
 
 /// Return `Some(toast_warning)` if user is not logged in, `None` if logged in.
 macro_rules! require_logged_in {
@@ -255,6 +257,11 @@ impl App {
         debug!("Starting Personal FM");
 
         self.enter_fm_mode();
+
+        let prefetched_tracks = std::mem::take(&mut self.ui.discover.personal_fm_prefetched_tracks);
+        if !prefetched_tracks.is_empty() {
+            return Task::done(Message::AddNcmPlaylist(prefetched_tracks, true));
+        }
 
         if let Some(client) = &self.core.ncm_client {
             let client = client.clone();
@@ -690,7 +697,7 @@ impl App {
                     ))
                 } else {
                     self.set_ncm_client(NcmClient::with_proxy(proxy_url));
-                    Some(self.load_homepage_data())
+                    Some(self.load_discover_data())
                 }
             }
 
@@ -713,7 +720,7 @@ impl App {
                     let user_id = login_info.user_id;
 
                     Some(Task::batch([
-                        self.load_homepage_data(),
+                        self.load_discover_data(),
                         Task::perform(
                             {
                                 let client = client.clone();
@@ -755,7 +762,7 @@ impl App {
                             "Auto login failed after {} retries, keeping cookie for next launch",
                             MAX_RETRIES
                         );
-                        Some(self.load_homepage_data())
+                        Some(self.load_discover_data())
                     }
                 }
             }
@@ -902,7 +909,7 @@ impl App {
 
                 Some(Task::batch([
                     Self::toast_success("登录成功！".to_string()),
-                    self.load_homepage_data(),
+                    self.load_discover_data(),
                     self.load_user_playlists(),
                 ]))
             }
@@ -918,10 +925,14 @@ impl App {
                 NcmClient::clean_cookie_file();
                 self.core.is_logged_in = false;
                 self.core.user_info = None;
+                self.ui.home.user_playlists.clear();
                 let proxy_url = self.core.settings.network.proxy_url();
                 self.set_ncm_client(NcmClient::with_proxy(proxy_url));
 
-                Some(Self::toast_success("已退出登录".to_string()))
+                Some(Task::batch([
+                    Self::toast_success("已退出登录".to_string()),
+                    self.load_discover_data(),
+                ]))
             }
 
             Message::UserInfoLoaded(user_info) => {
@@ -941,119 +952,6 @@ impl App {
                     Some(Task::none())
                 }
             }
-
-            Message::BannersLoaded(banners) => {
-                self.ui.home.banners = banners.clone();
-                self.ui.home.current_banner = 0;
-                Some(Task::none())
-            }
-
-            Message::BannerPlay(index) => {
-                if let Some(banner) = self.ui.home.banners.get(*index) {
-                    debug!(
-                        "Playing banner {}: {} (Type: {:?}, ID: {})",
-                        index, banner.title, banner.target, banner.target_id
-                    );
-
-                    match banner.target {
-                        crate::api::BannerTarget::Song => {
-                            let song_id = banner.target_id;
-                            if let Some(client) = &self.core.ncm_client {
-                                let client = client.clone();
-                                return Some(Task::perform(
-                                    async move {
-                                        match client.track_detail(&[song_id]).await {
-                                            Ok(tracks) => tracks.first().cloned(),
-                                            Err(e) => {
-                                                error!("Failed to get banner song detail: {}", e);
-                                                None
-                                            }
-                                        }
-                                    },
-                                    |song_opt| {
-                                        if let Some(song) = song_opt {
-                                            Message::PlayNcmSong(song)
-                                        } else {
-                                            Message::ShowErrorToast("无法获取歌曲信息".to_string())
-                                        }
-                                    },
-                                ));
-                            }
-                        }
-                        crate::api::BannerTarget::Album => {
-                            debug!("Album playback from banner not implemented yet");
-                        }
-                        _ => {
-                            debug!("Unsupported banner target type: {:?}", banner.target);
-                        }
-                    }
-                }
-                Some(Task::none())
-            }
-
-            Message::ToggleBannerFavorite(index) => {
-                if let Some(banner) = self.ui.home.banners.get(*index) {
-                    match banner.target {
-                        crate::api::BannerTarget::Song => {
-                            return Some(self.update(Message::ToggleFavorite(banner.target_id)));
-                        }
-                        _ => {
-                            debug!(
-                                "Favorite not implemented for banner type: {:?}",
-                                banner.target
-                            );
-                        }
-                    }
-                }
-                Some(Task::none())
-            }
-
-            Message::CarouselTick => {
-                if !self.ui.home.banners.is_empty() {
-                    let now = iced::time::Instant::now();
-
-                    self.ui.home.last_banner = self.ui.home.current_banner;
-                    self.ui.home.current_banner =
-                        (self.ui.home.current_banner + 1) % self.ui.home.banners.len();
-
-                    self.ui.home.carousel_direction = 1;
-                    self.ui.home.carousel_animation = iced::animation::Animation::new(false).slow();
-                    self.ui.home.carousel_animation.go_mut(true, now);
-                }
-                Some(Task::none())
-            }
-
-            Message::CarouselNavigate(delta) => {
-                if !self.ui.home.banners.is_empty() {
-                    let now = iced::time::Instant::now();
-
-                    self.ui.home.last_banner = self.ui.home.current_banner;
-                    let len = self.ui.home.banners.len() as i32;
-                    let current = self.ui.home.current_banner as i32;
-                    let new_index = ((current + *delta) % len + len) % len;
-                    self.ui.home.current_banner = new_index as usize;
-
-                    self.ui.home.carousel_direction = *delta;
-                    self.ui.home.carousel_animation = iced::animation::Animation::new(false).slow();
-                    self.ui.home.carousel_animation.go_mut(true, now);
-                }
-                Some(Task::none())
-            }
-
-            Message::TopPicksLoaded(playlists) => {
-                self.ui.home.top_picks = playlists.clone();
-                Some(Task::none())
-            }
-
-            Message::TrendingSongsLoaded(songs) => {
-                self.ui.home.trending_songs = songs.clone();
-                Some(Task::none())
-            }
-
-            Message::OpenTrendingSongs => Some(self.navigate_to_route(
-                Route::Discover(crate::app::state::DiscoverViewMode::AllHot),
-                true,
-            )),
 
             Message::ToggleFavorite(song_id) => {
                 require_logged_in!(self);
@@ -1149,15 +1047,13 @@ impl App {
                 Some(Task::none())
             }
 
-            Message::HoverTrendingSong(song_id_opt) => {
-                self.ui
-                    .home
-                    .song_hover_animations
-                    .set_hovered_exclusive(*song_id_opt);
-                Some(Task::none())
-            }
-
             Message::OpenNcmPlaylist(playlist_id) => {
+                if !self.core.is_logged_in && is_login_only_feature_playlist(*playlist_id) {
+                    return Some(Self::toast_warning(
+                        self.core.locale.get(Key::NotLoggedIn).to_string(),
+                    ));
+                }
+
                 let route = Route::NcmPlaylist(*playlist_id);
                 if self.ui.current_route != route {
                     return Some(self.navigate_to_route(route, true));
@@ -2016,72 +1912,6 @@ impl App {
         }
     }
 
-    /// Load homepage data (banners, top picks, trending songs)
-    fn load_homepage_data(&self) -> Task<Message> {
-        let client = self.core.ncm_client.clone();
-
-        Task::batch([
-            Task::perform(
-                {
-                    let client = client.clone();
-                    async move {
-                        if let Some(client) = client {
-                            match client.banners().await {
-                                Ok(banners) => banners,
-                                Err(e) => {
-                                    error!("Failed to load banners: {:?}", e);
-                                    Vec::new()
-                                }
-                            }
-                        } else {
-                            Vec::new()
-                        }
-                    }
-                },
-                Message::BannersLoaded,
-            ),
-            Task::perform(
-                {
-                    let client = client.clone();
-                    async move {
-                        if let Some(client) = client {
-                            const TRENDING_CHART_ID: u64 = 19723756;
-                            match client.playlist_detail(TRENDING_CHART_ID).await {
-                                Ok(detail) => detail.tracks,
-                                Err(e) => {
-                                    error!("Failed to load trending songs: {:?}", e);
-                                    Vec::new()
-                                }
-                            }
-                        } else {
-                            Vec::new()
-                        }
-                    }
-                },
-                Message::TrendingSongsLoaded,
-            ),
-            Task::perform(
-                {
-                    let client = client.clone();
-                    async move {
-                        if let Some(client) = client {
-                            match client.top_playlists("全部", "hot", 0, 8).await {
-                                Ok(playlists) => playlists,
-                                Err(e) => {
-                                    error!("Failed to load top picks: {:?}", e);
-                                    Vec::new()
-                                }
-                            }
-                        } else {
-                            Vec::new()
-                        }
-                    }
-                },
-                Message::TopPicksLoaded,
-            ),
-        ])
-    }
-
     /// Load user playlists (liked songs + collected playlists)
     fn load_user_playlists(&self) -> Task<Message> {
         let client = self.core.ncm_client.clone();
@@ -2121,18 +1951,21 @@ impl App {
         )
     }
 
-    /// Load discover page data (recommended playlists for logged-in users, hot playlists for all)
+    /// Load the redesigned home data.
     pub fn load_discover_data(&mut self) -> Task<Message> {
         self.ui.discover.data_loaded = true;
-        self.ui.discover.recommended_loading = true;
-        self.ui.discover.hot_loading = true;
+        self.ui.discover.load_generation = self.ui.discover.load_generation.wrapping_add(1);
+        let generation = self.ui.discover.load_generation;
 
         let client = self.core.ncm_client.clone();
         let is_logged_in = self.core.is_logged_in;
+        self.ui.discover.recommended_loading = is_logged_in;
+        self.ui.discover.private_radar_loading = is_logged_in;
+        self.ui.discover.hot_loading = true;
+        self.ui.discover.official_loading = true;
 
         let mut tasks = Vec::new();
 
-        // Load recommended playlists (only for logged-in users)
         if is_logged_in {
             tasks.push(Task::perform(
                 {
@@ -2151,32 +1984,120 @@ impl App {
                         }
                     }
                 },
-                Message::RecommendedPlaylistsLoaded,
+                move |playlists| Message::RecommendedPlaylistsLoaded(generation, playlists),
             ));
+
+            tasks.push(Task::perform(
+                {
+                    let client = client.clone();
+                    async move {
+                        let Some(client) = client else {
+                            return None;
+                        };
+                        match client.recommend_tracks().await {
+                            Ok(tracks) => tracks.into_iter().next(),
+                            Err(e) => {
+                                error!("Failed to load Daily Recommend preview: {:?}", e);
+                                None
+                            }
+                        }
+                    }
+                },
+                move |track| Message::DailyRecommendPreviewLoaded(generation, track),
+            ));
+
+            tasks.push(Task::perform(
+                {
+                    let client = client.clone();
+                    async move {
+                        let Some(client) = client else {
+                            return Vec::new();
+                        };
+                        match client.personal_fm_tracks().await {
+                            Ok(tracks) => tracks,
+                            Err(e) => {
+                                error!("Failed to load Personal FM preview: {:?}", e);
+                                Vec::new()
+                            }
+                        }
+                    }
+                },
+                move |tracks| Message::PersonalFmPreviewLoaded(generation, tracks),
+            ));
+
+            tasks.push(Task::perform(
+                {
+                    let client = client.clone();
+                    async move {
+                        let Some(client) = client else {
+                            return None;
+                        };
+                        match client
+                            .playlist_detail_preview(PRIVATE_RADAR_PLAYLIST_ID)
+                            .await
+                        {
+                            Ok((detail, _)) => Some(PlaylistSummary {
+                                id: detail.id,
+                                name: detail.name,
+                                cover_url: detail.cover_url,
+                                creator: detail.creator,
+                                subscribed: detail.subscribed,
+                            }),
+                            Err(e) => {
+                                error!("Failed to load Private Radar metadata: {:?}", e);
+                                None
+                            }
+                        }
+                    }
+                },
+                move |playlist| Message::PrivateRadarLoaded(generation, playlist),
+            ));
+        } else {
+            self.ui.discover.recommended_playlists.clear();
+            self.ui.discover.daily_recommend_preview = None;
+            self.ui.discover.personal_fm_preview = None;
+            self.ui.discover.personal_fm_prefetched_tracks.clear();
+            self.ui.discover.private_radar = None;
         }
 
-        // Load hot playlists (for all users)
         tasks.push(Task::perform(
             {
                 let client = client.clone();
                 async move {
                     if let Some(client) = client {
-                        match client.top_playlists("全部", "hot", 0, 30).await {
-                            Ok(playlists) => {
-                                let has_more = playlists.len() >= 30;
-                                (playlists, has_more)
-                            }
+                        match client.hot_playlists("全部", 0, 30).await {
+                            Ok(playlists) => playlists,
                             Err(e) => {
                                 error!("Failed to load hot playlists: {:?}", e);
-                                (Vec::new(), false)
+                                Vec::new()
                             }
                         }
                     } else {
-                        (Vec::new(), false)
+                        Vec::new()
                     }
                 }
             },
-            |(playlists, has_more)| Message::HotPlaylistsLoaded(playlists, has_more),
+            move |playlists| Message::HotPlaylistsLoaded(generation, playlists),
+        ));
+
+        tasks.push(Task::perform(
+            {
+                let client = client.clone();
+                async move {
+                    if let Some(client) = client {
+                        match client.high_quality_playlists("全部", None, 30).await {
+                            Ok(playlists) => playlists,
+                            Err(e) => {
+                                error!("Failed to load official playlists: {:?}", e);
+                                Vec::new()
+                            }
+                        }
+                    } else {
+                        Vec::new()
+                    }
+                }
+            },
+            move |playlists| Message::OfficialPlaylistsLoaded(generation, playlists),
         ));
 
         Task::batch(tasks)

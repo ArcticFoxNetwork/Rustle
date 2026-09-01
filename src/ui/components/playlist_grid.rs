@@ -1,64 +1,62 @@
-//! Playlist grid component for discover page
-//!
-//! Displays playlists in a responsive grid layout.
+//! Responsive playlist grid and single-row layouts.
 
-use iced::widget::{Space, column, container, row, text};
-use iced::{Color, Element, Fill};
+use iced::widget::{Space, column, row};
+use iced::{Element, Fill};
 
 use crate::api::PlaylistSummary;
 use crate::app::{ImageState, Message};
 use crate::image::ImageKind;
 use crate::ui::animation::HoverAnimations;
-use crate::ui::theme::BOLD_WEIGHT;
-use crate::ui::widgets::playlist_card;
-use crate::ui::{theme, widgets};
+use crate::ui::widgets::{self, playlist_card};
 
-/// Grid configuration
-const CARD_WIDTH: f32 = 160.0;
 const CARD_SPACING: f32 = 24.0;
 const ROW_SPACING: f32 = 32.0;
 
-fn daily_recommend_cover<'a>(hover_progress: f32) -> Element<'a, Message> {
-    let day = chrono::Local::now().format("%d").to_string();
-
-    container(
-        text(day)
-            .size(theme::TEXT_SIZE_DISPLAY)
-            .color(Color::WHITE)
-            .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
-    )
-    .width(CARD_WIDTH)
-    .height(CARD_WIDTH)
-    .center_x(CARD_WIDTH)
-    .center_y(CARD_WIDTH)
-    .style(move |_theme| daily_recommend_cover_style(hover_progress))
-    .into()
+pub fn visible_column_count(container_width: f32) -> usize {
+    widgets::calculate_grid_columns(container_width, playlist_card::CARD_WIDTH, CARD_SPACING)
 }
 
-fn daily_recommend_cover_style(hover_progress: f32) -> iced::widget::container::Style {
-    let shadow_blur = 16.0 + 8.0 * hover_progress;
-    let shadow_alpha = 0.3 + 0.2 * hover_progress;
+fn card<'a>(
+    playlist: &'a PlaylistSummary,
+    image_state: &'a ImageState,
+    animations: &'a HoverAnimations<u64>,
+) -> Element<'a, Message> {
+    let hover_progress = animations.get_progress(&playlist.id);
+    playlist_card::view(
+        &playlist.name,
+        image_state.get(ImageKind::PlaylistCover, playlist.id),
+        image_state.get_playlist_footer(playlist.id),
+        hover_progress,
+        Message::OpenNcmPlaylist(playlist.id),
+        Message::PlayDiscoverPlaylist(playlist.id),
+        Message::HoverDiscoverPlaylist(Some(playlist.id)),
+        Message::HoverDiscoverPlaylist(None),
+    )
+}
 
-    iced::widget::container::Style {
-        background: Some(iced::Background::Gradient(iced::Gradient::Linear(
-            iced::gradient::Linear::new(std::f32::consts::PI * 0.75)
-                .add_stop(0.0, Color::from_rgb(0.95, 0.3, 0.4))
-                .add_stop(1.0, Color::from_rgb(0.6, 0.2, 0.5)),
-        ))),
-        border: iced::Border {
-            radius: 8.0.into(),
-            ..Default::default()
-        },
-        shadow: iced::Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, shadow_alpha),
-            offset: iced::Vector::new(0.0, 4.0 + 4.0 * hover_progress),
-            blur_radius: shadow_blur,
-        },
-        ..Default::default()
+/// Render exactly one responsive row, taking only the number of complete cards
+/// that fit in the measured content width.
+pub fn view_single_row<'a>(
+    playlists: &'a [PlaylistSummary],
+    image_state: &'a ImageState,
+    animations: &'a HoverAnimations<u64>,
+    container_width: f32,
+) -> Element<'a, Message> {
+    let columns = visible_column_count(container_width);
+    let cards = playlists
+        .iter()
+        .take(columns)
+        .map(|playlist| card(playlist, image_state, animations))
+        .collect::<Vec<_>>();
+
+    if cards.is_empty() {
+        Space::new().width(Fill).height(100).into()
+    } else {
+        row(cards).spacing(CARD_SPACING).into()
     }
 }
 
-/// Create a playlist grid element
+/// Render a wrapping grid for full-list views.
 pub fn view<'a>(
     playlists: &'a [PlaylistSummary],
     image_state: &'a ImageState,
@@ -66,83 +64,38 @@ pub fn view<'a>(
     max_items: Option<usize>,
     container_width: f32,
 ) -> Element<'a, Message> {
-    // Limit items if max_items is specified
-    let items: Vec<_> = if let Some(max) = max_items {
-        playlists.iter().take(max).collect()
-    } else {
-        playlists.iter().collect()
-    };
-
+    let items = playlists
+        .iter()
+        .take(max_items.unwrap_or(usize::MAX))
+        .collect::<Vec<_>>();
     if items.is_empty() {
         return Space::new().width(Fill).height(100).into();
     }
 
-    // Calculate number of columns based on container width
-    let columns = widgets::calculate_grid_columns(container_width, CARD_WIDTH, CARD_SPACING);
+    let columns = visible_column_count(container_width);
+    let rows = items
+        .chunks(columns)
+        .map(|chunk| {
+            let cards = chunk
+                .iter()
+                .map(|playlist| card(playlist, image_state, animations))
+                .collect::<Vec<_>>();
+            row(cards).spacing(CARD_SPACING).into()
+        })
+        .collect::<Vec<Element<'a, Message>>>();
 
-    // Build rows of cards
-    let mut rows: Vec<Element<'a, Message>> = Vec::new();
+    column(rows).spacing(ROW_SPACING).into()
+}
 
-    for chunk in items.chunks(columns) {
-        let mut row_items: Vec<Element<'a, Message>> = Vec::new();
+#[cfg(test)]
+mod tests {
+    use super::visible_column_count;
 
-        for playlist in chunk {
-            let hover_progress = animations.get_progress(&playlist.id);
-
-            let card = if playlist.id == 0 {
-                let cover = daily_recommend_cover(hover_progress);
-                playlist_card::view_with_custom_cover(
-                    &playlist.name,
-                    &playlist.creator.nickname,
-                    cover,
-                    hover_progress,
-                    Message::OpenNcmPlaylist(0),
-                    Message::PlayDiscoverPlaylist(0),
-                    Message::HoverDiscoverPlaylist(Some(0)),
-                    Message::HoverDiscoverPlaylist(None),
-                )
-            } else {
-                let cover_handle = image_state.get(ImageKind::PlaylistCover, playlist.id);
-                playlist_card::view(
-                    &playlist.name,
-                    &playlist.creator.nickname,
-                    cover_handle,
-                    hover_progress,
-                    Message::OpenNcmPlaylist(playlist.id),
-                    Message::PlayDiscoverPlaylist(playlist.id),
-                    Message::HoverDiscoverPlaylist(Some(playlist.id)),
-                    Message::HoverDiscoverPlaylist(None),
-                )
-            };
-
-            row_items.push(card);
-
-            // Add spacing between cards (except after last)
-            if row_items.len() < columns * 2 - 1 {
-                row_items.push(Space::new().width(CARD_SPACING).into());
-            }
-        }
-
-        // Fill remaining space if row is not complete
-        let items_in_row = chunk.len();
-        if items_in_row < columns {
-            for _ in items_in_row..columns {
-                row_items.push(Space::new().width(CARD_SPACING).into());
-                row_items.push(Space::new().width(CARD_WIDTH).into());
-            }
-        }
-
-        rows.push(row(row_items).into());
+    #[test]
+    fn responsive_row_never_reports_zero_columns() {
+        assert_eq!(visible_column_count(0.0), 1);
+        assert_eq!(visible_column_count(160.0), 1);
+        assert!(visible_column_count(900.0) >= 4);
+        assert_eq!(visible_column_count(1136.0), 6);
     }
-
-    // Add spacing between rows
-    let mut content: Vec<Element<'a, Message>> = Vec::new();
-    for (i, row_elem) in rows.into_iter().enumerate() {
-        content.push(row_elem);
-        if i < items.len() / columns {
-            content.push(Space::new().height(ROW_SPACING).into());
-        }
-    }
-
-    column(content).into()
 }

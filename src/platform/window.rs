@@ -51,9 +51,7 @@ pub fn focus_window<Message: Send + 'static>() -> Task<Message> {
     }
 }
 
-pub fn drag_resize<Message: Send + 'static>(
-    direction: iced::window::Direction,
-) -> Task<Message> {
+pub fn drag_resize<Message: Send + 'static>(direction: iced::window::Direction) -> Task<Message> {
     iced::window::latest().and_then(move |id| iced::window::drag_resize(id, direction))
 }
 
@@ -89,7 +87,7 @@ pub fn native_window_handle(id: iced::window::Id) -> Task<Option<usize>> {
 /// Get platform-specific window settings
 pub fn window_settings() -> iced::window::Settings {
     iced::window::Settings {
-        size: iced::Size::new(1400.0, 900.0),
+        size: iced::Size::new(1480.0, 900.0),
         exit_on_close_request: false,
         decorations: false,
         #[cfg(target_os = "linux")]

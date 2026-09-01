@@ -6,8 +6,8 @@ mod ncm;
 
 #[allow(unused_imports)]
 pub use ncm::{
-    AlbumDetail, AlbumSummary, ArtistDetail, ArtistSummary, Banner, BannerTarget, LoginInfo,
-    NcmClient, NcmQualityLevel, PlaylistDetail, PlaylistSummary, RadioSummary, SearchType,
+    AlbumDetail, AlbumSummary, ArtistDetail, ArtistSummary, LoginInfo, NcmClient, NcmQualityLevel,
+    PRIVATE_RADAR_PLAYLIST_ID, PlaylistDetail, PlaylistSummary, RadioSummary, SearchType,
     SongQualityDetail, SongQualityOption, Track, TrackAvailability, TrackUrl, UserDetail,
     UserSummary, VideoSummary, VipInfo, VipTier,
 };

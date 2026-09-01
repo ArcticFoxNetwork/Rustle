@@ -69,7 +69,6 @@ impl App {
             .home
             .current_ncm_playlist_songs
             .iter()
-            .chain(self.ui.home.trending_songs.iter())
             .chain(self.ui.search.tracks.iter())
             .find(|candidate| {
                 if let Some(id) = ncm_id {

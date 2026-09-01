@@ -910,6 +910,36 @@ pub enum PlaylistSource {
     Search,
 }
 
+#[cfg(test)]
+mod playlist_summary_tests {
+    use serde_json::json;
+
+    use super::{PlaylistSource, playlist_summaries};
+
+    #[test]
+    fn maps_high_quality_playlist_response_shape() {
+        let value = json!({
+            "code": 200,
+            "playlists": [{
+                "id": 42,
+                "name": "Official Selection",
+                "coverImgUrl": "https://example.com/cover.jpg",
+                "creator": {
+                    "userId": 7,
+                    "nickname": "NCM Editor"
+                }
+            }]
+        });
+
+        let playlists = playlist_summaries(&value, PlaylistSource::Top)
+            .expect("high-quality playlists should map");
+
+        assert_eq!(playlists.len(), 1);
+        assert_eq!(playlists[0].id, 42);
+        assert_eq!(playlists[0].creator.nickname, "NCM Editor");
+    }
+}
+
 pub fn album_summaries(value: &Value, source: AlbumSource) -> Result<Vec<AlbumSummary>> {
     if !code_ok(value) {
         return Err(anyhow!("album summary request failed"));
@@ -1099,28 +1129,6 @@ pub fn msg(value: &Value) -> Msg {
             .unwrap_or_default()
             .to_string(),
     }
-}
-
-pub fn banners(value: &Value) -> Result<Vec<Banner>> {
-    if !code_ok(value) {
-        return Err(anyhow!("banner request failed"));
-    }
-    Ok(value
-        .get("banners")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|item| {
-            Some(Banner {
-                image_url: item.get("imageUrl")?.as_str()?.to_string(),
-                target_id: item.get("targetId").and_then(as_u64).unwrap_or_default(),
-                target: BannerTarget::from(
-                    item.get("targetType").and_then(as_i32).unwrap_or_default(),
-                ),
-                title: str_value(item, "typeTitle"),
-            })
-        })
-        .collect())
 }
 
 pub fn search(value: &Value, search_type: SearchType) -> Result<SearchResponse> {

@@ -15,9 +15,9 @@ pub use message::{
     SidebarId,
 };
 pub use state::{
-    App, ContextMenuState, CoreState, DiscoverPageState, DiscoverViewMode, DownloadTab,
-    HomePageState, ImageState, LibraryState, PlaybackSessionState, Route, SearchPageState,
-    SearchTab, SongEditDialogState, UiState, UserInfo,
+    App, ContextMenuState, CoreState, DiscoverPageState, DiscoverViewMode, DownloadTab, ImageState,
+    LibraryState, PlaybackSessionState, Route, SearchPageState, SearchTab, SongEditDialogState,
+    UiState, UserInfo,
 };
 pub use update::song_resolver::ResolvedAudioQuality;
 
@@ -277,14 +277,7 @@ impl App {
             iced::Subscription::none()
         };
 
-        // 9. Carousel auto-advance (5s)
-        let carousel_sub = if !power_saving && !self.ui.home.banners.is_empty() && !window_hidden {
-            iced::time::every(Duration::from_secs(5)).map(|_| Message::CarouselTick)
-        } else {
-            iced::Subscription::none()
-        };
-
-        // 10. Window lifecycle + resize/focus events
+        // 9. Window lifecycle + resize/focus events
         let opened_sub = iced::window::open_events().map(|_id| Message::InitializeTray);
         let resize_sub =
             iced::window::resize_events().map(|(_id, size)| Message::WindowResized(size));
@@ -295,7 +288,7 @@ impl App {
             _ => None,
         });
 
-        // 11. Mouse events for sidebar resize, context menus, and volume scroll
+        // 10. Mouse events for sidebar resize, context menus, and volume scroll
         let mouse_sub = if !window_hidden {
             iced::event::listen().filter_map(|event| match event {
                 iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
@@ -317,7 +310,7 @@ impl App {
             iced::Subscription::none()
         };
 
-        // 12. Player events - handled via Task::run in initialization, not subscription
+        // 11. Player events - handled via Task::run in initialization, not subscription
         // (see handle_player_event_receiver_ready message)
 
         // Batch all subscriptions
@@ -326,7 +319,6 @@ impl App {
             close_request_sub,
             animation_sub, // Animation updates (vsync rate)
             playback_sub,  // Playback monitoring (100ms intervals)
-            carousel_sub,
             opened_sub,
             resize_sub,
             shown_sub,

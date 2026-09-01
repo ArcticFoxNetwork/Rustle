@@ -215,6 +215,7 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     // Discover Page
     m.insert(Key::DiscoverRecommended, "推荐歌单");
     m.insert(Key::DiscoverHot, "热门歌单");
+    m.insert(Key::DiscoverOfficialPicks, "官方精选");
     m.insert(Key::DiscoverSeeAll, "查看全部");
     m.insert(Key::DiscoverDailyRecommend, "每日推荐");
     m.insert(
@@ -222,6 +223,10 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
         "根据你的口味生成，每天6:00更新",
     );
     m.insert(Key::DiscoverDailyRecommendCreator, "网易云音乐");
+    m.insert(Key::DiscoverPrivateRadar, "私人雷达");
+    m.insert(Key::DiscoverPrivateRadarDesc, "捕捉你的近期音乐偏好");
+    m.insert(Key::DiscoverPersonalFm, "私人 FM");
+    m.insert(Key::DiscoverPersonalFmDesc, "即刻播放为你挑选的音乐");
     m.insert(Key::DiscoverLoadFailed, "无法加载每日推荐");
     m.insert(Key::DiscoverPlaylistLoadFailed, "无法加载歌单");
 

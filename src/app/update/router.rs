@@ -58,11 +58,6 @@ impl App {
         self.ui.current_route = route.clone();
 
         match route {
-            Route::Home => {
-                self.ui.search.keyword.clear();
-                self.clear_playlist_route_markers();
-                self.ui.discover.view_mode = DiscoverViewMode::Overview;
-            }
             Route::Discover(mode) => {
                 self.ui.search.keyword.clear();
                 self.clear_playlist_route_markers();
@@ -123,29 +118,28 @@ impl App {
 
     fn route_effects(&mut self, route: &Route, should_reload_search: bool) -> Task<Message> {
         match route {
-            Route::Home => iced::widget::operation::snap_to(
-                iced::widget::Id::new("home_scroll"),
-                iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
-            ),
             Route::Discover(_) => {
                 let load_task = if !self.ui.discover.data_loaded {
                     self.load_discover_data()
                 } else {
                     Task::none()
                 };
+                let image_task = self.collect_discover_image_tasks();
                 Task::batch([
                     iced::widget::operation::snap_to(
                         iced::widget::Id::new("discover_scroll"),
                         iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
                     ),
                     load_task,
+                    image_task,
                 ])
             }
             Route::Radio => Task::batch([
                 iced::widget::operation::snap_to(
-                    iced::widget::Id::new("home_scroll"),
+                    iced::widget::Id::new("discover_scroll"),
                     iced::widget::scrollable::RelativeOffset { x: 0.0, y: 0.0 },
                 ),
+                self.collect_discover_image_tasks(),
                 self.start_personal_fm_route(),
             ]),
             Route::Downloads => Task::none(),
@@ -209,8 +203,7 @@ impl App {
     pub(super) fn route_for_message(&self, message: &Message) -> Option<Route> {
         match message {
             Message::Navigate(nav) => Some(match nav {
-                NavItem::Home => Route::Home,
-                NavItem::Discover => Route::Discover(DiscoverViewMode::Overview),
+                NavItem::Home => Route::Discover(DiscoverViewMode::Overview),
                 NavItem::Radio => Route::Radio,
                 NavItem::Downloads => Route::Downloads,
                 NavItem::Settings => Route::Settings(self.ui.active_settings_section),
@@ -241,6 +234,7 @@ impl App {
             }
             Message::SeeAllRecommended => Some(Route::Discover(DiscoverViewMode::AllRecommended)),
             Message::SeeAllHot => Some(Route::Discover(DiscoverViewMode::AllHot)),
+            Message::SeeAllOfficial => Some(Route::Discover(DiscoverViewMode::AllOfficial)),
             _ => None,
         }
     }

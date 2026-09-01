@@ -8,6 +8,9 @@
 
 use image::DynamicImage;
 
+pub const PLAYLIST_FOOTER_WIDTH: u32 = 160;
+pub const PLAYLIST_FOOTER_HEIGHT: u32 = 56;
+
 /// 图像预处理结果
 pub struct ProcessedImage {
     pub width: u32,
@@ -196,10 +199,7 @@ pub fn contrast_image(data: &mut [u8], contrast: f32) {
 /// 注意：的模糊效果主要来自于 Bicubic Hermite Patch 插值，
 /// 而不是图像本身的模糊。32x32 的小图像在 mesh 上被平滑插值放大，
 /// 自然产生了柔和的渐变效果。
-pub fn process_image_for_background(
-    image: &DynamicImage,
-    target_size: u32,
-) -> ProcessedImage {
+pub fn process_image_for_background(image: &DynamicImage, target_size: u32) -> ProcessedImage {
     // 缩小图像以提高处理速度 (使用 32x32)
     let resized = image.resize_exact(
         target_size,
@@ -220,4 +220,55 @@ pub fn process_image_for_background(
     blur_image(&mut data, width as usize, height as usize, 2, 4); // 原始参数
 
     ProcessedImage::from_rgba(width, height, data)
+}
+
+/// Build the small, darkened blur used behind playlist-card metadata.
+///
+/// Processing a bounded footer-sized buffer keeps the work cheap while the
+/// repeated box blur produces a Gaussian-like result suitable for text.
+pub fn process_image_for_playlist_footer(image: &DynamicImage) -> ProcessedImage {
+    let resized = image.resize_to_fill(
+        PLAYLIST_FOOTER_WIDTH,
+        PLAYLIST_FOOTER_HEIGHT,
+        image::imageops::FilterType::Triangle,
+    );
+    let rgba = resized.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    let mut data = rgba.into_raw();
+
+    blur_image(&mut data, width as usize, height as usize, 9, 3);
+    saturate_image(&mut data, 1.15);
+    brightness_image(&mut data, 0.58);
+    contrast_image(&mut data, 0.92);
+
+    ProcessedImage::from_rgba(width, height, data)
+}
+
+#[cfg(test)]
+mod playlist_footer_tests {
+    use super::{PLAYLIST_FOOTER_HEIGHT, PLAYLIST_FOOTER_WIDTH, process_image_for_playlist_footer};
+    use image::{DynamicImage, Rgba, RgbaImage};
+
+    #[test]
+    fn playlist_footer_has_expected_dimensions_and_blended_pixels() {
+        let mut source = RgbaImage::new(32, 32);
+        for (x, _y, pixel) in source.enumerate_pixels_mut() {
+            *pixel = if x < 16 {
+                Rgba([255, 32, 32, 255])
+            } else {
+                Rgba([32, 32, 255, 255])
+            };
+        }
+
+        let processed = process_image_for_playlist_footer(&DynamicImage::ImageRgba8(source));
+
+        assert_eq!(processed.width, PLAYLIST_FOOTER_WIDTH);
+        assert_eq!(processed.height, PLAYLIST_FOOTER_HEIGHT);
+        let center = ((PLAYLIST_FOOTER_HEIGHT / 2 * PLAYLIST_FOOTER_WIDTH
+            + PLAYLIST_FOOTER_WIDTH / 2)
+            * 4) as usize;
+        assert!(processed.data[center] > 20);
+        assert!(processed.data[center + 2] > 20);
+        assert_eq!(processed.data[center + 3], 255);
+    }
 }

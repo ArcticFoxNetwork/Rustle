@@ -1,30 +1,25 @@
 //! Discover page message handlers
 
 use iced::Task;
-use rand::SeedableRng;
-use rand::seq::SliceRandom;
 use tracing::{debug, error};
 
-use crate::api::{PlaylistSummary, UserSummary};
+use crate::api::{PRIVATE_RADAR_PLAYLIST_ID, PlaylistSummary};
 use crate::app::message::Message;
 use crate::app::state::{App, Route};
 use crate::i18n::Key;
 
-/// Get a daily seed based on current date
-fn get_daily_seed() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let now = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default();
-    // 使用天数作为种子（每天变化）
-    now.as_secs() / 86400
+fn visible_recommended_playlists(playlists: &[PlaylistSummary]) -> Vec<PlaylistSummary> {
+    playlists
+        .iter()
+        .filter(|playlist| {
+            playlist.id != PRIVATE_RADAR_PLAYLIST_ID && !playlist.name.contains("私人雷达")
+        })
+        .cloned()
+        .collect()
 }
 
-/// Shuffle playlists using a daily seed for consistent daily randomization
-fn shuffle_daily(playlists: &mut [PlaylistSummary]) {
-    let seed = get_daily_seed();
-    let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
-    playlists.shuffle(&mut rng);
+pub(super) fn is_login_only_feature_playlist(playlist_id: u64) -> bool {
+    playlist_id == 0 || playlist_id == PRIVATE_RADAR_PLAYLIST_ID
 }
 
 impl App {
@@ -35,57 +30,60 @@ impl App {
     /// Handle discover page related messages
     pub fn handle_discover(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
-            Message::RecommendedPlaylistsLoaded(playlists) => {
+            Message::RecommendedPlaylistsLoaded(generation, playlists) => {
+                if *generation != self.ui.discover.load_generation {
+                    return Some(Task::none());
+                }
                 debug!("Loaded {} recommended playlists", playlists.len());
-
-                let locale = &self.core.locale;
-                let mut all_playlists = vec![PlaylistSummary {
-                    id: 0, // Special ID for daily recommend
-                    name: locale.get(Key::DiscoverDailyRecommend).to_string(),
-                    cover_url: String::new(),
-                    creator: UserSummary {
-                        id: 0,
-                        nickname: locale.get(Key::DiscoverDailyRecommendDesc).to_string(),
-                        avatar_url: String::new(),
-                        vip: crate::api::VipInfo::default(),
-                    },
-                    subscribed: false,
-                }];
-                all_playlists.extend(playlists.clone());
-
-                self.ui.discover.recommended_playlists = all_playlists;
+                self.ui.discover.recommended_playlists = visible_recommended_playlists(playlists);
                 self.ui.discover.recommended_loading = false;
 
                 Some(Task::none())
             }
 
-            Message::HotPlaylistsLoaded(playlists, has_more) => {
-                debug!(
-                    "Loaded {} hot playlists, has_more: {}",
-                    playlists.len(),
-                    has_more
-                );
-
-                // For the first batch (offset 0), shuffle with daily seed
-                let is_first_batch = self.ui.discover.hot_playlists.is_empty();
-
-                if is_first_batch {
-                    // First batch: shuffle and set
-                    let mut shuffled = playlists.clone();
-                    shuffle_daily(&mut shuffled);
-                    self.ui.discover.hot_playlists = shuffled;
-                } else {
-                    // Subsequent batches: append without shuffling (pagination)
-                    self.ui.discover.hot_playlists.extend(playlists.clone());
+            Message::DailyRecommendPreviewLoaded(generation, track) => {
+                if *generation != self.ui.discover.load_generation {
+                    return Some(Task::none());
                 }
+                self.ui.discover.daily_recommend_preview = track.clone();
+                Some(Task::none())
+            }
 
+            Message::PersonalFmPreviewLoaded(generation, tracks) => {
+                if *generation != self.ui.discover.load_generation {
+                    return Some(Task::none());
+                }
+                self.ui.discover.personal_fm_preview = tracks.first().cloned();
+                self.ui.discover.personal_fm_prefetched_tracks = tracks.clone();
+                Some(Task::none())
+            }
+
+            Message::PrivateRadarLoaded(generation, playlist) => {
+                if *generation != self.ui.discover.load_generation {
+                    return Some(Task::none());
+                }
+                self.ui.discover.private_radar = playlist.clone();
+                self.ui.discover.private_radar_loading = false;
+                Some(Task::none())
+            }
+
+            Message::HotPlaylistsLoaded(generation, playlists) => {
+                if *generation != self.ui.discover.load_generation {
+                    return Some(Task::none());
+                }
+                debug!("Loaded {} hot playlists", playlists.len());
+                self.ui.discover.hot_playlists = playlists.clone();
                 self.ui.discover.hot_loading = false;
-                self.ui.discover.hot_has_more = *has_more;
+                Some(Task::none())
+            }
 
-                // Update offset for next page
-                if *has_more {
-                    self.ui.discover.hot_offset += playlists.len() as u16;
+            Message::OfficialPlaylistsLoaded(generation, playlists) => {
+                if *generation != self.ui.discover.load_generation {
+                    return Some(Task::none());
                 }
+                debug!("Loaded {} official playlists", playlists.len());
+                self.ui.discover.official_playlists = playlists.clone();
+                self.ui.discover.official_loading = false;
 
                 Some(Task::none())
             }
@@ -105,6 +103,12 @@ impl App {
             Message::PlayDiscoverPlaylist(playlist_id) => {
                 debug!("Playing discover playlist: {}", playlist_id);
                 let playlist_id = *playlist_id;
+
+                if !self.core.is_logged_in && is_login_only_feature_playlist(playlist_id) {
+                    return Some(Self::toast_warning(
+                        self.core.locale.get(Key::NotLoggedIn).to_string(),
+                    ));
+                }
 
                 // Load and play the playlist
                 if let Some(client) = &self.core.ncm_client {
@@ -165,37 +169,6 @@ impl App {
                 Some(Task::none())
             }
 
-            Message::LoadMoreHotPlaylists => {
-                if self.ui.discover.hot_loading || !self.ui.discover.hot_has_more {
-                    return Some(Task::none());
-                }
-
-                self.ui.discover.hot_loading = true;
-
-                if let Some(client) = &self.core.ncm_client {
-                    let client = client.clone();
-                    let offset = self.ui.discover.hot_offset;
-                    let limit = 30u16;
-
-                    return Some(Task::perform(
-                        async move {
-                            match client.top_playlists("全部", "hot", offset, limit).await {
-                                Ok(playlists) => {
-                                    let has_more = playlists.len() >= limit as usize;
-                                    (playlists, has_more)
-                                }
-                                Err(e) => {
-                                    error!("Failed to load more hot playlists: {}", e);
-                                    (Vec::new(), false)
-                                }
-                            }
-                        },
-                        |(playlists, has_more)| Message::HotPlaylistsLoaded(playlists, has_more),
-                    ));
-                }
-                Some(Task::none())
-            }
-
             Message::SeeAllRecommended => {
                 let route = Route::Discover(crate::app::state::DiscoverViewMode::AllRecommended);
                 Some(self.navigate_to_route(route, true))
@@ -203,20 +176,52 @@ impl App {
 
             Message::SeeAllHot => {
                 let route = Route::Discover(crate::app::state::DiscoverViewMode::AllHot);
-                let needs_more =
-                    self.ui.discover.hot_playlists.len() < 30 && self.ui.discover.hot_has_more;
-                let nav_task = self.navigate_to_route(route, true);
-                if needs_more {
-                    Some(Task::batch([
-                        nav_task,
-                        Task::done(Message::LoadMoreHotPlaylists),
-                    ]))
-                } else {
-                    Some(nav_task)
-                }
+                Some(self.navigate_to_route(route, true))
+            }
+
+            Message::SeeAllOfficial => {
+                let route = Route::Discover(crate::app::state::DiscoverViewMode::AllOfficial);
+                Some(self.navigate_to_route(route, true))
             }
 
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_login_only_feature_playlist, visible_recommended_playlists};
+    use crate::api::{PRIVATE_RADAR_PLAYLIST_ID, PlaylistSummary, UserSummary};
+
+    fn playlist(id: u64, name: &str) -> PlaylistSummary {
+        PlaylistSummary {
+            id,
+            name: name.to_string(),
+            cover_url: String::new(),
+            creator: UserSummary::default(),
+            subscribed: false,
+        }
+    }
+
+    #[test]
+    fn recommendation_row_excludes_private_radar_duplicates() {
+        let playlists = vec![
+            playlist(PRIVATE_RADAR_PLAYLIST_ID, "私人雷达"),
+            playlist(2, "我的私人雷达歌单"),
+            playlist(3, "晚间推荐"),
+        ];
+
+        let visible = visible_recommended_playlists(&playlists);
+
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].id, 3);
+    }
+
+    #[test]
+    fn daily_and_private_radar_require_login() {
+        assert!(is_login_only_feature_playlist(0));
+        assert!(is_login_only_feature_playlist(PRIVATE_RADAR_PLAYLIST_ID));
+        assert!(!is_login_only_feature_playlist(42));
     }
 }

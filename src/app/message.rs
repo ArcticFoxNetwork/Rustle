@@ -6,7 +6,7 @@ use std::sync::Arc;
 use iced::keyboard::{Key, Modifiers};
 
 use crate::api::{
-    AlbumDetail, AlbumSummary, ArtistDetail, ArtistSummary, Banner, LoginInfo, PlaylistDetail,
+    AlbumDetail, AlbumSummary, ArtistDetail, ArtistSummary, LoginInfo, PlaylistDetail,
     PlaylistSummary, Track, UserDetail,
 };
 use crate::app::state::UserInfo;
@@ -555,21 +555,6 @@ pub enum Message {
     /// No operation (placeholder)
     NoOp,
 
-    // ============ NCM Homepage Data ============
-    /// Banners loaded
-    BannersLoaded(Vec<Banner>),
-    /// Banner play button clicked
-    BannerPlay(usize),
-    /// Carousel navigate
-    CarouselNavigate(i32),
-    /// Carousel auto-advance tick
-    CarouselTick,
-    /// Top picks (trending playlists) loaded
-    TopPicksLoaded(Vec<PlaylistSummary>),
-    /// Trending songs (飙升榜) loaded
-    TrendingSongsLoaded(Vec<Track>),
-    /// Navigate to trending songs page
-    OpenTrendingSongs,
     /// Toggle favorite status for a song
     ToggleFavorite(u64),
     /// Favorite status changed
@@ -589,9 +574,6 @@ pub enum Message {
     OpenAlbum(u64),
     /// Resolve artist by name then open detail page
     OpenArtistByName(String),
-    /// Toggle favorite status for banner item
-    ToggleBannerFavorite(usize),
-
     // ============ Cloud Playlist ============
     /// User playlists loaded
     UserPlaylistsLoaded(Vec<PlaylistSummary>),
@@ -644,24 +626,29 @@ pub enum Message {
     /// Playlist subscription status changed
     PlaylistSubscribeChanged(i64, bool),
 
-    /// Hover over a trending song
-    HoverTrendingSong(Option<u64>),
-
     // ============ Discover Page ============
     /// Recommended playlists loaded (for logged-in users)
-    RecommendedPlaylistsLoaded(Vec<PlaylistSummary>),
-    /// Hot playlists loaded (playlists, has_more)
-    HotPlaylistsLoaded(Vec<PlaylistSummary>, bool),
+    RecommendedPlaylistsLoaded(u64, Vec<PlaylistSummary>),
+    /// First Daily Recommend track loaded for the feature-card cover.
+    DailyRecommendPreviewLoaded(u64, Option<Track>),
+    /// Personal FM tracks prefetched for the feature-card cover and first playback.
+    PersonalFmPreviewLoaded(u64, Vec<Track>),
+    /// Private Radar playlist metadata loaded.
+    PrivateRadarLoaded(u64, Option<PlaylistSummary>),
+    /// Ordinary hot playlists loaded.
+    HotPlaylistsLoaded(u64, Vec<PlaylistSummary>),
+    /// Official high-quality playlists loaded.
+    OfficialPlaylistsLoaded(u64, Vec<PlaylistSummary>),
     /// Hover over a discover playlist card
     HoverDiscoverPlaylist(Option<u64>),
     /// Play a playlist from discover page
     PlayDiscoverPlaylist(u64),
-    /// Load more hot playlists (pagination)
-    LoadMoreHotPlaylists,
     /// See all recommended playlists
     SeeAllRecommended,
     /// See all hot playlists
     SeeAllHot,
+    /// See all official high-quality playlists
+    SeeAllOfficial,
 
     // ============ Search Page ============
     /// Submit search query (Enter pressed in search bar)
@@ -825,7 +812,6 @@ impl std::fmt::Debug for Message {
             // High-frequency messages - keep minimal (no data)
             Self::AnimationTick => simple!("AnimationTick"),
             Self::PlaybackTick => simple!("PlaybackTick"),
-            Self::CarouselTick => simple!("CarouselTick"),
             Self::Noop => simple!("Noop"),
             Self::NoOp => simple!("NoOp"),
 
@@ -845,9 +831,6 @@ impl std::fmt::Debug for Message {
             }
             Self::QueueLoaded(v) => simple!("QueueLoaded", "{} songs", v.len()),
             Self::RecentlyPlayedLoaded(v) => simple!("RecentlyPlayedLoaded", "{} songs", v.len()),
-            Self::BannersLoaded(v) => simple!("BannersLoaded", "{} banners", v.len()),
-            Self::TopPicksLoaded(v) => simple!("TopPicksLoaded", "{} picks", v.len()),
-            Self::TrendingSongsLoaded(v) => simple!("TrendingSongsLoaded", "{} songs", v.len()),
             Self::UserPlaylistsLoaded(v) => simple!("UserPlaylistsLoaded", "{} playlists", v.len()),
             Self::AddNcmPlaylist(v, play) => {
                 simple!("AddNcmPlaylist", "{} songs, play={}", v.len(), play)
@@ -1207,10 +1190,7 @@ impl std::fmt::Debug for Message {
             Self::Logout => simple!("Logout"),
             Self::ToggleLoginPopup => simple!("ToggleLoginPopup"),
 
-            // NCM Homepage
-            Self::BannerPlay(i) => simple!("BannerPlay", "{}", i),
-            Self::CarouselNavigate(d) => simple!("CarouselNavigate", "{}", d),
-            Self::OpenTrendingSongs => simple!("OpenTrendingSongs"),
+            // NCM playback and navigation
             Self::ToggleFavorite(id) => simple!("ToggleFavorite", "{}", id),
             Self::FavoriteStatusChanged(id, s) => simple!("FavoriteStatusChanged", "{}, {}", id, s),
             Self::OpenNcmPlaylist(id) => simple!("OpenNcmPlaylist", "{}", id),
@@ -1218,7 +1198,6 @@ impl std::fmt::Debug for Message {
             Self::OpenArtist(id) => simple!("OpenArtist", "{}", id),
             Self::OpenAlbum(id) => simple!("OpenAlbum", "{}", id),
             Self::OpenArtistByName(name) => simple!("OpenArtistByName", "{}", name),
-            Self::ToggleBannerFavorite(i) => simple!("ToggleBannerFavorite", "{}", i),
 
             // Cloud Playlist
             Self::ImageDownloadReady(generation, scope, kind, id, _path) => {
@@ -1253,20 +1232,60 @@ impl std::fmt::Debug for Message {
             Self::PlaylistSubscribeChanged(id, s) => {
                 simple!("PlaylistSubscribeChanged", "{}, {}", id, s)
             }
-            Self::HoverTrendingSong(id) => simple!("HoverTrendingSong", "{:?}", id),
-
             // Discover Page
-            Self::RecommendedPlaylistsLoaded(v) => {
-                simple!("RecommendedPlaylistsLoaded", "{} playlists", v.len())
+            Self::RecommendedPlaylistsLoaded(generation, v) => {
+                simple!(
+                    "RecommendedPlaylistsLoaded",
+                    "generation={}, {} playlists",
+                    generation,
+                    v.len()
+                )
             }
-            Self::HotPlaylistsLoaded(v, more) => {
-                simple!("HotPlaylistsLoaded", "{} playlists, more={}", v.len(), more)
+            Self::DailyRecommendPreviewLoaded(generation, track) => {
+                simple!(
+                    "DailyRecommendPreviewLoaded",
+                    "generation={}, loaded={}",
+                    generation,
+                    track.is_some()
+                )
+            }
+            Self::PersonalFmPreviewLoaded(generation, tracks) => {
+                simple!(
+                    "PersonalFmPreviewLoaded",
+                    "generation={}, {} tracks",
+                    generation,
+                    tracks.len()
+                )
+            }
+            Self::PrivateRadarLoaded(generation, playlist) => {
+                simple!(
+                    "PrivateRadarLoaded",
+                    "generation={}, loaded={}",
+                    generation,
+                    playlist.is_some()
+                )
+            }
+            Self::HotPlaylistsLoaded(generation, v) => {
+                simple!(
+                    "HotPlaylistsLoaded",
+                    "generation={}, {} playlists",
+                    generation,
+                    v.len()
+                )
+            }
+            Self::OfficialPlaylistsLoaded(generation, v) => {
+                simple!(
+                    "OfficialPlaylistsLoaded",
+                    "generation={}, {} playlists",
+                    generation,
+                    v.len()
+                )
             }
             Self::HoverDiscoverPlaylist(id) => simple!("HoverDiscoverPlaylist", "{:?}", id),
             Self::PlayDiscoverPlaylist(id) => simple!("PlayDiscoverPlaylist", "{}", id),
-            Self::LoadMoreHotPlaylists => simple!("LoadMoreHotPlaylists"),
             Self::SeeAllRecommended => simple!("SeeAllRecommended"),
             Self::SeeAllHot => simple!("SeeAllHot"),
+            Self::SeeAllOfficial => simple!("SeeAllOfficial"),
 
             // Search Page
             Self::SearchSubmit => simple!("SearchSubmit"),

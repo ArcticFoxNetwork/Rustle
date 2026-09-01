@@ -145,7 +145,10 @@ impl App {
                 self.seek_by_offset(std::time::Duration::from_secs(10), false);
             }
             Action::GoHome => {
-                return self.navigate_to_route(Route::Home, true);
+                return self.navigate_to_route(
+                    Route::Discover(crate::app::state::DiscoverViewMode::Overview),
+                    true,
+                );
             }
             Action::FocusSearch => {
                 return iced::widget::operation::focus(iced::widget::Id::new(
