@@ -65,6 +65,10 @@ impl FadeControl {
         self.fade_to_with_curve(None, volume, duration, 1);
     }
 
+    pub(crate) fn fade_from_to_equal_power(&self, from: f32, volume: f32, duration: Duration) {
+        self.fade_to_with_curve(Some(from), volume, duration, 1);
+    }
+
     pub(crate) fn fade_from_to(&self, from: f32, volume: f32, duration: Duration) {
         self.fade_to_with_curve(Some(from), volume, duration, 0);
     }
@@ -424,5 +428,27 @@ mod tests {
         for (out, input) in (&mut outgoing).zip(&mut incoming) {
             assert!((out * out + input * input - 1.0).abs() < 1e-5);
         }
+    }
+
+    #[test]
+    fn explicit_equal_power_start_survives_coalesced_preload_commands() {
+        let control = FadeControl::new(1.0);
+        let source = TestSource {
+            samples: vec![1.0; 4].into_iter(),
+            sample_rate: 1_000,
+            channels: 1,
+        };
+        let mut envelope = FadeEnvelope::new(source, control.clone());
+
+        // A paused preload may not consume a sample between these commands.
+        // The final ramp must therefore carry its zero start explicitly.
+        control.set_volume(0.0);
+        control.fade_from_to_equal_power(0.0, 1.0, Duration::from_millis(4));
+
+        let values: Vec<_> = (&mut envelope).collect();
+        assert!(values[0] < 0.5);
+        assert!(values.windows(2).all(|pair| pair[0] <= pair[1]));
+        assert_eq!(values[3], 1.0);
+        assert!(control.is_complete());
     }
 }

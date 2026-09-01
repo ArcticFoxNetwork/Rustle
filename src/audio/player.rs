@@ -649,10 +649,13 @@ impl AudioPlayer {
                 }
             }
             old_runtime.crossfade_to(0.0, crossfade);
-            runtime.set_fade_volume(0.0);
             sink.set_volume(self.get_sink_volume());
             sink.play();
-            runtime.crossfade_to(1.0, crossfade);
+            // A paused preload may not process the preceding control command
+            // before playback starts. Carry the zero anchor in the ramp itself
+            // so latest-value command coalescing cannot turn this into a
+            // full-volume handoff.
+            runtime.crossfade_from_to(0.0, 1.0, crossfade);
             self.outgoing_transition = Some(OutgoingTransition {
                 sink: old_sink,
                 runtime: old_runtime,
