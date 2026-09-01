@@ -156,8 +156,9 @@ impl App {
                         self.ui.playlist_page.description_expanded,
                         self.ui.playlist_page.gradient_animation.progress(),
                     )
+                        self.ui.playlist_page.gradient_source(),
                 } else {
-                    Space::new().width(Fill).height(Fill).into()
+                    pages::playlist::gradient_placeholder(self.ui.playlist_page.gradient_source())
                 }
             }
             Route::User(_) => {
@@ -179,8 +180,9 @@ impl App {
                         self.ui.playlist_page.description_expanded,
                         self.ui.playlist_page.gradient_animation.progress(),
                     )
+                        self.ui.playlist_page.gradient_source(),
                 } else {
-                    Space::new().width(Fill).height(Fill).into()
+                    pages::playlist::gradient_placeholder(self.ui.playlist_page.gradient_source())
                 }
             }
             Route::Artist(_) => {
@@ -202,8 +204,9 @@ impl App {
                         self.ui.playlist_page.description_expanded,
                         self.ui.playlist_page.gradient_animation.progress(),
                     )
+                        self.ui.playlist_page.gradient_source(),
                 } else {
-                    Space::new().width(Fill).height(Fill).into()
+                    pages::playlist::gradient_placeholder(self.ui.playlist_page.gradient_source())
                 }
             }
             Route::Search { .. } => {

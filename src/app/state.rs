@@ -1705,6 +1705,8 @@ impl UiState {
                 load_state: Default::default(),
                 content_width: 904.0,
                 description_expanded: false,
+                gradient_source: None,
+                retained_gradient: None,
                 ncm_cache_baseline: None,
                 ncm_replace_songs_on_chunk: false,
                 ncm_load_generation: 0,
@@ -1846,7 +1848,16 @@ pub struct PlaylistPageState {
     /// Fade-in animation for cover-derived detail-page gradients.
     pub gradient_animation: SingleHoverAnimation,
     /// Palette identity already installed into the gradient animation.
-    pub gradient_palette_key: Option<(i64, Option<String>)>,
+    pub gradient_palette_key: Option<(
+        crate::ui::pages::playlist::DetailPageKind,
+        i64,
+        Option<String>,
+    )>,
+    /// Gradient displayed while the current page palette is pending and used
+    /// as the fixed start of the next transition.
+    gradient_source: Option<crate::ui::pages::playlist::DetailGradientSnapshot>,
+    /// Most recently computed detail-page gradient, retained across routes.
+    retained_gradient: Option<crate::ui::pages::playlist::DetailGradientSnapshot>,
     /// Virtual list scroll state for efficient rendering
     pub scroll_state: std::rc::Rc<std::cell::RefCell<crate::ui::widgets::VirtualListState>>,
     /// Loading state for async playlist loading
@@ -1884,6 +1895,8 @@ impl Default for PlaylistPageState {
                 crate::ui::widgets::VirtualListState::default(),
             )),
             load_state: Default::default(),
+            gradient_source: None,
+            retained_gradient: None,
             content_width: 904.0,
             description_expanded: false,
             ncm_cache_baseline: None,
@@ -1896,18 +1909,38 @@ impl Default for PlaylistPageState {
 impl PlaylistPageState {
     /// Synchronize the gradient fade with the current page palette.
     pub fn sync_gradient_animation(&mut self, power_saving: bool) {
-        let palette_key = self.current.as_ref().and_then(|page| {
-            page.palette
-                .as_ref()
-                .map(|_| (page.id, page.cover_path.clone()))
-        });
+        let target = self
+            .current
+            .as_ref()
+            .and_then(crate::ui::pages::PlaylistView::gradient_snapshot);
+        let palette_key = self
+            .current
+            .as_ref()
+            .and_then(|page| target.map(|_| (page.kind, page.id, page.cover_path.clone())));
+
+        self.sync_gradient_target(palette_key, target, power_saving);
+    }
 
         if palette_key != self.gradient_palette_key {
             self.gradient_palette_key = palette_key;
             self.gradient_animation.settle_at(0.0);
 
-            if self.gradient_palette_key.is_some() {
-                if power_saving {
+    fn sync_gradient_target(
+        &mut self,
+        palette_key: Option<(
+            crate::ui::pages::playlist::DetailPageKind,
+            i64,
+            Option<String>,
+        )>,
+        target: Option<crate::ui::pages::playlist::DetailGradientSnapshot>,
+        power_saving: bool,
+    ) {
+            if let Some(target) = target {
+                let unchanged = self.gradient_source == Some(target);
+                self.retained_gradient = Some(target);
+
+                if power_saving || unchanged {
+            self.gradient_source = self.retained_gradient;
                     self.gradient_animation.settle_at(1.0);
                 } else {
                     self.gradient_animation.start();
@@ -1923,9 +1956,55 @@ impl PlaylistPageState {
         self.gradient_animation.settle_at(0.0);
     }
 }
+        self.gradient_source = self.retained_gradient;
 
 pub struct LyricsState {
     pub is_open: bool,
+
+    pub fn gradient_source(&self) -> Option<crate::ui::pages::playlist::DetailGradientSnapshot> {
+        self.gradient_source
+    }
+}
+
+#[cfg(test)]
+mod detail_gradient_state_tests {
+    use super::PlaylistPageState;
+    use crate::ui::pages::playlist::{DetailGradientSnapshot, DetailPageKind};
+    use iced::Color;
+
+    #[test]
+    fn completed_gradient_becomes_the_next_page_transition_source() {
+        let first = DetailGradientSnapshot {
+            kind: DetailPageKind::Playlist,
+            primary: Color::from_rgb(0.2, 0.4, 0.7),
+        };
+        let second = DetailGradientSnapshot {
+            kind: DetailPageKind::Artist,
+            primary: Color::from_rgb(0.8, 0.25, 0.15),
+        };
+        let mut state = PlaylistPageState::default();
+
+        state.sync_gradient_target(
+            Some((DetailPageKind::Playlist, 1, Some("first".into()))),
+            Some(first),
+            true,
+        );
+        assert_eq!(state.retained_gradient, Some(first));
+        assert_eq!(state.gradient_animation.progress(), 1.0);
+
+        state.reset_gradient_animation();
+        assert_eq!(state.gradient_source(), Some(first));
+        assert_eq!(state.gradient_animation.progress(), 0.0);
+
+        state.sync_gradient_target(
+            Some((DetailPageKind::Artist, 2, Some("second".into()))),
+            Some(second),
+            false,
+        );
+        assert_eq!(state.gradient_source(), Some(first));
+        assert_eq!(state.retained_gradient, Some(second));
+        assert!(state.gradient_animation.is_animating());
+    }
     pub animation: SingleHoverAnimation,
     /// Song currently displayed in the lyrics page.
     pub displayed_song_id: Option<i64>,

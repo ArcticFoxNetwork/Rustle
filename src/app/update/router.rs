@@ -44,6 +44,10 @@ impl App {
         if previous_route != *route {
             self.ui.image_state.cancel_pending_and_inflight();
             self.ui.smooth_scroll.cancel_all();
+
+            if route.has_gradient_background() {
+                self.ui.playlist_page.reset_gradient_animation();
+            }
         }
 
         if matches!(previous_route, Route::Search { .. }) && !matches!(route, Route::Search { .. })

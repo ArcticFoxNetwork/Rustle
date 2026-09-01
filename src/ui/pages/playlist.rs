@@ -64,6 +64,25 @@ pub enum DetailPageKind {
     Artist,
 }
 
+/// A cover-derived gradient that can survive detail-page navigation.
+///
+/// The page kind is retained because playlist/album headers and user/artist
+/// headers intentionally use slightly different color treatments.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DetailGradientSnapshot {
+    pub kind: DetailPageKind,
+    pub primary: Color,
+}
+
+impl PlaylistView {
+    pub fn gradient_snapshot(&self) -> Option<DetailGradientSnapshot> {
+        self.palette.as_ref().map(|palette| DetailGradientSnapshot {
+            kind: self.kind,
+            primary: palette.primary,
+        })
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ArtistPageTab {
     #[default]
@@ -89,6 +108,7 @@ pub fn view<'a>(
     current_user_id: Option<u64>,
     current_playing_id: Option<i64>,
     description_expanded: bool,
+    gradient_source: Option<DetailGradientSnapshot>,
     gradient_progress: f32,
 ) -> Element<'a, Message> {
     let header = build_header(playlist, image_state, locale, description_expanded);
@@ -108,70 +128,12 @@ pub fn view<'a>(
     // Content with gradient that extends through controls
     let header_and_controls = column![header, controls,].spacing(0).width(Fill);
 
-    // Use the extracted palette only after color extraction succeeds. While
-    // extraction is pending, or if it fails, keep the theme background.
-    let gradient_top = playlist.palette.as_ref().map(|palette| {
-        let primary = palette.primary;
-        (
-            (primary.r * 1.1 + 0.05).min(1.0),
-            (primary.g * 1.05 + 0.03).min(1.0),
-            (primary.b * 1.08 + 0.04).min(1.0),
-        )
-    });
+    let gradient_target = playlist.gradient_snapshot();
 
     let gradient_section = container(header_and_controls)
         .width(Fill)
         .style(move |theme| {
-            // Get the bottom color based on theme (black for dark, white for light)
-            let bottom_color = theme::background(theme);
-            let Some((top_r, top_g, top_b)) = gradient_top else {
-                return iced::widget::container::Style {
-                    background: Some(iced::Background::Color(bottom_color)),
-                    ..Default::default()
-                };
-            };
-            let is_light = !theme::is_dark_theme(theme);
-
-            // For light mode: make colors brighter and less saturated
-            let (adj_r, adj_g, adj_b) = if is_light {
-                // Lighten and desaturate for light mode
-                let avg = (top_r + top_g + top_b) / 3.0;
-                let desat = 0.4; // Desaturation factor
-                let lighten = 0.3; // Lighten factor
-                (
-                    ((top_r * (1.0 - desat) + avg * desat) + lighten).min(1.0),
-                    ((top_g * (1.0 - desat) + avg * desat) + lighten).min(1.0),
-                    ((top_b * (1.0 - desat) + avg * desat) + lighten).min(1.0),
-                )
-            } else {
-                (top_r, top_g, top_b)
-            };
-
-            let top_color = fade_gradient_color(
-                Color::from_rgb(adj_r, adj_g, adj_b),
-                bottom_color,
-                gradient_progress,
-            );
-            let middle_color = fade_gradient_color(
-                Color::from_rgb(
-                    adj_r * 0.6 + bottom_color.r * 0.4,
-                    adj_g * 0.55 + bottom_color.g * 0.4,
-                    adj_b * 0.58 + bottom_color.b * 0.4,
-                ),
-                bottom_color,
-                gradient_progress,
-            );
-
-            iced::widget::container::Style {
-                background: Some(iced::Background::Gradient(iced::Gradient::Linear(
-                    // Top to bottom gradient with palette colors
-                    iced::gradient::Linear::new(iced::Radians(std::f32::consts::PI))
-                        .add_stop(0.0, top_color)
-                        .add_stop(0.55, middle_color)
-                        .add_stop(1.0, bottom_color),
-                ))),
-                ..Default::default()
-            }
+            detail_gradient_style(theme, gradient_source, gradient_target, gradient_progress)
         });
 
     // Build song list header using the reusable component
@@ -201,13 +163,141 @@ pub fn view<'a>(
     content.into()
 }
 
-pub(crate) fn fade_gradient_color(target: Color, background: Color, progress: f32) -> Color {
+/// Show the retained gradient while a detail route is waiting for its page
+/// model. Most routes publish a skeleton immediately, but recently played is
+/// populated asynchronously and can otherwise flash the themed background.
+pub fn gradient_placeholder(
+    gradient_source: Option<DetailGradientSnapshot>,
+) -> Element<'static, Message> {
+    container(Space::new().width(Fill).height(Fill))
+        .width(Fill)
+        .height(Fill)
+        .style(move |theme| detail_gradient_style(theme, gradient_source, None, 0.0))
+        .into()
+}
+
+#[derive(Debug, Clone, Copy)]
+struct DetailGradientColors {
+    top: Color,
+    middle: Color,
+    middle_stop: f32,
+}
+
+pub(crate) fn detail_gradient_style(
+    iced_theme: &iced::Theme,
+    source: Option<DetailGradientSnapshot>,
+    target: Option<DetailGradientSnapshot>,
+    progress: f32,
+) -> iced::widget::container::Style {
+    let bottom = theme::background(iced_theme);
+
+    let Some(target) = target else {
+        return match source {
+            Some(source) => {
+                gradient_container_style(detail_gradient_colors(iced_theme, source, bottom), bottom)
+            }
+            None => iced::widget::container::Style {
+                background: Some(iced::Background::Color(bottom)),
+                ..Default::default()
+            },
+        };
+    };
+
+    let target = detail_gradient_colors(iced_theme, target, bottom);
+    let source = source
+        .map(|source| detail_gradient_colors(iced_theme, source, bottom))
+        .unwrap_or(DetailGradientColors {
+            top: bottom,
+            middle: bottom,
+            middle_stop: target.middle_stop,
+        });
+    let progress = progress.clamp(0.0, 1.0);
+    let colors = DetailGradientColors {
+        top: fade_gradient_color(target.top, source.top, progress),
+        middle: fade_gradient_color(target.middle, source.middle, progress),
+        middle_stop: source.middle_stop + (target.middle_stop - source.middle_stop) * progress,
+    };
+
+    gradient_container_style(colors, bottom)
+}
+
+fn detail_gradient_colors(
+    iced_theme: &iced::Theme,
+    snapshot: DetailGradientSnapshot,
+    bottom: Color,
+) -> DetailGradientColors {
+    match snapshot.kind {
+        DetailPageKind::Playlist | DetailPageKind::Album => {
+            let primary = snapshot.primary;
+            let top = Color::from_rgb(
+                (primary.r * 1.1 + 0.05).min(1.0),
+                (primary.g * 1.05 + 0.03).min(1.0),
+                (primary.b * 1.08 + 0.04).min(1.0),
+            );
+            let top = if theme::is_dark_theme(iced_theme) {
+                top
+            } else {
+                let average = (top.r + top.g + top.b) / 3.0;
+                let desaturation = 0.4;
+                let lighten = 0.3;
+                Color::from_rgb(
+                    ((top.r * (1.0 - desaturation) + average * desaturation) + lighten).min(1.0),
+                    ((top.g * (1.0 - desaturation) + average * desaturation) + lighten).min(1.0),
+                    ((top.b * (1.0 - desaturation) + average * desaturation) + lighten).min(1.0),
+                )
+            };
+
+            DetailGradientColors {
+                top,
+                middle: Color::from_rgb(
+                    top.r * 0.6 + bottom.r * 0.4,
+                    top.g * 0.55 + bottom.g * 0.4,
+                    top.b * 0.58 + bottom.b * 0.4,
+                ),
+                middle_stop: 0.55,
+            }
+        }
+        DetailPageKind::User | DetailPageKind::Artist => {
+            let primary = snapshot.primary;
+            DetailGradientColors {
+                top: Color::from_rgb(
+                    (primary.r * 1.08 + 0.04).min(1.0),
+                    (primary.g * 1.06 + 0.03).min(1.0),
+                    (primary.b * 1.08 + 0.04).min(1.0),
+                ),
+                middle: Color::from_rgb(
+                    primary.r * 0.58 + bottom.r * 0.42,
+                    primary.g * 0.58 + bottom.g * 0.42,
+                    primary.b * 0.58 + bottom.b * 0.42,
+                ),
+                middle_stop: 0.58,
+            }
+        }
+    }
+}
+
+fn gradient_container_style(
+    colors: DetailGradientColors,
+    bottom: Color,
+) -> iced::widget::container::Style {
+    iced::widget::container::Style {
+        background: Some(iced::Background::Gradient(iced::Gradient::Linear(
+            iced::gradient::Linear::new(iced::Radians(std::f32::consts::PI))
+                .add_stop(0.0, colors.top)
+                .add_stop(colors.middle_stop, colors.middle)
+                .add_stop(1.0, bottom),
+        ))),
+        ..Default::default()
+    }
+}
+
+pub(crate) fn fade_gradient_color(target: Color, source: Color, progress: f32) -> Color {
     let progress = progress.clamp(0.0, 1.0);
     Color::from_rgba(
-        background.r + (target.r - background.r) * progress,
-        background.g + (target.g - background.g) * progress,
-        background.b + (target.b - background.b) * progress,
-        background.a + (target.a - background.a) * progress,
+        source.r + (target.r - source.r) * progress,
+        source.g + (target.g - source.g) * progress,
+        source.b + (target.b - source.b) * progress,
+        source.a + (target.a - source.a) * progress,
     )
 }
 
@@ -234,6 +324,40 @@ mod gradient_tests {
             fade_gradient_color(target, background, 0.5),
             Color::from_rgb(0.4, 0.4, 0.4),
         );
+    }
+
+    #[test]
+    fn detail_gradient_transition_starts_at_retained_colors() {
+        let iced_theme = iced::Theme::Dark;
+        let bottom = theme::background(&iced_theme);
+        let retained = DetailGradientSnapshot {
+            kind: DetailPageKind::Playlist,
+            primary: Color::from_rgb(0.2, 0.4, 0.7),
+        };
+        let target = DetailGradientSnapshot {
+            kind: DetailPageKind::Artist,
+            primary: Color::from_rgb(0.8, 0.25, 0.15),
+        };
+        let retained_colors = detail_gradient_colors(&iced_theme, retained, bottom);
+        let target_colors = detail_gradient_colors(&iced_theme, target, bottom);
+
+        let at_start = DetailGradientColors {
+            top: fade_gradient_color(target_colors.top, retained_colors.top, 0.0),
+            middle: fade_gradient_color(target_colors.middle, retained_colors.middle, 0.0),
+            middle_stop: retained_colors.middle_stop,
+        };
+        let at_end = DetailGradientColors {
+            top: fade_gradient_color(target_colors.top, retained_colors.top, 1.0),
+            middle: fade_gradient_color(target_colors.middle, retained_colors.middle, 1.0),
+            middle_stop: target_colors.middle_stop,
+        };
+
+        assert_color_close(at_start.top, retained_colors.top);
+        assert_color_close(at_start.middle, retained_colors.middle);
+        assert_color_close(at_end.top, target_colors.top);
+        assert_color_close(at_end.middle, target_colors.middle);
+        assert_eq!(at_start.middle_stop, retained_colors.middle_stop);
+        assert_eq!(at_end.middle_stop, target_colors.middle_stop);
     }
 }
 
