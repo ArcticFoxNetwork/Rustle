@@ -208,8 +208,10 @@ fn play_button_offset(hover_progress: f32) -> f32 {
     PLAY_BUTTON_START_OFFSET + (PLAY_BUTTON_END_OFFSET - PLAY_BUTTON_START_OFFSET) * progress
 }
 
-fn play_icon_size(hover_progress: f32) -> f32 {
-    PLAY_ICON_SIZE * hover_progress.clamp(0.0, 1.0)
+// Keep SVG raster bounds stable across the hover animation. Subpixel image
+// bounds can abort preparation of the remaining Iced image layer.
+fn play_icon_size(_hover_progress: f32) -> f32 {
+    PLAY_ICON_SIZE
 }
 
 fn cover_image_scale(hover_progress: f32) -> f32 {
@@ -320,8 +322,8 @@ mod tests {
             (PLAY_BUTTON_START_OFFSET + PLAY_BUTTON_END_OFFSET) / 2.0
         );
         assert_eq!(play_button_offset(1.0), PLAY_BUTTON_END_OFFSET);
-        assert_eq!(play_icon_size(0.0), 0.0);
-        assert_eq!(play_icon_size(0.5), PLAY_ICON_SIZE / 2.0);
+        assert_eq!(play_icon_size(0.0), PLAY_ICON_SIZE);
+        assert_eq!(play_icon_size(0.5), PLAY_ICON_SIZE);
         assert_eq!(play_icon_size(1.0), PLAY_ICON_SIZE);
         assert_eq!(cover_image_scale(0.0), 1.0);
         assert_eq!(cover_image_scale(1.0), HOVER_IMAGE_SCALE);
