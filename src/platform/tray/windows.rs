@@ -12,7 +12,7 @@ use std::ptr::{null, null_mut};
 use std::rc::Rc;
 use tokio::sync::mpsc;
 use windows_sys::Win32::Foundation::{
-    ERROR_CLASS_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, POINT, WPARAM,
+    ERROR_CLASS_ALREADY_EXISTS, GetLastError, HINSTANCE, HWND, LPARAM, LRESULT, POINT, RECT, WPARAM,
 };
 use windows_sys::Win32::Graphics::Gdi::{
     BI_RGB, BITMAPINFO, BITMAPINFOHEADER, CreateBitmap, CreateDIBSection, DIB_RGB_COLORS,
@@ -20,25 +20,30 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetSystemMetricsForDpi};
+#[cfg(any(feature = "windows-installed", test))]
+use windows_sys::Win32::UI::Shell::NIF_GUID;
 use windows_sys::Win32::UI::Shell::{
-    NIF_GUID, NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY,
-    NIM_SETVERSION, NIN_SELECT, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, Shell_NotifyIconW,
+    NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETFOCUS,
+    NIM_SETVERSION, NIN_SELECT, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, NOTIFYICONIDENTIFIER,
+    Shell_NotifyIconGetRect, Shell_NotifyIconW,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CREATESTRUCTW, CreateIconIndirect, CreatePopupMenu, CreateWindowExW,
     DefWindowProcW, DestroyIcon, DestroyMenu, DestroyWindow, GWLP_USERDATA, GetCursorPos,
     GetSystemMetrics, GetWindowLongPtrW, HICON, HMENU, ICONINFO, MF_CHECKED, MF_DISABLED,
     MF_GRAYED, MF_POPUP, MF_SEPARATOR, MF_STRING, PostMessageW, RegisterClassExW,
-    RegisterWindowMessageW, SM_CXSMICON, SM_CYSMICON, SetForegroundWindow, SetWindowLongPtrW,
-    TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTBUTTON, TPM_TOPALIGN, TrackPopupMenuEx,
-    UnregisterClassW, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_NCCREATE, WM_NCDESTROY, WM_NULL,
-    WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_POPUP,
+    RegisterWindowMessageW, SM_CXSMICON, SM_CYSMICON, SM_MENUDROPALIGNMENT, SetForegroundWindow,
+    SetWindowLongPtrW, TPM_LEFTALIGN, TPM_NONOTIFY, TPM_RETURNCMD, TPM_RIGHTALIGN, TPM_RIGHTBUTTON,
+    TrackPopupMenuEx, UnregisterClassW, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_NCCREATE,
+    WM_NCDESTROY, WM_NULL, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
+#[cfg(any(feature = "windows-installed", test))]
 use windows_sys::core::GUID;
 
-const TRAY_ICON_ID: u32 = 1;
 const TRAY_CALLBACK_MESSAGE: u32 = WM_APP + 0x51;
 const NIN_KEYSELECT: u32 = NIN_SELECT | 1;
+#[cfg(any(not(feature = "windows-installed"), test))]
+const TRAY_ICON_ID: u32 = 1;
 
 const CMD_PLAY_PAUSE: u16 = 1001;
 const CMD_PREV_TRACK: u16 = 1002;
@@ -51,12 +56,78 @@ const CMD_SHUFFLE: u16 = 1013;
 const CMD_TOGGLE_WINDOW: u16 = 1020;
 const CMD_QUIT: u16 = 1030;
 
+#[cfg(any(feature = "windows-installed", test))]
 const TRAY_GUID: GUID = GUID {
     data1: 0xd72bd4d9,
     data2: 0xf218,
     data3: 0x4ddb,
     data4: [0x9e, 0x4f, 0xc5, 0x71, 0x83, 0x9a, 0x93, 0x66],
 };
+
+#[derive(Clone, Copy)]
+enum TrayIdentity {
+    /// Portable and local builds can move between executable paths, so they
+    /// must not participate in Windows' persistent GUID/path registration.
+    #[cfg(any(not(feature = "windows-installed"), test))]
+    WindowId(u32),
+    /// The MSI build has a stable Program Files path across upgrades and can
+    /// therefore use the persistent application GUID recommended by Windows.
+    #[cfg(any(feature = "windows-installed", test))]
+    Guid(GUID),
+}
+
+fn default_tray_identity() -> TrayIdentity {
+    #[cfg(feature = "windows-installed")]
+    {
+        TrayIdentity::Guid(TRAY_GUID)
+    }
+
+    #[cfg(not(feature = "windows-installed"))]
+    {
+        TrayIdentity::WindowId(TRAY_ICON_ID)
+    }
+}
+
+impl TrayIdentity {
+    fn apply_to_notify_data(self, data: &mut NOTIFYICONDATAW) {
+        match self {
+            #[cfg(any(not(feature = "windows-installed"), test))]
+            Self::WindowId(id) => data.uID = id,
+            #[cfg(any(feature = "windows-installed", test))]
+            Self::Guid(guid) => {
+                data.uFlags |= NIF_GUID;
+                data.guidItem = guid;
+            }
+        }
+    }
+
+    fn identifier(self, hwnd: HWND) -> NOTIFYICONIDENTIFIER {
+        let mut identifier = NOTIFYICONIDENTIFIER {
+            cbSize: size_of::<NOTIFYICONIDENTIFIER>() as u32,
+            hWnd: hwnd,
+            ..Default::default()
+        };
+        match self {
+            #[cfg(any(not(feature = "windows-installed"), test))]
+            Self::WindowId(id) => identifier.uID = id,
+            #[cfg(any(feature = "windows-installed", test))]
+            Self::Guid(guid) => identifier.guidItem = guid,
+        }
+        identifier
+    }
+
+    fn matches_callback(self, packed: LPARAM) -> bool {
+        let _ = packed;
+        match self {
+            // guidItem overrides uID, so the high word is not a valid GUID
+            // routing key. This dedicated callback window owns one icon.
+            #[cfg(any(feature = "windows-installed", test))]
+            Self::Guid(_) => true,
+            #[cfg(any(not(feature = "windows-installed"), test))]
+            Self::WindowId(id) => (packed as u32 >> 16) as u16 == id as u16,
+        }
+    }
+}
 
 thread_local! {
     /// The native owner is deliberately thread-local: HWND/HMENU/HICON never
@@ -68,8 +139,16 @@ pub fn start_windows_tray(
     language: Language,
     command_capacity: usize,
 ) -> anyhow::Result<(TrayHandle, mpsc::Receiver<TrayCommand>)> {
+    start_windows_tray_with_identity(language, command_capacity, default_tray_identity())
+}
+
+fn start_windows_tray_with_identity(
+    language: Language,
+    command_capacity: usize,
+    identity: TrayIdentity,
+) -> anyhow::Result<(TrayHandle, mpsc::Receiver<TrayCommand>)> {
     let (command_tx, command_rx) = mpsc::channel(command_capacity);
-    let tray = WindowsTray::new(command_tx, TrayState::new(language))?;
+    let tray = WindowsTray::new(command_tx, TrayState::new(language), identity)?;
 
     WINDOWS_TRAY.with(|slot| {
         let mut slot = slot.borrow_mut();
@@ -129,7 +208,11 @@ struct WindowsTray {
 }
 
 impl WindowsTray {
-    fn new(command_tx: mpsc::Sender<TrayCommand>, state: TrayState) -> anyhow::Result<Self> {
+    fn new(
+        command_tx: mpsc::Sender<TrayCommand>,
+        state: TrayState,
+        identity: TrayIdentity,
+    ) -> anyhow::Result<Self> {
         // SAFETY: All calls in this constructor execute on the active Winit UI
         // thread. The Box address passed to CreateWindowExW remains stable for
         // the lifetime of the HWND.
@@ -186,6 +269,7 @@ impl WindowsTray {
                 taskbar_created,
                 command_tx,
                 command_overflow_warned: false,
+                identity,
                 state,
                 presentation,
             });
@@ -288,6 +372,7 @@ struct WindowState {
     taskbar_created: u32,
     command_tx: mpsc::Sender<TrayCommand>,
     command_overflow_warned: bool,
+    identity: TrayIdentity,
     state: TrayState,
     presentation: TrayPresentation,
 }
@@ -295,7 +380,7 @@ struct WindowState {
 impl WindowState {
     unsafe fn register_icon(&mut self) -> anyhow::Result<()> {
         let mut data = self.notify_data(
-            NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP | NIF_GUID,
+            NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP,
             &self.presentation.tooltip,
         );
         // SAFETY: data contains a live callback HWND and HICON owned by self.
@@ -322,7 +407,7 @@ impl WindowState {
         if !self.icon_registered || self.hwnd.is_null() {
             return;
         }
-        let data = self.notify_data(NIF_GUID, "");
+        let data = self.notify_data(0, "");
         // SAFETY: deletion is idempotently guarded by icon_registered.
         let _ = unsafe { Shell_NotifyIconW(NIM_DELETE, &data) };
         self.icon_registered = false;
@@ -345,7 +430,7 @@ impl WindowState {
                 }
             };
         }
-        let data = self.notify_data(NIF_TIP | NIF_SHOWTIP | NIF_GUID, &self.presentation.tooltip);
+        let data = self.notify_data(NIF_TIP | NIF_SHOWTIP, &self.presentation.tooltip);
         // SAFETY: data points to no borrowed buffers and targets our live HWND/GUID.
         if unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) } == 0 {
             let error = last_error("Shell_NotifyIconW(NIM_MODIFY tooltip)");
@@ -365,13 +450,12 @@ impl WindowState {
         let mut data = NOTIFYICONDATAW {
             cbSize: size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: self.hwnd,
-            uID: TRAY_ICON_ID,
             uFlags: flags,
             uCallbackMessage: TRAY_CALLBACK_MESSAGE,
             hIcon: self.icon,
-            guidItem: TRAY_GUID,
             ..Default::default()
         };
+        self.identity.apply_to_notify_data(&mut data);
         data.szTip = utf16_array::<128>(tooltip);
         data
     }
@@ -488,12 +572,8 @@ unsafe extern "system" fn tray_window_proc(
         }
 
         if message == TRAY_CALLBACK_MESSAGE {
-            let packed_callback = lparam as u32;
-            if (packed_callback >> 16) as u16 != TRAY_ICON_ID as u16 {
-                return 0;
-            }
-            let callback = packed_callback & 0xffff;
-            match classify_callback(callback) {
+            let identity = unsafe { (*state_ptr).identity };
+            match classify_callback(identity, lparam) {
                 TrayCallbackAction::PrimaryActivation => unsafe {
                     (&mut *state_ptr)
                         .send_command(TrayCommand::Window(TrayWindowCommand::PrimaryActivation));
@@ -526,35 +606,45 @@ unsafe extern "system" fn tray_window_proc(
 unsafe fn show_context_menu(state_ptr: *mut WindowState, packed_position: WPARAM) {
     // Capture the native handles, then end the Rust borrow before calling
     // TrackPopupMenuEx because it runs a nested Windows message loop.
-    let (hwnd, menu) = unsafe {
+    let (hwnd, menu, identity) = unsafe {
         let state = &mut *state_ptr;
         if state.menu_tracking {
             return;
         }
         state.menu_tracking = true;
-        (state.hwnd, state.menu)
+        (state.hwnd, state.menu, state.identity)
     };
 
-    let mut point = point_from_packed_position(packed_position);
-    if point.x == -1 && point.y == -1 {
-        // SAFETY: GetCursorPos writes one initialized POINT.
-        let _ = unsafe { GetCursorPos(&mut point) };
-    }
+    let point = unsafe { context_menu_point(hwnd, identity, packed_position) };
+    let alignment = menu_alignment_flag(unsafe { GetSystemMetrics(SM_MENUDROPALIGNMENT) } != 0);
 
     // TPM_RETURNCMD | TPM_NONOTIFY keeps WM_COMMAND out of the nested loop.
-    // WM_NULL is the documented notification-area menu-dismissal handoff.
+    // The owner must be foreground or clicking outside will not dismiss the menu.
     let _ = unsafe { SetForegroundWindow(hwnd) };
     let selected = unsafe {
         TrackPopupMenuEx(
             menu,
-            TPM_LEFTALIGN | TPM_TOPALIGN | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
+            alignment | TPM_RIGHTBUTTON | TPM_RETURNCMD | TPM_NONOTIFY,
             point.x,
             point.y,
             hwnd,
             null(),
         )
     };
+    // WM_NULL completes the documented notification-area menu-dismissal handoff.
     let _ = unsafe { PostMessageW(hwnd, WM_NULL, 0, 0) };
+
+    let mut focus_data = NOTIFYICONDATAW {
+        cbSize: size_of::<NOTIFYICONDATAW>() as u32,
+        hWnd: hwnd,
+        ..Default::default()
+    };
+    identity.apply_to_notify_data(&mut focus_data);
+    // Return keyboard focus to the notification area after either selection or
+    // cancellation, as required for notification-icon shortcut menus.
+    if unsafe { Shell_NotifyIconW(NIM_SETFOCUS, &focus_data) } == 0 {
+        tracing::debug!("Windows notification area rejected NIM_SETFOCUS");
+    }
 
     if unsafe { GetWindowLongPtrW(hwnd, GWLP_USERDATA) as *mut WindowState } != state_ptr {
         return;
@@ -566,6 +656,32 @@ unsafe fn show_context_menu(state_ptr: *mut WindowState, packed_position: WPARAM
     state.finish_menu_tracking();
     if selected > 0 {
         state.send_menu_command(selected as u16);
+    }
+}
+
+unsafe fn context_menu_point(hwnd: HWND, identity: TrayIdentity, packed_position: WPARAM) -> POINT {
+    let point = point_from_packed_position(packed_position);
+    if point.x != -1 || point.y != -1 {
+        return point;
+    }
+
+    let identifier = identity.identifier(hwnd);
+    let mut icon_rect = RECT::default();
+    // SAFETY: identifier and icon_rect are valid for the duration of the call.
+    // The API documents S_OK specifically; S_FALSE must use the cursor fallback.
+    if unsafe { Shell_NotifyIconGetRect(&identifier, &mut icon_rect) } == 0 {
+        return POINT {
+            x: icon_rect.left + (icon_rect.right - icon_rect.left) / 2,
+            y: icon_rect.top + (icon_rect.bottom - icon_rect.top) / 2,
+        };
+    }
+
+    let mut cursor = POINT::default();
+    // SAFETY: GetCursorPos writes one initialized POINT on success.
+    if unsafe { GetCursorPos(&mut cursor) } != 0 {
+        cursor
+    } else {
+        POINT { x: 0, y: 0 }
     }
 }
 
@@ -920,11 +1036,23 @@ enum TrayCallbackAction {
     Ignore,
 }
 
-fn classify_callback(code: u32) -> TrayCallbackAction {
-    match code {
+fn classify_callback(identity: TrayIdentity, packed: LPARAM) -> TrayCallbackAction {
+    if !identity.matches_callback(packed) {
+        return TrayCallbackAction::Ignore;
+    }
+
+    match packed as u32 & 0xffff {
         NIN_SELECT | NIN_KEYSELECT => TrayCallbackAction::PrimaryActivation,
         WM_CONTEXTMENU => TrayCallbackAction::ContextMenu,
         _ => TrayCallbackAction::Ignore,
+    }
+}
+
+fn menu_alignment_flag(drop_alignment: bool) -> u32 {
+    if drop_alignment {
+        TPM_RIGHTALIGN
+    } else {
+        TPM_LEFTALIGN
     }
 }
 
@@ -1035,19 +1163,81 @@ mod tests {
 
     #[test]
     fn callback_classification_covers_mouse_keyboard_and_context_menu() {
+        let guid_identity = TrayIdentity::Guid(TRAY_GUID);
         assert_eq!(
-            classify_callback(NIN_SELECT),
+            classify_callback(guid_identity, NIN_SELECT as LPARAM),
             TrayCallbackAction::PrimaryActivation
         );
         assert_eq!(
-            classify_callback(NIN_KEYSELECT),
+            classify_callback(
+                guid_identity,
+                ((u16::MAX as u32) << 16 | NIN_KEYSELECT) as LPARAM,
+            ),
             TrayCallbackAction::PrimaryActivation
         );
+
+        let window_id = TrayIdentity::WindowId(TRAY_ICON_ID);
         assert_eq!(
-            classify_callback(WM_CONTEXTMENU),
+            classify_callback(window_id, (TRAY_ICON_ID << 16 | WM_CONTEXTMENU) as LPARAM,),
             TrayCallbackAction::ContextMenu
         );
-        assert_eq!(classify_callback(123_456), TrayCallbackAction::Ignore);
+        assert_eq!(
+            classify_callback(
+                window_id,
+                ((TRAY_ICON_ID + 1) << 16 | WM_CONTEXTMENU) as LPARAM,
+            ),
+            TrayCallbackAction::Ignore
+        );
+        assert_eq!(
+            classify_callback(window_id, (TRAY_ICON_ID << 16 | 0xffff) as LPARAM),
+            TrayCallbackAction::Ignore
+        );
+    }
+
+    #[test]
+    fn build_mode_selects_path_appropriate_identity() {
+        #[cfg(feature = "windows-installed")]
+        assert!(matches!(
+            default_tray_identity(),
+            TrayIdentity::Guid(guid)
+                if guid.data1 == TRAY_GUID.data1
+                    && guid.data2 == TRAY_GUID.data2
+                    && guid.data3 == TRAY_GUID.data3
+                    && guid.data4 == TRAY_GUID.data4
+        ));
+
+        #[cfg(not(feature = "windows-installed"))]
+        assert!(matches!(
+            default_tray_identity(),
+            TrayIdentity::WindowId(TRAY_ICON_ID)
+        ));
+    }
+
+    #[test]
+    fn notification_identity_populates_every_native_identifier_consistently() {
+        let mut numeric = NOTIFYICONDATAW::default();
+        TrayIdentity::WindowId(TRAY_ICON_ID).apply_to_notify_data(&mut numeric);
+        assert_eq!(numeric.uID, TRAY_ICON_ID);
+        assert_eq!(numeric.uFlags & NIF_GUID, 0);
+
+        let mut guid_data = NOTIFYICONDATAW::default();
+        TrayIdentity::Guid(TRAY_GUID).apply_to_notify_data(&mut guid_data);
+        assert_eq!(guid_data.uID, 0);
+        assert_ne!(guid_data.uFlags & NIF_GUID, 0);
+        assert_eq!(guid_data.guidItem.data1, TRAY_GUID.data1);
+
+        let numeric_identifier = TrayIdentity::WindowId(TRAY_ICON_ID).identifier(null_mut());
+        assert_eq!(numeric_identifier.uID, TRAY_ICON_ID);
+        let guid_identifier = TrayIdentity::Guid(TRAY_GUID).identifier(null_mut());
+        assert_eq!(guid_identifier.guidItem.data4, TRAY_GUID.data4);
+    }
+
+    #[test]
+    fn context_menu_helpers_preserve_signed_coordinates_and_system_alignment() {
+        let point = point_from_packed_position(((0xffec_u32 << 16) | 0xfff6) as WPARAM);
+        assert_eq!((point.x, point.y), (-10, -20));
+        assert_eq!(menu_alignment_flag(false), TPM_LEFTALIGN);
+        assert_eq!(menu_alignment_flag(true), TPM_RIGHTALIGN);
     }
 
     #[test]
@@ -1074,11 +1264,29 @@ mod tests {
     #[test]
     #[ignore = "requires an interactive Windows Explorer notification area"]
     fn native_shell_registration_update_and_cleanup_smoke_test() {
-        let (_handle, _commands) =
-            start_windows_tray(Language::English, 4).expect("register tray icon");
+        run_native_shell_smoke(TrayIdentity::WindowId(0x7ffe), "Portable identity");
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        let unique_bytes = unique.to_le_bytes();
+        let test_guid = GUID {
+            data1: unique as u32 ^ std::process::id(),
+            data2: (unique >> 32) as u16,
+            data3: (unique >> 48) as u16,
+            data4: unique_bytes[8..].try_into().expect("eight GUID tail bytes"),
+        };
+        run_native_shell_smoke(TrayIdentity::Guid(test_guid), "Disposable GUID");
+    }
+
+    fn run_native_shell_smoke(identity: TrayIdentity, title: &str) {
+        let (_handle, _commands) = start_windows_tray_with_identity(Language::English, 4, identity)
+            .expect("register tray icon");
+        assert!(is_available(), "registered tray must be reported available");
         update_state(TrayState {
             is_playing: true,
-            title: Some("Rustle Tray Smoke Test".into()),
+            title: Some(format!("Rustle Tray Smoke Test — {title}")),
             artist: Some("Rustle".into()),
             play_mode: PlayMode::Shuffle,
             ncm_song_id: Some(1),
@@ -1086,6 +1294,11 @@ mod tests {
             language: Language::English,
         })
         .expect("update registered tray icon");
+        assert!(is_available(), "updated tray must remain available");
         shutdown();
+        assert!(
+            !is_available(),
+            "shutdown tray must be reported unavailable"
+        );
     }
 }

@@ -44,6 +44,7 @@ pub fn start_macos_tray(
     let tray = TrayIconBuilder::new()
         .with_menu(Box::new(menu))
         .with_menu_on_left_click(true)
+        .with_menu_on_right_click(true)
         .with_tooltip(tooltip(&state))
         .with_icon(icon)
         .with_icon_as_template(true)

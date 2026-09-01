@@ -11,6 +11,10 @@ readme = "README.md"
 keywords = ["music", "player", "netease", "iced", "gui"]
 categories = ["multimedia::audio"]
 
+[features]
+default = []
+windows-installed = []
+
 [dependencies]
 iced = { version = "=0.15.0-dev", features = ["tokio", "advanced", "canvas", "image", "svg", "debug"] }
 iced_runtime = { version = "=0.15.0-dev" }

@@ -116,34 +116,46 @@ pub struct TrayHandle {
     _private: (),
 }
 
+#[cfg(target_os = "linux")]
 impl TrayHandle {
-    /// Apply the newest state. Intermediate snapshots intentionally are not queued.
+    /// Submit the newest state to the asynchronous StatusNotifierItem service.
     pub fn update(&self, state: TrayState) {
-        #[cfg(target_os = "linux")]
-        {
-            let handle = self.handle.clone();
-            tokio::spawn(async move {
-                if handle
-                    .update(|tray| tray.update_state(state))
-                    .await
-                    .is_none()
-                {
-                    tracing::warn!("Linux system tray service stopped before state update");
-                }
-            });
-        }
+        let handle = self.handle.clone();
+        tokio::spawn(async move {
+            if handle
+                .update(|tray| tray.update_state(state))
+                .await
+                .is_none()
+            {
+                tracing::warn!("Linux system tray service stopped before state update");
+            }
+        });
+    }
+}
 
-        #[cfg(target_os = "windows")]
+#[cfg(target_os = "windows")]
+impl TrayHandle {
+    /// Apply the newest state synchronously on the Win32/Winit UI thread.
+    pub fn update(&self, state: TrayState) {
         if let Err(error) = windows::update_state(state) {
             tracing::warn!(%error, "Failed to update Windows system tray state");
         }
+    }
+}
 
-        #[cfg(target_os = "macos")]
+#[cfg(target_os = "macos")]
+impl TrayHandle {
+    /// Apply the newest state synchronously on the AppKit main thread.
+    pub fn update(&self, state: TrayState) {
         if let Err(error) = macos::update_state(state) {
             tracing::warn!(%error, "Failed to update macOS status item state");
         }
+    }
+}
 
-        #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+#[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
+impl TrayHandle {
+    pub fn update(&self, state: TrayState) {
         let _ = state;
     }
 }
@@ -174,7 +186,9 @@ pub fn is_available() -> bool {
 
     #[cfg(target_os = "linux")]
     {
-        TRAY_HANDLE.get().is_some()
+        TRAY_HANDLE
+            .get()
+            .is_some_and(|handle| !handle.handle.is_closed())
     }
 
     #[cfg(not(any(target_os = "linux", target_os = "windows", target_os = "macos")))]
