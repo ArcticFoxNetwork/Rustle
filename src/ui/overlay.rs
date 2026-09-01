@@ -16,7 +16,7 @@ use iced::widget::{button, column, container, mouse_area, opaque, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Shadow};
 
 use crate::app::Message;
-use crate::ui::theme;
+use crate::ui::{theme, widgets};
 
 // ============================================================================
 // ModalKind — Enum covering all modal dialog types with typed payloads
@@ -179,18 +179,32 @@ pub fn modal_view<'a>(
 
 /// Header bar: title left, close button (✕) right.
 pub fn modal_header(title: String, on_close: Message) -> Element<'static, Message> {
+    let close_button = button(text("✕").size(16.0).style(|theme| text::Style {
+        color: Some(theme::text_muted(theme)),
+    }))
+    .style(close_btn_style)
+    .padding([6, 10])
+    .on_press(on_close);
+    let close_button =
+        widgets::hover_surface(close_button).style(|theme, progress| container::Style {
+            background: Some(Background::Color(theme::hover_bg_alpha(
+                theme,
+                0.08 * progress,
+            ))),
+            border: Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
     container(
         row![
             text(title).size(14.0).style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
             }),
             iced::widget::Space::new().width(Length::Fill),
-            button(text("✕").size(16.0).style(|theme| text::Style {
-                color: Some(theme::text_muted(theme))
-            }))
-            .style(close_btn_style)
-            .padding([6, 10])
-            .on_press(on_close),
+            close_button,
         ]
         .align_y(Alignment::Center)
         .padding([14, 20]),
@@ -234,14 +248,9 @@ fn divider() -> Element<'static, Message> {
         .into()
 }
 
-fn close_btn_style(_: &iced::Theme, s: button::Status) -> button::Style {
+fn close_btn_style(_: &iced::Theme, _status: button::Status) -> button::Style {
     button::Style {
-        background: matches!(s, button::Status::Hovered | button::Status::Pressed)
-            .then_some(Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.08))),
-        border: Border {
-            radius: 6.0.into(),
-            ..Default::default()
-        },
+        background: Some(Background::Color(Color::TRANSPARENT)),
         ..Default::default()
     }
 }

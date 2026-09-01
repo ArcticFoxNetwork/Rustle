@@ -6,7 +6,7 @@ use iced::{Alignment, Color, Element, Fill, Length, Padding};
 use crate::app::Message;
 use crate::database::DbSong;
 use crate::features::PlayMode;
-use crate::ui::theme::MEDIUM_WEIGHT;
+use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::widgets::{self, ControlSize, SliderSize};
 use crate::ui::{icons, theme};
 use crate::utils;
@@ -50,7 +50,35 @@ pub fn view(
             s,
         );
 
-        let cover_btn = button(cover_content)
+        let cover_size = s.px();
+        let cover_radius = s.radius();
+        let expand_overlay = widgets::hover_surface(
+            container(
+                text("⌃")
+                    .size(24)
+                    .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
+            )
+            .width(cover_size)
+            .height(cover_size)
+            .center_x(cover_size)
+            .center_y(cover_size),
+        )
+        .style(move |_theme, progress| iced::widget::container::Style {
+            background: Some(iced::Background::Color(Color::from_rgba(
+                0.0,
+                0.0,
+                0.0,
+                0.58 * progress,
+            ))),
+            text_color: Some(Color::from_rgba(1.0, 1.0, 1.0, progress)),
+            border: iced::Border {
+                radius: cover_radius.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        });
+
+        let cover_btn = button(iced::widget::stack![cover_content, expand_overlay])
             .padding(0)
             .style(|_theme, _status| button::Style {
                 background: Some(iced::Background::Color(Color::TRANSPARENT)),
@@ -70,7 +98,7 @@ pub fn view(
                     .style(|theme| text::Style {
                         color: Some(theme::text_primary(theme)),
                     })
-                    .font(iced::Font::DEFAULT.weight(MEDIUM_WEIGHT))
+                    .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
                     .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
             )
             .max_width(TEXT_MAX_WIDTH)
@@ -119,7 +147,10 @@ pub fn view(
             Space::new().height(0).into()
         };
 
-        let song_details = column![title_btn, artist_btn, quality_badge].spacing(2);
+        let artist_and_quality = row![artist_btn, quality_badge]
+            .spacing(6)
+            .align_y(Alignment::Center);
+        let song_details = column![title_btn, artist_and_quality].spacing(2);
 
         row![cover_btn, Space::new().width(12), song_details]
             .align_y(Alignment::Center)
@@ -214,21 +245,23 @@ pub fn view(
             }),
     )
     .padding(8)
-    .style(|theme, status| {
-        let bg = match status {
-            button::Status::Hovered => theme::hover_bg(theme),
-            _ => Color::TRANSPARENT,
-        };
-        button::Style {
-            background: Some(iced::Background::Color(bg)),
+    .style(|_theme, _status| button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        ..Default::default()
+    })
+    .on_press(Message::ToggleQueue);
+    let queue_btn =
+        widgets::hover_surface(queue_btn).style(|theme, progress| iced::widget::container::Style {
+            background: Some(iced::Background::Color(theme::hover_bg_alpha(
+                theme,
+                0.12 * progress,
+            ))),
             border: iced::Border {
                 radius: 18.0.into(),
                 ..Default::default()
             },
             ..Default::default()
-        }
-    })
-    .on_press(Message::ToggleQueue);
+        });
 
     let volume_area = iced::widget::mouse_area(
         row![volume_icon, Space::new().width(8), volume_slider,]

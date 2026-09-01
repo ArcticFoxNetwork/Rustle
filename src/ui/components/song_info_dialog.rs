@@ -6,7 +6,7 @@ use iced::{Border, Color, Element, Length};
 
 use crate::app::{Message, SongEditDialogState};
 use crate::i18n::{Key, Locale};
-use crate::ui::theme;
+use crate::ui::{theme, widgets};
 
 const COVER_SIZE: f32 = 192.0;
 
@@ -70,16 +70,28 @@ fn edit_cover_block<'a>(
         12.0,
     );
     let label = replace_label.to_string();
+    let replace_button = button(text(label).size(11.0))
+        .style(dim_btn)
+        .padding([4, 12])
+        .on_press(Message::PickSongEditCover(song_id));
+    let replace_button =
+        widgets::hover_surface(replace_button).style(|theme, progress| container::Style {
+            background: Some(iced::Background::Color(theme::lerp_color(
+                Color::TRANSPARENT,
+                theme::surface_hover(theme),
+                progress,
+            ))),
+            border: r(8.0),
+            ..Default::default()
+        });
+
     column![
         container(img)
             .width(COVER_SIZE)
             .height(COVER_SIZE)
             .style(cover_border),
         spacer(6.0),
-        button(text(label).size(11.0))
-            .style(dim_btn)
-            .padding([4, 12])
-            .on_press(Message::PickSongEditCover(song_id)),
+        replace_button,
     ]
     .into()
 }
@@ -129,16 +141,14 @@ fn msg_f(sid: i64, field: &str, v: String) -> Message {
 
 fn dim_btn(t: &iced::Theme, s: button::Status) -> button::Style {
     let hover = matches!(s, button::Status::Hovered | button::Status::Pressed);
-    let bg = hover.then_some(iced::Background::Color(theme::surface_hover(t)));
     let tc = if hover {
         theme::text_primary(t)
     } else {
         theme::text_secondary(t)
     };
     button::Style {
-        background: bg,
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
         text_color: tc,
-        border: r(8.0),
         ..Default::default()
     }
 }

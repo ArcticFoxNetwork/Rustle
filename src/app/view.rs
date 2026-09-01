@@ -771,79 +771,91 @@ impl App {
 // ── Modal button helpers ──
 
 fn cancel_btn(locale: crate::i18n::Locale) -> Element<'static, Message> {
-    button(text(locale.get(crate::i18n::Key::Cancel).to_string()).size(14))
+    let button = button(text(locale.get(crate::i18n::Key::Cancel).to_string()).size(14))
         .padding([8, 20])
-        .style(|theme, status| {
-            let bg = matches!(status, button::Status::Hovered)
-                .then_some(iced::Background::Color(theme::hover_bg(theme)));
-            button::Style {
-                background: bg,
-                text_color: theme::text_secondary(theme),
-                border: iced::Border {
-                    radius: 8.0.into(),
-                    width: 1.0,
-                    color: theme::divider(theme),
-                },
-                ..Default::default()
-            }
+        .style(|theme, _status| button::Style {
+            background: Some(iced::Background::Color(Color::TRANSPARENT)),
+            text_color: theme::text_secondary(theme),
+            ..Default::default()
         })
-        .on_press(Message::DismissTopModal)
+        .on_press(Message::DismissTopModal);
+    widgets::hover_surface(button)
+        .style(|theme, progress| container::Style {
+            background: Some(iced::Background::Color(theme::lerp_color(
+                Color::TRANSPARENT,
+                theme::hover_bg(theme),
+                progress,
+            ))),
+            border: iced::Border {
+                radius: 8.0.into(),
+                width: 1.0,
+                color: theme::divider(theme),
+            },
+            ..Default::default()
+        })
         .into()
 }
 
 fn save_btn(locale: crate::i18n::Locale) -> Element<'static, Message> {
-    button(
+    let button = button(
         text(locale.get(crate::i18n::Key::Save).to_string())
             .size(14)
             .color(Color::BLACK),
     )
     .padding([8, 20])
-    .style(|_theme, status| {
-        let bg = matches!(status, button::Status::Hovered)
-            .then_some(theme::ACCENT_PINK_HOVER)
-            .unwrap_or(theme::ACCENT_PINK);
-        button::Style {
-            background: Some(iced::Background::Color(bg)),
-            text_color: Color::BLACK,
+    .style(|_theme, _status| button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        text_color: Color::BLACK,
+        ..Default::default()
+    })
+    .on_press(Message::SavePlaylistEdits);
+    widgets::hover_surface(button)
+        .style(|_theme, progress| container::Style {
+            background: Some(iced::Background::Color(theme::lerp_color(
+                theme::ACCENT_PINK,
+                theme::ACCENT_PINK_HOVER,
+                progress,
+            ))),
             border: iced::Border {
                 radius: 8.0.into(),
                 ..Default::default()
             },
             ..Default::default()
-        }
-    })
-    .on_press(Message::SavePlaylistEdits)
-    .into()
+        })
+        .into()
 }
 
 fn delete_btn(locale: crate::i18n::Locale) -> Element<'static, Message> {
-    button(
+    let button = button(
         text(locale.get(crate::i18n::Key::Delete).to_string())
             .size(14)
             .color(Color::WHITE),
     )
     .padding([8, 20])
-    .style(|theme, status| {
-        let bg = match status {
-            button::Status::Hovered => theme::danger_hover(theme),
-            _ => theme::danger(theme),
-        };
-        button::Style {
-            background: Some(iced::Background::Color(bg)),
-            text_color: Color::WHITE,
+    .style(|_theme, _status| button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        text_color: Color::WHITE,
+        ..Default::default()
+    })
+    .on_press(Message::ConfirmDeletePlaylist);
+    widgets::hover_surface(button)
+        .style(|theme, progress| container::Style {
+            background: Some(iced::Background::Color(theme::lerp_color(
+                theme::danger(theme),
+                theme::danger_hover(theme),
+                progress,
+            ))),
             border: iced::Border {
                 radius: 8.0.into(),
                 ..Default::default()
             },
             ..Default::default()
-        }
-    })
-    .on_press(Message::ConfirmDeletePlaylist)
-    .into()
+        })
+        .into()
 }
 
 fn exit_btn(locale: crate::i18n::Locale) -> Element<'static, Message> {
-    button(
+    let button = button(
         text(locale.get(crate::i18n::Key::ExitDialogExit).to_string())
             .size(14)
             .style(|theme| text::Style {
@@ -851,70 +863,81 @@ fn exit_btn(locale: crate::i18n::Locale) -> Element<'static, Message> {
             }),
     )
     .padding([8, 20])
-    .style(|theme, status| {
-        let bg = match status {
-            button::Status::Hovered => theme::hover_bg(theme),
-            _ => theme::surface_container(theme),
-        };
-        button::Style {
-            background: Some(iced::Background::Color(bg)),
-            text_color: theme::text_primary(theme),
+    .style(|theme, _status| button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        text_color: theme::text_primary(theme),
+        ..Default::default()
+    })
+    .on_press(Message::ConfirmExit);
+    widgets::hover_surface(button)
+        .style(|theme, progress| container::Style {
+            background: Some(iced::Background::Color(theme::lerp_color(
+                theme::surface_container(theme),
+                theme::surface_hover(theme),
+                progress,
+            ))),
             border: iced::Border {
                 radius: 8.0.into(),
                 width: 1.0,
                 color: theme::divider(theme),
             },
             ..Default::default()
-        }
-    })
-    .on_press(Message::ConfirmExit)
-    .into()
+        })
+        .into()
 }
 
 fn minimize_btn(locale: crate::i18n::Locale) -> Element<'static, Message> {
-    button(
+    let button = button(
         text(locale.get(crate::i18n::Key::ExitDialogMinimize).to_string())
             .size(14)
-            .color(Color::BLACK),
+            .style(|theme| text::Style {
+                color: Some(theme::background(theme)),
+            }),
     )
     .padding([8, 20])
-    .style(|theme, status| {
-        let bg = match status {
-            button::Status::Hovered => theme::hover_bg(theme),
-            _ => theme::text_primary(theme),
-        };
-        button::Style {
-            background: Some(iced::Background::Color(bg)),
-            text_color: Color::BLACK,
+    .style(|theme, _status| button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        text_color: theme::background(theme),
+        ..Default::default()
+    })
+    .on_press(Message::MinimizeToTray);
+    widgets::hover_surface(button)
+        .style(|theme, progress| container::Style {
+            background: Some(iced::Background::Color(theme::lerp_color(
+                theme::text_primary(theme),
+                theme::play_button_hover(theme),
+                progress,
+            ))),
             border: iced::Border {
                 radius: 8.0.into(),
                 ..Default::default()
             },
             ..Default::default()
-        }
-    })
-    .on_press(Message::MinimizeToTray)
-    .into()
+        })
+        .into()
 }
 
 fn accent_btn(label: String, msg: Message) -> Element<'static, Message> {
-    button(text(label).size(14).color(Color::WHITE))
+    let button = button(text(label).size(14).color(Color::WHITE))
         .padding([8, 20])
-        .style(|_theme, status| {
-            let bg = match status {
-                button::Status::Hovered => theme::ACCENT_PINK_HOVER,
-                _ => theme::ACCENT_PINK,
-            };
-            button::Style {
-                background: Some(iced::Background::Color(bg)),
-                text_color: Color::WHITE,
-                border: iced::Border {
-                    radius: 8.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
+        .style(|_theme, _status| button::Style {
+            background: Some(iced::Background::Color(Color::TRANSPARENT)),
+            text_color: Color::WHITE,
+            ..Default::default()
         })
-        .on_press(msg)
+        .on_press(msg);
+    widgets::hover_surface(button)
+        .style(|_theme, progress| container::Style {
+            background: Some(iced::Background::Color(theme::lerp_color(
+                theme::ACCENT_PINK,
+                theme::ACCENT_PINK_HOVER,
+                progress,
+            ))),
+            border: iced::Border {
+                radius: 8.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
         .into()
 }

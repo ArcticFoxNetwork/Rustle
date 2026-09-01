@@ -6,13 +6,12 @@ use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 
 use crate::app::{ContextMenuAction, ContextMenuState, Message};
 use crate::i18n::{Key, Locale};
-use crate::ui::{icons, theme};
+use crate::ui::{icons, theme, widgets};
 use crate::utils::Source;
 
 const W: f32 = 240.0;
 const H: f32 = 36.0;
-const PAD_X: f32 = 12.0;
-const PAD_Y: f32 = 6.0;
+const PAD: f32 = 8.0;
 const DIV_V: f32 = 4.0;
 const DIV_X: f32 = 12.0;
 
@@ -35,7 +34,7 @@ pub fn view(menu: &ContextMenuState, locale: Locale, sw: f32, sh: f32) -> Elemen
         n += 1.0;
     }
     let dv: f32 = 4.0;
-    let mh = n * H + dv * (1.0 + DIV_V * 2.0) + PAD_Y * 2.0;
+    let mh = n * H + dv * (1.0 + DIV_V * 2.0) + PAD * 2.0;
 
     let x = if menu.x + W > sw {
         (menu.x - W - 4.0).max(0.0)
@@ -150,21 +149,17 @@ pub fn view(menu: &ContextMenuState, locale: Locale, sw: f32, sh: f32) -> Elemen
         msg(RemoveFromList, id),
     ));
 
-    let panel = container(
-        column(items)
-            .spacing(0)
-            .padding(Padding::new(PAD_Y).left(PAD_X).right(PAD_X)),
-    )
-    .width(W)
-    .style(|t| container::Style {
-        background: Some(Background::Color(glass(t))),
-        border: Border {
-            radius: 12.0.into(),
-            width: 1.0,
-            color: glass_border(t),
-        },
-        ..Default::default()
-    });
+    let panel = container(column(items).spacing(0).padding(PAD))
+        .width(W)
+        .style(|t| container::Style {
+            background: Some(Background::Color(glass(t))),
+            border: Border {
+                radius: 12.0.into(),
+                width: 1.0,
+                color: glass_border(t),
+            },
+            ..Default::default()
+        });
 
     let positioned = container(panel).padding(Padding::new(0.0).top(y).left(x));
     container(iced::widget::stack([backdrop.into(), positioned.into()]))
@@ -201,7 +196,7 @@ fn item<'a>(
     let lb = label.to_string();
     let is_accent = style.is_accent();
     let is_danger = style.is_danger();
-    button(
+    let button = button(
         container(
             row![
                 svg(icon)
@@ -235,30 +230,35 @@ fn item<'a>(
     )
     .width(Length::Fill)
     .height(Length::Fixed(H))
-    .style(move |t, s| {
-        let hover = matches!(s, button::Status::Hovered | button::Status::Pressed);
-        let bg = if hover {
-            if is_accent {
-                Some(Background::Color(purple_bg()))
-            } else if is_danger {
-                Some(Background::Color(red_bg()))
-            } else {
-                Some(Background::Color(theme::surface_hover(t)))
-            }
-        } else {
-            None
-        };
-        button::Style {
-            background: bg,
-            border: Border {
-                radius: 6.0.into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
+    .style(|_theme, _status| button::Style {
+        background: Some(Background::Color(Color::TRANSPARENT)),
+        ..Default::default()
     })
-    .on_press(msg)
-    .into()
+    .on_press(msg);
+
+    widgets::hover_surface(button)
+        .style(move |theme, progress| {
+            let hover = if is_accent {
+                purple_bg()
+            } else if is_danger {
+                red_bg()
+            } else {
+                theme::surface_hover(theme)
+            };
+            container::Style {
+                background: Some(Background::Color(theme::lerp_color(
+                    Color::TRANSPARENT,
+                    hover,
+                    progress,
+                ))),
+                border: Border {
+                    radius: 6.0.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .into()
 }
 
 fn purple() -> Color {

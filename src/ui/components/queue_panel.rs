@@ -9,7 +9,7 @@ use crate::app::Message;
 use crate::database::DbSong;
 use crate::i18n::{Key, Locale};
 use crate::ui::animation::SmoothScrollTarget;
-use crate::ui::{icons, theme};
+use crate::ui::{icons, theme, widgets};
 
 /// Queue popup width
 pub const QUEUE_PANEL_WIDTH: f32 = 360.0;
@@ -246,26 +246,30 @@ fn build_queue_item(song: DbSong, index: usize, is_current: bool) -> Element<'st
     let btn = button(item_row)
         .width(Fill)
         .padding(0)
-        .style(move |theme, status| {
-            let bg_color = if is_current {
-                theme::hover_bg(theme)
-            } else {
-                Color::TRANSPARENT
-            };
-            let hover_bg = match status {
-                button::Status::Hovered | button::Status::Pressed => theme::hover_bg(theme),
-                _ => bg_color,
-            };
-            button::Style {
-                background: Some(iced::Background::Color(hover_bg)),
-                border: iced::Border {
-                    radius: 4.0.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
+        .style(|_theme, _status| button::Style {
+            background: Some(iced::Background::Color(Color::TRANSPARENT)),
+            ..Default::default()
         })
         .on_press(Message::PlayQueueIndex(index));
+    let btn = widgets::hover_surface(btn).style(move |theme, progress| {
+        let base = if is_current {
+            theme::hover_bg(theme)
+        } else {
+            Color::TRANSPARENT
+        };
+        iced::widget::container::Style {
+            background: Some(iced::Background::Color(theme::lerp_color(
+                base,
+                theme::hover_bg(theme),
+                progress,
+            ))),
+            border: iced::Border {
+                radius: 4.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    });
 
     mouse_area(btn)
         .on_right_press(Message::RightClickSong(song_id))

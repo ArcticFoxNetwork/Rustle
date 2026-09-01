@@ -3,7 +3,7 @@
 //! Provides a reusable play mode toggle button with tooltip.
 //! Used by both the player bar and lyrics page.
 
-use iced::widget::{button, svg, text, tooltip};
+use iced::widget::{button, container, svg, text, tooltip};
 use iced::{Color, Element};
 
 use crate::app::Message;
@@ -63,31 +63,34 @@ pub fn view(play_mode: PlayMode, size: ButtonSize, is_fm_mode: bool) -> Element<
         Message::CyclePlayMode
     };
 
+    let button = button(
+        svg(svg::Handle::from_memory(play_mode_icon.as_bytes()))
+            .width(icon_size)
+            .height(icon_size)
+            .style(move |_theme, _status| svg::Style {
+                color: Some(theme::text_secondary(_theme)),
+            }),
+    )
+    .padding(padding)
+    .style(|_theme, _status| button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        ..Default::default()
+    })
+    .on_press(on_press);
+    let button = super::hover_surface(button).style(move |theme, progress| container::Style {
+        background: Some(iced::Background::Color(theme::hover_bg_alpha(
+            theme,
+            0.12 * progress,
+        ))),
+        border: iced::Border {
+            radius: radius.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+
     tooltip(
-        button(
-            svg(svg::Handle::from_memory(play_mode_icon.as_bytes()))
-                .width(icon_size)
-                .height(icon_size)
-                .style(move |_theme, _status| svg::Style {
-                    color: Some(theme::text_secondary(_theme)),
-                }),
-        )
-        .padding(padding)
-        .style(move |theme, status| {
-            let bg = match status {
-                button::Status::Hovered => crate::ui::theme::hover_bg(theme),
-                _ => Color::TRANSPARENT,
-            };
-            button::Style {
-                background: Some(iced::Background::Color(bg)),
-                border: iced::Border {
-                    radius: radius.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            }
-        })
-        .on_press(on_press),
+        button,
         text(play_mode_tooltip).size(theme::TEXT_SIZE_CAPTION),
         tooltip::Position::Top,
     )

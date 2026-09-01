@@ -654,6 +654,17 @@ pub fn hover_bg_alpha(theme: &Theme, alpha: f32) -> Color {
     }
 }
 
+/// Interpolate between two colors for animated UI state transitions.
+pub fn lerp_color(from: Color, to: Color, progress: f32) -> Color {
+    let progress = progress.clamp(0.0, 1.0);
+    Color::from_rgba(
+        from.r + (to.r - from.r) * progress,
+        from.g + (to.g - from.g) * progress,
+        from.b + (to.b - from.b) * progress,
+        from.a + (to.a - from.a) * progress,
+    )
+}
+
 /// Animated text color based on progress (for hover animations)
 pub fn animated_text(theme: &Theme, progress: f32) -> Color {
     if is_dark(theme) {
@@ -688,17 +699,6 @@ pub fn close_button_hover(theme: &Theme) -> Color {
         color!(0xead6d7)
     };
     color.a = 0.72;
-    color
-}
-
-/// Close button pressed (slightly stronger muted red)
-pub fn close_button_pressed(theme: &Theme) -> Color {
-    let mut color = if is_dark(theme) {
-        color!(0x5c3638)
-    } else {
-        color!(0xdfc0c2)
-    };
-    color.a = 0.82;
     color
 }
 

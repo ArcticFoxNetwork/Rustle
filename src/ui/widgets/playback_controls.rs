@@ -87,8 +87,10 @@ pub fn play_button_with_buffering(
     // Offset to visually center the triangle (play icon is not symmetric)
     let offset = if is_playing || show_loading {
         0.0
+    } else if size == ControlSize::Small {
+        2.0
     } else {
-        if size == ControlSize::Small { 2.0 } else { 3.0 }
+        3.0
     };
 
     let btn = button(
@@ -115,27 +117,35 @@ pub fn play_button_with_buffering(
     .padding(0)
     .width(btn_size)
     .height(btn_size)
-    .style(move |theme, status| {
-        let bg = if show_loading {
-            theme::surface_container(theme)
-        } else {
-            match status {
-                button::Status::Hovered => theme::play_button_hover(theme),
-                _ => theme::text_primary(theme),
-            }
-        };
-        button::Style {
-            background: Some(iced::Background::Color(bg)),
-            border: iced::Border {
-                radius: (btn_size / 2.0).into(),
-                ..Default::default()
-            },
-            ..Default::default()
-        }
-    });
+    .style(|_theme, _status| button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        ..Default::default()
+    })
+    .on_press(Message::TogglePlayback);
 
     // Always enable button - user can pause even during buffering
-    btn.on_press(Message::TogglePlayback).into()
+    super::hover_surface(btn)
+        .enabled(!show_loading)
+        .style(move |theme, progress| {
+            let background = if show_loading {
+                theme::surface_container(theme)
+            } else {
+                theme::lerp_color(
+                    theme::text_primary(theme),
+                    theme::play_button_hover(theme),
+                    progress,
+                )
+            };
+            container::Style {
+                background: Some(iced::Background::Color(background)),
+                border: iced::Border {
+                    radius: (btn_size / 2.0).into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .into()
 }
 
 /// Build the previous song button
@@ -157,30 +167,31 @@ pub fn prev_button(size: ControlSize, disabled: bool) -> Element<'static, Messag
             }),
     )
     .padding(padding)
-    .style(move |theme, status| {
-        let bg = if disabled {
-            Color::TRANSPARENT
-        } else {
-            match status {
-                button::Status::Hovered => crate::ui::theme::hover_bg(theme),
-                _ => Color::TRANSPARENT,
-            }
-        };
-        button::Style {
-            background: Some(iced::Background::Color(bg)),
+    .style(|_theme, _status| button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        ..Default::default()
+    });
+
+    let btn = if disabled {
+        btn
+    } else {
+        btn.on_press(Message::PrevSong)
+    };
+
+    super::hover_surface(btn)
+        .enabled(!disabled)
+        .style(move |theme, progress| container::Style {
+            background: Some(iced::Background::Color(theme::hover_bg_alpha(
+                theme,
+                0.12 * progress,
+            ))),
             border: iced::Border {
                 radius: radius.into(),
                 ..Default::default()
             },
             ..Default::default()
-        }
-    });
-
-    if disabled {
-        btn.into()
-    } else {
-        btn.on_press(Message::PrevSong).into()
-    }
+        })
+        .into()
 }
 
 /// Build the next song button
@@ -189,7 +200,7 @@ pub fn next_button(size: ControlSize) -> Element<'static, Message> {
     let padding = size.skip_button_padding();
     let radius = size.skip_button_radius();
 
-    button(
+    let btn = button(
         svg(svg::Handle::from_memory(icons::SKIP_NEXT.as_bytes()))
             .width(icon_size)
             .height(icon_size)
@@ -198,22 +209,25 @@ pub fn next_button(size: ControlSize) -> Element<'static, Message> {
             }),
     )
     .padding(padding)
-    .style(move |theme, status| {
-        let bg = match status {
-            button::Status::Hovered => crate::ui::theme::hover_bg(theme),
-            _ => Color::TRANSPARENT,
-        };
-        button::Style {
-            background: Some(iced::Background::Color(bg)),
+    .style(|_theme, _status| button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        ..Default::default()
+    })
+    .on_press(Message::NextSong);
+
+    super::hover_surface(btn)
+        .style(move |theme, progress| container::Style {
+            background: Some(iced::Background::Color(theme::hover_bg_alpha(
+                theme,
+                0.12 * progress,
+            ))),
             border: iced::Border {
                 radius: radius.into(),
                 ..Default::default()
             },
             ..Default::default()
-        }
-    })
-    .on_press(Message::NextSong)
-    .into()
+        })
+        .into()
 }
 
 /// Build the favorite button used by the player bar.
@@ -250,27 +264,31 @@ pub fn favorite_button(
             }),
     )
     .padding(padding)
-    .style(move |theme, status| {
-        let bg = if enabled && matches!(status, button::Status::Hovered) {
-            theme::hover_bg(theme)
-        } else {
-            Color::TRANSPARENT
-        };
-        button::Style {
-            background: Some(iced::Background::Color(bg)),
+    .style(|_theme, _status| button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        ..Default::default()
+    });
+
+    let btn = if let Some((song_id, _)) = favorite {
+        btn.on_press(Message::ToggleFavorite(song_id))
+    } else {
+        btn
+    };
+
+    super::hover_surface(btn)
+        .enabled(enabled)
+        .style(move |theme, progress| container::Style {
+            background: Some(iced::Background::Color(theme::hover_bg_alpha(
+                theme,
+                0.12 * progress,
+            ))),
             border: iced::Border {
                 radius: radius.into(),
                 ..Default::default()
             },
             ..Default::default()
-        }
-    });
-
-    if let Some((song_id, _)) = favorite {
-        btn.on_press(Message::ToggleFavorite(song_id)).into()
-    } else {
-        btn.into()
-    }
+        })
+        .into()
 }
 
 /// Build the player bar controls, including play mode and favorite actions.

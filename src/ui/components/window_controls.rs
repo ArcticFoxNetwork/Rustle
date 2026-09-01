@@ -2,13 +2,13 @@
 //! Positioned at top of the application with navigation on left, search in center, and controls on right
 
 use iced::widget::{Space, button, container, image, mouse_area, row, stack, svg, text, tooltip};
-use iced::{Alignment, ContentFit, Element, Fill, Length, Padding};
+use iced::{Alignment, Color, ContentFit, Element, Fill, Length, Padding};
 
 use crate::app::{ImageState, Message, UserInfo};
 use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::components::search_bar::{self, SearchBarStyle};
-use crate::ui::theme;
+use crate::ui::{theme, widgets};
 
 /// Build the complete top bar with navigation buttons on left, search bar in center, user info and window controls on right
 pub fn view<'a>(
@@ -27,52 +27,54 @@ pub fn view<'a>(
     let nav_icon_size = 18;
 
     // Navigation buttons (left side)
-    let back_btn = tooltip(
-        button(
-            svg(svg::Handle::from_memory(BACK_ICON.as_bytes()))
-                .width(nav_icon_size)
-                .height(nav_icon_size)
-                .style(move |theme, _status| svg::Style {
-                    color: Some(if can_go_back {
-                        theme::text_secondary(theme)
-                    } else {
-                        theme::TEXT_DISABLED
-                    }),
+    let back_button = button(
+        svg(svg::Handle::from_memory(BACK_ICON.as_bytes()))
+            .width(nav_icon_size)
+            .height(nav_icon_size)
+            .style(move |theme, _status| svg::Style {
+                color: Some(if can_go_back {
+                    theme::text_secondary(theme)
+                } else {
+                    theme::TEXT_DISABLED
                 }),
-        )
-        .width(button_size)
-        .height(button_size)
-        .style(move |theme, status| nav_button_style(theme, status, can_go_back))
-        .on_press_maybe(if can_go_back {
-            Some(Message::NavigateBack)
-        } else {
-            None
-        }),
+            }),
+    )
+    .width(button_size)
+    .height(button_size)
+    .style(move |theme, status| nav_button_style(theme, status, can_go_back))
+    .on_press_maybe(if can_go_back {
+        Some(Message::NavigateBack)
+    } else {
+        None
+    });
+    let back_btn = tooltip(
+        animated_nav_button(back_button.into(), can_go_back),
         locale.get(Key::Back),
         tooltip::Position::Bottom,
     );
 
-    let forward_btn = tooltip(
-        button(
-            svg(svg::Handle::from_memory(FORWARD_ICON.as_bytes()))
-                .width(nav_icon_size)
-                .height(nav_icon_size)
-                .style(move |theme, _status| svg::Style {
-                    color: Some(if can_go_forward {
-                        theme::text_secondary(theme)
-                    } else {
-                        theme::TEXT_DISABLED
-                    }),
+    let forward_button = button(
+        svg(svg::Handle::from_memory(FORWARD_ICON.as_bytes()))
+            .width(nav_icon_size)
+            .height(nav_icon_size)
+            .style(move |theme, _status| svg::Style {
+                color: Some(if can_go_forward {
+                    theme::text_secondary(theme)
+                } else {
+                    theme::TEXT_DISABLED
                 }),
-        )
-        .width(button_size)
-        .height(button_size)
-        .style(move |theme, status| nav_button_style(theme, status, can_go_forward))
-        .on_press_maybe(if can_go_forward {
-            Some(Message::NavigateForward)
-        } else {
-            None
-        }),
+            }),
+    )
+    .width(button_size)
+    .height(button_size)
+    .style(move |theme, status| nav_button_style(theme, status, can_go_forward))
+    .on_press_maybe(if can_go_forward {
+        Some(Message::NavigateForward)
+    } else {
+        None
+    });
+    let forward_btn = tooltip(
+        animated_nav_button(forward_button.into(), can_go_forward),
         locale.get(Key::Forward),
         tooltip::Position::Bottom,
     );
@@ -182,57 +184,60 @@ pub fn view<'a>(
             });
 
     // Window control buttons (right side)
+    let settings_button = button(
+        svg(svg::Handle::from_memory(
+            crate::ui::icons::SETTINGS.as_bytes(),
+        ))
+        .width(icon_size)
+        .height(icon_size)
+        .style(|theme, _status| svg::Style {
+            color: Some(theme::text_secondary(theme)),
+        }),
+    )
+    .width(button_size)
+    .height(button_size)
+    .style(window_button_style)
+    .on_press(Message::OpenSettings);
     let settings_btn = tooltip(
-        button(
-            svg(svg::Handle::from_memory(
-                crate::ui::icons::SETTINGS.as_bytes(),
-            ))
-            .width(icon_size)
-            .height(icon_size)
-            .style(|theme, _status| svg::Style {
-                color: Some(theme::text_secondary(theme)),
-            }),
-        )
-        .width(button_size)
-        .height(button_size)
-        .style(window_button_style)
-        .on_press(Message::OpenSettings),
+        animated_window_button(settings_button.into()),
         locale.get(Key::Settings),
         tooltip::Position::Bottom,
     );
 
-    let minimize_btn = tooltip(
-        button(
-            svg(svg::Handle::from_memory(MINIMIZE_ICON.as_bytes()))
-                .width(icon_size)
-                .height(icon_size)
-                .style(|theme, _status| svg::Style {
-                    color: Some(theme::text_secondary(theme)),
-                }),
-        )
-        .width(button_size)
-        .height(button_size)
-        .style(window_button_style)
-        .on_press(Message::WindowMinimize),
-        locale.get(Key::Minimize),
-        tooltip::Position::Bottom,
-    );
-
-    let maximize_btn = tooltip(
-        button(
-            svg(svg::Handle::from_memory(
-                crate::ui::icons::maximize_restore(is_maximized).as_bytes(),
-            ))
+    let minimize_button = button(
+        svg(svg::Handle::from_memory(MINIMIZE_ICON.as_bytes()))
             .width(icon_size)
             .height(icon_size)
             .style(|theme, _status| svg::Style {
                 color: Some(theme::text_secondary(theme)),
             }),
-        )
-        .width(button_size)
-        .height(button_size)
-        .style(window_button_style)
-        .on_press(Message::WindowMaximize),
+    )
+    .width(button_size)
+    .height(button_size)
+    .style(window_button_style)
+    .on_press(Message::WindowMinimize);
+    let minimize_btn = tooltip(
+        animated_window_button(minimize_button.into()),
+        locale.get(Key::Minimize),
+        tooltip::Position::Bottom,
+    );
+
+    let maximize_button = button(
+        svg(svg::Handle::from_memory(
+            crate::ui::icons::maximize_restore(is_maximized).as_bytes(),
+        ))
+        .width(icon_size)
+        .height(icon_size)
+        .style(|theme, _status| svg::Style {
+            color: Some(theme::text_secondary(theme)),
+        }),
+    )
+    .width(button_size)
+    .height(button_size)
+    .style(window_button_style)
+    .on_press(Message::WindowMaximize);
+    let maximize_btn = tooltip(
+        animated_window_button(maximize_button.into()),
         locale.get(if is_maximized {
             Key::Restore
         } else {
@@ -241,19 +246,20 @@ pub fn view<'a>(
         tooltip::Position::Bottom,
     );
 
+    let close_button = button(
+        svg(svg::Handle::from_memory(CLOSE_ICON.as_bytes()))
+            .width(icon_size)
+            .height(icon_size)
+            .style(|theme, _status| svg::Style {
+                color: Some(theme::text_secondary(theme)),
+            }),
+    )
+    .width(button_size)
+    .height(button_size)
+    .style(close_button_style)
+    .on_press(Message::RequestClose);
     let close_btn = tooltip(
-        button(
-            svg(svg::Handle::from_memory(CLOSE_ICON.as_bytes()))
-                .width(icon_size)
-                .height(icon_size)
-                .style(|theme, _status| svg::Style {
-                    color: Some(theme::text_secondary(theme)),
-                }),
-        )
-        .width(button_size)
-        .height(button_size)
-        .style(close_button_style)
-        .on_press(Message::RequestClose),
+        animated_close_button(close_button.into()),
         locale.get(Key::Close),
         tooltip::Position::Bottom,
     );
@@ -331,7 +337,7 @@ pub fn view<'a>(
 /// Navigation button style (back/forward)
 fn nav_button_style(theme: &iced::Theme, status: button::Status, enabled: bool) -> button::Style {
     let base = button::Style {
-        background: Some(iced::Background::Color(theme::hover_bg_alpha(theme, 0.08))),
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
         text_color: if enabled {
             theme::text_secondary(theme)
         } else {
@@ -351,12 +357,7 @@ fn nav_button_style(theme: &iced::Theme, status: button::Status, enabled: bool) 
 
     match status {
         button::Status::Hovered => button::Style {
-            background: Some(iced::Background::Color(theme::hover_bg_alpha(theme, 0.14))),
             text_color: theme::text_primary(theme),
-            ..base
-        },
-        button::Status::Pressed => button::Style {
-            background: Some(iced::Background::Color(theme::hover_bg_alpha(theme, 0.18))),
             ..base
         },
         _ => base,
@@ -378,12 +379,7 @@ fn window_button_style(theme: &iced::Theme, status: button::Status) -> button::S
 
     match status {
         button::Status::Hovered => button::Style {
-            background: Some(iced::Background::Color(theme::hover_bg_alpha(theme, 0.14))),
             text_color: theme::text_primary(theme),
-            ..base
-        },
-        button::Status::Pressed => button::Style {
-            background: Some(iced::Background::Color(theme::hover_bg_alpha(theme, 0.18))),
             ..base
         },
         _ => base,
@@ -405,17 +401,61 @@ fn close_button_style(theme: &iced::Theme, status: button::Status) -> button::St
 
     match status {
         button::Status::Hovered => button::Style {
-            background: Some(iced::Background::Color(theme::close_button_hover(theme))),
-            text_color: theme::text_primary(theme),
-            ..base
-        },
-        button::Status::Pressed => button::Style {
-            background: Some(iced::Background::Color(theme::close_button_pressed(theme))),
             text_color: theme::text_primary(theme),
             ..base
         },
         _ => base,
     }
+}
+
+fn animated_nav_button<'a>(content: Element<'a, Message>, enabled: bool) -> Element<'a, Message> {
+    widgets::hover_surface(content)
+        .enabled(enabled)
+        .style(move |theme, progress| iced::widget::container::Style {
+            background: Some(iced::Background::Color(theme::hover_bg_alpha(
+                theme,
+                0.08 + 0.06 * progress,
+            ))),
+            border: iced::Border {
+                radius: 18.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn animated_window_button<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
+    widgets::hover_surface(content)
+        .style(|theme, progress| iced::widget::container::Style {
+            background: Some(iced::Background::Color(theme::hover_bg_alpha(
+                theme,
+                0.14 * progress,
+            ))),
+            border: iced::Border {
+                radius: 18.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
+}
+
+fn animated_close_button<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
+    widgets::hover_surface(content)
+        .style(|theme, progress| iced::widget::container::Style {
+            background: Some(iced::Background::Color(theme::lerp_color(
+                Color::TRANSPARENT,
+                theme::close_button_hover(theme),
+                progress,
+            ))),
+            border: iced::Border {
+                radius: 18.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into()
 }
 
 // Navigation icons - clean chevron style

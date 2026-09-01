@@ -5,7 +5,7 @@ use iced::{Alignment, Color, Element, Fill};
 
 use crate::app::Message;
 use crate::i18n::{Key, Locale};
-use crate::ui::{icons, theme};
+use crate::ui::{icons, theme, widgets};
 
 /// Content-only body for unified modal layout (cover + form fields, no backdrop/title/buttons).
 pub fn view_body<'a>(
@@ -56,14 +56,24 @@ pub fn view_body<'a>(
             }),
     )
     .padding([4, 8])
-    .style(|theme, status| {
-        let bg = matches!(status, button::Status::Hovered).then_some(theme::hover_bg(theme));
-        button::Style {
-            background: bg.map(iced::Background::Color),
-            ..Default::default()
-        }
+    .style(|_theme, _status| button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        ..Default::default()
     })
     .on_press(Message::PickCoverImage);
+    let change_cover_btn = widgets::hover_surface(change_cover_btn).style(|theme, progress| {
+        iced::widget::container::Style {
+            background: Some(iced::Background::Color(theme::hover_bg_alpha(
+                theme,
+                0.12 * progress,
+            ))),
+            border: iced::Border {
+                radius: 6.0.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    });
 
     let cover_section = column![
         container(cover_content)
