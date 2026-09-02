@@ -311,6 +311,9 @@ impl App {
         }
 
         debug!("Opening NCM playlist: {}", playlist_id);
+        if is_daily_recommend {
+            self.invalidate_daily_recommend_cover();
+        }
         self.ui.playlist_page.ncm_load_generation =
             self.ui.playlist_page.ncm_load_generation.wrapping_add(1);
         let generation = self.ui.playlist_page.ncm_load_generation;
@@ -1963,6 +1966,8 @@ impl App {
         self.ui.discover.load_generation = self.ui.discover.load_generation.wrapping_add(1);
         let generation = self.ui.discover.load_generation;
 
+        self.invalidate_daily_recommend_cover();
+
         let client = self.core.ncm_client.clone();
         let is_logged_in = self.core.is_logged_in;
         self.ui.discover.recommended_loading = is_logged_in;
@@ -2107,5 +2112,15 @@ impl App {
         ));
 
         Task::batch(tasks)
+    }
+
+    /// Daily Recommend is backed by a synthetic playlist ID (`0`), but its
+    /// cover is derived from the current first recommendation and can change
+    /// on every refresh. Never reuse the stable playlist cache for it.
+    fn invalidate_daily_recommend_cover(&mut self) {
+        let kind = crate::image::ImageKind::PlaylistCover;
+        let id = 0;
+        self.ui.image_state.invalidate(kind, id);
+        crate::utils::remove_cached_image(&kind.cache_dir(), &kind.file_stem(id));
     }
 }

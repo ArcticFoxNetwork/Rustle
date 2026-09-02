@@ -145,6 +145,21 @@ impl ImageState {
         self.inflight.remove(&(kind, id));
     }
 
+    /// Drop a cache entry and every request for a resource whose remote
+    /// identity is no longer stable. Dynamic resources (such as the synthetic
+    /// Daily Recommend playlist) reuse an application-level ID while their
+    /// cover URL changes between refreshes.
+    pub fn invalidate(&mut self, kind: crate::image::ImageKind, id: u64) {
+        let key = (kind, id);
+        self.entries.remove(&key);
+        if let Some(request) = self.inflight.remove(&key) {
+            request.handle.abort();
+        }
+        self.pending
+            .retain(|request| (request.kind, request.id) != key);
+        self.queued.remove(&key);
+    }
+
     pub fn is_current_inflight(
         &self,
         kind: crate::image::ImageKind,
@@ -315,6 +330,41 @@ mod image_state_tests {
         state.cancel_pending_and_inflight();
 
         assert!(state.get(key.0, key.1).is_some());
+    }
+
+    #[test]
+    fn invalidating_image_work_drops_dynamic_cache_entries() {
+        let mut state = ImageState::default();
+        let key = (crate::image::ImageKind::PlaylistCover, 0);
+
+        assert!(state.enqueue_with_scope(
+            key.0,
+            key.1,
+            "https://example.invalid/daily-cover.jpg".to_string(),
+            ImageRequestScope::Page,
+        ));
+        let request = state.pop_pending().expect("daily cover request");
+        let (_task, handle) = iced::Task::perform(async {}, |_| ()).abortable();
+        let observer = handle.clone();
+        state.mark_inflight(
+            request.kind,
+            request.id,
+            request.generation,
+            request.scope,
+            handle,
+        );
+
+        state.invalidate(key.0, key.1);
+
+        assert!(observer.is_aborted());
+        assert!(!state.is_inflight(key.0, key.1));
+        assert!(!state.is_queued(key.0, key.1));
+
+        state.insert_path(key.0, key.1, PathBuf::from("daily-cover.jpg"));
+
+        state.invalidate(key.0, key.1);
+
+        assert!(state.get(key.0, key.1).is_none());
     }
 
     #[test]

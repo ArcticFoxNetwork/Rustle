@@ -27,6 +27,19 @@ pub(crate) fn find_cached_image(dir: &Path, stem: &str) -> Option<PathBuf> {
         .find(|p| p.exists())
 }
 
+/// Remove all cached image variants for a cache key.
+///
+/// This is used for remote resources whose URL changes while their logical
+/// application ID stays the same. Cache entries are disposable, so a failed
+/// removal is intentionally ignored and the next request can still recover by
+/// replacing whichever variant remains.
+pub(crate) fn remove_cached_image(dir: &Path, stem: &str) {
+    for ext in IMAGE_EXTENSIONS {
+        let _ = std::fs::remove_file(dir.join(format!("{}.{}", stem, ext)));
+    }
+    let _ = std::fs::remove_file(dir.join(format!("{}.tmp", stem)));
+}
+
 // ============================================================================
 // Color Extraction
 // ============================================================================
