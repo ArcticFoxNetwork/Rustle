@@ -427,7 +427,12 @@ impl App {
             StreamingEventKind::Progress(downloaded, total) => {
                 tracing::trace!("Streaming progress: {}/{} bytes", downloaded, total)
             }
-            StreamingEventKind::Complete => tracing::info!("Streaming download complete"),
+            StreamingEventKind::DownloadComplete => {
+                tracing::info!("Streaming download complete; final cache publication pending")
+            }
+            StreamingEventKind::Complete => {
+                tracing::info!("Streaming download and cache publication complete")
+            }
             StreamingEventKind::CacheFinalized(path) => {
                 tracing::info!("Streaming cache finalized at {:?}", path)
             }

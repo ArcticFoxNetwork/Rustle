@@ -902,8 +902,7 @@ fn storage_section(
     let cache_size_str = if let Some(stats) = cache_stats {
         format_size_bytes(stats.total_bytes)
     } else {
-        let cache_size = get_cache_size(&cache_dir);
-        format_size_bytes(cache_size)
+        format_size_bytes(crate::cache::calculate_cache_stats().total_bytes)
     };
 
     column![
@@ -1006,28 +1005,6 @@ fn storage_section(
     ]
     .spacing(0)
     .into()
-}
-
-/// Get total size of cache directory in bytes
-fn get_cache_size(path: &std::path::Path) -> u64 {
-    if !path.exists() {
-        return 0;
-    }
-
-    let mut total = 0u64;
-    if let Ok(entries) = std::fs::read_dir(path) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_file() {
-                if let Ok(meta) = path.metadata() {
-                    total += meta.len();
-                }
-            } else if path.is_dir() {
-                total += get_cache_size(&path);
-            }
-        }
-    }
-    total
 }
 
 /// Format bytes to human readable string

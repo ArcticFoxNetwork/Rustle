@@ -4,14 +4,15 @@
 //! Handles caching, URL fetching, and cover downloading.
 //! Uses SharedBuffer for streaming playback (no file-based streaming).
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::api::NcmClient;
 use crate::api::{NcmQualityLevel, TrackUrl};
 use crate::audio::identity::PlaybackContext;
 use crate::audio::streaming::{
-    SharedBuffer, StreamingEvent, StreamingEventKind, StreamingIdentity, start_buffer_download,
-    wait_for_buffer_playable,
+    AudioCacheKey, SharedBuffer, StreamingEvent, StreamingEventKind, StreamingIdentity,
+    start_buffer_download, wait_for_buffer_playable,
 };
 use crate::database::DbSong;
 
@@ -62,6 +63,130 @@ impl From<&TrackUrl> for ResolvedAudioQuality {
     }
 }
 
+#[derive(Debug)]
+pub(crate) enum ResolvedAudioSource {
+    Cached {
+        path: PathBuf,
+        quality: ResolvedAudioQuality,
+    },
+    Streaming {
+        url: String,
+        cache_path: PathBuf,
+        cache_key: AudioCacheKey,
+        quality: ResolvedAudioQuality,
+    },
+}
+
+fn cached_quality(
+    requested: NcmQualityLevel,
+    actual: NcmQualityLevel,
+    path: &std::path::Path,
+) -> ResolvedAudioQuality {
+    ResolvedAudioQuality {
+        requested,
+        actual,
+        bitrate: None,
+        size: std::fs::metadata(path).ok().map(|metadata| metadata.len()),
+        format: path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(ToString::to_string),
+        sample_rate: None,
+        bit_depth: None,
+        channels: None,
+        channel_layout: None,
+        immerse_type: None,
+    }
+}
+
+/// Resolve the single authoritative audio cache/URL state shared by playback
+/// and preload. Fallback and actual-quality selection belong here; callers only
+/// decide how to consume a cached path or the shared streaming coordinator.
+pub(crate) async fn resolve_audio_source(
+    client: &NcmClient,
+    song: &DbSong,
+) -> Result<ResolvedAudioSource, String> {
+    let ncm_id = get_ncm_id(song);
+    let song_cache_dir = crate::utils::songs_cache_dir();
+    std::fs::create_dir_all(&song_cache_dir)
+        .map_err(|error| format!("failed to create song cache directory: {error}"))?;
+
+    let requested_level = client.current_quality_level();
+    let requested_stem = format!("{}_{}", ncm_id, requested_level.api_level());
+    let requested_candidate = crate::utils::find_cached_audio(&song_cache_dir, &requested_stem);
+    if let Some(cached_path) = requested_candidate.as_ref() {
+        if crate::cache::is_audio_cache_complete(&cached_path, ncm_id, requested_level, None) {
+            return Ok(ResolvedAudioSource::Cached {
+                quality: cached_quality(requested_level, requested_level, &cached_path),
+                path: cached_path.clone(),
+            });
+        }
+    }
+
+    let url = client
+        .resolve_track_url(ncm_id, requested_level)
+        .await
+        .map_err(|error| {
+            format!(
+                "歌曲 {ncm_id} 获取官方播放地址失败（音质偏好 {}）：{error}",
+                requested_level.api_level()
+            )
+        })?;
+    let quality = ResolvedAudioQuality::from(&url);
+    let actual_stem = format!("{}_{}", ncm_id, url.level.api_level());
+    if actual_stem == requested_stem {
+        if let Some(cached_path) = requested_candidate {
+            if crate::cache::is_audio_cache_complete(&cached_path, ncm_id, url.level, url.size) {
+                return Ok(ResolvedAudioSource::Cached {
+                    path: cached_path,
+                    quality,
+                });
+            }
+            tracing::info!(
+                ?cached_path,
+                ncm_id,
+                "Removing incomplete preferred-quality cache"
+            );
+            crate::cache::remove_audio_cache(&cached_path);
+        }
+    } else {
+        if let Some(cached_path) = requested_candidate {
+            tracing::info!(
+                ?cached_path,
+                ncm_id,
+                "Removing unverifiable cache after actual-quality negotiation"
+            );
+            crate::cache::remove_audio_cache(&cached_path);
+        }
+    }
+    if actual_stem != requested_stem
+        && let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &actual_stem)
+    {
+        if crate::cache::is_audio_cache_complete(&cached_path, ncm_id, url.level, url.size) {
+            return Ok(ResolvedAudioSource::Cached {
+                path: cached_path,
+                quality,
+            });
+        }
+        tracing::info!(
+            ?cached_path,
+            ncm_id,
+            "Removing incomplete actual-quality cache"
+        );
+        crate::cache::remove_audio_cache(&cached_path);
+    }
+
+    Ok(ResolvedAudioSource::Streaming {
+        url: url.url,
+        cache_path: song_cache_dir.join(actual_stem),
+        cache_key: AudioCacheKey {
+            song_id: ncm_id,
+            actual_quality: url.level,
+        },
+        quality,
+    })
+}
+
 /// Check if a song needs resolution (NCM song without local file)
 pub fn needs_resolution(song: &DbSong) -> bool {
     // NCM songs have negative IDs or file_path starting with "ncm://"
@@ -109,119 +234,23 @@ pub async fn resolve_song(
 ) -> Result<ResolvedSong, String> {
     let ncm_id = get_ncm_id(song);
     let identity = StreamingIdentity::Playback(context.clone());
-
-    let song_cache_dir = crate::utils::songs_cache_dir();
-
-    std::fs::create_dir_all(&song_cache_dir)
-        .map_err(|error| format!("failed to create song cache directory: {error}"))?;
-
-    // Use stem for cache lookup - actual extension determined by format detection
-    let requested_level = client.current_quality_level();
-    // Before URL negotiation, only the preferred-level cache can be identified
-    // safely. After negotiation, the server-returned actual-level cache is
-    // checked separately below.
-    let requested_stem = format!("{}_{}", ncm_id, requested_level.api_level());
-
     // Cover downloads are handled by app::update::images; song resolution only reuses cache.
     let cover_path = resolve_cover(ncm_id).await;
-
-    // Check if the exact requested quality is already fully cached.
-    if let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &requested_stem) {
-        let file_size = std::fs::metadata(&cached_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-        // Use duration-based heuristic: 40KB/s at 320kbps
-        let expected_min_size = (song.duration_secs as u64) * 40 * 1024;
-        let is_complete =
-            file_size > 0 && (expected_min_size == 0 || file_size >= expected_min_size * 8 / 10);
-
-        if is_complete {
-            tracing::debug!(
-                "Song {} found in cache: {:?} ({} bytes)",
-                ncm_id,
-                cached_path,
-                file_size
-            );
-            let _ = event_tx
-                .send(StreamingEvent::new(
-                    identity.clone(),
-                    StreamingEventKind::Playable,
-                ))
-                .await;
-            let _ = event_tx
-                .send(StreamingEvent::new(
-                    identity.clone(),
-                    StreamingEventKind::Complete,
-                ))
-                .await;
-            return Ok(ResolvedSong {
-                finalized_cache_path: Some(cached_path.to_string_lossy().to_string()),
-                cover_path,
-                shared_buffer: None,
-                duration_secs: None,
-                quality: Some(ResolvedAudioQuality {
-                    requested: requested_level,
-                    actual: requested_level,
-                    bitrate: None,
-                    size: Some(file_size),
-                    format: cached_path
-                        .extension()
-                        .and_then(|value| value.to_str())
-                        .map(ToString::to_string),
-                    sample_rate: None,
-                    bit_depth: None,
-                    channels: None,
-                    channel_layout: None,
-                    immerse_type: None,
-                }),
-            });
-        }
-
-        tracing::info!(
-            "Song {} cache incomplete ({} bytes), using streaming buffer",
-            ncm_id,
-            file_size
-        );
-        // Remove incomplete cache file
-        let _ = std::fs::remove_file(&cached_path);
-    }
-
-    // Get song URL
-    tracing::info!("Downloading song {} from NCM (streaming)", ncm_id);
-    let url = match client.resolve_track_url(ncm_id, requested_level).await {
-        Ok(url) => url,
-        Err(error) => {
-            let message = format!(
-                "歌曲 {ncm_id} 获取官方播放地址失败（音质偏好 {}）：{error}",
-                requested_level.api_level()
-            );
+    let source = match resolve_audio_source(&client, song).await {
+        Ok(source) => source,
+        Err(message) => {
             tracing::error!("{message}");
             let _ = event_tx
                 .send(StreamingEvent::new(
-                    identity.clone(),
+                    identity,
                     StreamingEventKind::Error(message.clone()),
                 ))
                 .await;
             return Err(message);
         }
     };
-
-    let song_url = url.url.clone();
-    let quality = Some(ResolvedAudioQuality::from(&url));
-
-    // Use stem-based path - actual extension will be determined during download
-    // The download function will detect format and save with correct extension
-    let actual_stem = format!("{}_{}", ncm_id, url.level.api_level());
-    if actual_stem != requested_stem
-        && let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &actual_stem)
-    {
-        let file_size = std::fs::metadata(&cached_path)
-            .map(|metadata| metadata.len())
-            .unwrap_or(0);
-        let expected_min_size = (song.duration_secs as u64) * 40 * 1024;
-        let is_complete =
-            file_size > 0 && (expected_min_size == 0 || file_size >= expected_min_size * 8 / 10);
-        if is_complete {
+    let (shared_buffer, quality) = match source {
+        ResolvedAudioSource::Cached { path, quality } => {
             let _ = event_tx
                 .send(StreamingEvent::new(
                     identity.clone(),
@@ -235,27 +264,29 @@ pub async fn resolve_song(
                 ))
                 .await;
             return Ok(ResolvedSong {
-                finalized_cache_path: Some(cached_path.to_string_lossy().to_string()),
+                finalized_cache_path: Some(path.to_string_lossy().to_string()),
                 cover_path,
                 shared_buffer: None,
                 duration_secs: None,
-                quality,
+                quality: Some(quality),
             });
         }
-        let _ = std::fs::remove_file(cached_path);
-    }
-    let cache_path = song_cache_dir.join(actual_stem);
-
-    // Use unified download function - content_length will be obtained from GET response
-    let shared_buffer =
-        start_buffer_download(song_url, cache_path.clone(), identity, Some(event_tx));
+        ResolvedAudioSource::Streaming {
+            url,
+            cache_path,
+            cache_key,
+            quality,
+        } => (
+            start_buffer_download(url, cache_path, cache_key, identity, Some(event_tx)),
+            quality,
+        ),
+    };
 
     if !wait_for_buffer_playable(&shared_buffer, 30).await {
         tracing::error!(
             "Song {} did not reach the streaming startup watermark",
             ncm_id
         );
-        shared_buffer.cancel();
         return Err(format!("歌曲 {ncm_id} 未达到流式播放启动缓冲水位"));
     }
 
@@ -266,7 +297,7 @@ pub async fn resolve_song(
         cover_path,
         shared_buffer: Some(shared_buffer),
         duration_secs: Some(song.duration_secs as u64),
-        quality,
+        quality: Some(quality),
     })
 }
 

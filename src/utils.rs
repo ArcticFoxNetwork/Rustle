@@ -38,6 +38,21 @@ pub(crate) fn remove_cached_image(dir: &Path, stem: &str) {
         let _ = std::fs::remove_file(dir.join(format!("{}.{}", stem, ext)));
     }
     let _ = std::fs::remove_file(dir.join(format!("{}.tmp", stem)));
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        let prefix = format!(".{stem}.");
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_file()
+                && path.extension().is_some_and(|ext| ext == "tmp")
+                && path
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .is_some_and(|name| name.starts_with(&prefix))
+            {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -290,6 +305,10 @@ pub fn automix_cache_dir() -> PathBuf {
     cache_dir().join("automix")
 }
 
+pub fn lyrics_cache_dir() -> PathBuf {
+    cache_dir().join("lyrics")
+}
+
 // ============================================================================
 // Audio Format Detection
 // ============================================================================
@@ -425,22 +444,31 @@ pub async fn download_img(
         return Some(existing);
     }
 
-    // Download to a temporary path first to detect format
-    let temp_path = parent.join(format!("{}.tmp", stem));
+    // Download to a process-unique temporary path first to detect format.
+    let temp_anchor = parent.join(stem);
+    let temp_path = crate::cache::unique_temp_path(&temp_anchor);
 
     match client.download_img(url, temp_path.clone(), resize).await {
         Ok(_) => {
+            if let Ok(file) = std::fs::File::open(&temp_path)
+                && let Err(error) = file.sync_all()
+            {
+                error!("Failed to sync downloaded image: {}", error);
+                drop(file);
+                crate::cache::cleanup_temp_file(&temp_path);
+                return None;
+            }
             // Read the file to detect format
             match std::fs::read(&temp_path) {
                 Ok(bytes) => {
                     let ext = detect_image_format(&bytes);
                     let final_path = parent.join(format!("{}.{}", stem, ext));
 
-                    // Rename temp file to final path with correct extension
-                    if let Err(e) = std::fs::rename(&temp_path, &final_path) {
+                    // Publish atomically, reusing an existing destination when
+                    // another request won the race.
+                    if let Err(e) = crate::cache::publish_or_reuse(&temp_path, &final_path, None) {
                         error!("Failed to rename temp file: {}", e);
-                        // Try to clean up temp file
-                        let _ = std::fs::remove_file(&temp_path);
+                        crate::cache::cleanup_temp_file(&temp_path);
                         return None;
                     }
 
@@ -448,14 +476,14 @@ pub async fn download_img(
                 }
                 Err(e) => {
                     error!("Failed to read downloaded image: {}", e);
-                    let _ = std::fs::remove_file(&temp_path);
+                    crate::cache::cleanup_temp_file(&temp_path);
                     None
                 }
             }
         }
         Err(e) => {
             error!("Failed to download image: {}", e);
-            let _ = std::fs::remove_file(&temp_path);
+            crate::cache::cleanup_temp_file(&temp_path);
             None
         }
     }

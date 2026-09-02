@@ -9,11 +9,11 @@
 //! Download thread writes to buffer, playback thread reads from it.
 //! Blocks when data is not yet available.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock, Weak};
 use std::time::{Duration, Instant};
 
 use crate::audio::identity::{PlaybackContext, PreloadIdentity};
@@ -182,13 +182,24 @@ pub enum StreamingIdentity {
     Preload(PreloadIdentity),
 }
 
+/// Stable identity for a persisted audio cache entry and its in-flight
+/// coordinator. Requested quality is deliberately excluded: the server's
+/// actual returned quality determines the bytes and cache key.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct AudioCacheKey {
+    pub song_id: u64,
+    pub actual_quality: crate::api::NcmQualityLevel,
+}
+
 #[derive(Debug, Clone)]
 pub enum StreamingEventKind {
     /// Enough data downloaded, playback can start.
     Playable,
     /// Download progress update (downloaded_bytes, total_bytes).
     Progress(u64, u64),
-    /// Download complete.
+    /// Remote bytes have all been received; persistence is not implied.
+    DownloadComplete,
+    /// Download and formal cache publication both completed.
     Complete,
     /// Final cache path after atomic rename.
     CacheFinalized(PathBuf),
@@ -259,16 +270,6 @@ impl SharedBufferHealth {
 
 type BufferCallback = Box<dyn Fn(BufferEvent) + Send + Sync>;
 
-/// Estimate content size from duration (40KB/s at 320kbps)
-pub fn estimate_size_from_duration(duration_secs: u64) -> u64 {
-    let estimated = duration_secs * 40 * 1024;
-    if estimated > 0 {
-        estimated
-    } else {
-        10 * 1024 * 1024
-    } // 10MB default
-}
-
 // ============ Buffer State ============
 
 /// Inner shared state
@@ -294,7 +295,8 @@ struct SharedBufferInner {
     /// cache file is complete after out-of-order Range windows.
     cached_prefix: AtomicU64,
     finalized_cache_path: RwLock<Option<PathBuf>>,
-    complete: AtomicBool,
+    download_complete: AtomicBool,
+    cache_finalized: AtomicBool,
     cancelled: AtomicBool,
     error: RwLock<Option<String>>,
     demand_stall_timeout: Duration,
@@ -303,15 +305,33 @@ struct SharedBufferInner {
     buffer_callback: RwLock<Option<BufferCallback>>,
 }
 
-struct CoordinatorGuard(SharedBuffer);
+static AUDIO_IN_FLIGHT: OnceLock<Mutex<HashMap<AudioCacheKey, Weak<SharedBufferInner>>>> =
+    OnceLock::new();
+
+fn audio_in_flight() -> &'static Mutex<HashMap<AudioCacheKey, Weak<SharedBufferInner>>> {
+    AUDIO_IN_FLIGHT.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+struct CoordinatorGuard {
+    buffer: SharedBuffer,
+    key: AudioCacheKey,
+}
 
 impl Drop for CoordinatorGuard {
     fn drop(&mut self) {
-        self.0
+        self.buffer
             .inner
             .coordinator_active
             .store(false, Ordering::Release);
-        self.0.inner.data_available.notify_all();
+        self.buffer.inner.data_available.notify_all();
+        let mut in_flight = audio_in_flight().lock();
+        let should_remove = in_flight
+            .get(&self.key)
+            .and_then(Weak::upgrade)
+            .is_some_and(|current| Arc::ptr_eq(&current, &self.buffer.inner));
+        if should_remove {
+            in_flight.remove(&self.key);
+        }
     }
 }
 
@@ -365,7 +385,8 @@ impl std::fmt::Debug for SharedBuffer {
         f.debug_struct("SharedBuffer")
             .field("total_size", &self.total_size())
             .field("downloaded", &self.downloaded())
-            .field("complete", &self.is_complete())
+            .field("download_complete", &self.is_download_complete())
+            .field("cache_finalized", &self.is_cache_finalized())
             .finish()
     }
 }
@@ -400,7 +421,8 @@ impl SharedBuffer {
                 coordinator_active: AtomicBool::new(false),
                 cached_prefix: AtomicU64::new(0),
                 finalized_cache_path: RwLock::new(None),
-                complete: AtomicBool::new(false),
+                download_complete: AtomicBool::new(false),
+                cache_finalized: AtomicBool::new(false),
                 cancelled: AtomicBool::new(false),
                 error: RwLock::new(None),
                 demand_stall_timeout,
@@ -653,7 +675,7 @@ impl SharedBuffer {
             let downloaded = self.inner.downloaded.load(Ordering::Acquire);
             let base = self.base_offset();
             let total = self.inner.total_size.load(Ordering::Acquire);
-            let is_complete = self.inner.complete.load(Ordering::Acquire);
+            let is_complete = self.inner.download_complete.load(Ordering::Acquire);
             let progress = (base, downloaded);
             if progress != last_progress {
                 last_progress = progress;
@@ -824,9 +846,17 @@ impl SharedBuffer {
         self.inner.total_size.store(size, Ordering::Release);
     }
 
-    /// Check if download is complete
+    /// Check if all remote bytes have been received.
     pub fn is_complete(&self) -> bool {
-        self.inner.complete.load(Ordering::Acquire)
+        self.is_download_complete()
+    }
+
+    pub fn is_download_complete(&self) -> bool {
+        self.inner.download_complete.load(Ordering::Acquire)
+    }
+
+    pub fn is_cache_finalized(&self) -> bool {
+        self.inner.cache_finalized.load(Ordering::Acquire)
     }
 
     /// Check if cancelled
@@ -852,7 +882,7 @@ impl SharedBuffer {
         if self.is_cancelled() {
             return SharedBufferHealth::Cancelled;
         }
-        if self.is_complete() || self.remote_eof_reached() {
+        if self.is_download_complete() || self.remote_eof_reached() {
             return SharedBufferHealth::Complete;
         }
         if self.inner.coordinator_active.load(Ordering::Acquire) {
@@ -885,11 +915,17 @@ impl SharedBuffer {
         true
     }
 
-    /// Mark download as complete
+    /// Mark remote download completion. Formal cache publication is tracked
+    /// separately by `mark_cache_finalized`.
     pub fn mark_complete(&self) {
-        self.inner.complete.store(true, Ordering::Release);
+        self.inner.download_complete.store(true, Ordering::Release);
         self.inner.data_available.notify_all();
         self.notify_callback(BufferEvent::Complete);
+    }
+
+    pub fn mark_cache_finalized(&self) {
+        self.inner.cache_finalized.store(true, Ordering::Release);
+        self.inner.data_available.notify_all();
     }
 
     /// Get download progress as fraction (0.0 to 1.0)
@@ -1035,7 +1071,6 @@ async fn fetch_range_chunk(
     url: &str,
     start: u64,
     end: u64,
-    identity: &StreamingIdentity,
     buffer: &SharedBuffer,
     epoch: u64,
 ) -> RangeFetchResult {
@@ -1043,7 +1078,7 @@ async fn fetch_range_chunk(
     let mut retries_completed = 0u8;
 
     loop {
-        if identity.is_cancelled() || buffer.is_cancelled() {
+        if buffer.is_cancelled() {
             return RangeFetchResult::Cancelled;
         }
         if let Some(error) = buffer.error_message() {
@@ -1061,7 +1096,7 @@ async fn fetch_range_chunk(
         {
             Ok(response) => response,
             Err(error) => {
-                if identity.is_cancelled() || buffer.is_cancelled() {
+                if buffer.is_cancelled() {
                     return RangeFetchResult::Cancelled;
                 }
                 if buffer.window_epoch() != epoch {
@@ -1081,7 +1116,6 @@ async fn fetch_range_chunk(
                     start,
                     end,
                     epoch,
-                    identity = ?identity,
                     "Retrying failed Range request"
                 );
                 tokio::time::sleep(backoff).await;
@@ -1089,7 +1123,7 @@ async fn fetch_range_chunk(
             }
         };
 
-        if identity.is_cancelled() || buffer.is_cancelled() {
+        if buffer.is_cancelled() {
             return RangeFetchResult::Cancelled;
         }
         if let Some(error) = buffer.error_message() {
@@ -1105,7 +1139,7 @@ async fn fetch_range_chunk(
 
         match response.bytes().await {
             Ok(body) => {
-                if identity.is_cancelled() || buffer.is_cancelled() {
+                if buffer.is_cancelled() {
                     return RangeFetchResult::Cancelled;
                 }
                 if let Some(error) = buffer.error_message() {
@@ -1124,7 +1158,7 @@ async fn fetch_range_chunk(
                 ));
             }
             Err(error) => {
-                if identity.is_cancelled() || buffer.is_cancelled() {
+                if buffer.is_cancelled() {
                     return RangeFetchResult::Cancelled;
                 }
                 if let Some(error) = buffer.error_message() {
@@ -1147,13 +1181,101 @@ async fn fetch_range_chunk(
                     start,
                     end,
                     epoch,
-                    identity = ?identity,
                     "Retrying failed Range response body"
                 );
                 tokio::time::sleep(backoff).await;
             }
         }
     }
+}
+
+/// Mirror coordinator state to a caller that joined an already-running
+/// download. Caller cancellation only stops this event follower; the shared
+/// cache download remains owned by the global in-flight registry.
+fn follow_existing_download(
+    buffer: SharedBuffer,
+    identity: StreamingIdentity,
+    event_tx: tokio::sync::mpsc::Sender<StreamingEvent>,
+) {
+    tokio::spawn(async move {
+        let mut playable_sent = false;
+        let mut download_complete_sent = false;
+        let mut last_progress = None;
+
+        loop {
+            if identity.is_cancelled() {
+                return;
+            }
+            if let Some(message) = buffer.error_message() {
+                let _ = event_tx
+                    .send(StreamingEvent::new(
+                        identity,
+                        StreamingEventKind::Error(message),
+                    ))
+                    .await;
+                return;
+            }
+
+            let progress = (buffer.cached_prefix(), buffer.total_size());
+            if last_progress != Some(progress) {
+                last_progress = Some(progress);
+                let _ = event_tx.try_send(StreamingEvent::new(
+                    identity.clone(),
+                    StreamingEventKind::Progress(progress.0, progress.1),
+                ));
+            }
+            if !playable_sent
+                && (buffer.buffered_ahead() >= HIGH_WATER_MARK_BYTES
+                    || buffer.remote_eof_reached()
+                    || buffer.is_download_complete())
+            {
+                let _ = event_tx
+                    .send(StreamingEvent::new(
+                        identity.clone(),
+                        StreamingEventKind::Playable,
+                    ))
+                    .await;
+                playable_sent = true;
+            }
+            if !download_complete_sent && buffer.is_download_complete() {
+                let _ = event_tx
+                    .send(StreamingEvent::new(
+                        identity.clone(),
+                        StreamingEventKind::DownloadComplete,
+                    ))
+                    .await;
+                download_complete_sent = true;
+            }
+            if buffer.is_cache_finalized() {
+                if let Some(path) = buffer.finalized_cache_path() {
+                    let _ = event_tx
+                        .send(StreamingEvent::new(
+                            identity.clone(),
+                            StreamingEventKind::CacheFinalized(path),
+                        ))
+                        .await;
+                }
+                let _ = event_tx
+                    .send(StreamingEvent::new(identity, StreamingEventKind::Complete))
+                    .await;
+                return;
+            }
+            if !buffer.inner.coordinator_active.load(Ordering::Acquire) {
+                let kind = if buffer.is_download_complete() {
+                    StreamingEventKind::CacheFinalizationFailed(
+                        "shared download finished without a published cache file".to_string(),
+                    )
+                } else if buffer.is_cancelled() {
+                    StreamingEventKind::Error("shared download was cancelled".to_string())
+                } else {
+                    StreamingEventKind::Error("shared download coordinator stopped".to_string())
+                };
+                let _ = event_tx.send(StreamingEvent::new(identity, kind)).await;
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    });
 }
 
 /// Start downloading audio to a SharedBuffer using strict byte ranges.
@@ -1163,19 +1285,54 @@ async fn fetch_range_chunk(
 pub fn start_buffer_download(
     url: String,
     cache_path: PathBuf,
+    cache_key: AudioCacheKey,
     identity: StreamingIdentity,
     event_tx: Option<tokio::sync::mpsc::Sender<StreamingEvent>>,
 ) -> SharedBuffer {
-    let shared_buffer = SharedBuffer::new(0);
-    shared_buffer
-        .inner
-        .coordinator_active
-        .store(true, Ordering::Release);
+    let (shared_buffer, is_new) = {
+        let mut in_flight = audio_in_flight().lock();
+        if let Some(existing) = in_flight.get(&cache_key).and_then(Weak::upgrade) {
+            let existing = SharedBuffer { inner: existing };
+            if !matches!(
+                existing.health(),
+                SharedBufferHealth::Failed(_)
+                    | SharedBufferHealth::Cancelled
+                    | SharedBufferHealth::CoordinatorStopped
+            ) {
+                (existing, false)
+            } else {
+                in_flight.remove(&cache_key);
+                let shared_buffer = SharedBuffer::new(0);
+                shared_buffer
+                    .inner
+                    .coordinator_active
+                    .store(true, Ordering::Release);
+                in_flight.insert(cache_key, Arc::downgrade(&shared_buffer.inner));
+                (shared_buffer, true)
+            }
+        } else {
+            let shared_buffer = SharedBuffer::new(0);
+            shared_buffer
+                .inner
+                .coordinator_active
+                .store(true, Ordering::Release);
+            in_flight.insert(cache_key, Arc::downgrade(&shared_buffer.inner));
+            (shared_buffer, true)
+        }
+    };
+    if !is_new {
+        if let Some(event_tx) = event_tx {
+            follow_existing_download(shared_buffer.clone(), identity, event_tx);
+        }
+        return shared_buffer;
+    }
     let buffer_clone = shared_buffer.clone();
 
-    let identity_for_task = identity.clone();
     tokio::spawn(async move {
-        let _coordinator_guard = CoordinatorGuard(buffer_clone.clone());
+        let _coordinator_guard = CoordinatorGuard {
+            buffer: buffer_clone.clone(),
+            key: cache_key,
+        };
         let client = match reqwest::Client::builder()
             .connect_timeout(HTTP_CONNECT_TIMEOUT)
             .timeout(HTTP_REQUEST_TIMEOUT)
@@ -1199,11 +1356,6 @@ pub fn start_buffer_download(
         let fail = |message: String, buffer: &SharedBuffer| {
             buffer.set_error(message);
         };
-
-        if identity_for_task.is_cancelled() {
-            buffer_clone.cancel();
-            return;
-        }
 
         let _head = match client.head(&url).send().await {
             Ok(response) if response.status().is_success() => response,
@@ -1237,11 +1389,6 @@ pub fn start_buffer_download(
                 return;
             }
         };
-        if identity_for_task.is_cancelled() {
-            buffer_clone.cancel();
-            return;
-        }
-
         let probe = match client
             .get(&url)
             .header(reqwest::header::RANGE, "bytes=0-0")
@@ -1263,11 +1410,6 @@ pub fn start_buffer_download(
                 return;
             }
         };
-        if identity_for_task.is_cancelled() {
-            buffer_clone.cancel();
-            return;
-        }
-
         let probe_range = match validate_range_response(&probe, 0, 0) {
             Ok(range) => range,
             Err(message) => {
@@ -1315,14 +1457,10 @@ pub fn start_buffer_download(
                 return;
             }
         };
-        if identity_for_task.is_cancelled() {
-            buffer_clone.cancel();
-            return;
-        }
         let total_size = probe_range.total;
         buffer_clone.set_total_size(total_size);
 
-        let temp_path = cache_path.with_extension("tmp");
+        let temp_path = crate::cache::unique_temp_path(&cache_path);
         let mut file = match std::fs::OpenOptions::new()
             .create(true)
             .truncate(true)
@@ -1350,7 +1488,8 @@ pub fn start_buffer_download(
         if let Err(error) = file.write_all(&probe_body) {
             let message = format!("I/O: cache write failed: {}", error);
             fail(message.clone(), &buffer_clone);
-            let _ = std::fs::remove_file(&temp_path);
+            drop(file);
+            crate::cache::cleanup_temp_file(&temp_path);
             if let Some(tx) = &event_tx {
                 let _ = tx
                     .send(StreamingEvent::new(
@@ -1386,15 +1525,14 @@ pub fn start_buffer_download(
         let mut feed_ring = true;
 
         'download: loop {
-            if identity_for_task.is_cancelled() || buffer_clone.is_cancelled() {
-                buffer_clone.cancel();
+            if buffer_clone.is_cancelled() {
                 drop(file);
-                let _ = std::fs::remove_file(&temp_path);
+                crate::cache::cleanup_temp_file(&temp_path);
                 return;
             }
             if buffer_clone.has_error() {
                 drop(file);
-                let _ = std::fs::remove_file(&temp_path);
+                crate::cache::cleanup_temp_file(&temp_path);
                 return;
             }
 
@@ -1438,39 +1576,33 @@ pub fn start_buffer_download(
 
             let end = (start.saturating_add(RANGE_CHUNK_BYTES).saturating_sub(1))
                 .min(total_size.saturating_sub(1));
-            let body = match fetch_range_chunk(
-                &client,
-                &url,
-                start,
-                end,
-                &identity_for_task,
-                &buffer_clone,
-                active_epoch,
-            )
-            .await
-            {
-                RangeFetchResult::Data(body) => body,
-                RangeFetchResult::Superseded => continue 'download,
-                RangeFetchResult::Cancelled => {
-                    buffer_clone.cancel();
-                    drop(file);
-                    let _ = std::fs::remove_file(&temp_path);
-                    return;
-                }
-                RangeFetchResult::Fatal(message) => {
-                    fail(message.clone(), &buffer_clone);
-                    let _ = std::fs::remove_file(&temp_path);
-                    if let Some(tx) = &event_tx {
-                        let _ = tx
-                            .send(StreamingEvent::new(
-                                identity.clone(),
-                                StreamingEventKind::Error(message),
-                            ))
-                            .await;
+            let body =
+                match fetch_range_chunk(&client, &url, start, end, &buffer_clone, active_epoch)
+                    .await
+                {
+                    RangeFetchResult::Data(body) => body,
+                    RangeFetchResult::Superseded => continue 'download,
+                    RangeFetchResult::Cancelled => {
+                        buffer_clone.cancel();
+                        drop(file);
+                        crate::cache::cleanup_temp_file(&temp_path);
+                        return;
                     }
-                    return;
-                }
-            };
+                    RangeFetchResult::Fatal(message) => {
+                        fail(message.clone(), &buffer_clone);
+                        drop(file);
+                        crate::cache::cleanup_temp_file(&temp_path);
+                        if let Some(tx) = &event_tx {
+                            let _ = tx
+                                .send(StreamingEvent::new(
+                                    identity.clone(),
+                                    StreamingEventKind::Error(message),
+                                ))
+                                .await;
+                        }
+                        return;
+                    }
+                };
 
             if let Err(error) = file
                 .seek(SeekFrom::Start(start))
@@ -1478,7 +1610,8 @@ pub fn start_buffer_download(
             {
                 let message = format!("I/O: cache write failed: {}", error);
                 fail(message.clone(), &buffer_clone);
-                let _ = std::fs::remove_file(&temp_path);
+                drop(file);
+                crate::cache::cleanup_temp_file(&temp_path);
                 if let Some(tx) = &event_tx {
                     let _ = tx
                         .send(StreamingEvent::new(
@@ -1494,10 +1627,9 @@ pub fn start_buffer_download(
             }
             if feed_ring {
                 while !buffer_clone.append_window(start, &body, active_epoch) {
-                    if identity_for_task.is_cancelled() || buffer_clone.is_cancelled() {
-                        buffer_clone.cancel();
+                    if buffer_clone.is_cancelled() {
                         drop(file);
-                        let _ = std::fs::remove_file(&temp_path);
+                        crate::cache::cleanup_temp_file(&temp_path);
                         return;
                     }
                     if buffer_clone.window_epoch() != active_epoch {
@@ -1538,7 +1670,34 @@ pub fn start_buffer_download(
         }
 
         if let Err(error) = file.flush() {
-            tracing::warn!("Cache flush failed: {}", error);
+            let message = format!("I/O: cache flush failed: {error}");
+            fail(message.clone(), &buffer_clone);
+            drop(file);
+            crate::cache::cleanup_temp_file(&temp_path);
+            if let Some(tx) = &event_tx {
+                let _ = tx
+                    .send(StreamingEvent::new(
+                        identity.clone(),
+                        StreamingEventKind::Error(message),
+                    ))
+                    .await;
+            }
+            return;
+        }
+        if let Err(error) = file.sync_all() {
+            let message = format!("I/O: cache sync failed: {error}");
+            fail(message.clone(), &buffer_clone);
+            drop(file);
+            crate::cache::cleanup_temp_file(&temp_path);
+            if let Some(tx) = &event_tx {
+                let _ = tx
+                    .send(StreamingEvent::new(
+                        identity.clone(),
+                        StreamingEventKind::Error(message),
+                    ))
+                    .await;
+            }
+            return;
         }
         drop(file);
 
@@ -1551,7 +1710,8 @@ pub fn start_buffer_download(
                     None => {
                         let message =
                             "UnsupportedFormat: unknown or damaged audio prefix".to_string();
-                        let _ = std::fs::remove_file(&temp_path);
+                        drop(reader);
+                        crate::cache::cleanup_temp_file(&temp_path);
                         if let Some(tx) = &event_tx {
                             let _ = tx
                                 .send(StreamingEvent::new(
@@ -1570,7 +1730,7 @@ pub fn start_buffer_download(
             }
             Err(error) => {
                 let message = format!("I/O: could not open cache for format detection: {error}");
-                let _ = std::fs::remove_file(&temp_path);
+                crate::cache::cleanup_temp_file(&temp_path);
                 if let Some(tx) = &event_tx {
                     let _ = tx
                         .send(StreamingEvent::new(
@@ -1591,37 +1751,80 @@ pub fn start_buffer_download(
         let parent = cache_path.parent().unwrap_or(std::path::Path::new("."));
         let final_path = parent.join(format!("{stem}.{final_ext}"));
 
-        if let Err(error) = std::fs::rename(&temp_path, &final_path) {
-            let message = format!("failed to finalize cache {:?}: {}", final_path, error);
-            let _ = std::fs::remove_file(&temp_path);
-            if let Some(tx) = &event_tx {
-                let _ = tx
-                    .send(StreamingEvent::new(
-                        identity.clone(),
-                        StreamingEventKind::CacheFinalizationFailed(message),
-                    ))
-                    .await;
-            }
-        } else {
-            buffer_clone.set_finalized_cache_path(final_path.clone());
-            if let Some(tx) = &event_tx {
-                let _ = tx
-                    .send(StreamingEvent::new(
-                        identity.clone(),
-                        StreamingEventKind::CacheFinalized(final_path),
-                    ))
-                    .await;
-            }
-        }
-
         buffer_clone.mark_complete();
         if let Some(tx) = &event_tx {
+            let _ = tx
+                .send(StreamingEvent::new(
+                    identity.clone(),
+                    StreamingEventKind::DownloadComplete,
+                ))
+                .await;
+        }
+
+        match crate::cache::publish_or_reuse(&temp_path, &final_path, Some(total_size)) {
+            Err(error) => {
+                let message = format!("failed to finalize cache {:?}: {}", final_path, error);
+                crate::cache::cleanup_temp_file(&temp_path);
+                if let Some(tx) = &event_tx {
+                    let _ = tx
+                        .send(StreamingEvent::new(
+                            identity.clone(),
+                            StreamingEventKind::CacheFinalizationFailed(message),
+                        ))
+                        .await;
+                }
+            }
+            Ok(publish_result) => match crate::cache::write_audio_manifest(
+                &final_path,
+                cache_key.song_id,
+                cache_key.actual_quality,
+                total_size,
+                &final_ext,
+            ) {
+                Err(error) => {
+                    let message = format!(
+                        "failed to publish cache manifest for {:?}: {}",
+                        final_path, error
+                    );
+                    tracing::warn!(?error, ?final_path, "Failed to write audio cache manifest");
+                    if publish_result == crate::cache::PublishResult::Published {
+                        crate::cache::remove_audio_cache(&final_path);
+                    }
+                    if let Some(tx) = &event_tx {
+                        let _ = tx
+                            .send(StreamingEvent::new(
+                                identity.clone(),
+                                StreamingEventKind::CacheFinalizationFailed(message),
+                            ))
+                            .await;
+                    }
+                }
+                Ok(()) => {
+                    buffer_clone.set_finalized_cache_path(final_path.clone());
+                    buffer_clone.mark_cache_finalized();
+                    if let Some(tx) = &event_tx {
+                        let _ = tx
+                            .send(StreamingEvent::new(
+                                identity.clone(),
+                                StreamingEventKind::CacheFinalized(final_path),
+                            ))
+                            .await;
+                    }
+                }
+            },
+        }
+
+        if buffer_clone.is_cache_finalized()
+            && let Some(tx) = &event_tx
+        {
             let _ = tx
                 .send(StreamingEvent::new(
                     identity.clone(),
                     StreamingEventKind::Complete,
                 ))
                 .await;
+        }
+        if let Some(tx) = &event_tx {
             if !playable_sent {
                 let _ = tx
                     .send(StreamingEvent::new(
@@ -1673,6 +1876,31 @@ mod tests {
     }
 
     #[test]
+    fn audio_downloads_are_deduplicated_by_song_and_actual_quality() {
+        let key = AudioCacheKey {
+            song_id: 991,
+            actual_quality: crate::api::NcmQualityLevel::Lossless,
+        };
+        let existing = SharedBuffer::new(100);
+        existing.set_coordinator_active_for_test(true);
+        audio_in_flight()
+            .lock()
+            .insert(key, Arc::downgrade(&existing.inner));
+        let controller = crate::audio::identity::PlaybackGenerationController::new();
+        controller.activate_generation();
+
+        let reused = start_buffer_download(
+            "http://127.0.0.1:1/audio".to_string(),
+            std::env::temp_dir().join("rustle-dedupe"),
+            key,
+            StreamingIdentity::Preload(controller.reserve_preload_identity().unwrap()),
+            None,
+        );
+        assert!(Arc::ptr_eq(&existing.inner, &reused.inner));
+        audio_in_flight().lock().remove(&key);
+    }
+
+    #[test]
     fn range_retry_budget_allows_three_retries_then_stops() {
         assert_eq!(range_retry_backoff(0), Some(Duration::from_millis(100)));
         assert_eq!(range_retry_backoff(1), Some(Duration::from_millis(200)));
@@ -1713,6 +1941,17 @@ mod tests {
     }
 
     #[test]
+    fn download_completion_is_distinct_from_cache_finalization() {
+        let buffer = SharedBuffer::new(4);
+        buffer.append(&[0; 4]);
+        buffer.mark_complete();
+        assert!(buffer.is_download_complete());
+        assert!(!buffer.is_cache_finalized());
+        buffer.mark_cache_finalized();
+        assert!(buffer.is_cache_finalized());
+    }
+
+    #[test]
     fn stored_failure_remains_authoritative_after_coordinator_exit() {
         let buffer = SharedBuffer::new(100);
         buffer
@@ -1720,7 +1959,13 @@ mod tests {
             .coordinator_active
             .store(true, Ordering::Release);
         buffer.set_error("Network: body failed".to_string());
-        drop(CoordinatorGuard(buffer.clone()));
+        drop(CoordinatorGuard {
+            buffer: buffer.clone(),
+            key: AudioCacheKey {
+                song_id: 1,
+                actual_quality: crate::api::NcmQualityLevel::Standard,
+            },
+        });
 
         assert_eq!(
             buffer.health(),
@@ -1976,7 +2221,13 @@ mod tests {
             .inner
             .coordinator_active
             .store(true, Ordering::Release);
-        drop(CoordinatorGuard(buffer.clone()));
+        drop(CoordinatorGuard {
+            buffer: buffer.clone(),
+            key: AudioCacheKey {
+                song_id: 1,
+                actual_quality: crate::api::NcmQualityLevel::Standard,
+            },
+        });
         assert!(!buffer.inner.coordinator_active.load(Ordering::Acquire));
     }
 

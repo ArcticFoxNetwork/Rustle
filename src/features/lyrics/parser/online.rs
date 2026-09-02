@@ -8,14 +8,9 @@ use std::path::PathBuf;
 use super::{LyricLineOwned, LyricsFormat, merge_translation, parse_lyrics_with_format};
 use crate::api::NcmClient;
 
-/// Lyrics cache directory
-fn lyrics_cache_dir() -> PathBuf {
-    crate::utils::cache_dir().join("lyrics")
-}
-
 /// Get cached lyrics file path for a song
 fn get_cache_path(ncm_id: u64, suffix: &str) -> PathBuf {
-    let cache_dir = lyrics_cache_dir();
+    let cache_dir = crate::utils::lyrics_cache_dir();
     cache_dir.join(format!("{}{}", ncm_id, suffix))
 }
 
@@ -116,21 +111,30 @@ pub fn save_lyrics_cache(
     trans_lyric: Option<&str>,
     is_yrc: bool,
 ) -> Result<()> {
-    let cache_dir = lyrics_cache_dir();
+    let cache_dir = crate::utils::lyrics_cache_dir();
     std::fs::create_dir_all(&cache_dir)?;
 
     let suffix = if is_yrc { ".yrc" } else { ".lrc" };
     let main_path = get_cache_path(ncm_id, suffix);
-    std::fs::write(&main_path, main_lyric)?;
+    write_cache_file(&main_path, main_lyric.as_bytes())?;
 
     if let Some(trans) = trans_lyric
         && !trans.is_empty()
     {
         let trans_path = get_cache_path(ncm_id, ".tlrc");
-        std::fs::write(&trans_path, trans)?;
+        write_cache_file(&trans_path, trans.as_bytes())?;
     }
 
     Ok(())
+}
+
+fn write_cache_file(path: &std::path::Path, bytes: &[u8]) -> Result<()> {
+    let temp = crate::cache::unique_temp_path(path);
+    if let Err(error) = std::fs::write(&temp, bytes) {
+        crate::cache::cleanup_temp_file(&temp);
+        return Err(error.into());
+    }
+    crate::cache::publish_replace(&temp, path).map_err(Into::into)
 }
 
 /// Fetch and parse lyrics with automatic format detection

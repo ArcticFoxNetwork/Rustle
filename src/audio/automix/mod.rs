@@ -278,11 +278,7 @@ impl AnalysisCache {
             }
         }
 
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|value| value.as_nanos())
-            .unwrap_or(0);
-        let temp = path.with_extension(format!("{}.{}.tmp", std::process::id(), unique));
+        let temp = crate::cache::unique_temp_path(&path);
         let bytes = serde_json::to_vec(analysis)
             .map_err(|error| format!("serialize Automix analysis: {error}"))?;
         let write_result = (|| {
@@ -296,12 +292,12 @@ impl AnalysisCache {
             file.sync_all()
                 .map_err(|error| format!("sync Automix cache {:?}: {error}", temp))?;
             drop(file);
-            fs::rename(&temp, &path)
+            crate::cache::publish_or_reuse(&temp, &path, None)
                 .map_err(|error| format!("publish Automix cache {:?}: {error}", path))?;
             Ok::<(), String>(())
         })();
         if write_result.is_err() {
-            let _ = fs::remove_file(&temp);
+            crate::cache::cleanup_temp_file(&temp);
         }
         write_result?;
         self.prune()?;

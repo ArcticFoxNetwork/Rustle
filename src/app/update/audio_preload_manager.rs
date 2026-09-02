@@ -21,8 +21,7 @@ use crate::api::NcmClient;
 use crate::app::message::Message;
 use crate::audio::identity::PreloadIdentity;
 use crate::audio::streaming::{
-    SharedBuffer, StreamingIdentity, estimate_size_from_duration, start_buffer_download,
-    wait_for_buffer_playable,
+    SharedBuffer, StreamingIdentity, start_buffer_download, wait_for_buffer_playable,
 };
 use crate::database::DbSong;
 
@@ -178,10 +177,6 @@ impl AudioPreloadManager {
             return Vec::new();
         };
 
-        if let Some(buffer) = slot.buffer {
-            buffer.cancel();
-        }
-
         [slot.request_id, slot.pending_request_id]
             .into_iter()
             .flatten()
@@ -249,7 +244,7 @@ impl AudioPreloadManager {
 
         let retry_count = slot.retry_count().saturating_add(1);
         slot.pending_request_id = None;
-        slot.buffer.take().inspect(|buffer| buffer.cancel());
+        slot.buffer.take();
         slot.state = SlotState::Failed { retry_count };
         true
     }
@@ -265,7 +260,7 @@ impl AudioPreloadManager {
 
             let retry_count = slot.retry_count().saturating_add(1);
             slot.pending_request_id = None;
-            slot.buffer.take().inspect(|buffer| buffer.cancel());
+            slot.buffer.take();
             slot.state = SlotState::Failed { retry_count };
             return true;
         }
@@ -391,101 +386,46 @@ async fn download_audio_streaming(
     direction: PreloadDirection,
     identity: PreloadIdentity,
 ) -> Message {
-    let ncm_id = if song.id < 0 {
-        (-song.id) as u64
-    } else {
-        song.id as u64
-    };
+    let ncm_id = super::song_resolver::get_ncm_id(&song);
 
     tracing::info!(
         "Preload: downloading audio for song {} (streaming buffer)",
         ncm_id
     );
 
-    let song_cache_dir = crate::utils::songs_cache_dir();
-    if std::fs::create_dir_all(&song_cache_dir).is_err() {
-        return Message::PreloadAudioFailed(idx, direction, identity);
-    }
-
-    let requested_level = client.current_quality_level();
-    let requested_stem = format!("{}_{}", ncm_id, requested_level.api_level());
-
-    if let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &requested_stem) {
-        let file_size = std::fs::metadata(&cached_path)
-            .map(|m| m.len())
-            .unwrap_or(0);
-        let expected_min_size = estimate_size_from_duration(song.duration_secs as u64);
-        let is_complete = file_size > 0 && file_size >= expected_min_size * 8 / 10;
-
-        if is_complete {
-            tracing::debug!(
-                "Preload: song {} fully cached ({} bytes)",
-                ncm_id,
-                file_size
-            );
-            return Message::PreloadReady(
-                idx,
-                cached_path.to_string_lossy().to_string(),
-                direction,
-                Some(super::song_resolver::ResolvedAudioQuality {
-                    requested: requested_level,
-                    actual: requested_level,
-                    bitrate: None,
-                    size: Some(file_size),
-                    format: cached_path
-                        .extension()
-                        .and_then(|value| value.to_str())
-                        .map(ToString::to_string),
-                    sample_rate: None,
-                    bit_depth: None,
-                    channels: None,
-                    channel_layout: None,
-                    immerse_type: None,
-                }),
-                identity,
-            );
-        }
-        tracing::info!(
-            "Preload: song {} cache incomplete ({} bytes), using streaming buffer",
-            ncm_id,
-            file_size
-        );
-        let _ = std::fs::remove_file(&cached_path);
-    }
-
-    let url = match client.resolve_track_url(ncm_id, requested_level).await {
-        Ok(url) => url,
-        Err(e) => {
-            tracing::error!("Preload: failed to get song URL for {}: {}", ncm_id, e);
+    let source = match super::song_resolver::resolve_audio_source(&client, &song).await {
+        Ok(source) => source,
+        Err(error) => {
+            tracing::error!("Preload: failed to resolve song {}: {}", ncm_id, error);
             return Message::PreloadAudioFailed(idx, direction, identity);
         }
     };
-
-    let quality = super::song_resolver::ResolvedAudioQuality::from(&url);
-    let actual_stem = format!("{}_{}", ncm_id, url.level.api_level());
-    if actual_stem != requested_stem
-        && let Some(cached_path) = crate::utils::find_cached_audio(&song_cache_dir, &actual_stem)
-    {
-        let file_size = std::fs::metadata(&cached_path)
-            .map(|metadata| metadata.len())
-            .unwrap_or(0);
-        let expected_min_size = estimate_size_from_duration(song.duration_secs as u64);
-        if file_size > 0 && file_size >= expected_min_size * 8 / 10 {
+    let (shared_buffer, quality) = match source {
+        super::song_resolver::ResolvedAudioSource::Cached { path, quality } => {
             return Message::PreloadReady(
                 idx,
-                cached_path.to_string_lossy().to_string(),
+                path.to_string_lossy().to_string(),
                 direction,
                 Some(quality),
                 identity,
             );
         }
-        let _ = std::fs::remove_file(cached_path);
-    }
-    let cache_path = song_cache_dir.join(actual_stem);
-    let song_url = url.url;
-
-    let streaming_identity = StreamingIdentity::Preload(identity.clone());
-    let shared_buffer = start_buffer_download(song_url, cache_path, streaming_identity, None);
+        super::song_resolver::ResolvedAudioSource::Streaming {
+            url,
+            cache_path,
+            cache_key,
+            quality,
+        } => (
+            start_buffer_download(
+                url,
+                cache_path,
+                cache_key,
+                StreamingIdentity::Preload(identity.clone()),
+                None,
+            ),
+            quality,
+        ),
+    };
 
     // Buffer health, not a short-lived event receiver, remains authoritative
     // after the first startup watermark. The audio thread rechecks the same
@@ -507,7 +447,6 @@ async fn download_audio_streaming(
         )
     } else {
         tracing::error!("Preload: download failed for song {}", ncm_id);
-        shared_buffer.cancel();
         Message::PreloadAudioFailed(idx, direction, identity)
     }
 }
@@ -558,6 +497,19 @@ mod tests {
         assert!(released.contains(&prev_pending));
         assert!(manager.slot(PreloadDirection::Next).is_none());
         assert!(manager.slot(PreloadDirection::Previous).is_none());
+    }
+
+    #[test]
+    fn clearing_a_preload_slot_does_not_cancel_a_shared_download() {
+        let mut manager = AudioPreloadManager::default();
+        let buffer = SharedBuffer::new(100);
+        let mut slot = AudioPreloadSlot::pending(1);
+        slot.buffer = Some(buffer.clone());
+        manager.set_slot_for_test(PreloadDirection::Next, slot);
+
+        manager.reset();
+
+        assert!(!buffer.is_cancelled());
     }
 
     #[test]

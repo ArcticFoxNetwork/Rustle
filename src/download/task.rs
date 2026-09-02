@@ -4,7 +4,7 @@
 //! verifying downloaded file integrity, and writing metadata tags.
 
 use std::fs;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 use tracing::{info, warn};
@@ -55,7 +55,8 @@ pub async fn download_song(
         sanitize_filename(&meta.artist),
         sanitize_filename(&meta.title)
     );
-    let tmp = download_dir.join(format!("{}.tmp", stem));
+    let temp_anchor = download_dir.join(&stem);
+    let tmp = crate::cache::unique_temp_path(&temp_anchor);
     {
         let existing = crate::utils::AUDIO_EXTENSIONS
             .iter()
@@ -88,31 +89,71 @@ pub async fn download_song(
 
     use futures_util::StreamExt;
     while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Download error: {}", e))?;
-        std::io::Write::write_all(&mut file, &chunk).map_err(|e| format!("Write error: {}", e))?;
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                drop(file);
+                crate::cache::cleanup_temp_file(&tmp);
+                return Err(format!("Download error: {}", error));
+            }
+        };
+        if let Err(error) = file.write_all(&chunk) {
+            drop(file);
+            crate::cache::cleanup_temp_file(&tmp);
+            return Err(format!("Write error: {}", error));
+        }
         downloaded += chunk.len() as u64;
         on_progress(downloaded, total);
     }
 
+    if let Err(error) = file.flush() {
+        drop(file);
+        crate::cache::cleanup_temp_file(&tmp);
+        return Err(format!("Flush error: {}", error));
+    }
+    if let Err(error) = file.sync_all() {
+        drop(file);
+        crate::cache::cleanup_temp_file(&tmp);
+        return Err(format!("Sync error: {}", error));
+    }
     drop(file);
 
     if downloaded == 0 {
-        let _ = fs::remove_file(&tmp);
+        crate::cache::cleanup_temp_file(&tmp);
         return Err("Downloaded 0 bytes".to_string());
+    }
+    if total > 0 && downloaded != total {
+        crate::cache::cleanup_temp_file(&tmp);
+        return Err(format!(
+            "Downloaded size {} does not match expected {}",
+            downloaded, total
+        ));
     }
 
     // Detect format from magic bytes, then rename.
     let ext = {
         let mut buf = [0u8; 16];
-        let mut f = fs::File::open(&tmp)
-            .map_err(|e| format!("Failed to open temp for format detection: {}", e))?;
+        let mut f = match fs::File::open(&tmp) {
+            Ok(file) => file,
+            Err(error) => {
+                crate::cache::cleanup_temp_file(&tmp);
+                return Err(format!(
+                    "Failed to open temp for format detection: {}",
+                    error
+                ));
+            }
+        };
         let n = f.read(&mut buf).unwrap_or(0);
-        detect_audio_format(&buf[..n])
-            .ok_or_else(|| "Downloaded file has an unknown or damaged audio format".to_string())?
-            .to_string()
+        let Some(extension) = detect_audio_format(&buf[..n]) else {
+            drop(f);
+            crate::cache::cleanup_temp_file(&tmp);
+            return Err("Downloaded file has an unknown or damaged audio format".to_string());
+        };
+        extension.to_string()
     };
     let dest = download_dir.join(format!("{}.{}", stem, ext));
-    fs::rename(&tmp, &dest).map_err(|e| format!("Failed to rename temp file: {}", e))?;
+    crate::cache::publish_or_reuse(&tmp, &dest, (total > 0).then_some(total))
+        .map_err(|e| format!("Failed to publish downloaded file: {}", e))?;
 
     // Verify the final file is playable.
     if let Err(e) = verify_integrity(&dest) {
