@@ -2091,6 +2091,15 @@ impl PlaylistPageState {
         self.gradient_animation.settle_at(0.0);
     }
 
+    /// Clear detail-page gradient state so the next gradient starts at the
+    /// theme background instead of reusing a previous detail page's colors.
+    pub fn reset_gradient_to_background(&mut self) {
+        self.gradient_source = None;
+        self.retained_gradient = None;
+        self.gradient_palette_key = None;
+        self.gradient_animation.settle_at(0.0);
+    }
+
     pub fn gradient_source(&self) -> Option<crate::ui::pages::playlist::DetailGradientSnapshot> {
         self.gradient_source
     }
@@ -2133,6 +2142,39 @@ mod detail_gradient_state_tests {
         );
         assert_eq!(state.gradient_source(), Some(first));
         assert_eq!(state.retained_gradient, Some(second));
+        assert!(state.gradient_animation.is_animating());
+    }
+
+    #[test]
+    fn resetting_to_background_drops_the_retained_gradient() {
+        let first = DetailGradientSnapshot {
+            kind: DetailPageKind::Playlist,
+            primary: Color::from_rgb(0.2, 0.4, 0.7),
+        };
+        let second = DetailGradientSnapshot {
+            kind: DetailPageKind::Artist,
+            primary: Color::from_rgb(0.8, 0.25, 0.15),
+        };
+        let mut state = PlaylistPageState::default();
+
+        state.sync_gradient_target(
+            Some((DetailPageKind::Playlist, 1, Some("first".into()))),
+            Some(first),
+            true,
+        );
+        state.reset_gradient_to_background();
+
+        assert_eq!(state.gradient_source(), None);
+        assert_eq!(state.retained_gradient, None);
+        assert_eq!(state.gradient_palette_key, None);
+        assert_eq!(state.gradient_animation.progress(), 0.0);
+
+        state.sync_gradient_target(
+            Some((DetailPageKind::Artist, 2, Some("second".into()))),
+            Some(second),
+            false,
+        );
+        assert_eq!(state.gradient_source(), None);
         assert!(state.gradient_animation.is_animating());
     }
 }

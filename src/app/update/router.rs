@@ -47,6 +47,8 @@ impl App {
 
             if route.has_gradient_background() {
                 self.ui.playlist_page.reset_gradient_animation();
+            } else {
+                self.ui.playlist_page.reset_gradient_to_background();
             }
         }
 
