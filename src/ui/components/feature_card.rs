@@ -1,17 +1,17 @@
 //! Wide home feature card used by Daily Recommend, Private Radar and FM.
 
-use iced::widget::{Space, button, column, container, image, mouse_area, row, svg, text};
+use iced::widget::{Space, button, column, container, mouse_area, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
-use crate::ui::{icons, theme};
+use crate::ui::{icons, theme, widgets};
 
-const CARD_HEIGHT: f32 = 172.0;
+const CARD_HEIGHT: f32 = 180.0;
 const CARD_RADIUS: f32 = 14.0;
 const PLAY_BUTTON_SIZE: f32 = 42.0;
 const PLAY_BUTTON_START_OFFSET: f32 = 12.0;
 const PLAY_BUTTON_END_OFFSET: f32 = 6.0;
 const PLAY_ICON_SIZE: f32 = 19.0;
-const HOVER_IMAGE_SCALE: f32 = 1.04;
+const HOVER_IMAGE_SCALE: f32 = 1.06;
 
 #[allow(clippy::too_many_arguments)]
 pub fn view<'a, Message: Clone + 'a>(
@@ -28,21 +28,18 @@ pub fn view<'a, Message: Clone + 'a>(
     on_hover: Message,
     on_unhover: Message,
 ) -> Element<'a, Message> {
-    let background: Element<'a, Message> = if let Some(handle) = cover_handle {
-        image(handle.clone())
-            .width(Fill)
-            .height(CARD_HEIGHT)
-            .content_fit(iced::ContentFit::Cover)
-            .border_radius(CARD_RADIUS)
-            .scale(background_image_scale(hover_progress))
-            .into()
-    } else {
-        container(Space::new())
-            .width(Fill)
-            .height(CARD_HEIGHT)
-            .style(move |_theme| gradient_style(gradient))
-            .into()
-    };
+    let fallback = container(Space::new())
+        .width(Fill)
+        .height(CARD_HEIGHT)
+        .style(move |_theme| gradient_style(gradient));
+    let cover: Element<'a, Message> = widgets::crossfade_image(cover_handle.cloned())
+        .width(Fill)
+        .height(CARD_HEIGHT)
+        .content_fit(iced::ContentFit::Cover)
+        .border_radius(CARD_RADIUS)
+        .scale(background_image_scale(hover_progress))
+        .into();
+    let background = iced::widget::stack![fallback, cover];
 
     let scrim = container(Space::new())
         .width(Fill)

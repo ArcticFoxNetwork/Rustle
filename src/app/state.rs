@@ -2232,6 +2232,8 @@ impl Default for SearchPageState {
 }
 
 /// Discover page state for browsing playlists
+const DISCOVER_CARD_HOVER_DURATION: Duration = Duration::from_millis(240);
+
 pub struct DiscoverPageState {
     /// Current view mode
     pub view_mode: DiscoverViewMode,
@@ -2279,7 +2281,7 @@ impl Default for DiscoverPageState {
             private_radar: None,
             hot_playlists: Vec::new(),
             official_playlists: Vec::new(),
-            card_animations: Default::default(),
+            card_animations: HoverAnimations::with_duration(DISCOVER_CARD_HOVER_DURATION),
             recommended_loading: false,
             private_radar_loading: false,
             hot_loading: false,

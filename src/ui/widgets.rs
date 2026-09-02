@@ -16,6 +16,7 @@
 //! - **Widgets** (this module): Composable UI patterns
 //! - **Components** (`crate::ui::components`): Business-specific UI with Message handling
 
+mod crossfade_image;
 mod hover_surface;
 pub mod multi_track_slider;
 pub mod play_mode_button;
@@ -33,6 +34,7 @@ pub use crate::ui::primitives::{
     ProgressRing, VirtualList, VirtualListState, view_progress_ring_styled,
 };
 
+pub use crossfade_image::crossfade_image;
 pub use hover_surface::hover_surface;
 pub use play_mode_button::ButtonSize as PlayModeButtonSize;
 pub use playback_controls::ControlSize;

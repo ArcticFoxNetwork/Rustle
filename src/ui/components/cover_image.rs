@@ -1,4 +1,4 @@
-//! Single image-rendering entry-point for the entire app.
+//! Shared shaped image entry-point for covers, avatars, banners, and thumbnails.
 //!
 //! Every cover, avatar, banner, and thumbnail flows through one of the two
 //! functions below.  There is no other image widget in the codebase.
@@ -18,6 +18,7 @@ use iced::Element;
 use iced::widget::{container, image, svg};
 
 use crate::image::{CoverSize, ImageKind};
+use crate::ui::widgets;
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -61,41 +62,35 @@ fn shaped(
     px: f32,
     radius: f32,
 ) -> Element<'static, crate::app::Message> {
-    if let Some(handle) = handle {
-        container(
-            image(handle.clone())
-                .width(px)
-                .height(px)
-                .content_fit(iced::ContentFit::Cover)
-                .border_radius(radius),
-        )
-        .width(px)
-        .height(px)
-        .into()
-    } else {
-        let svg_data = placeholder_svg(kind);
-        let icon = (px * 0.4).min(64.0);
-        container(
-            svg(svg::Handle::from_memory(svg_data.as_bytes()))
-                .width(icon)
-                .height(icon),
-        )
-        .width(px)
-        .height(px)
-        .center_x(px)
-        .center_y(px)
-        .style(move |t| iced::widget::container::Style {
-            background: Some(iced::Background::Color(
-                crate::ui::theme::surface_container(t),
-            )),
-            border: iced::Border {
-                radius: radius.into(),
-                ..Default::default()
-            },
+    let svg_data = placeholder_svg(kind);
+    let icon = (px * 0.4).min(64.0);
+    let placeholder = container(
+        svg(svg::Handle::from_memory(svg_data.as_bytes()))
+            .width(icon)
+            .height(icon),
+    )
+    .width(px)
+    .height(px)
+    .center_x(px)
+    .center_y(px)
+    .style(move |t| iced::widget::container::Style {
+        background: Some(iced::Background::Color(
+            crate::ui::theme::surface_container(t),
+        )),
+        border: iced::Border {
+            radius: radius.into(),
             ..Default::default()
-        })
-        .into()
-    }
+        },
+        ..Default::default()
+    });
+    let image: Element<'static, crate::app::Message> = widgets::crossfade_image(handle.cloned())
+        .width(px)
+        .height(px)
+        .content_fit(iced::ContentFit::Cover)
+        .border_radius(radius)
+        .into();
+
+    iced::widget::stack![placeholder, image].into()
 }
 
 fn placeholder_svg(kind: ImageKind) -> &'static str {

@@ -3,7 +3,7 @@
 //! Displays QR code for NCM login with status messages.
 
 use iced::mouse::Interaction;
-use iced::widget::{Space, button, column, container, image, mouse_area, row, svg, text};
+use iced::widget::{Space, button, column, container, mouse_area, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Padding};
 use std::path::PathBuf;
 
@@ -11,7 +11,7 @@ use crate::app::Message;
 use crate::app::UserInfo;
 use crate::i18n::{Key, Locale};
 use crate::ui::theme::BOLD_WEIGHT;
-use crate::ui::{overlay, theme};
+use crate::ui::{overlay, theme, widgets};
 
 const POPUP_WIDTH: f32 = 320.0;
 const POPUP_HEIGHT: f32 = 400.0;
@@ -95,7 +95,7 @@ fn view_qr_login<'a>(
 
     let qr_display: Element<'_, Message> = if let Some(path) = qr_code_path {
         container(
-            image(path.to_string_lossy().to_string())
+            widgets::crossfade_image(Some(iced::widget::image::Handle::from_path(path.clone())))
                 .width(QR_SIZE)
                 .height(QR_SIZE),
         )

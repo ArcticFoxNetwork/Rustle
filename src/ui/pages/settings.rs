@@ -5,8 +5,7 @@
 //! Clicking tab scrolls to corresponding section
 
 use iced::widget::{
-    Space, button, column, container, image, pick_list, row, scrollable, svg, text, text_input,
-    toggler,
+    Space, button, column, container, pick_list, row, scrollable, svg, text, text_input, toggler,
 };
 use iced::{Alignment, Background, Border, Color, ContentFit, Element, Fill, Length, Padding};
 
@@ -15,7 +14,7 @@ use crate::features::{Action, KeyBindings, Settings, ShortcutScope};
 use crate::i18n::{Key, Language, Locale};
 use crate::image::ImageKind;
 use crate::ui::animation::SmoothScrollTarget;
-use crate::ui::theme;
+use crate::ui::{theme, widgets};
 
 /// Settings page view with fixed header and all sections on one scrollable page
 pub fn view(
@@ -291,7 +290,7 @@ fn account_section(
                 .cloned();
             let avatar = if let Some(handle) = avatar_handle {
                 container(
-                    iced::widget::image(handle)
+                    widgets::crossfade_image(Some(handle))
                         .width(Fill)
                         .height(Fill)
                         .content_fit(iced::ContentFit::Cover)
@@ -333,7 +332,7 @@ fn account_section(
                     image_state.get(ImageKind::VipBadge, vip_key).cloned()
                 })
                 .map(|handle| -> Element<'static, Message> {
-                    image(handle)
+                    widgets::crossfade_image(Some(handle))
                         // Slightly taller than the account text while staying
                         // subordinate to the 48px avatar. Intrinsic width keeps
                         // Black Vinyl VIP and SVIP at their own proportions.
@@ -1052,7 +1051,7 @@ fn about_section(_locale: Locale) -> Element<'static, Message> {
         LazyLock::new(|| iced::widget::image::Handle::from_bytes(ICON_DATA));
 
     let icon = container(
-        iced::widget::image(ICON_HANDLE.clone())
+        widgets::crossfade_image(Some(ICON_HANDLE.clone()))
             .width(240)
             .height(240),
     )

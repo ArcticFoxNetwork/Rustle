@@ -8,7 +8,7 @@ use iced_anim::transition::Easing;
 use std::hash::Hash;
 use std::time::{Duration, Instant};
 
-/// Hover animation duration (200ms for snappy feel)
+/// Default hover animation duration (200ms for snappy feel)
 const HOVER_DURATION: Duration = Duration::from_millis(200);
 
 /// Optimized hover animation manager for exclusive hover states
@@ -20,6 +20,7 @@ const HOVER_DURATION: Duration = Duration::from_millis(200);
 /// This reduces memory usage and CPU overhead from O(n) to O(1).
 #[derive(Debug, Clone)]
 pub struct HoverAnimations<K: Eq + Hash + Clone> {
+    duration: Duration,
     /// Currently hovered item key
     active_key: Option<K>,
     /// Animation for active item (fading in)
@@ -37,18 +38,24 @@ impl<K: Eq + Hash + Clone> Default for HoverAnimations<K> {
 }
 
 /// Create hover easing with custom duration
-fn hover_easing() -> Easing {
-    Easing::EASE_OUT.with_duration(HOVER_DURATION)
+fn hover_easing(duration: Duration) -> Easing {
+    Easing::EASE_OUT.with_duration(duration)
 }
 
 impl<K: Eq + Hash + Clone> HoverAnimations<K> {
     /// Create a new empty hover animation manager
     pub fn new() -> Self {
+        Self::with_duration(HOVER_DURATION)
+    }
+
+    /// Create a hover animation manager with a custom transition duration.
+    pub fn with_duration(duration: Duration) -> Self {
         Self {
+            duration,
             active_key: None,
-            active_anim: Animated::transition(0.0, hover_easing()),
+            active_anim: Animated::transition(0.0, hover_easing(duration)),
             fading_key: None,
-            fading_anim: Animated::transition(0.0, hover_easing()),
+            fading_anim: Animated::transition(0.0, hover_easing(duration)),
         }
     }
 
@@ -70,20 +77,21 @@ impl<K: Eq + Hash + Clone> HoverAnimations<K> {
                     self.fading_key = Some(old);
                     // Start fading from current active value
                     let current_val = *self.active_anim.value();
-                    self.fading_anim = Animated::transition(current_val, hover_easing());
+                    self.fading_anim =
+                        Animated::transition(current_val, hover_easing(self.duration));
                     self.fading_anim.update(0.0.into());
                 }
 
                 // Create new active animation
                 self.active_key = Some(new_key);
-                self.active_anim = Animated::transition(0.0, hover_easing());
+                self.active_anim = Animated::transition(0.0, hover_easing(self.duration));
                 self.active_anim.update(1.0.into());
             }
 
             // Case B: Mouse entered a new item (nothing was hovered before)
             (None, Some(new_key)) => {
                 self.active_key = Some(new_key);
-                self.active_anim = Animated::transition(0.0, hover_easing());
+                self.active_anim = Animated::transition(0.0, hover_easing(self.duration));
                 self.active_anim.update(1.0.into());
             }
 
@@ -92,7 +100,8 @@ impl<K: Eq + Hash + Clone> HoverAnimations<K> {
                 if let Some(old) = self.active_key.take() {
                     self.fading_key = Some(old);
                     let current_val = *self.active_anim.value();
-                    self.fading_anim = Animated::transition(current_val, hover_easing());
+                    self.fading_anim =
+                        Animated::transition(current_val, hover_easing(self.duration));
                     self.fading_anim.update(0.0.into());
                 }
             }
@@ -139,8 +148,8 @@ impl<K: Eq + Hash + Clone> HoverAnimations<K> {
     pub fn clear(&mut self) {
         self.active_key = None;
         self.fading_key = None;
-        self.active_anim = Animated::transition(0.0, hover_easing());
-        self.fading_anim = Animated::transition(0.0, hover_easing());
+        self.active_anim = Animated::transition(0.0, hover_easing(self.duration));
+        self.fading_anim = Animated::transition(0.0, hover_easing(self.duration));
     }
 
     /// Tick the animations forward in time

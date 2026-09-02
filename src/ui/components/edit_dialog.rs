@@ -1,6 +1,6 @@
 //! Edit playlist dialog component
 
-use iced::widget::{Space, button, column, container, image, row, svg, text, text_input, toggler};
+use iced::widget::{Space, button, column, container, row, svg, text, text_input, toggler};
 use iced::{Alignment, Color, Element, Fill};
 
 use crate::app::Message;
@@ -19,7 +19,7 @@ pub fn view_body<'a>(
 ) -> Element<'a, Message> {
     // Cover
     let cover_content: Element<'a, Message> = if let Some(path) = cover_path {
-        image(path)
+        widgets::crossfade_image(Some(iced::widget::image::Handle::from_path(path)))
             .width(120)
             .height(120)
             .content_fit(iced::ContentFit::Cover)

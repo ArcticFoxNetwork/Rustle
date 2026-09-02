@@ -1,12 +1,12 @@
 //! Connected playlist card with a cover-derived blurred metadata footer.
 
-use iced::widget::{Space, button, column, container, image, mouse_area, svg, text};
+use iced::widget::{Space, button, column, container, mouse_area, svg, text};
 use iced::{Color, Element, Padding};
 
-use crate::ui::icons;
 use crate::ui::theme::{self, MEDIUM_WEIGHT};
+use crate::ui::{icons, widgets};
 
-pub const CARD_WIDTH: f32 = 160.0;
+pub const CARD_WIDTH: f32 = 161.0;
 const COVER_SIZE: f32 = CARD_WIDTH;
 const FOOTER_HEIGHT: f32 = 56.0;
 const CARD_RADIUS: f32 = 10.0;
@@ -15,7 +15,7 @@ const PLAY_BUTTON_START_OFFSET: f32 = 10.0;
 const PLAY_BUTTON_END_OFFSET: f32 = 4.0;
 const PLAY_ICON_SIZE: f32 = 24.0;
 const HOVER_MASK_MAX_ALPHA: f32 = 0.24;
-const HOVER_IMAGE_SCALE: f32 = 1.04;
+const HOVER_IMAGE_SCALE: f32 = 1.06;
 
 #[allow(clippy::too_many_arguments)]
 pub fn view<'a, Message: Clone + 'a>(
@@ -28,31 +28,28 @@ pub fn view<'a, Message: Clone + 'a>(
     on_hover: Message,
     on_unhover: Message,
 ) -> Element<'a, Message> {
-    let cover: Element<'a, Message> = if let Some(handle) = cover_handle {
-        image(handle.clone())
-            .width(COVER_SIZE)
-            .height(COVER_SIZE)
-            .content_fit(iced::ContentFit::Cover)
-            .border_radius(cover_image_radius())
-            .scale(cover_image_scale(hover_progress))
-            .into()
-    } else {
-        container(
-            svg(svg::Handle::from_memory(icons::MUSIC.as_bytes()))
-                .width(48)
-                .height(48)
-                .style(|theme, _status| svg::Style {
-                    color: Some(theme::opaque_color(theme::icon_muted(theme))),
-                })
-                .opacity(0.4),
-        )
+    let placeholder = container(
+        svg(svg::Handle::from_memory(icons::MUSIC.as_bytes()))
+            .width(48)
+            .height(48)
+            .style(|theme, _status| svg::Style {
+                color: Some(theme::opaque_color(theme::icon_muted(theme))),
+            })
+            .opacity(0.4),
+    )
+    .width(COVER_SIZE)
+    .height(COVER_SIZE)
+    .center_x(COVER_SIZE)
+    .center_y(COVER_SIZE)
+    .style(move |theme| placeholder_style(theme, hover_progress));
+    let cover_image: Element<'a, Message> = widgets::crossfade_image(cover_handle.cloned())
         .width(COVER_SIZE)
         .height(COVER_SIZE)
-        .center_x(COVER_SIZE)
-        .center_y(COVER_SIZE)
-        .style(move |theme| placeholder_style(theme, hover_progress))
-        .into()
-    };
+        .content_fit(iced::ContentFit::Cover)
+        .border_radius(cover_image_radius())
+        .scale(cover_image_scale(hover_progress))
+        .into();
+    let cover = iced::widget::stack![placeholder, cover_image];
 
     let play_overlay: Element<'a, Message> = if hover_progress > 0.01 {
         let opacity = hover_progress;
@@ -97,20 +94,17 @@ pub fn view<'a, Message: Clone + 'a>(
 
     let cover = iced::widget::stack![cover, play_overlay];
 
-    let footer_background: Element<'a, Message> = if let Some(handle) = footer_handle {
-        image(handle.clone())
-            .width(CARD_WIDTH)
-            .height(FOOTER_HEIGHT)
-            .content_fit(iced::ContentFit::Cover)
-            .border_radius(footer_image_radius())
-            .into()
-    } else {
-        container(Space::new())
-            .width(CARD_WIDTH)
-            .height(FOOTER_HEIGHT)
-            .style(footer_fallback_style)
-            .into()
-    };
+    let footer_fallback = container(Space::new())
+        .width(CARD_WIDTH)
+        .height(FOOTER_HEIGHT)
+        .style(footer_fallback_style);
+    let footer_image: Element<'a, Message> = widgets::crossfade_image(footer_handle.cloned())
+        .width(CARD_WIDTH)
+        .height(FOOTER_HEIGHT)
+        .content_fit(iced::ContentFit::Cover)
+        .border_radius(footer_image_radius())
+        .into();
+    let footer_background = iced::widget::stack![footer_fallback, footer_image];
 
     let scrim = container(Space::new())
         .width(CARD_WIDTH)

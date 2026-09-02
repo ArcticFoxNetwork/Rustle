@@ -1,7 +1,7 @@
 //! Window control buttons and navigation bar
 //! Positioned at top of the application with navigation on left, search in center, and controls on right
 
-use iced::widget::{Space, button, container, image, mouse_area, row, stack, svg, text, tooltip};
+use iced::widget::{Space, button, container, mouse_area, row, stack, svg, text, tooltip};
 use iced::{Alignment, Color, ContentFit, Element, Fill, Length, Padding};
 
 use crate::app::{ImageState, Message, UserInfo};
@@ -100,7 +100,7 @@ pub fn view<'a>(
         if let Some(info) = user_info {
             if let Some(handle) = image_state.get(ImageKind::UserAvatar, info.user_id) {
                 container(
-                    image(handle.clone())
+                    widgets::crossfade_image(Some(handle.clone()))
                         .width(Fill)
                         .height(Fill)
                         .content_fit(ContentFit::Cover)
@@ -127,7 +127,7 @@ pub fn view<'a>(
                     crate::image::vip_badge_key(info.user_id, info.vip.tier(), icon_url),
                 )
             {
-                let vip_badge = image(handle.clone())
+                let vip_badge = widgets::crossfade_image(Some(handle.clone()))
                     // Match the adjacent 16px nickname. Width remains Shrink,
                     // so Iced derives it from the official image aspect ratio.
                     .height(theme::TEXT_SIZE_BODY_LARGE)
