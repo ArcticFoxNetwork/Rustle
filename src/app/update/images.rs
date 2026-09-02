@@ -44,11 +44,15 @@ impl App {
                 Some(self.pump_image_downloads())
             }
 
-            Message::ImageViewportChanged(generation, _) => {
+            Message::ImageViewportChanged(generation, images) => {
                 if *generation != self.ui.image_state.generation {
                     return Some(Task::none());
                 }
-                self.ui.image_state.cancel_viewport_requests();
+                let desired = images
+                    .iter()
+                    .map(|(kind, id, _)| (*kind, *id))
+                    .collect::<std::collections::HashSet<_>>();
+                self.ui.image_state.reconcile_viewport_requests(&desired);
                 Some(Task::none())
             }
 

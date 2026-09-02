@@ -235,20 +235,29 @@ impl ImageState {
         );
     }
 
-    /// Cancel requests owned by the previous virtual-list range while leaving
-    /// page-level header/card work intact.
-    pub fn cancel_viewport_requests(&mut self) {
+    /// Reconcile viewport-owned work with the latest visible range.
+    ///
+    /// Requests that still belong to the new range keep running. Only work for
+    /// images that actually left the range is aborted or removed. This avoids
+    /// restarting overlapping cover downloads at every virtual-list row
+    /// boundary during smooth scrolling.
+    pub fn reconcile_viewport_requests(
+        &mut self,
+        desired: &std::collections::HashSet<(crate::image::ImageKind, u64)>,
+    ) {
         let mut retained = StateMap::default();
         for (key, request) in self.inflight.drain() {
-            if request.scope == ImageRequestScope::Viewport {
+            if request.scope == ImageRequestScope::Viewport && !desired.contains(&key) {
                 request.handle.abort();
             } else {
                 retained.insert(key, request);
             }
         }
         self.inflight = retained;
-        self.pending
-            .retain(|request| request.scope != ImageRequestScope::Viewport);
+        self.pending.retain(|request| {
+            request.scope != ImageRequestScope::Viewport
+                || desired.contains(&(request.kind, request.id))
+        });
         self.rebuild_queued_keys();
         self.viewport_generation = self.viewport_generation.wrapping_add(1);
     }
@@ -434,7 +443,7 @@ mod image_state_tests {
             viewport_handle,
         );
 
-        state.cancel_viewport_requests();
+        state.reconcile_viewport_requests(&std::collections::HashSet::new());
 
         assert!(!page_observer.is_aborted());
         assert!(viewport_observer.is_aborted());
@@ -455,6 +464,61 @@ mod image_state_tests {
                 .generation,
             1
         );
+    }
+
+    #[test]
+    fn reconciling_viewport_work_keeps_overlapping_requests() {
+        let mut state = ImageState::default();
+        let retained_inflight = (crate::image::ImageKind::SongCover, 11);
+        let dropped_inflight = (crate::image::ImageKind::SongCover, 12);
+        let retained_pending = (crate::image::ImageKind::SongCover, 13);
+        let dropped_pending = (crate::image::ImageKind::SongCover, 14);
+
+        for key in [
+            retained_inflight,
+            dropped_inflight,
+            retained_pending,
+            dropped_pending,
+        ] {
+            assert!(state.enqueue_with_scope(
+                key.0,
+                key.1,
+                format!("https://example.invalid/{}.jpg", key.1),
+                ImageRequestScope::Viewport,
+            ));
+        }
+
+        let retained_request = state.pop_pending().expect("retained in-flight request");
+        let dropped_request = state.pop_pending().expect("dropped in-flight request");
+        let (_retained_task, retained_handle) = iced::Task::perform(async {}, |_| ()).abortable();
+        let (_dropped_task, dropped_handle) = iced::Task::perform(async {}, |_| ()).abortable();
+        let retained_observer = retained_handle.clone();
+        let dropped_observer = dropped_handle.clone();
+        state.mark_inflight(
+            retained_request.kind,
+            retained_request.id,
+            retained_request.generation,
+            retained_request.scope,
+            retained_handle,
+        );
+        state.mark_inflight(
+            dropped_request.kind,
+            dropped_request.id,
+            dropped_request.generation,
+            dropped_request.scope,
+            dropped_handle,
+        );
+
+        let desired = std::collections::HashSet::from([retained_inflight, retained_pending]);
+        state.reconcile_viewport_requests(&desired);
+
+        assert!(!retained_observer.is_aborted());
+        assert!(dropped_observer.is_aborted());
+        assert!(state.is_inflight(retained_inflight.0, retained_inflight.1));
+        assert!(!state.is_inflight(dropped_inflight.0, dropped_inflight.1));
+        assert!(state.is_queued(retained_pending.0, retained_pending.1));
+        assert!(!state.is_queued(dropped_pending.0, dropped_pending.1));
+        assert_eq!(state.viewport_generation, 1);
     }
 
     #[test]
