@@ -72,7 +72,6 @@ pub fn view(search_query: &str, locale: Locale, style: SearchBarStyle) -> Elemen
         .style(|theme, _status| iced::widget::text_input::Style {
             background: iced::Background::Color(iced::Color::TRANSPARENT),
             border: iced::Border::default(),
-            icon: theme::text_muted(theme),
             placeholder: theme::text_muted(theme),
             value: theme::text_primary(theme),
             selection: theme::ACCENT_PINK,

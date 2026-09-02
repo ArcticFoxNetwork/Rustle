@@ -204,7 +204,7 @@ impl PerLineBlurRenderer {
 
         let blur_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Per-Line Blur Pipeline Layout"),
-            bind_group_layouts: &[&blur_bind_group_layout],
+            bind_group_layouts: &[Some(&blur_bind_group_layout)],
             immediate_size: 0,
         });
 
@@ -307,7 +307,7 @@ impl PerLineBlurRenderer {
         let composite_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Per-Line Composite Pipeline Layout"),
-                bind_group_layouts: &[&composite_bind_group_layout],
+                bind_group_layouts: &[Some(&composite_bind_group_layout)],
                 immediate_size: 0,
             });
 

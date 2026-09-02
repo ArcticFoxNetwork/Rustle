@@ -858,7 +858,7 @@ where
                     }),
             ],
             Space::new().width(Fill),
-            text_input(&placeholder_text, &value_text)
+            text_input(placeholder_text, value_text)
                 .on_input(on_input)
                 .padding([8, 12])
                 .width(200)
@@ -875,7 +875,6 @@ where
                             width: 1.0,
                             radius: 4.0.into(),
                         },
-                        icon: theme::settings_desc(theme),
                         placeholder: theme::settings_desc(theme),
                         value: theme::settings_label(theme),
                         selection: theme::ACCENT_PINK,

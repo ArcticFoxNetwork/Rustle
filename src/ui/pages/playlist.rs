@@ -934,7 +934,7 @@ pub(crate) fn build_controls<'a>(
 
         // Text input - only show when animation is far enough
         let input_element: Element<'a, Message> = if search_progress > 0.3 {
-            text_input("", &search_query_owned)
+            text_input("", search_query_owned)
                 .id(iced::widget::Id::new("playlist_search_input"))
                 .on_input(Message::PlaylistSearchChanged)
                 .on_submit(Message::PlaylistSearchSubmit)
@@ -944,7 +944,6 @@ pub(crate) fn build_controls<'a>(
                 .style(move |_theme, _status| text_input::Style {
                     background: iced::Background::Color(Color::TRANSPARENT),
                     border: iced::Border::default(),
-                    icon: Color::from_rgba(1.0, 1.0, 1.0, input_opacity),
                     placeholder: Color::from_rgba(1.0, 1.0, 1.0, 0.5 * input_opacity),
                     value: Color::from_rgba(1.0, 1.0, 1.0, input_opacity),
                     selection: theme::ACCENT_PINK,

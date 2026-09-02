@@ -104,7 +104,7 @@ fn inp<'a>(label: &str, value: &str, sid: i64, field: &'static str) -> Element<'
     column![
         text(l).size(11.0).style(st(theme::text_secondary)),
         spacer(4.0),
-        text_input("", &v)
+        text_input("", v)
             .on_input(move |x| msg_f(sid, field, x))
             .padding([8, 10])
             .style(inp_s),
@@ -120,7 +120,7 @@ fn inp2<'a>(label: &str, value: &str, sid: i64, field: &'static str) -> Element<
     column![
         text(l).size(11.0).style(st(theme::text_secondary)),
         spacer(4.0),
-        text_input("", &v)
+        text_input("", v)
             .on_input(move |x| msg_f(sid, field, x))
             .width(Length::Fixed(90.0))
             .padding([8, 10])
@@ -167,7 +167,6 @@ fn inp_s(t: &iced::Theme, s: text_input::Status) -> text_input::Style {
             width: 1.0,
             radius: Radius::new(8.0),
         },
-        icon: theme::TEXT_MUTED,
         placeholder: theme::TEXT_MUTED,
         value: theme::text_primary(t),
         selection: purple,

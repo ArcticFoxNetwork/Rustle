@@ -183,7 +183,7 @@ mod tests {
         fn fill_quad(&mut self, _quad: renderer::Quad, _background: impl Into<Background>) {}
 
         fn allocate_image(
-            &mut self,
+            &self,
             _handle: &iced::advanced::image::Handle,
             _callback: impl FnOnce(
                 Result<iced::advanced::image::Allocation, iced::advanced::image::Error>,
@@ -192,13 +192,17 @@ mod tests {
         ) {
         }
 
-        fn hint(&mut self, _scale_factor: f32) {}
+        fn hint(&mut self, _scale: renderer::Scale) {}
 
-        fn scale_factor(&self) -> Option<f32> {
+        fn scale(&self) -> Option<renderer::Scale> {
             None
         }
 
         fn reset(&mut self, _new_bounds: Rectangle) {}
+
+        fn settings(&self) -> renderer::Settings {
+            renderer::Settings::default()
+        }
     }
 
     struct DrawViewportProbe {
@@ -336,9 +340,18 @@ mod tests {
             &mut renderer,
         );
         let redraw = Event::Window(iced::window::Event::RedrawRequested(Instant::now()));
-        let mut messages = Vec::new();
+        let window = iced::window::Headless;
+        let waker = iced::advanced::shell::Waker::noop();
+        let mut messages = iced::advanced::shell::Bus::new();
 
-        user_interface.update(&[redraw], Cursor::Unavailable, &mut renderer, &mut messages);
+        user_interface.update(
+            &window,
+            &waker,
+            &[redraw],
+            Cursor::Unavailable,
+            &mut renderer,
+            &mut messages,
+        );
 
         assert_eq!(redraw_count.get(), 1);
     }
@@ -362,11 +375,20 @@ mod tests {
             &mut renderer,
         );
         let redraw = Event::Window(iced::window::Event::RedrawRequested(Instant::now()));
-        let mut messages = Vec::new();
+        let window = iced::window::Headless;
+        let waker = iced::advanced::shell::Waker::noop();
+        let mut messages = iced::advanced::shell::Bus::new();
 
-        user_interface.update(&[redraw], Cursor::Unavailable, &mut renderer, &mut messages);
+        user_interface.update(
+            &window,
+            &waker,
+            &[redraw],
+            Cursor::Unavailable,
+            &mut renderer,
+            &mut messages,
+        );
 
-        assert_eq!(messages, vec![(0, 11)]);
+        assert_eq!(messages.into_iter().collect::<Vec<_>>(), vec![(0, 11)]);
     }
 
     #[test]
@@ -388,9 +410,13 @@ mod tests {
             &mut renderer,
         );
         let click = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
-        let mut messages = Vec::new();
+        let window = iced::window::Headless;
+        let waker = iced::advanced::shell::Waker::noop();
+        let mut messages = iced::advanced::shell::Bus::new();
 
         user_interface.update(
+            &window,
+            &waker,
             &[click],
             Cursor::Available(Point::new(20.0, 75.0)),
             &mut renderer,
@@ -680,7 +706,7 @@ where
     Renderer: renderer::Renderer,
     Key: Eq + Hash + Clone + 'static,
 {
-    fn diff(&self, tree: &mut Tree) {
+    fn diff(&mut self, tree: &mut Tree) {
         let (start, end) = {
             let mut state = self.state.borrow_mut();
             state.item_count = self.item_count;
@@ -709,13 +735,13 @@ where
 
         // Ensure trees exist for all visible items and diff them
         for item_idx in start..end {
-            let element = (self.item_builder)(item_idx);
+            let mut element = (self.item_builder)(item_idx);
             let item_key = (self.item_key)(item_idx);
             let tree = internal_state
                 .item_trees
                 .entry(item_key)
                 .or_insert_with(Tree::empty);
-            tree.diff(&element);
+            tree.diff(&mut element);
         }
     }
 
@@ -773,10 +799,10 @@ where
                 .entry(item_key)
                 .or_insert_with(|| {
                     let mut t = Tree::empty();
-                    t.diff(&element);
+                    t.diff(&mut element);
                     t
                 });
-            tree.diff(&element);
+            tree.diff(&mut element);
 
             let node = element.as_widget_mut().layout(tree, renderer, &item_limits);
 
