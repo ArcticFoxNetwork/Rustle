@@ -6,7 +6,7 @@ use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 
 use crate::app::{ContextMenuAction, ContextMenuState, Message};
 use crate::i18n::{Key, Locale};
-use crate::ui::{icons, theme, widgets};
+use crate::ui::{icons, overlay, theme, widgets};
 use crate::utils::Source;
 
 const W: f32 = 240.0;
@@ -162,10 +162,12 @@ pub fn view(menu: &ContextMenuState, locale: Locale, sw: f32, sh: f32) -> Elemen
         });
 
     let positioned = container(panel).padding(Padding::new(0.0).top(y).left(x));
-    container(iced::widget::stack([backdrop.into(), positioned.into()]))
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+    overlay::block_mouse_events(
+        container(iced::widget::stack([backdrop.into(), positioned.into()]))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into(),
+    )
 }
 
 fn msg(a: ContextMenuAction, id: i64) -> Message {

@@ -2,9 +2,7 @@
 //! Application view rendering
 
 use iced::mouse::Interaction;
-use iced::widget::{
-    Space, button, column, container, mouse_area, opaque, row, scrollable, stack, text,
-};
+use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, stack, text};
 use iced::{Alignment, Color, Element, Fill, Length};
 
 use super::message::Message;
@@ -381,7 +379,7 @@ impl App {
                 is_fm_mode,
             );
 
-            opaque(
+            overlay::block_mouse_events(
                 mouse_area(
                     container(
                         column![
@@ -399,7 +397,8 @@ impl App {
                     .height(Fill),
                 )
                 .interaction(Interaction::Idle)
-                .on_press(Message::ToggleQueue),
+                .on_press(Message::ToggleQueue)
+                .into(),
             )
         } else {
             Space::new().width(0).height(0).into()
@@ -422,16 +421,15 @@ impl App {
         // Build overlays - always use consistent stack structure to preserve scroll
 
         // Toast overlay (empty space if not visible)
-        // Wrapped in opaque to prevent click/cursor penetration through toast area
+        // Intentionally pointer-transparent: notifications should not disturb controls beneath.
         let toast_overlay: Element<'_, Message> = if self.ui.toast_visible {
             if let Some(toast) = &self.ui.toast {
                 let toast_widget = widgets::view_toast(toast);
-                opaque(
-                    container(toast_widget)
-                        .width(Fill)
-                        .padding(20)
-                        .align_x(Alignment::Center),
-                )
+                container(toast_widget)
+                    .width(Fill)
+                    .padding(20)
+                    .align_x(Alignment::Center)
+                    .into()
             } else {
                 Space::new().width(0).height(0).into()
             }
@@ -751,7 +749,17 @@ impl App {
             }
         };
 
-        let resize_handles = components::window_resize_handles::view();
+        // Keep borderless-window resize handles from sitting above a blocking overlay.
+        // Toasts are deliberately excluded so they remain fully pointer-transparent.
+        let resize_handles: Element<'_, Message> = if self.ui.queue_visible
+            || self.ui.home.login_popup_open
+            || !self.ui.overlay_stack.is_empty()
+            || self.ui.context_menu.is_some()
+        {
+            Space::new().width(0).height(0).into()
+        } else {
+            components::window_resize_handles::view()
+        };
 
         stack![
             main_layout,

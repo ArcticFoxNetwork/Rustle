@@ -6,9 +6,7 @@
 
 use std::sync::Arc;
 
-use iced::widget::{
-    Sensor, Space, button, column, container, mouse_area, opaque, row, shader, svg, text,
-};
+use iced::widget::{Sensor, Space, button, column, container, mouse_area, row, shader, svg, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
 use crate::app::{ImageState, Message};
@@ -17,6 +15,7 @@ use crate::features::PlayMode;
 use crate::features::lyrics::engine::{LyricLineData, LyricsEngine};
 use crate::ui::effects::textured_background::TexturedBackgroundProgram;
 use crate::ui::icons;
+use crate::ui::overlay;
 use crate::ui::theme::{self, BOLD_WEIGHT};
 use crate::ui::widgets::{self, ControlSize, PlayModeButtonSize, SliderSize};
 
@@ -301,10 +300,14 @@ pub fn view<'a>(
     .width(Fill)
     .height(Fill);
 
-    // Use opaque to block events from reaching underlying widgets (main content behind lyrics page)
-    // opaque only blocks events from propagating to widgets BELOW it in the stack,
-    // it does NOT block events to widgets INSIDE it (like our buttons)
-    opaque(container(content_with_shader).width(Fill).height(Fill))
+    // Block all pointer events from reaching the main content behind the lyrics page while
+    // preserving the controls and scrollable lyrics inside this full-screen surface.
+    overlay::block_mouse_events(
+        container(content_with_shader)
+            .width(Fill)
+            .height(Fill)
+            .into(),
+    )
 }
 
 /// Build the left panel with cover, song info, and controls

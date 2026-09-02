@@ -8,10 +8,12 @@
 //!
 //! # Event Isolation
 //!
-//! All overlays use `iced::widget::opaque()` to prevent cursor, click, and scroll events
-//! from penetrating through to widgets beneath.
+//! Blocking overlays use [`block_mouse_events`] to prevent cursor, click, and scroll events
+//! from penetrating through to widgets beneath while preserving interactions inside the
+//! overlay itself.
 
 use iced::border::Radius;
+use iced::mouse::Interaction;
 use iced::widget::{button, column, container, mouse_area, opaque, row, text};
 use iced::{Alignment, Background, Border, Color, Element, Length, Shadow};
 
@@ -86,6 +88,22 @@ impl OverlayEntry {
 
 fn backdrop_color() -> Color {
     Color::from_rgba(0.0, 0.0, 0.0, 0.6)
+}
+
+/// Prevent pointer interaction from reaching layers below an overlay.
+///
+/// [`iced::widget::opaque`] only captures left-button presses. Overlay surfaces also need to
+/// own right/middle-button and scroll events so a context menu or modal cannot accidentally
+/// trigger controls underneath it. The wrapped content is updated first, which means buttons
+/// and other interactive controls inside the overlay retain their normal behavior.
+pub fn block_mouse_events<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
+    mouse_area(content)
+        .interaction(Interaction::Idle)
+        .on_press(Message::Noop)
+        .on_right_press(Message::Noop)
+        .on_middle_press(Message::Noop)
+        .on_scroll(|_| Message::Noop)
+        .into()
 }
 
 // ============================================================================
@@ -170,7 +188,7 @@ pub fn modal_view<'a>(
         backdrop_container.into()
     };
 
-    opaque(inner)
+    block_mouse_events(inner)
 }
 
 // ============================================================================

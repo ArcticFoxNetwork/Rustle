@@ -3,14 +3,15 @@
 //! Displays QR code for NCM login with status messages.
 
 use iced::mouse::Interaction;
-use iced::widget::{Space, button, column, container, image, mouse_area, opaque, row, svg, text};
+use iced::widget::{Space, button, column, container, image, mouse_area, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Padding};
 use std::path::PathBuf;
 
 use crate::app::Message;
 use crate::app::UserInfo;
 use crate::i18n::{Key, Locale};
-use crate::ui::theme::{self, BOLD_WEIGHT};
+use crate::ui::theme::BOLD_WEIGHT;
+use crate::ui::{overlay, theme};
 
 const POPUP_WIDTH: f32 = 320.0;
 const POPUP_HEIGHT: f32 = 400.0;
@@ -63,8 +64,8 @@ pub fn view<'a>(
     .interaction(Interaction::Idle)
     .on_press(Message::ToggleLoginPopup);
 
-    // Stack popup on backdrop, wrapped in opaque to block events from reaching layers below
-    opaque(
+    // Stack popup on backdrop and block all pointer events from reaching layers below
+    overlay::block_mouse_events(
         iced::widget::stack![
             backdrop,
             container(popup)
@@ -74,7 +75,8 @@ pub fn view<'a>(
                 .align_y(Alignment::Center),
         ]
         .width(Fill)
-        .height(Fill),
+        .height(Fill)
+        .into(),
     )
 }
 
