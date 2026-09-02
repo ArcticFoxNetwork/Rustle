@@ -153,15 +153,84 @@ mod tests {
     use iced::advanced::widget::{Tree, Widget};
     use iced::mouse::{self, Cursor};
     use iced::time::Instant;
-    use iced::{Element, Event, Length, Point, Rectangle, Size};
+    use iced::{Background, Element, Event, Length, Point, Rectangle, Size, Transformation};
     use iced_runtime::UserInterface;
     use iced_runtime::user_interface::Cache;
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
     use std::rc::Rc;
 
     struct EventProbe {
         redraw_count: Rc<Cell<usize>>,
         pointer_count: Rc<Cell<usize>>,
+    }
+
+    #[derive(Default)]
+    struct LayerRecordingRenderer {
+        layers: Vec<Rectangle>,
+    }
+
+    impl renderer::Renderer for LayerRecordingRenderer {
+        fn start_layer(&mut self, bounds: Rectangle) {
+            self.layers.push(bounds);
+        }
+
+        fn end_layer(&mut self) {}
+
+        fn start_transformation(&mut self, _transformation: Transformation) {}
+
+        fn end_transformation(&mut self) {}
+
+        fn fill_quad(&mut self, _quad: renderer::Quad, _background: impl Into<Background>) {}
+
+        fn allocate_image(
+            &mut self,
+            _handle: &iced::advanced::image::Handle,
+            _callback: impl FnOnce(
+                Result<iced::advanced::image::Allocation, iced::advanced::image::Error>,
+            ) + Send
+            + 'static,
+        ) {
+        }
+
+        fn hint(&mut self, _scale_factor: f32) {}
+
+        fn scale_factor(&self) -> Option<f32> {
+            None
+        }
+
+        fn reset(&mut self, _new_bounds: Rectangle) {}
+    }
+
+    struct DrawViewportProbe {
+        viewports: Rc<RefCell<Vec<Rectangle>>>,
+    }
+
+    impl Widget<(), (), LayerRecordingRenderer> for DrawViewportProbe {
+        fn size(&self) -> Size<Length> {
+            Size::new(Length::Fill, Length::Fixed(50.0))
+        }
+
+        fn layout(
+            &mut self,
+            _tree: &mut Tree,
+            _renderer: &LayerRecordingRenderer,
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            layout::Node::new(limits.resolve(Length::Fill, Length::Fixed(50.0), Size::ZERO))
+        }
+
+        fn draw(
+            &self,
+            _tree: &Tree,
+            _renderer: &mut LayerRecordingRenderer,
+            _theme: &(),
+            _style: &renderer::Style,
+            _layout: Layout<'_>,
+            _cursor: Cursor,
+            viewport: &Rectangle,
+        ) {
+            self.viewports.borrow_mut().push(*viewport);
+        }
     }
 
     impl<Message> Widget<Message, (), ()> for EventProbe {
@@ -330,6 +399,41 @@ mod tests {
 
         assert_eq!(pointer_counts[0].get(), 0);
         assert_eq!(pointer_counts[1].get(), 1);
+    }
+
+    #[test]
+    fn drawing_layers_and_children_use_the_parent_viewport_intersection() {
+        let child_viewports = Rc::new(RefCell::new(Vec::new()));
+        let observed_viewports = Rc::clone(&child_viewports);
+        let mut list: VirtualList<'_, (), (), LayerRecordingRenderer> =
+            VirtualList::new(3, 50.0, move |_| {
+                Element::new(DrawViewportProbe {
+                    viewports: Rc::clone(&observed_viewports),
+                })
+            });
+        let mut tree = Tree::new(&list as &dyn Widget<(), (), LayerRecordingRenderer>);
+        let mut renderer = LayerRecordingRenderer::default();
+        let limits = layout::Limits::new(Size::ZERO, Size::new(200.0, 100.0));
+        let node = list.layout(&mut tree, &renderer, &limits);
+        let viewport = Rectangle {
+            x: 0.0,
+            y: 20.0,
+            width: 200.0,
+            height: 60.0,
+        };
+
+        list.draw(
+            &tree,
+            &mut renderer,
+            &(),
+            &renderer::Style::default(),
+            Layout::new(&node),
+            Cursor::Unavailable,
+            &viewport,
+        );
+
+        assert_eq!(renderer.layers, vec![viewport, viewport]);
+        assert_eq!(child_viewports.borrow().as_slice(), &[viewport, viewport]);
     }
 }
 
@@ -698,6 +802,10 @@ where
         let internal_state = tree.state.downcast_ref::<VirtualListInternalState<Key>>();
         let (start, end) = internal_state.cached_visible_range;
 
+        let Some(visible_bounds) = bounds.intersection(viewport) else {
+            return;
+        };
+
         // Early return if no items to draw
         if start >= end {
             return;
@@ -705,12 +813,14 @@ where
 
         // Find the subset of items actually on screen (within viewport bounds)
         let scroll_offset = self.state.borrow().scroll_offset;
+        let visible_top = visible_bounds.y - bounds.y;
+        let visible_bottom = visible_top + visible_bounds.height;
         let mut on_screen_start = end;
         let mut on_screen_end = start;
         for item_idx in start..end {
             let y = item_idx as f32 * self.item_height - scroll_offset;
             let y_end = y + self.item_height;
-            if y_end > 0.0 && y < bounds.height {
+            if y_end > visible_top && y < visible_bottom {
                 if item_idx < on_screen_start {
                     on_screen_start = item_idx;
                 }
@@ -722,8 +832,8 @@ where
             return;
         }
 
-        // Draw list items (clipped to bounds)
-        renderer.with_layer(bounds, |renderer| {
+        // Draw list items inside both the list bounds and the parent viewport.
+        renderer.with_layer(visible_bounds, |renderer| {
             let mut children = layout.children();
             // Skip to the first on-screen item
             let skip = on_screen_start.saturating_sub(start);
@@ -747,7 +857,7 @@ where
                         style,
                         child_layout,
                         cursor,
-                        viewport,
+                        &visible_bounds,
                     );
                 }
             }
@@ -757,13 +867,15 @@ where
         if self.show_scrollbar {
             let state = self.state.borrow();
             if state.total_height() > bounds.height {
-                self.draw_scrollbar(
-                    renderer,
-                    bounds,
-                    &state,
-                    internal_state.scrollbar_hovered,
-                    internal_state.scrollbar_dragging,
-                );
+                renderer.with_layer(visible_bounds, |renderer| {
+                    self.draw_scrollbar(
+                        renderer,
+                        bounds,
+                        &state,
+                        internal_state.scrollbar_hovered,
+                        internal_state.scrollbar_dragging,
+                    );
+                });
             }
         }
     }

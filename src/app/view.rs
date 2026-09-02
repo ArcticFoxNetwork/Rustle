@@ -407,7 +407,8 @@ impl App {
         // Content row: sidebar + resize handle + right panel (fills remaining vertical space)
         let content_row = row![sidebar, resize_handle, right_panel]
             .width(Fill)
-            .height(Fill);
+            .height(Fill)
+            .clip(true);
 
         // Main layout: content row on top, full-width player bar at bottom
         let main_layout: Element<'_, Message> = stack![
