@@ -41,6 +41,17 @@ const SCROLLBAR_MIN_HEIGHT: f32 = 30.0;
 const SCROLLBAR_MARGIN: f32 = 2.0;
 const SCROLLBAR_BORDER_RADIUS: f32 = 3.0;
 
+/// Events that must reach every mounted row because child widgets may own
+/// lifecycle, focus, or clipboard state that is independent of pointer hit
+/// testing. In particular, stateful image widgets synchronize new handles on
+/// `RedrawRequested`.
+fn broadcasts_to_visible_children(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Keyboard(_) | Event::Window(_) | Event::InputMethod(_) | Event::Clipboard(_)
+    )
+}
+
 /// State for the virtual list
 #[derive(Debug, Clone)]
 pub struct VirtualListState {
@@ -135,7 +146,74 @@ impl VirtualListState {
 
 #[cfg(test)]
 mod tests {
-    use super::VirtualListState;
+    use super::{VirtualList, VirtualListState};
+    use iced::advanced::Shell;
+    use iced::advanced::layout::{self, Layout};
+    use iced::advanced::renderer;
+    use iced::advanced::widget::{Tree, Widget};
+    use iced::mouse::{self, Cursor};
+    use iced::time::Instant;
+    use iced::{Element, Event, Length, Point, Rectangle, Size};
+    use iced_runtime::UserInterface;
+    use iced_runtime::user_interface::Cache;
+    use std::cell::Cell;
+    use std::rc::Rc;
+
+    struct EventProbe {
+        redraw_count: Rc<Cell<usize>>,
+        pointer_count: Rc<Cell<usize>>,
+    }
+
+    impl<Message> Widget<Message, (), ()> for EventProbe {
+        fn size(&self) -> Size<Length> {
+            Size::new(Length::Fill, Length::Fixed(50.0))
+        }
+
+        fn layout(
+            &mut self,
+            _tree: &mut Tree,
+            _renderer: &(),
+            limits: &layout::Limits,
+        ) -> layout::Node {
+            layout::Node::new(limits.resolve(Length::Fill, Length::Fixed(50.0), Size::ZERO))
+        }
+
+        fn update(
+            &mut self,
+            _tree: &mut Tree,
+            event: &Event,
+            _layout: Layout<'_>,
+            _cursor: Cursor,
+            _renderer: &(),
+            _shell: &mut Shell<'_, Message>,
+            _viewport: &Rectangle,
+        ) {
+            if matches!(
+                event,
+                Event::Window(iced::window::Event::RedrawRequested(_))
+            ) {
+                self.redraw_count.set(self.redraw_count.get() + 1);
+            }
+            if matches!(
+                event,
+                Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left))
+            ) {
+                self.pointer_count.set(self.pointer_count.get() + 1);
+            }
+        }
+
+        fn draw(
+            &self,
+            _tree: &Tree,
+            _renderer: &mut (),
+            _theme: &(),
+            _style: &renderer::Style,
+            _layout: Layout<'_>,
+            _cursor: Cursor,
+            _viewport: &Rectangle,
+        ) {
+        }
+    }
 
     #[test]
     fn visible_range_includes_overscan_and_stays_within_item_count() {
@@ -168,6 +246,90 @@ mod tests {
 
         state.jump_to(f32::MAX);
         assert_eq!(state.scroll_offset, 800.0);
+    }
+
+    #[test]
+    fn redraw_events_reach_visible_children() {
+        let redraw_count = Rc::new(Cell::new(0));
+        let probe_count = Rc::clone(&redraw_count);
+        let list: VirtualList<'_, (), (), ()> = VirtualList::new(1, 50.0, move |_| {
+            Element::new(EventProbe {
+                redraw_count: Rc::clone(&probe_count),
+                pointer_count: Rc::new(Cell::new(0)),
+            })
+        })
+        .scrollbar(false);
+        let mut renderer = ();
+        let mut user_interface = UserInterface::build(
+            list,
+            Size::new(200.0, 100.0),
+            Cache::default(),
+            &mut renderer,
+        );
+        let redraw = Event::Window(iced::window::Event::RedrawRequested(Instant::now()));
+        let mut messages = Vec::new();
+
+        user_interface.update(&[redraw], Cursor::Unavailable, &mut renderer, &mut messages);
+
+        assert_eq!(redraw_count.get(), 1);
+    }
+
+    #[test]
+    fn initial_redraw_publishes_the_visible_range() {
+        let list: VirtualList<'_, (usize, usize), (), ()> =
+            VirtualList::new(100, 50.0, move |_| {
+                Element::new(EventProbe {
+                    redraw_count: Rc::new(Cell::new(0)),
+                    pointer_count: Rc::new(Cell::new(0)),
+                })
+            })
+            .scrollbar(false)
+            .on_visible_range(|range| range);
+        let mut renderer = ();
+        let mut user_interface = UserInterface::build(
+            list,
+            Size::new(200.0, 100.0),
+            Cache::default(),
+            &mut renderer,
+        );
+        let redraw = Event::Window(iced::window::Event::RedrawRequested(Instant::now()));
+        let mut messages = Vec::new();
+
+        user_interface.update(&[redraw], Cursor::Unavailable, &mut renderer, &mut messages);
+
+        assert_eq!(messages, vec![(0, 11)]);
+    }
+
+    #[test]
+    fn pointer_events_only_reach_the_hit_row() {
+        let pointer_counts = [Rc::new(Cell::new(0)), Rc::new(Cell::new(0))];
+        let probe_counts = pointer_counts.clone();
+        let list: VirtualList<'_, (), (), ()> = VirtualList::new(2, 50.0, move |index| {
+            Element::new(EventProbe {
+                redraw_count: Rc::new(Cell::new(0)),
+                pointer_count: Rc::clone(&probe_counts[index]),
+            })
+        })
+        .scrollbar(false);
+        let mut renderer = ();
+        let mut user_interface = UserInterface::build(
+            list,
+            Size::new(200.0, 100.0),
+            Cache::default(),
+            &mut renderer,
+        );
+        let click = Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left));
+        let mut messages = Vec::new();
+
+        user_interface.update(
+            &[click],
+            Cursor::Available(Point::new(20.0, 75.0)),
+            &mut renderer,
+            &mut messages,
+        );
+
+        assert_eq!(pointer_counts[0].get(), 0);
+        assert_eq!(pointer_counts[1].get(), 1);
     }
 }
 
@@ -869,7 +1031,7 @@ where
                 }
             }
 
-            Event::Keyboard(_) => {
+            _ if broadcasts_to_visible_children(event) => {
                 let (start, end) = internal_state.cached_visible_range;
                 let mut children = layout.children();
                 for item_idx in start..end {
@@ -891,7 +1053,7 @@ where
                 }
             }
 
-            Event::Window(_) | Event::InputMethod(_) | Event::Clipboard(_) => {}
+            _ => {}
         }
     }
 
