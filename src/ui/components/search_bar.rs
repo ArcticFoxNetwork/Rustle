@@ -25,7 +25,7 @@ pub struct SearchBarStyle {
 impl SearchBarStyle {
     pub const fn top_bar() -> Self {
         Self {
-            width: 0.0, // signal: Fill + max_width(240)
+            width: 0.0, // signal: fluid search content with a visual width cap
             height: 36.0,
             icon_size: 16.0,
             horizontal_padding: 12.0,
@@ -101,12 +101,12 @@ pub fn view(search_query: &str, locale: Locale, style: SearchBarStyle) -> Elemen
             })
             .into()
     } else {
-        // Web-like: outer Fill fills flex space, inner max_width caps visual size
+        // Web-like: outer Fill fills flex space, inner container caps visual size.
         container(
             container(content)
                 .height(style.height)
                 .align_y(Alignment::Center)
-                .max_width(320.0)
+                .width(320.0)
                 .style(move |theme| iced::widget::container::Style {
                     background: Some(iced::Background::Color(theme::hover_bg_alpha(theme, 0.08))),
                     border: iced::Border {
