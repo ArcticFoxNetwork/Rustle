@@ -3,14 +3,14 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use iced::widget::{Space, button, column, container, row, scrollable, text};
+use iced::widget::{Space, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Fill, Length, Padding};
 
 use crate::app::{ContentWidthTarget, ImageState, Message};
 use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::animation::SmoothScrollTarget;
-use crate::ui::components::{cover_image, detail_card};
+use crate::ui::components::{cover_image, detail_card, detail_description};
 use crate::ui::pages::playlist::{self, DetailGradientSnapshot, PlaylistView};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{theme, widgets};
@@ -121,16 +121,10 @@ fn build_header(
                     Message::SmoothScroll,
                 );
 
-                let collapse_btn = button(
-                    text(locale.get(Key::CollapseDescription))
-                        .size(theme::TEXT_SIZE_CAPTION)
-                        .style(|_theme| iced::widget::text::Style {
-                            color: Some(theme::ACCENT_PINK),
-                        }),
-                )
-                .style(theme::transparent_btn)
-                .padding(Padding::new(2.0).left(0.0))
-                .on_press(Message::ToggleDescriptionExpand);
+                let collapse_btn = detail_description::toggle_button(
+                    locale.get(Key::CollapseDescription),
+                    Message::ToggleDescriptionExpand,
+                );
 
                 column![scrollable_desc, collapse_btn]
                     .spacing(2)
@@ -138,20 +132,14 @@ fn build_header(
                     .into()
             } else {
                 let clamped_desc = container(desc_widget)
-                    .max_height(theme::TEXT_SIZE_BODY_LARGE * 1.5 * 2.0 + 4.0)
+                    .height(detail_description::collapsed_height())
                     .clip(true)
                     .width(Fill);
 
-                let expand_btn = button(
-                    text(locale.get(Key::ExpandDescription))
-                        .size(theme::TEXT_SIZE_CAPTION)
-                        .style(|_theme| iced::widget::text::Style {
-                            color: Some(theme::ACCENT_PINK),
-                        }),
-                )
-                .style(theme::transparent_btn)
-                .padding(Padding::new(2.0).left(0.0))
-                .on_press(Message::ToggleDescriptionExpand);
+                let expand_btn = detail_description::toggle_button(
+                    locale.get(Key::ExpandDescription),
+                    Message::ToggleDescriptionExpand,
+                );
 
                 column![clamped_desc, expand_btn]
                     .spacing(2)
@@ -159,7 +147,9 @@ fn build_header(
                     .into()
             }
         } else {
-            container(desc_widget).max_width(720).into()
+            container(desc_widget)
+                .width(detail_description::text_width())
+                .into()
         }
     };
 
