@@ -751,11 +751,7 @@ impl App {
 
         // Keep borderless-window resize handles from sitting above a blocking overlay.
         // Toasts are deliberately excluded so they remain fully pointer-transparent.
-        let resize_handles: Element<'_, Message> = if self.ui.queue_visible
-            || self.ui.home.login_popup_open
-            || !self.ui.overlay_stack.is_empty()
-            || self.ui.context_menu.is_some()
-        {
+        let resize_handles: Element<'_, Message> = if self.ui.has_blocking_pointer_overlay() {
             Space::new().width(0).height(0).into()
         } else {
             components::window_resize_handles::view()

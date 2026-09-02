@@ -66,6 +66,13 @@ impl App {
 
             Message::MouseMoved(position) => {
                 self.core.mouse_position = *position;
+                if self.ui.has_blocking_pointer_overlay() {
+                    // The event subscription is independent from Iced's widget event capture.
+                    // Do not continue a drag that started beneath a modal/popup while that layer
+                    // is visible.
+                    self.ui.sidebar_dragging = false;
+                    return Some(Task::none());
+                }
                 // Update sidebar width if dragging
                 if self.ui.sidebar_dragging {
                     const MIN_WIDTH: f32 = 240.0;
@@ -92,7 +99,10 @@ impl App {
             }
 
             Message::MouseWheelScrolled { delta_y } => {
-                if self.ui.is_volume_slider_hovered && *delta_y != 0.0 {
+                if !self.ui.has_blocking_pointer_overlay()
+                    && self.ui.is_volume_slider_hovered
+                    && *delta_y != 0.0
+                {
                     // 每个滚轮步长 = 2% 音量，signum 保证步长恒定
                     let step = delta_y.signum() * 0.02;
                     let current = self.playback_info().volume;

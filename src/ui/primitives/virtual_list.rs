@@ -648,10 +648,29 @@ where
                 shell.capture_event();
                 return;
             }
-            Event::Mouse(mouse::Event::CursorMoved { position }) => {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                // A `CursorMoved` event can still reach a lower stack layer with a
+                // `Cursor::Levitating`/`Unavailable` cursor when an upper layer owns the
+                // pointer. Do not use the raw event position in that case: doing so would let
+                // this custom widget update hover state even though Iced has deliberately hidden
+                // the cursor from the layer below.
+                let Some(position) = cursor.position() else {
+                    if internal_state.scrollbar_hovered {
+                        internal_state.scrollbar_hovered = false;
+                        shell.request_redraw();
+                    }
+                    if internal_state.last_hovered_item.is_some() {
+                        internal_state.last_hovered_item = None;
+                        if let Some(msg) = &self.on_empty_area {
+                            shell.publish(msg.clone());
+                        }
+                    }
+                    return;
+                };
+
                 if let Some(sb_bounds) = scrollbar_bounds {
                     let was_hovered = internal_state.scrollbar_hovered;
-                    internal_state.scrollbar_hovered = sb_bounds.contains(*position);
+                    internal_state.scrollbar_hovered = sb_bounds.contains(position);
                     if was_hovered != internal_state.scrollbar_hovered {
                         shell.request_redraw();
                     }
@@ -689,7 +708,7 @@ where
                 }
 
                 // Handle hover state directly on CursorMoved for reliable tracking
-                if bounds.contains(*position) {
+                if bounds.contains(position) {
                     if let Some(on_hover) = &self.on_item_hover {
                         let state = self.state.borrow();
                         let scroll_offset = state.scroll_offset;

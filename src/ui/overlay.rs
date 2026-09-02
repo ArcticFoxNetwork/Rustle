@@ -12,10 +12,16 @@
 //! from penetrating through to widgets beneath while preserving interactions inside the
 //! overlay itself.
 
+use iced::advanced::layout::{self, Layout};
+use iced::advanced::overlay;
+use iced::advanced::renderer;
+use iced::advanced::widget::{Operation, Tree, Widget};
 use iced::border::Radius;
-use iced::mouse::Interaction;
+use iced::mouse::{self, Cursor, Interaction};
 use iced::widget::{button, column, container, mouse_area, opaque, row, text};
-use iced::{Alignment, Background, Border, Color, Element, Length, Shadow};
+use iced::{
+    Alignment, Background, Border, Color, Element, Event, Length, Rectangle, Shadow, Size, Vector,
+};
 
 use crate::app::Message;
 use crate::ui::{theme, widgets};
@@ -97,13 +103,195 @@ fn backdrop_color() -> Color {
 /// trigger controls underneath it. The wrapped content is updated first, which means buttons
 /// and other interactive controls inside the overlay retain their normal behavior.
 pub fn block_mouse_events<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
-    mouse_area(content)
-        .interaction(Interaction::Idle)
-        .on_press(Message::Noop)
-        .on_right_press(Message::Noop)
-        .on_middle_press(Message::Noop)
-        .on_scroll(|_| Message::Noop)
-        .into()
+    Element::new(BlockMouseEvents { content })
+}
+
+/// A pointer barrier for a stack layer.
+///
+/// Iced's built-in `opaque` follows the documented semantics of capturing button presses only.
+/// That is enough for ordinary overlays, but it still lets a lower custom widget inspect raw
+/// `CursorMoved` events. This wrapper follows the same update order as `opaque`—the content gets
+/// the event first—then captures every pointer event that was not handled by the content itself.
+/// Consequently, controls inside the overlay continue to work while widgets below it never see
+/// the event.
+struct BlockMouseEvents<'a, Message, Theme, Renderer> {
+    content: Element<'a, Message, Theme, Renderer>,
+}
+
+impl<Message, Theme, Renderer> Widget<Message, Theme, Renderer>
+    for BlockMouseEvents<'_, Message, Theme, Renderer>
+where
+    Renderer: renderer::Renderer,
+{
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+
+    fn diff(&self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_ref(&self.content));
+    }
+
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn size_hint(&self) -> Size<Length> {
+        self.content.as_widget().size_hint()
+    }
+
+    fn layout(
+        &mut self,
+        tree: &mut Tree,
+        renderer: &Renderer,
+        limits: &layout::Limits,
+    ) -> layout::Node {
+        self.content
+            .as_widget_mut()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn operate(
+        &mut self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &Renderer,
+        operation: &mut dyn Operation,
+    ) {
+        self.content
+            .as_widget_mut()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn update(
+        &mut self,
+        tree: &mut Tree,
+        event: &Event,
+        layout: Layout<'_>,
+        cursor: Cursor,
+        renderer: &Renderer,
+        shell: &mut iced::advanced::Shell<'_, Message>,
+        viewport: &Rectangle,
+    ) {
+        self.content.as_widget_mut().update(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            shell,
+            viewport,
+        );
+
+        if shell.is_event_captured() || !pointer_is_over(event, cursor, layout.bounds()) {
+            return;
+        }
+
+        if is_pointer_event(event) {
+            shell.capture_event();
+        }
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut Renderer,
+        theme: &Theme,
+        style: &renderer::Style,
+        layout: Layout<'_>,
+        cursor: Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: Cursor,
+        viewport: &Rectangle,
+        renderer: &Renderer,
+    ) -> Interaction {
+        let interaction = self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        );
+
+        if interaction == Interaction::None && cursor.is_over(layout.bounds()) {
+            Interaction::Idle
+        } else {
+            interaction
+        }
+    }
+
+    fn overlay<'a>(
+        &'a mut self,
+        tree: &'a mut Tree,
+        layout: Layout<'a>,
+        renderer: &Renderer,
+        viewport: &Rectangle,
+        translation: Vector,
+    ) -> Option<overlay::Element<'a, Message, Theme, Renderer>> {
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            viewport,
+            translation,
+        )
+    }
+}
+
+impl<'a, Message, Theme, Renderer> From<BlockMouseEvents<'a, Message, Theme, Renderer>>
+    for Element<'a, Message, Theme, Renderer>
+where
+    Message: 'a,
+    Theme: 'a,
+    Renderer: renderer::Renderer + 'a,
+{
+    fn from(blocker: BlockMouseEvents<'a, Message, Theme, Renderer>) -> Self {
+        Element::new(blocker)
+    }
+}
+
+fn is_pointer_event(event: &Event) -> bool {
+    matches!(
+        event,
+        Event::Mouse(
+            mouse::Event::CursorEntered
+                | mouse::Event::CursorMoved { .. }
+                | mouse::Event::ButtonPressed(_)
+                | mouse::Event::ButtonReleased(_)
+                | mouse::Event::WheelScrolled { .. }
+        ) | Event::Touch(_)
+    )
+}
+
+fn pointer_is_over(event: &Event, cursor: Cursor, bounds: Rectangle) -> bool {
+    match event {
+        // Use Iced's cursor state instead of the raw event position here. A levitating cursor
+        // means another layer above this widget already owns the pointer, so this layer must not
+        // capture the event on behalf of itself.
+        Event::Mouse(mouse::Event::CursorMoved { .. }) => cursor.is_over(bounds),
+        Event::Touch(touch_event) => match touch_event {
+            iced::touch::Event::FingerPressed { position, .. }
+            | iced::touch::Event::FingerMoved { position, .. }
+            | iced::touch::Event::FingerLifted { position, .. }
+            | iced::touch::Event::FingerLost { position, .. } => bounds.contains(*position),
+        },
+        _ => cursor.is_over(bounds),
+    }
 }
 
 // ============================================================================

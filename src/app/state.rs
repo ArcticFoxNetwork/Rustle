@@ -1842,6 +1842,21 @@ impl UiState {
             || self.smooth_scroll.is_animating()
     }
 
+    /// Whether a visible UI layer owns pointer input instead of the main content.
+    ///
+    /// Toasts intentionally do not count here: they are notifications and remain pointer
+    /// transparent. Lyrics are included while opening/closing so the underlying player cannot
+    /// receive input during the transition either.
+    pub fn has_blocking_pointer_overlay(&self) -> bool {
+        self.queue_visible
+            || self.home.login_popup_open
+            || !self.overlay_stack.is_empty()
+            || self.context_menu.is_some()
+            || self.lyrics.is_open
+            || self.lyrics.animation.is_animating()
+            || self.lyrics.animation.progress() > 0.01
+    }
+
     /// Clean up completed animations to prevent memory leaks
     /// Call this periodically (e.g., on AnimationTick)
     pub fn cleanup_animations(&mut self, now: Instant) {
