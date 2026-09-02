@@ -84,7 +84,7 @@ pub fn play_button_with_buffering(
     let btn_size = size.play_button_size();
     let icon_size = size.play_icon_size();
     let inner_padding = (btn_size - icon_size) / 2.0;
-    let icon_opacity = if show_loading { 0.4 } else { 1.0 };
+    let icon_opacity: f32 = if show_loading { 0.4 } else { 1.0 };
     // Offset to visually center the triangle (play icon is not symmetric)
     let offset = if is_playing || show_loading {
         0.0
@@ -155,7 +155,7 @@ pub fn prev_button(size: ControlSize, disabled: bool) -> Element<'static, Messag
     let icon_size = size.skip_icon_size();
     let padding = size.skip_button_padding();
     let radius = size.skip_button_radius();
-    let icon_opacity = if disabled { 0.5 } else { 1.0 };
+    let icon_opacity: f32 = if disabled { 0.5 } else { 1.0 };
 
     let btn = button(
         svg(svg::Handle::from_memory(icons::SKIP_PREV.as_bytes()))
@@ -247,7 +247,7 @@ pub fn favorite_button(
     let radius = size.skip_button_radius();
     let is_liked = favorite.is_some_and(|(_, is_liked)| is_liked);
     let enabled = favorite.is_some();
-    let icon_opacity = if enabled { 1.0 } else { 0.4 };
+    let icon_opacity: f32 = if enabled { 1.0 } else { 0.4 };
     let heart_icon = if is_liked {
         icons::HEART
     } else {

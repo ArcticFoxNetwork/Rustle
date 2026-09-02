@@ -226,7 +226,7 @@ pub fn build_header(locale: Locale, columns: PlaylistColumns) -> Element<'static
                 .style(|theme, _status| svg::Style {
                     color: Some(theme::opaque_color(theme::header_text(theme))),
                 })
-                .opacity(0.6),
+                .opacity(0.6_f32),
         )
         .width(50)
         .center_x(50)

@@ -35,7 +35,7 @@ pub fn view<'a, Message: Clone + 'a>(
             .style(|theme, _status| svg::Style {
                 color: Some(theme::opaque_color(theme::icon_muted(theme))),
             })
-            .opacity(0.4),
+            .opacity(0.4_f32),
     )
     .width(COVER_SIZE)
     .height(COVER_SIZE)

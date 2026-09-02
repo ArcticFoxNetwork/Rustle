@@ -338,7 +338,7 @@ fn build_song_info(
                     .style(|theme, _status| svg::Style {
                         color: Some(theme::opaque_color(theme::icon_muted(theme))),
                     })
-                    .opacity(0.4),
+                    .opacity(0.4_f32),
             )
             .width(56)
             .height(56)

@@ -32,7 +32,7 @@ pub fn view_body<'a>(
                 .style(|_theme, _status| svg::Style {
                     color: Some(theme::opaque_color(theme::icon_muted(&iced::Theme::Dark))),
                 })
-                .opacity(0.4),
+                .opacity(0.4_f32),
         )
         .width(120)
         .height(120)
@@ -99,43 +99,47 @@ pub fn view_body<'a>(
         .style(|theme| text::Style {
             color: Some(theme::text_secondary(theme)),
         });
-    let name_input = text_input(locale.get(Key::EditPlaylistNamePlaceholder), name)
-        .on_input(Message::EditPlaylistNameChanged)
-        .padding(12)
-        .size(theme::TEXT_SIZE_BODY_LARGE)
-        .style(|theme, _status| text_input::Style {
-            background: iced::Background::Color(theme::surface_container(theme)),
-            border: iced::Border {
-                color: theme::divider(theme),
-                width: 1.0,
-                radius: 6.0.into(),
-            },
-            icon: theme::text_muted(theme),
-            placeholder: theme::text_muted(theme),
-            value: theme::text_primary(theme),
-            selection: theme::ACCENT_PINK,
-        });
+    let name_input = text_input(
+        locale.get(Key::EditPlaylistNamePlaceholder),
+        name.to_string(),
+    )
+    .on_input(Message::EditPlaylistNameChanged)
+    .padding(12)
+    .size(theme::TEXT_SIZE_BODY_LARGE)
+    .style(|theme, _status| text_input::Style {
+        background: iced::Background::Color(theme::surface_container(theme)),
+        border: iced::Border {
+            color: theme::divider(theme),
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        placeholder: theme::text_muted(theme),
+        value: theme::text_primary(theme),
+        selection: theme::ACCENT_PINK,
+    });
     let desc_label = text(locale.get(Key::EditPlaylistDesc).to_string())
         .size(theme::TEXT_SIZE_BODY)
         .style(|theme| text::Style {
             color: Some(theme::text_secondary(theme)),
         });
-    let desc_input = text_input(locale.get(Key::EditPlaylistDescPlaceholder), description)
-        .on_input(Message::EditPlaylistDescriptionChanged)
-        .padding(12)
-        .size(theme::TEXT_SIZE_BODY_LARGE)
-        .style(|theme, _status| text_input::Style {
-            background: iced::Background::Color(theme::surface_container(theme)),
-            border: iced::Border {
-                color: theme::divider(theme),
-                width: 1.0,
-                radius: 6.0.into(),
-            },
-            icon: theme::text_muted(theme),
-            placeholder: theme::text_muted(theme),
-            value: theme::text_primary(theme),
-            selection: theme::ACCENT_PINK,
-        });
+    let desc_input = text_input(
+        locale.get(Key::EditPlaylistDescPlaceholder),
+        description.to_string(),
+    )
+    .on_input(Message::EditPlaylistDescriptionChanged)
+    .padding(12)
+    .size(theme::TEXT_SIZE_BODY_LARGE)
+    .style(|theme, _status| text_input::Style {
+        background: iced::Background::Color(theme::surface_container(theme)),
+        border: iced::Border {
+            color: theme::divider(theme),
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        placeholder: theme::text_muted(theme),
+        value: theme::text_primary(theme),
+        selection: theme::ACCENT_PINK,
+    });
 
     let watch_section: Element<'a, Message> = if watch_available {
         container(

@@ -435,7 +435,7 @@ fn build_left_panel<'a>(
                 .style(|_theme, _status| svg::Style {
                     color: Some(theme::opaque_color(theme::icon_muted(&iced::Theme::Dark))),
                 })
-                .opacity(0.4),
+                .opacity(0.4_f32),
         )
         .padding(10)
         .style(|_theme, _status| button::Style {
@@ -474,7 +474,7 @@ fn build_left_panel<'a>(
         controls,
     ]
     .width(Fill)
-    .max_width(400);
+    .width(Fill.max(400));
 
     // Assemble left panel - center the content vertically
     column![
@@ -510,7 +510,7 @@ fn build_right_panel_engine<'a>(
                                 theme::icon_muted(&iced::Theme::Dark,)
                             )),
                         })
-                        .opacity(0.4),
+                        .opacity(0.4_f32),
                     Space::new().height(16),
                     text("纯音乐，请欣赏")
                         .size(theme::TEXT_SIZE_SUBTITLE)
@@ -635,7 +635,7 @@ fn build_simple_lyrics_panel(
                                 theme::icon_muted(&iced::Theme::Dark,)
                             )),
                         })
-                        .opacity(0.4),
+                        .opacity(0.4_f32),
                     Space::new().height(16),
                     text("暂无歌词")
                         .size(theme::TEXT_SIZE_SUBTITLE)

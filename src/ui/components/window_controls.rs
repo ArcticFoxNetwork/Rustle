@@ -25,8 +25,8 @@ pub fn view<'a>(
     let button_size = 36;
     let icon_size = 16;
     let nav_icon_size = 18;
-    let back_icon_opacity = if can_go_back { 1.0 } else { 0.5 };
-    let forward_icon_opacity = if can_go_forward { 1.0 } else { 0.5 };
+    let back_icon_opacity: f32 = if can_go_back { 1.0 } else { 0.5 };
+    let forward_icon_opacity: f32 = if can_go_forward { 1.0 } else { 0.5 };
 
     // Navigation buttons (left side)
     let back_button = button(
