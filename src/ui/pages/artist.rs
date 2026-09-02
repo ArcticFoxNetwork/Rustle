@@ -12,7 +12,7 @@ use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::{
-    cover_image,
+    cover_image, detail_card,
     playlist_view::{self, PlaylistColumns},
 };
 use crate::ui::pages::playlist::{self, ArtistPageTab, DetailGradientSnapshot, PlaylistView};
@@ -297,8 +297,8 @@ fn build_albums_view<'a>(
         .into();
     }
 
-    let card_width = 208.0;
-    let card_spacing = 20.0;
+    let card_width = detail_card::CARD_WIDTH;
+    let card_spacing = detail_card::CARD_SPACING;
     let columns_per_row =
         widgets::calculate_grid_columns_clamped(content_width, card_width, card_spacing, 8);
     let mut rows = column![]
@@ -309,7 +309,13 @@ fn build_albums_view<'a>(
         let mut row_items: Vec<Element<'a, Message>> = Vec::new();
         for album in chunk {
             let cover_handle = image_state.get(ImageKind::AlbumCover, album.id);
-            row_items.push(build_album_card(album, cover_handle, card_width));
+            row_items.push(detail_card::view(
+                album.name.clone(),
+                album.artist_names(),
+                cover_handle,
+                ImageKind::AlbumCover,
+                Message::OpenAlbum(album.id),
+            ));
             row_items.push(Space::new().width(card_spacing).into());
         }
         if !row_items.is_empty() {
@@ -324,40 +330,6 @@ fn build_albums_view<'a>(
         |size| Message::ContentWidthResized(ContentWidthTarget::PlaylistDetail, size),
         Message::SmoothScroll,
     )
-}
-
-fn build_album_card<'a>(
-    album: &crate::api::AlbumSummary,
-    cover_handle: Option<&'a iced::widget::image::Handle>,
-    card_width: f32,
-) -> Element<'a, Message> {
-    let cover: Element<'a, Message> =
-        cover_image::custom(cover_handle, ImageKind::AlbumCover, card_width, 16.0);
-
-    button(
-        column![
-            cover,
-            Space::new().height(10),
-            text(album.name.clone())
-                .size(theme::TEXT_SIZE_BODY_LARGE)
-                .style(|theme| iced::widget::text::Style {
-                    color: Some(theme::text_primary(theme)),
-                }),
-            text(album.artist_names())
-                .size(theme::TEXT_SIZE_BODY)
-                .style(|theme| iced::widget::text::Style {
-                    color: Some(theme::text_secondary(theme)),
-                }),
-        ]
-        .width(card_width),
-    )
-    .padding(0)
-    .style(|_theme, _status| button::Style {
-        background: Some(iced::Background::Color(Color::TRANSPARENT)),
-        ..Default::default()
-    })
-    .on_press(Message::OpenAlbum(album.id))
-    .into()
 }
 
 fn circular_avatar(

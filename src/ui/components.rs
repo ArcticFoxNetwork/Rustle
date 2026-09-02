@@ -17,6 +17,7 @@
 
 pub mod context_menu;
 pub mod cover_image;
+pub mod detail_card;
 pub mod download_panel;
 pub mod edit_dialog;
 pub mod exit_dialog;

@@ -248,7 +248,8 @@ impl App {
                     &detail.image_url,
                 ));
             }
-            Message::ArtistAlbumsLoaded(artist_id, albums) if matches!(self.ui.current_route, Route::Artist(id) if u64::try_from(*artist_id).ok() == Some(id)) =>
+            Message::ArtistAlbumsLoaded(page_id, albums)
+                if artist_route_matches_page_id(&self.ui.current_route, *page_id) =>
             {
                 refs.extend(remote_album_covers(albums));
             }
@@ -828,6 +829,10 @@ fn artist_page_id(id: u64) -> i64 {
     i64::MIN + id as i64
 }
 
+fn artist_route_matches_page_id(route: &Route, page_id: i64) -> bool {
+    matches!(route, Route::Artist(id) if artist_page_id(*id) == page_id)
+}
+
 fn album_page_id(id: u64) -> i64 {
     (i64::MIN / 4) + id as i64
 }
@@ -867,6 +872,26 @@ mod tests {
         ));
         assert!(!user_route_matches_page_id(
             &Route::Artist(user_id),
+            page_id
+        ));
+    }
+
+    #[test]
+    fn artist_route_matches_encoded_page_id() {
+        let artist_id = 123_456_789;
+        let page_id = artist_page_id(artist_id);
+
+        assert!(page_id < 0);
+        assert!(artist_route_matches_page_id(
+            &Route::Artist(artist_id),
+            page_id
+        ));
+        assert!(!artist_route_matches_page_id(
+            &Route::Artist(artist_id + 1),
+            page_id
+        ));
+        assert!(!artist_route_matches_page_id(
+            &Route::User(artist_id),
             page_id
         ));
     }

@@ -4,13 +4,13 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use iced::widget::{Space, button, column, container, row, scrollable, text};
-use iced::{Alignment, Color, Element, Fill, Length, Padding};
+use iced::{Alignment, Element, Fill, Length, Padding};
 
 use crate::app::{ContentWidthTarget, ImageState, Message};
 use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::animation::SmoothScrollTarget;
-use crate::ui::components::cover_image;
+use crate::ui::components::{cover_image, detail_card};
 use crate::ui::pages::playlist::{self, DetailGradientSnapshot, PlaylistView};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{theme, widgets};
@@ -197,8 +197,8 @@ fn build_playlist_grid<'a>(
         .into();
     }
 
-    let card_width = 208.0;
-    let card_spacing = 20.0;
+    let card_width = detail_card::CARD_WIDTH;
+    let card_spacing = detail_card::CARD_SPACING;
     let columns_per_row =
         widgets::calculate_grid_columns_clamped(content_width, card_width, card_spacing, 8);
 
@@ -217,7 +217,13 @@ fn build_playlist_grid<'a>(
         let mut row_items: Vec<Element<'a, Message>> = Vec::new();
         for playlist in chunk {
             let cover_handle = image_state.get(ImageKind::PlaylistCover, playlist.id);
-            row_items.push(build_playlist_card(playlist, cover_handle, card_width));
+            row_items.push(detail_card::view(
+                playlist.name.clone(),
+                playlist.creator.nickname.clone(),
+                cover_handle,
+                ImageKind::PlaylistCover,
+                Message::OpenNcmPlaylist(playlist.id),
+            ));
             row_items.push(Space::new().width(card_spacing).into());
         }
         if !row_items.is_empty() {
@@ -232,40 +238,6 @@ fn build_playlist_grid<'a>(
         |size| Message::ContentWidthResized(ContentWidthTarget::PlaylistDetail, size),
         Message::SmoothScroll,
     )
-}
-
-fn build_playlist_card<'a>(
-    playlist: &crate::api::PlaylistSummary,
-    cover_handle: Option<&'a iced::widget::image::Handle>,
-    card_width: f32,
-) -> Element<'a, Message> {
-    let cover: Element<'a, Message> =
-        cover_image::custom(cover_handle, ImageKind::PlaylistCover, card_width, 16.0);
-
-    button(
-        column![
-            cover,
-            Space::new().height(10),
-            text(playlist.name.clone())
-                .size(theme::TEXT_SIZE_BODY_LARGE)
-                .style(|theme| iced::widget::text::Style {
-                    color: Some(theme::text_primary(theme)),
-                }),
-            text(playlist.creator.nickname.clone())
-                .size(theme::TEXT_SIZE_BODY)
-                .style(|theme| iced::widget::text::Style {
-                    color: Some(theme::text_secondary(theme)),
-                }),
-        ]
-        .width(card_width),
-    )
-    .padding(0)
-    .style(|_theme, _status| button::Style {
-        background: Some(iced::Background::Color(Color::TRANSPARENT)),
-        ..Default::default()
-    })
-    .on_press(Message::OpenNcmPlaylist(playlist.id))
-    .into()
 }
 
 fn circular_avatar(
