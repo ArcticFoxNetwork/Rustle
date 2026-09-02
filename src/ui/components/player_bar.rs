@@ -4,7 +4,7 @@ use iced::widget::text::{Ellipsis, Wrapping};
 use iced::widget::{
     Space, button, column, container, opaque, responsive, rich_text, row, span, svg, text,
 };
-use iced::{Alignment, Color, Element, Fill, Length, Padding};
+use iced::{Alignment, Color, Element, Fill, Length, Padding, Shadow, Vector, mouse};
 
 use crate::api::ArtistSummary;
 use crate::app::Message;
@@ -31,6 +31,7 @@ const RIGHT_PREFERRED_WIDTH: f32 = RIGHT_HORIZONTAL_FIXED_WIDTH + HORIZONTAL_VOL
 const RIGHT_HORIZONTAL_MIN_WIDTH: f32 = RIGHT_HORIZONTAL_FIXED_WIDTH + HORIZONTAL_VOLUME_MIN_WIDTH;
 const RIGHT_VERTICAL_WITH_TIME_WIDTH: f32 = 180.0;
 const RIGHT_VERTICAL_MIN_WIDTH: f32 = 88.0;
+const VERTICAL_VOLUME_SLIDER_HEIGHT: f32 = 96.0;
 
 const COVER_EXPAND_CHEVRON: &str = r#"<svg viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M4 8.5L12 5L20 8.5"/>
@@ -296,6 +297,7 @@ fn build_body(
         .align_y(Alignment::Center)
         .padding(Padding::new(0.0).left(16.0).right(16.0))
         .width(Fill)
+        .height(Fill)
         .into()
 }
 
@@ -429,6 +431,13 @@ fn build_song_info(
         artist_spans.push(span(link.name).link(link.target));
     }
 
+    // Keep quality in the same inline flow as the artists. A separate `Fill`
+    // artist widget would push a short name and the quality label to opposite
+    // ends of the metadata lane.
+    if show_quality && let Some(quality) = current_quality {
+        artist_spans.push(span(format!("  {}", quality.actual.short_name())).color(theme::ACCENT));
+    }
+
     let artist_line: Element<'static, Message> = rich_text(artist_spans)
         .size(theme::TEXT_SIZE_CAPTION)
         .width(Fill)
@@ -444,31 +453,7 @@ fn build_song_info(
         })
         .into();
 
-    let artist_and_quality: Element<'static, Message> = if show_quality {
-        if let Some(quality) = current_quality {
-            row![
-                artist_line,
-                text(quality.actual.short_name())
-                    .size(theme::TEXT_SIZE_CAPTION)
-                    .height(18)
-                    .wrapping(Wrapping::None)
-                    .style(|_theme| text::Style {
-                        color: Some(theme::ACCENT),
-                    })
-            ]
-            .spacing(6)
-            .align_y(Alignment::Center)
-            .width(Fill)
-            .clip(true)
-            .into()
-        } else {
-            artist_line
-        }
-    } else {
-        artist_line
-    };
-
-    let song_details = column![title_btn, artist_and_quality]
+    let song_details = column![title_btn, artist_line]
         .spacing(2)
         .width(Fill)
         .clip(true);
@@ -488,30 +473,71 @@ fn build_right_section(
     show_time: bool,
     volume_layout: VolumeLayout,
 ) -> Element<'static, Message> {
-    let volume_icon = svg(svg::Handle::from_memory(icons::VOLUME.as_bytes()))
-        .width(20)
-        .height(20)
-        .style(|theme, _status| svg::Style {
-            color: Some(theme::text_secondary(theme)),
-        });
-
-    let (volume_gap, volume_slider) = match volume_layout {
+    let volume_area: Element<'static, Message> = match volume_layout {
         VolumeLayout::Horizontal { width } => {
-            (8.0, widgets::progress_slider::volume_slider(volume, width))
+            let volume_icon = volume_icon();
+            iced::widget::mouse_area(
+                row![
+                    volume_icon,
+                    Space::new().width(8),
+                    widgets::progress_slider::volume_slider(volume, width)
+                ]
+                .align_y(Alignment::Center)
+                .width(Length::Shrink),
+            )
+            .on_scroll(move |delta| Message::SetVolume(volume_after_scroll(volume, delta)))
+            .into()
         }
-        VolumeLayout::Vertical => (
-            4.0,
-            widgets::progress_slider::vertical_volume_slider(volume),
-        ),
-    };
+        VolumeLayout::Vertical => {
+            let anchor = iced::widget::mouse_area(
+                widgets::hover_surface(
+                    container(volume_icon())
+                        .width(36)
+                        .height(36)
+                        .align_x(Alignment::Center)
+                        .align_y(Alignment::Center),
+                )
+                .style(|theme, progress| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(theme::hover_bg_alpha(
+                        theme,
+                        0.12 * progress,
+                    ))),
+                    border: iced::Border {
+                        radius: 18.0.into(),
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                }),
+            )
+            .on_scroll(move |delta| Message::SetVolume(volume_after_scroll(volume, delta)))
+            .interaction(mouse::Interaction::Pointer);
 
-    let volume_area = iced::widget::mouse_area(
-        row![volume_icon, Space::new().width(volume_gap), volume_slider]
-            .align_y(Alignment::Center)
-            .width(Length::Shrink),
-    )
-    .on_enter(Message::VolumeSliderHovered(true))
-    .on_exit(Message::VolumeSliderHovered(false));
+            let popup = iced::widget::mouse_area(
+                container(widgets::progress_slider::vertical_volume_slider(
+                    volume,
+                    VERTICAL_VOLUME_SLIDER_HEIGHT,
+                ))
+                .padding(Padding::new(10.0).left(12.0).right(12.0))
+                .style(|theme| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(theme::surface_elevated(theme))),
+                    border: iced::Border {
+                        radius: 12.0.into(),
+                        width: 1.0,
+                        color: theme::border_color(theme),
+                    },
+                    shadow: Shadow {
+                        color: theme::shadow_color(theme),
+                        offset: Vector::new(0.0, 4.0),
+                        blur_radius: 12.0,
+                    },
+                    ..Default::default()
+                }),
+            )
+            .on_scroll(move |delta| Message::SetVolume(volume_after_scroll(volume, delta)));
+
+            widgets::hover_popup(anchor, popup).gap(8.0).into()
+        }
+    };
 
     let queue_btn = button(
         svg(svg::Handle::from_memory(icons::QUEUE.as_bytes()))
@@ -577,6 +603,23 @@ fn build_right_section(
         .align_y(Alignment::Center)
         .clip(true)
         .into()
+}
+
+fn volume_icon() -> iced::widget::Svg<'static, iced::Theme> {
+    svg(svg::Handle::from_memory(icons::VOLUME.as_bytes()))
+        .width(20)
+        .height(20)
+        .style(|theme, _status| svg::Style {
+            color: Some(theme::text_secondary(theme)),
+        })
+}
+
+fn volume_after_scroll(volume: f32, delta: mouse::ScrollDelta) -> f32 {
+    let delta_y = match delta {
+        mouse::ScrollDelta::Lines { y, .. } | mouse::ScrollDelta::Pixels { y, .. } => y,
+    };
+
+    (volume + delta_y.signum() * 0.02).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]

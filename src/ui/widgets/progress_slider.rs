@@ -166,11 +166,11 @@ pub fn volume_slider(volume: f32, width: f32) -> Element<'static, Message> {
         .into()
 }
 
-/// Build the compact vertical volume slider used by a narrow player bar.
-pub fn vertical_volume_slider(volume: f32) -> Element<'static, Message> {
+/// Build the vertical volume slider used by a narrow player bar popup.
+pub fn vertical_volume_slider(volume: f32, height: f32) -> Element<'static, Message> {
     vertical_slider(0.0..=1.0, volume, Message::SetVolume)
         .width(16)
-        .height(48)
+        .height(height)
         .step(0.01_f32)
         .shift_step(0.05_f32)
         .style(|iced_theme, status| {

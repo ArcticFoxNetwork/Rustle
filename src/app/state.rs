@@ -1686,8 +1686,6 @@ pub struct UiState {
     pub settings_scroll_offset: f32,
     /// Shared motion state for native and virtual smooth scrolling.
     pub smooth_scroll: SmoothScrollState,
-    /// Whether the mouse is hovering over the volume slider area
-    pub is_volume_slider_hovered: bool,
     pub editing_keybinding: Option<(crate::features::Action, crate::features::ShortcutScope)>,
     /// Native event already observed for the key currently being recorded.
     pub global_hotkey_seen_while_recording: Option<u32>,
@@ -1791,7 +1789,6 @@ impl UiState {
             positions_measured: false,
             settings_scroll_offset: 0.0,
             smooth_scroll: SmoothScrollState::default(),
-            is_volume_slider_hovered: false,
             editing_keybinding: None,
             global_hotkey_seen_while_recording: None,
             suppressed_recording_hotkey: None,
