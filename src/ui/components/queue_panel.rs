@@ -137,7 +137,6 @@ pub fn view(
 
     container(content)
         .width(QUEUE_PANEL_WIDTH)
-        .max_height(QUEUE_PANEL_HEIGHT)
         .style(|theme| iced::widget::container::Style {
             background: Some(iced::Background::Color(theme::surface_elevated(theme))),
             border: iced::Border {
