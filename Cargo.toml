@@ -13,7 +13,6 @@ categories = ["multimedia::audio"]
 
 [features]
 default = []
-windows-installed = []
 
 [dependencies]
 iced = { version = "=0.15.0-dev", features = ["tokio", "advanced", "canvas", "image", "svg", "debug"] }

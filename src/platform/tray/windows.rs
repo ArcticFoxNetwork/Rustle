@@ -20,8 +20,6 @@ use windows_sys::Win32::Graphics::Gdi::{
 };
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetSystemMetricsForDpi};
-#[cfg(any(feature = "windows-installed", test))]
-use windows_sys::Win32::UI::Shell::NIF_GUID;
 use windows_sys::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_SHOWTIP, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NIM_SETFOCUS,
     NIM_SETVERSION, NIN_SELECT, NOTIFYICON_VERSION_4, NOTIFYICONDATAW, NOTIFYICONIDENTIFIER,
@@ -37,12 +35,9 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     TrackPopupMenuEx, UnregisterClassW, WM_APP, WM_COMMAND, WM_CONTEXTMENU, WM_NCCREATE,
     WM_NCDESTROY, WM_NULL, WNDCLASSEXW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
-#[cfg(any(feature = "windows-installed", test))]
-use windows_sys::core::GUID;
 
 const TRAY_CALLBACK_MESSAGE: u32 = WM_APP + 0x51;
 const NIN_KEYSELECT: u32 = NIN_SELECT | 1;
-#[cfg(any(not(feature = "windows-installed"), test))]
 const TRAY_ICON_ID: u32 = 1;
 
 const CMD_PLAY_PAUSE: u16 = 1001;
@@ -56,59 +51,22 @@ const CMD_SHUFFLE: u16 = 1013;
 const CMD_TOGGLE_WINDOW: u16 = 1020;
 const CMD_QUIT: u16 = 1030;
 
-#[cfg(any(feature = "windows-installed", test))]
-// V2 identity: the legacy GUID was first registered by a development binary.
-// The replacement must be registered first from the stable MSI install path.
-const INSTALLED_TRAY_GUID: GUID = GUID {
-    data1: 0x96be4116,
-    data2: 0x7f67,
-    data3: 0x46d9,
-    data4: [0x9d, 0x5e, 0x36, 0xb7, 0xab, 0xcf, 0x5b, 0xbe],
-};
-
-#[cfg(test)]
-const LEGACY_PATH_BOUND_TRAY_GUID: GUID = GUID {
-    data1: 0xd72bd4d9,
-    data2: 0xf218,
-    data3: 0x4ddb,
-    data4: [0x9e, 0x4f, 0xc5, 0x71, 0x83, 0x9a, 0x93, 0x66],
-};
-
-#[derive(Clone, Copy)]
-enum TrayIdentity {
-    /// Portable and local builds can move between executable paths, so they
-    /// must not participate in Windows' persistent GUID/path registration.
-    #[cfg(any(not(feature = "windows-installed"), test))]
-    WindowId(u32),
-    /// The MSI build has a stable Program Files path across upgrades and can
-    /// therefore use the persistent application GUID recommended by Windows.
-    #[cfg(any(feature = "windows-installed", test))]
-    Guid(GUID),
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TrayIdentity {
+    window_id: u32,
 }
 
 fn default_tray_identity() -> TrayIdentity {
-    #[cfg(feature = "windows-installed")]
-    {
-        TrayIdentity::Guid(INSTALLED_TRAY_GUID)
-    }
-
-    #[cfg(not(feature = "windows-installed"))]
-    {
-        TrayIdentity::WindowId(TRAY_ICON_ID)
-    }
+    TrayIdentity::window_id(TRAY_ICON_ID)
 }
 
 impl TrayIdentity {
+    const fn window_id(window_id: u32) -> Self {
+        Self { window_id }
+    }
+
     fn apply_to_notify_data(self, data: &mut NOTIFYICONDATAW) {
-        match self {
-            #[cfg(any(not(feature = "windows-installed"), test))]
-            Self::WindowId(id) => data.uID = id,
-            #[cfg(any(feature = "windows-installed", test))]
-            Self::Guid(guid) => {
-                data.uFlags |= NIF_GUID;
-                data.guidItem = guid;
-            }
-        }
+        data.uID = self.window_id;
     }
 
     fn identifier(self, hwnd: HWND) -> NOTIFYICONIDENTIFIER {
@@ -117,25 +75,12 @@ impl TrayIdentity {
             hWnd: hwnd,
             ..Default::default()
         };
-        match self {
-            #[cfg(any(not(feature = "windows-installed"), test))]
-            Self::WindowId(id) => identifier.uID = id,
-            #[cfg(any(feature = "windows-installed", test))]
-            Self::Guid(guid) => identifier.guidItem = guid,
-        }
+        identifier.uID = self.window_id;
         identifier
     }
 
     fn matches_callback(self, packed: LPARAM) -> bool {
-        let _ = packed;
-        match self {
-            // guidItem overrides uID, so the high word is not a valid GUID
-            // routing key. This dedicated callback window owns one icon.
-            #[cfg(any(feature = "windows-installed", test))]
-            Self::Guid(_) => true,
-            #[cfg(any(not(feature = "windows-installed"), test))]
-            Self::WindowId(id) => (packed as u32 >> 16) as u16 == id as u16,
-        }
+        (packed as u32 >> 16) as u16 == self.window_id as u16
     }
 }
 
@@ -401,7 +346,7 @@ impl WindowState {
         self.icon_registered = true;
 
         data.Anonymous.uVersion = NOTIFYICON_VERSION_4;
-        // SAFETY: the icon was just registered using this stable GUID.
+        // SAFETY: the icon was just registered using this HWND and numeric ID.
         if unsafe { Shell_NotifyIconW(NIM_SETVERSION, &data) } == 0 {
             let error = last_error("Shell_NotifyIconW(NIM_SETVERSION)");
             unsafe {
@@ -441,7 +386,7 @@ impl WindowState {
             };
         }
         let data = self.notify_data(NIF_TIP | NIF_SHOWTIP, &self.presentation.tooltip);
-        // SAFETY: data points to no borrowed buffers and targets our live HWND/GUID.
+        // SAFETY: data points to no borrowed buffers and targets our live HWND/ID.
         if unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) } == 0 {
             let error = last_error("Shell_NotifyIconW(NIM_MODIFY tooltip)");
             self.report_unavailable(&error);
@@ -1173,22 +1118,17 @@ mod tests {
 
     #[test]
     fn callback_classification_covers_mouse_keyboard_and_context_menu() {
-        let guid_identity = TrayIdentity::Guid(INSTALLED_TRAY_GUID);
+        let window_id = TrayIdentity::window_id(TRAY_ICON_ID);
         assert_eq!(
-            classify_callback(guid_identity, NIN_SELECT as LPARAM),
+            classify_callback(window_id, (TRAY_ICON_ID << 16 | NIN_SELECT) as LPARAM),
             TrayCallbackAction::PrimaryActivation
         );
         assert_eq!(
-            classify_callback(
-                guid_identity,
-                ((u16::MAX as u32) << 16 | NIN_KEYSELECT) as LPARAM,
-            ),
+            classify_callback(window_id, (TRAY_ICON_ID << 16 | NIN_KEYSELECT) as LPARAM),
             TrayCallbackAction::PrimaryActivation
         );
-
-        let window_id = TrayIdentity::WindowId(TRAY_ICON_ID);
         assert_eq!(
-            classify_callback(window_id, (TRAY_ICON_ID << 16 | WM_CONTEXTMENU) as LPARAM,),
+            classify_callback(window_id, (TRAY_ICON_ID << 16 | WM_CONTEXTMENU) as LPARAM),
             TrayCallbackAction::ContextMenu
         );
         assert_eq!(
@@ -1205,51 +1145,21 @@ mod tests {
     }
 
     #[test]
-    fn build_mode_selects_path_appropriate_identity() {
-        #[cfg(feature = "windows-installed")]
-        assert!(matches!(
+    fn all_distribution_modes_use_the_numeric_identity() {
+        assert_eq!(
             default_tray_identity(),
-            TrayIdentity::Guid(guid)
-                if guid.data1 == INSTALLED_TRAY_GUID.data1
-                    && guid.data2 == INSTALLED_TRAY_GUID.data2
-                    && guid.data3 == INSTALLED_TRAY_GUID.data3
-                    && guid.data4 == INSTALLED_TRAY_GUID.data4
-        ));
-
-        #[cfg(not(feature = "windows-installed"))]
-        assert!(matches!(
-            default_tray_identity(),
-            TrayIdentity::WindowId(TRAY_ICON_ID)
-        ));
-    }
-
-    #[test]
-    fn installed_guid_is_rotated_away_from_legacy_development_path_binding() {
-        assert!(
-            INSTALLED_TRAY_GUID.data1 != LEGACY_PATH_BOUND_TRAY_GUID.data1
-                || INSTALLED_TRAY_GUID.data2 != LEGACY_PATH_BOUND_TRAY_GUID.data2
-                || INSTALLED_TRAY_GUID.data3 != LEGACY_PATH_BOUND_TRAY_GUID.data3
-                || INSTALLED_TRAY_GUID.data4 != LEGACY_PATH_BOUND_TRAY_GUID.data4
+            TrayIdentity::window_id(TRAY_ICON_ID)
         );
     }
 
     #[test]
     fn notification_identity_populates_every_native_identifier_consistently() {
         let mut numeric = NOTIFYICONDATAW::default();
-        TrayIdentity::WindowId(TRAY_ICON_ID).apply_to_notify_data(&mut numeric);
+        TrayIdentity::window_id(TRAY_ICON_ID).apply_to_notify_data(&mut numeric);
         assert_eq!(numeric.uID, TRAY_ICON_ID);
-        assert_eq!(numeric.uFlags & NIF_GUID, 0);
 
-        let mut guid_data = NOTIFYICONDATAW::default();
-        TrayIdentity::Guid(INSTALLED_TRAY_GUID).apply_to_notify_data(&mut guid_data);
-        assert_eq!(guid_data.uID, 0);
-        assert_ne!(guid_data.uFlags & NIF_GUID, 0);
-        assert_eq!(guid_data.guidItem.data1, INSTALLED_TRAY_GUID.data1);
-
-        let numeric_identifier = TrayIdentity::WindowId(TRAY_ICON_ID).identifier(null_mut());
+        let numeric_identifier = TrayIdentity::window_id(TRAY_ICON_ID).identifier(null_mut());
         assert_eq!(numeric_identifier.uID, TRAY_ICON_ID);
-        let guid_identifier = TrayIdentity::Guid(INSTALLED_TRAY_GUID).identifier(null_mut());
-        assert_eq!(guid_identifier.guidItem.data4, INSTALLED_TRAY_GUID.data4);
     }
 
     #[test]
@@ -1284,20 +1194,7 @@ mod tests {
     #[test]
     #[ignore = "requires an interactive Windows Explorer notification area"]
     fn native_shell_registration_update_and_cleanup_smoke_test() {
-        run_native_shell_smoke(TrayIdentity::WindowId(0x7ffe), "Portable identity");
-
-        let unique = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("system clock")
-            .as_nanos();
-        let unique_bytes = unique.to_le_bytes();
-        let test_guid = GUID {
-            data1: unique as u32 ^ std::process::id(),
-            data2: (unique >> 32) as u16,
-            data3: (unique >> 48) as u16,
-            data4: unique_bytes[8..].try_into().expect("eight GUID tail bytes"),
-        };
-        run_native_shell_smoke(TrayIdentity::Guid(test_guid), "Disposable GUID");
+        run_native_shell_smoke(TrayIdentity::window_id(0x7ffe), "Numeric identity");
     }
 
     fn run_native_shell_smoke(identity: TrayIdentity, title: &str) {

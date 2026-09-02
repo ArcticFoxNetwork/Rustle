@@ -271,7 +271,7 @@ jobs:
         with:
           key: windows-msvc
 
-      - name: Build portable release
+      - name: Build Windows release
         run: cargo build --release --bin rustle --bin rustle-cleanup
 
       - name: Stage portable executable
@@ -279,17 +279,11 @@ jobs:
         run: |
           Copy-Item "target/release/${{ env.APP_NAME }}.exe" "${{ env.APP_NAME }}-windows-x86_64.exe"
 
-      - name: Build installed release
-        run: >-
-          cargo build --release --features windows-installed
-          --bin rustle --bin rustle-cleanup
-          --target-dir target/windows-installed
-
       - name: Build MSI
         shell: pwsh
         run: |
           $version = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches.Groups[1].Value
-          cargo wix --no-build --target-bin-dir target/windows-installed/release `
+          cargo wix --no-build --target-bin-dir target/release `
             --culture zh-cn --locale wix/zh-CN.wxl `
             --output "rustle-$version-windows-x86_64.msi"
 
