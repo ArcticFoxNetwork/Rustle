@@ -37,6 +37,7 @@ impl App {
                 if id == -1 {
                     if !self.library.recently_played.is_empty() {
                         let db_songs = self.library.recently_played.clone();
+                        self.playback.queue_artists_by_song_id.clear();
                         self.playback.queue = db_songs.clone();
                         self.persist_queue_snapshot();
 
@@ -78,6 +79,7 @@ impl App {
                 self.exit_fm_mode();
                 self.store_db_song_cover_paths(songs);
                 if !songs.is_empty() {
+                    self.playback.queue_artists_by_song_id.clear();
                     self.playback.queue = songs.clone();
                     self.persist_queue_snapshot();
                     return Some(self.play_song_at_index(0));
@@ -128,6 +130,7 @@ impl App {
             Message::RemoveFromQueue(idx) => {
                 if *idx < self.playback.queue.len() {
                     self.playback.queue.remove(*idx);
+                    self.prune_queue_artist_metadata();
                     if let Some(current_idx) = self.playback.current_index {
                         if *idx < current_idx {
                             self.playback.current_index = Some(current_idx - 1);
@@ -157,6 +160,7 @@ impl App {
 
             Message::ClearQueue => {
                 self.playback.queue.clear();
+                self.playback.queue_artists_by_song_id.clear();
                 self.playback.current_index = None;
                 self.playback.preload_coordinator.clear_window();
                 // Release audio preload sinks

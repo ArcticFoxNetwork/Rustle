@@ -3,7 +3,7 @@
 //! Provides a reusable progress slider with consistent styling.
 //! Used by both the player bar and lyrics page.
 
-use iced::widget::slider;
+use iced::widget::{slider, vertical_slider};
 use iced::{Color, Element, Length};
 
 use super::multi_track_slider::{self, MultiTrackSlider};
@@ -129,10 +129,48 @@ fn perceived_brightness(color: Color) -> f32 {
 ///
 /// # Arguments
 /// * `volume` - Current volume (0.0 to 1.0)
-pub fn volume_slider(volume: f32) -> Element<'static, Message> {
+pub fn volume_slider(volume: f32, width: f32) -> Element<'static, Message> {
     slider(0.0..=1.0, volume, Message::SetVolume)
-        .width(100)
+        .width(width)
         .height(4)
+        .step(0.01_f32)
+        .shift_step(0.05_f32)
+        .style(|iced_theme, status| {
+            let handle_radius = match status {
+                slider::Status::Hovered | slider::Status::Dragged => 6.0,
+                _ => 0.0,
+            };
+            slider::Style {
+                rail: slider::Rail {
+                    backgrounds: (
+                        iced::Background::Color(theme::text_primary(iced_theme)),
+                        iced::Background::Color(theme::divider(iced_theme)),
+                    ),
+                    width: 4.0,
+                    border: iced::Border {
+                        radius: 2.0.into(),
+                        width: 0.0,
+                        color: Color::TRANSPARENT,
+                    },
+                },
+                handle: slider::Handle {
+                    shape: slider::HandleShape::Circle {
+                        radius: handle_radius,
+                    },
+                    background: iced::Background::Color(theme::text_primary(iced_theme)),
+                    border_width: 0.0,
+                    border_color: Color::TRANSPARENT,
+                },
+            }
+        })
+        .into()
+}
+
+/// Build the compact vertical volume slider used by a narrow player bar.
+pub fn vertical_volume_slider(volume: f32) -> Element<'static, Message> {
+    vertical_slider(0.0..=1.0, volume, Message::SetVolume)
+        .width(16)
+        .height(48)
         .step(0.01_f32)
         .shift_step(0.05_f32)
         .style(|iced_theme, status| {

@@ -1314,6 +1314,10 @@ pub struct PlaybackSessionState {
     pub current_song: Option<DbSong>,
     /// Current playing song's artist id when available from NCM metadata.
     pub current_artist_id: Option<u64>,
+    /// Complete structured artist list for per-artist player-bar navigation.
+    pub current_artists: Vec<crate::api::ArtistSummary>,
+    /// Structured NCM artists retained for songs owned by the playback queue.
+    pub queue_artists_by_song_id: StateMap<u64, Vec<ArtistSummary>>,
     /// Requested and actual NCM quality for the current playback generation.
     pub current_quality: Option<crate::app::update::song_resolver::ResolvedAudioQuality>,
     /// Last saved playback snapshot loaded from the database.

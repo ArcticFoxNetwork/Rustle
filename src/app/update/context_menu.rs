@@ -225,6 +225,18 @@ impl App {
     // ── Helpers ──────────────────────────────────────
 
     fn insert_next_in_queue(&mut self, song_id: i64) {
+        if song_id < 0
+            && let Some(track) = self
+                .ui
+                .home
+                .current_ncm_playlist_songs
+                .iter()
+                .find(|track| track.id == (-song_id) as u64)
+                .cloned()
+        {
+            self.extend_queue_artist_metadata(std::slice::from_ref(&track));
+        }
+
         let song = self.find_song_anywhere(song_id);
         if let Some(s) = song {
             let idx = self.playback.current_index.map(|i| i + 1).unwrap_or(0);
@@ -365,6 +377,7 @@ impl App {
         // 2. Fallback: remove from playback queue
         if let Some(pos) = self.playback.queue.iter().position(|s| s.id == song_id) {
             self.playback.queue.remove(pos);
+            self.prune_queue_artist_metadata();
             if let Some(ref mut idx) = self.playback.current_index {
                 if pos < *idx {
                     *idx -= 1;

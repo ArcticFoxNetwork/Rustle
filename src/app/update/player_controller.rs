@@ -3,13 +3,14 @@
 //!
 //! Uses QueueNavigator as Single Source of Truth for index calculations.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use iced::Task;
 
+use crate::api::{ArtistSummary, Track};
 use crate::app::message::Message;
 use crate::app::state::{App, PendingPlaybackKind, PendingPlaybackRequest};
 use crate::database::DbSong;
@@ -57,13 +58,45 @@ fn handoff_active_streaming_buffer(
     *active = incoming;
 }
 
+fn extend_ncm_artist_metadata(cache: &mut HashMap<u64, Vec<ArtistSummary>>, tracks: &[Track]) {
+    cache.extend(tracks.iter().map(|track| (track.id, track.artists.clone())));
+}
+
 impl App {
-    fn resolve_artist_id_for_song(&self, song: &DbSong) -> Option<u64> {
+    pub(super) fn replace_queue_artist_metadata(&mut self, tracks: &[Track]) {
+        self.playback.queue_artists_by_song_id.clear();
+        self.extend_queue_artist_metadata(tracks);
+    }
+
+    pub(super) fn extend_queue_artist_metadata(&mut self, tracks: &[Track]) {
+        extend_ncm_artist_metadata(&mut self.playback.queue_artists_by_song_id, tracks);
+    }
+
+    pub(super) fn prune_queue_artist_metadata(&mut self) {
+        let queued_ncm_ids: HashSet<u64> = self
+            .playback
+            .queue
+            .iter()
+            .filter_map(|song| (song.id < 0).then_some((-song.id) as u64))
+            .collect();
+        self.playback
+            .queue_artists_by_song_id
+            .retain(|song_id, _| queued_ncm_ids.contains(song_id));
+    }
+
+    fn resolve_artists_for_song(&self, song: &DbSong) -> Vec<crate::api::ArtistSummary> {
         let ncm_id = if song.id < 0 {
             Some((-song.id) as u64)
         } else {
             None
         };
+
+        if let Some(artists) = ncm_id
+            .and_then(|id| self.playback.queue_artists_by_song_id.get(&id))
+            .filter(|artists| !artists.is_empty())
+        {
+            return artists.clone();
+        }
 
         self.ui
             .home
@@ -79,7 +112,8 @@ impl App {
                         && candidate.album.name == song.album
                 }
             })
-            .and_then(|song| song.primary_artist().map(|artist| artist.id))
+            .map(|song| song.artists.clone())
+            .unwrap_or_default()
     }
 
     pub(super) fn effective_queue_play_mode(&self) -> PlayMode {
@@ -717,7 +751,9 @@ impl App {
             self.playback.current_index = Some(idx);
         }
 
-        self.playback.current_artist_id = self.resolve_artist_id_for_song(&song);
+        let artists = self.resolve_artists_for_song(&song);
+        self.playback.current_artist_id = artists.first().map(|artist| artist.id);
+        self.playback.current_artists = artists;
         self.playback.current_song = Some(song.clone());
         self.playback.consecutive_failures = 0;
         self.playback.crossfade_triggered = false;
@@ -960,6 +996,7 @@ impl App {
         self.stop_audio_output();
         self.playback.current_song = None;
         self.playback.current_artist_id = None;
+        self.playback.current_artists.clear();
         self.playback.current_quality = None;
         self.playback.preload_coordinator.clear_window();
         let released = self.playback.audio_preload_manager.reset();
@@ -1721,8 +1758,36 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::handoff_active_streaming_buffer;
+    use super::{extend_ncm_artist_metadata, handoff_active_streaming_buffer};
+    use crate::api::{ArtistSummary, Track};
     use crate::audio::SharedBuffer;
+    use std::collections::HashMap;
+
+    #[test]
+    fn queue_artist_metadata_retains_every_structured_artist_by_song_id() {
+        let artists = vec![
+            ArtistSummary {
+                id: 12,
+                name: "Artist A".to_string(),
+                image_url: String::new(),
+            },
+            ArtistSummary {
+                id: 34,
+                name: "Artist B".to_string(),
+                image_url: String::new(),
+            },
+        ];
+        let track = Track {
+            id: 56,
+            artists: artists.clone(),
+            ..Track::default()
+        };
+        let mut cache = HashMap::new();
+
+        extend_ncm_artist_metadata(&mut cache, &[track]);
+
+        assert_eq!(cache.get(&56), Some(&artists));
+    }
 
     #[test]
     fn preloaded_handoff_does_not_cancel_the_outgoing_stream() {

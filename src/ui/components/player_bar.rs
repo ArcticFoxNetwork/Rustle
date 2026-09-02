@@ -1,8 +1,12 @@
 //! Bottom player bar component
 
-use iced::widget::{Space, button, column, container, opaque, row, svg, text};
+use iced::widget::text::{Ellipsis, Wrapping};
+use iced::widget::{
+    Space, button, column, container, opaque, responsive, rich_text, row, span, svg, text,
+};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
+use crate::api::ArtistSummary;
 use crate::app::Message;
 use crate::database::DbSong;
 use crate::features::PlayMode;
@@ -14,14 +18,146 @@ use crate::utils;
 /// Player bar height
 pub const PLAYER_BAR_HEIGHT: f32 = 80.0;
 
+const CONTENT_HORIZONTAL_PADDING: f32 = 32.0;
+const SECTION_SPACING: f32 = 16.0;
+const CENTER_CONTROLS_WIDTH: f32 = 216.0;
+const LEFT_MAX_WIDTH: f32 = 420.0;
+const LEFT_MIN_WIDTH: f32 = 140.0;
+const TIME_WIDTH: f32 = 84.0;
+const HORIZONTAL_VOLUME_MAX_WIDTH: f32 = 100.0;
+const HORIZONTAL_VOLUME_MIN_WIDTH: f32 = 50.0;
+const RIGHT_HORIZONTAL_FIXED_WIDTH: f32 = 168.0;
+const RIGHT_PREFERRED_WIDTH: f32 = RIGHT_HORIZONTAL_FIXED_WIDTH + HORIZONTAL_VOLUME_MAX_WIDTH;
+const RIGHT_HORIZONTAL_MIN_WIDTH: f32 = RIGHT_HORIZONTAL_FIXED_WIDTH + HORIZONTAL_VOLUME_MIN_WIDTH;
+const RIGHT_VERTICAL_WITH_TIME_WIDTH: f32 = 180.0;
+const RIGHT_VERTICAL_MIN_WIDTH: f32 = 88.0;
+
 const COVER_EXPAND_CHEVRON: &str = r#"<svg viewBox="0 0 24 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
     <path d="M4 8.5L12 5L20 8.5"/>
 </svg>"#;
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum VolumeLayout {
+    Horizontal { width: f32 },
+    Vertical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct PlayerBarLayout {
+    left_width: f32,
+    right_width: f32,
+    show_quality: bool,
+    show_time: bool,
+    volume: VolumeLayout,
+}
+
+impl PlayerBarLayout {
+    fn for_width(total_width: f32) -> Self {
+        let fixed_chrome = CONTENT_HORIZONTAL_PADDING + SECTION_SPACING * 2.0;
+        let side_width = (total_width - fixed_chrome - CENTER_CONTROLS_WIDTH).max(0.0);
+
+        let (left_width, right_width) = if side_width >= LEFT_MIN_WIDTH + RIGHT_PREFERRED_WIDTH {
+            (
+                (side_width - RIGHT_PREFERRED_WIDTH).min(LEFT_MAX_WIDTH),
+                RIGHT_PREFERRED_WIDTH,
+            )
+        } else if side_width >= LEFT_MIN_WIDTH + RIGHT_VERTICAL_MIN_WIDTH {
+            (LEFT_MIN_WIDTH, side_width - LEFT_MIN_WIDTH)
+        } else {
+            let right_width = side_width.min(RIGHT_VERTICAL_MIN_WIDTH);
+            (side_width - right_width, right_width)
+        };
+
+        let (show_time, volume) = if right_width >= RIGHT_HORIZONTAL_MIN_WIDTH {
+            (
+                true,
+                VolumeLayout::Horizontal {
+                    width: (right_width - RIGHT_HORIZONTAL_FIXED_WIDTH)
+                        .clamp(HORIZONTAL_VOLUME_MIN_WIDTH, HORIZONTAL_VOLUME_MAX_WIDTH),
+                },
+            )
+        } else {
+            (
+                right_width >= RIGHT_VERTICAL_WITH_TIME_WIDTH,
+                VolumeLayout::Vertical,
+            )
+        };
+
+        Self {
+            left_width,
+            right_width,
+            show_quality: left_width >= LEFT_MAX_WIDTH,
+            show_time,
+            volume,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ArtistTarget {
+    Id(u64),
+    Name(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ArtistLink {
+    name: String,
+    target: ArtistTarget,
+}
+
+fn artist_links(artist_text: &str, structured_artists: &[ArtistSummary]) -> Vec<ArtistLink> {
+    let mut links = Vec::new();
+
+    if !structured_artists.is_empty() {
+        for artist in structured_artists {
+            let name = artist.name.trim();
+            if name.is_empty() {
+                continue;
+            }
+
+            links.push(ArtistLink {
+                name: name.to_string(),
+                target: if artist.id == 0 {
+                    ArtistTarget::Name(name.to_string())
+                } else {
+                    ArtistTarget::Id(artist.id)
+                },
+            });
+        }
+    } else {
+        for name in artist_text
+            .split('/')
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+        {
+            if links.iter().any(|link: &ArtistLink| link.name == name) {
+                continue;
+            }
+
+            links.push(ArtistLink {
+                name: name.to_string(),
+                target: ArtistTarget::Name(name.to_string()),
+            });
+        }
+    }
+
+    if links.is_empty() {
+        let name = artist_text.trim();
+        if !name.is_empty() {
+            links.push(ArtistLink {
+                name: name.to_string(),
+                target: ArtistTarget::Name(name.to_string()),
+            });
+        }
+    }
+
+    links
+}
+
 /// Build the player bar
 pub fn view(
     current_song: Option<&DbSong>,
-    current_artist_id: Option<u64>,
+    current_artists: &[ArtistSummary],
     is_playing: bool,
     position: f32, // 0.0 to 1.0
     duration_secs: f32,
@@ -39,138 +175,160 @@ pub fn view(
     let current_time = utils::format_time(position * duration_secs);
     let total_time = utils::format_time(duration_secs);
 
-    // Left section: Song info or placeholder (fixed width to prevent layout issues)
-    const LEFT_SECTION_WIDTH: f32 = 260.0;
-    const TEXT_MAX_WIDTH: f32 = 180.0;
+    let current_song = current_song.cloned();
+    let current_artists = current_artists.to_vec();
+    let current_song_cover = current_song_cover.cloned();
+    let current_quality = current_quality.cloned();
 
-    let song_info: Element<'static, Message> = if let Some(song) = current_song {
-        let song_clone = song.clone();
-
-        // Cover - clickable to open lyrics page
-        let s = crate::image::CoverSize::Medium;
-        let cover_content: Element<'static, Message> = crate::ui::components::cover_image::cover(
-            current_song_cover,
-            crate::image::ImageKind::SongCover,
-            s,
-        );
-
-        let cover_size = s.px();
-        let cover_radius = s.radius();
-        let expand_overlay =
-            widgets::hover_surface(Space::new().width(cover_size).height(cover_size))
-                .style(move |_theme, progress| iced::widget::container::Style {
-                    background: Some(iced::Background::Color(Color::from_rgba(
-                        0.0,
-                        0.0,
-                        0.0,
-                        0.58 * progress,
-                    ))),
-                    border: iced::Border {
-                        radius: cover_radius.into(),
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                })
-                .svg_overlay(
-                    svg::Handle::from_memory(COVER_EXPAND_CHEVRON.as_bytes()),
-                    iced::Size::new(24.0, 12.0),
-                    Color::WHITE,
-                );
-
-        let cover_btn = button(iced::widget::stack![cover_content, expand_overlay])
-            .padding(0)
-            .style(|_theme, _status| button::Style {
-                background: Some(iced::Background::Color(Color::TRANSPARENT)),
-                ..Default::default()
-            })
-            .on_press(Message::OpenLyricsPage);
-
-        // Title - clickable to open lyrics page
-        const TITLE_LINE_HEIGHT: f32 = 17.0;
-        const TITLE_MAX_LINES: f32 = 2.0;
-        const TITLE_MAX_HEIGHT: f32 = TITLE_LINE_HEIGHT * TITLE_MAX_LINES;
-
-        let title_btn = button(
-            container(
-                text(song_clone.title.clone())
-                    .size(theme::TEXT_SIZE_BODY)
-                    .style(|theme| text::Style {
-                        color: Some(theme::text_primary(theme)),
-                    })
-                    .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
-                    .wrapping(iced::widget::text::Wrapping::WordOrGlyph),
-            )
-            .max_width(TEXT_MAX_WIDTH)
-            .max_height(TITLE_MAX_HEIGHT)
-            .clip(true),
+    let body = responsive(move |size| {
+        build_body(
+            current_song.as_ref(),
+            &current_artists,
+            is_playing,
+            volume,
+            play_mode,
+            current_favorite,
+            is_buffering,
+            is_fm_mode,
+            is_first_song,
+            current_song_cover.as_ref(),
+            current_quality.as_ref(),
+            &current_time,
+            &total_time,
+            PlayerBarLayout::for_width(size.width),
         )
-        .padding(0)
-        .style(|_theme, _status| button::Style {
-            background: Some(iced::Background::Color(Color::TRANSPARENT)),
+    })
+    .width(Fill)
+    .height(Fill);
+
+    const PROGRESS_BAR_HEIGHT: f32 = 8.0;
+    let top_progress = container(widgets::progress_slider::view_with_gradient(
+        position,
+        download_progress,
+        SliderSize::Edge,
+        progress_colors,
+    ))
+    .width(Fill)
+    .height(PROGRESS_BAR_HEIGHT)
+    .style(|theme| iced::widget::container::Style {
+        background: Some(iced::Background::Color(theme::player_bar_bg(theme))),
+        ..Default::default()
+    });
+
+    let main_content = container(body)
+        .width(Fill)
+        .height(PLAYER_BAR_HEIGHT)
+        .padding(Padding::new(0.0).top(PROGRESS_BAR_HEIGHT))
+        .align_y(Alignment::Center)
+        .style(|theme| iced::widget::container::Style {
+            background: Some(iced::Background::Color(theme::player_bar_bg(theme))),
             ..Default::default()
-        })
-        .on_press(Message::OpenLyricsPage);
+        });
 
-        // Artist
-        let artist_action = current_artist_id
-            .map(Message::OpenArtist)
-            .or_else(|| Some(Message::OpenArtistByName(song_clone.artist.clone())));
-        let artist_btn = button(
-            container(
-                text(song_clone.artist.clone())
-                    .size(theme::TEXT_SIZE_CAPTION)
-                    .style(|theme| text::Style {
-                        color: Some(theme::text_secondary(theme)),
-                    }),
-            )
-            .max_width(TEXT_MAX_WIDTH)
-            .clip(true),
-        )
-        .padding(0)
-        .style(|_theme, _status| button::Style {
-            background: Some(iced::Background::Color(Color::TRANSPARENT)),
-            ..Default::default()
-        })
-        .on_press_maybe(artist_action);
+    // Draw the progress slider after the player bar body so its hover handle
+    // can extend below the rail without being covered by the body background.
+    let bar = iced::widget::stack![main_content, top_progress]
+        .width(Fill)
+        .height(PLAYER_BAR_HEIGHT);
 
-        let quality_badge: Element<'static, Message> = if let Some(quality) = current_quality {
-            // The configured preference is internal negotiation context. The
-            // player bar describes this song, so only show its actual quality.
-            text(quality.actual.short_name())
-                .size(theme::TEXT_SIZE_CAPTION)
-                .style(|_theme| text::Style {
-                    color: Some(theme::ACCENT),
-                })
-                .into()
-        } else {
-            Space::new().height(0).into()
-        };
+    // Use opaque to block events from reaching underlying widgets without swallowing
+    // interactions inside the player bar itself.
+    opaque(bar)
+}
 
-        let artist_and_quality = row![artist_btn, quality_badge]
-            .spacing(6)
-            .align_y(Alignment::Center);
-        let song_details = column![title_btn, artist_and_quality].spacing(2);
+#[allow(clippy::too_many_arguments)]
+fn build_body(
+    current_song: Option<&DbSong>,
+    current_artists: &[ArtistSummary],
+    is_playing: bool,
+    volume: f32,
+    play_mode: PlayMode,
+    current_favorite: Option<(u64, bool)>,
+    is_buffering: bool,
+    is_fm_mode: bool,
+    is_first_song: bool,
+    current_song_cover: Option<&iced::widget::image::Handle>,
+    current_quality: Option<&crate::app::ResolvedAudioQuality>,
+    current_time: &str,
+    total_time: &str,
+    layout: PlayerBarLayout,
+) -> Element<'static, Message> {
+    let song_info = build_song_info(
+        current_song,
+        current_artists,
+        current_song_cover,
+        current_quality,
+        layout.show_quality,
+    );
 
-        row![cover_btn, Space::new().width(12), song_details]
-            .align_y(Alignment::Center)
-            .into()
-    } else {
-        // Show placeholder when no song
+    let left_section = container(song_info)
+        .width(layout.left_width)
+        .align_y(Alignment::Center)
+        .clip(true);
+
+    // The responsive allocator protects this lane before either side is
+    // allowed to consume it.
+    let controls = widgets::playback_controls::view_player_bar(
+        is_playing,
+        is_buffering,
+        ControlSize::Small,
+        is_fm_mode,
+        is_first_song,
+        play_mode,
+        current_favorite,
+    );
+
+    let center_section = container(controls)
+        .width(Length::Fill)
+        .align_x(Alignment::Center);
+
+    let right_section = build_right_section(
+        current_time,
+        total_time,
+        volume,
+        layout.right_width,
+        layout.show_time,
+        layout.volume,
+    );
+
+    row![left_section, center_section, right_section]
+        .spacing(SECTION_SPACING)
+        .align_y(Alignment::Center)
+        .padding(Padding::new(0.0).left(16.0).right(16.0))
+        .width(Fill)
+        .into()
+}
+
+fn build_song_info(
+    current_song: Option<&DbSong>,
+    current_artists: &[ArtistSummary],
+    current_song_cover: Option<&iced::widget::image::Handle>,
+    current_quality: Option<&crate::app::ResolvedAudioQuality>,
+    show_quality: bool,
+) -> Element<'static, Message> {
+    let Some(song) = current_song else {
         let placeholder = column![
             text("No song playing")
                 .size(theme::TEXT_SIZE_BODY)
+                .width(Fill)
+                .wrapping(Wrapping::None)
+                .ellipsis(Ellipsis::End)
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme))
                 }),
             text("Select a song to play")
                 .size(theme::TEXT_SIZE_CAPTION)
+                .width(Fill)
+                .wrapping(Wrapping::None)
+                .ellipsis(Ellipsis::End)
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme))
                 }),
         ]
-        .spacing(2);
+        .spacing(2)
+        .width(Fill);
 
-        row![
+        return row![
             container(
                 svg(svg::Handle::from_memory(icons::MUSIC.as_bytes()))
                     .width(24)
@@ -196,52 +354,171 @@ pub fn view(
             placeholder
         ]
         .align_y(Alignment::Center)
-        .into()
+        .width(Fill)
+        .clip(true)
+        .into();
     };
 
-    let left_section = container(song_info)
-        .width(LEFT_SECTION_WIDTH)
-        .align_y(Alignment::Center);
+    let song = song.clone();
 
-    // Center section: Playback controls (using unified widgets)
-    let controls = widgets::playback_controls::view_player_bar(
-        is_playing,
-        is_buffering,
-        ControlSize::Small,
-        is_fm_mode,
-        is_first_song,
-        play_mode,
-        current_favorite,
+    // Cover - clickable to open lyrics page
+    let cover_size = crate::image::CoverSize::Medium;
+    let cover_content: Element<'static, Message> = crate::ui::components::cover_image::cover(
+        current_song_cover,
+        crate::image::ImageKind::SongCover,
+        cover_size,
     );
 
-    let progress_slider = widgets::progress_slider::view_with_gradient(
-        position,
-        download_progress,
-        SliderSize::Edge,
-        progress_colors,
-    );
+    let cover_px = cover_size.px();
+    let cover_radius = cover_size.radius();
+    let expand_overlay = widgets::hover_surface(Space::new().width(cover_px).height(cover_px))
+        .style(move |_theme, progress| iced::widget::container::Style {
+            background: Some(iced::Background::Color(Color::from_rgba(
+                0.0,
+                0.0,
+                0.0,
+                0.58 * progress,
+            ))),
+            border: iced::Border {
+                radius: cover_radius.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .svg_overlay(
+            svg::Handle::from_memory(COVER_EXPAND_CHEVRON.as_bytes()),
+            iced::Size::new(24.0, 12.0),
+            Color::WHITE,
+        );
 
-    let center_section = container(controls)
-        .width(Length::Fill)
-        .align_x(Alignment::Center);
+    let cover_btn = button(iced::widget::stack![cover_content, expand_overlay])
+        .padding(0)
+        .style(|_theme, _status| button::Style {
+            background: Some(iced::Background::Color(Color::TRANSPARENT)),
+            ..Default::default()
+        })
+        .on_press(Message::OpenLyricsPage);
 
-    // Right section: Volume control (using unified widgets)
+    let title_btn = button(
+        text(song.title.clone())
+            .size(theme::TEXT_SIZE_BODY)
+            .width(Fill)
+            .height(20)
+            .wrapping(Wrapping::None)
+            .ellipsis(Ellipsis::End)
+            .style(|theme| text::Style {
+                color: Some(theme::text_primary(theme)),
+            })
+            .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
+    )
+    .padding(0)
+    .width(Fill)
+    .clip(true)
+    .style(|_theme, _status| button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        ..Default::default()
+    })
+    .on_press(Message::OpenLyricsPage);
+
+    let links = artist_links(&song.artist, current_artists);
+    let mut artist_spans = Vec::with_capacity(links.len().saturating_mul(2));
+    for (index, link) in links.into_iter().enumerate() {
+        if index > 0 {
+            artist_spans.push(span(" / "));
+        }
+        artist_spans.push(span(link.name).link(link.target));
+    }
+
+    let artist_line: Element<'static, Message> = rich_text(artist_spans)
+        .size(theme::TEXT_SIZE_CAPTION)
+        .width(Fill)
+        .height(18)
+        .wrapping(Wrapping::None)
+        .ellipsis(Ellipsis::End)
+        .style(|theme| text::Style {
+            color: Some(theme::text_secondary(theme)),
+        })
+        .on_link_click(|target| match target {
+            ArtistTarget::Id(id) => Message::OpenArtist(id),
+            ArtistTarget::Name(name) => Message::OpenArtistByName(name),
+        })
+        .into();
+
+    let artist_and_quality: Element<'static, Message> = if show_quality {
+        if let Some(quality) = current_quality {
+            row![
+                artist_line,
+                text(quality.actual.short_name())
+                    .size(theme::TEXT_SIZE_CAPTION)
+                    .height(18)
+                    .wrapping(Wrapping::None)
+                    .style(|_theme| text::Style {
+                        color: Some(theme::ACCENT),
+                    })
+            ]
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .width(Fill)
+            .clip(true)
+            .into()
+        } else {
+            artist_line
+        }
+    } else {
+        artist_line
+    };
+
+    let song_details = column![title_btn, artist_and_quality]
+        .spacing(2)
+        .width(Fill)
+        .clip(true);
+
+    row![cover_btn, Space::new().width(12), song_details]
+        .align_y(Alignment::Center)
+        .width(Fill)
+        .clip(true)
+        .into()
+}
+
+fn build_right_section(
+    current_time: &str,
+    total_time: &str,
+    volume: f32,
+    right_width: f32,
+    show_time: bool,
+    volume_layout: VolumeLayout,
+) -> Element<'static, Message> {
     let volume_icon = svg(svg::Handle::from_memory(icons::VOLUME.as_bytes()))
         .width(20)
         .height(20)
-        .style(|_theme, _status| svg::Style {
-            color: Some(theme::text_secondary(_theme)),
+        .style(|theme, _status| svg::Style {
+            color: Some(theme::text_secondary(theme)),
         });
 
-    let volume_slider = widgets::progress_slider::volume_slider(volume);
+    let (volume_gap, volume_slider) = match volume_layout {
+        VolumeLayout::Horizontal { width } => {
+            (8.0, widgets::progress_slider::volume_slider(volume, width))
+        }
+        VolumeLayout::Vertical => (
+            4.0,
+            widgets::progress_slider::vertical_volume_slider(volume),
+        ),
+    };
 
-    // Queue button
+    let volume_area = iced::widget::mouse_area(
+        row![volume_icon, Space::new().width(volume_gap), volume_slider]
+            .align_y(Alignment::Center)
+            .width(Length::Shrink),
+    )
+    .on_enter(Message::VolumeSliderHovered(true))
+    .on_exit(Message::VolumeSliderHovered(false));
+
     let queue_btn = button(
         svg(svg::Handle::from_memory(icons::QUEUE.as_bytes()))
             .width(20)
             .height(20)
-            .style(|_theme, _status| svg::Style {
-                color: Some(theme::text_secondary(_theme)),
+            .style(|theme, _status| svg::Style {
+                color: Some(theme::text_secondary(theme)),
             }),
     )
     .padding(8)
@@ -263,60 +540,170 @@ pub fn view(
             ..Default::default()
         });
 
-    let volume_area = iced::widget::mouse_area(
-        row![volume_icon, Space::new().width(8), volume_slider,]
+    let controls: Element<'static, Message> = if show_time {
+        let time = container(
+            text(format!("{current_time} / {total_time}"))
+                .size(theme::TEXT_SIZE_CAPTION)
+                .width(Fill)
+                .wrapping(Wrapping::None)
+                .ellipsis(Ellipsis::End)
+                .align_x(Alignment::End)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_muted(theme)),
+                }),
+        )
+        .width(TIME_WIDTH);
+
+        row![
+            time,
+            Space::new().width(8),
+            volume_area,
+            Space::new().width(12),
+            queue_btn,
+        ]
+        .align_y(Alignment::Center)
+        .width(Length::Shrink)
+        .into()
+    } else {
+        row![volume_area, Space::new().width(12), queue_btn]
             .align_y(Alignment::Center)
-            .width(Length::Shrink),
-    )
-    .on_enter(Message::VolumeSliderHovered(true))
-    .on_exit(Message::VolumeSliderHovered(false));
+            .width(Length::Shrink)
+            .into()
+    };
 
-    let right_section = row![
-        text(format!("{current_time} / {total_time}"))
-            .size(theme::TEXT_SIZE_CAPTION)
-            .style(|theme| text::Style {
-                color: Some(theme::text_muted(theme))
-            }),
-        Space::new().width(8),
-        volume_area,
-        Space::new().width(12),
-        queue_btn,
-    ]
-    .align_y(Alignment::Center)
-    .width(Length::Shrink);
-
-    // Combine all sections
-    let content = row![left_section, center_section, right_section,]
-        .spacing(16)
+    container(controls)
+        .width(right_width)
+        .align_x(Alignment::End)
         .align_y(Alignment::Center)
-        .padding(Padding::new(0.0).left(16.0).right(16.0));
+        .clip(true)
+        .into()
+}
 
-    const PROGRESS_BAR_HEIGHT: f32 = 8.0;
-    let top_progress = container(progress_slider)
-        .width(Fill)
-        .height(PROGRESS_BAR_HEIGHT)
-        .style(|theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(theme::player_bar_bg(theme))),
-            ..Default::default()
-        });
+#[cfg(test)]
+mod tests {
+    use super::{
+        ArtistLink, ArtistTarget, HORIZONTAL_VOLUME_MAX_WIDTH, HORIZONTAL_VOLUME_MIN_WIDTH,
+        PlayerBarLayout, RIGHT_PREFERRED_WIDTH, VolumeLayout, artist_links,
+    };
+    use crate::api::ArtistSummary;
 
-    let main_content = container(content)
-        .width(Fill)
-        .height(PLAYER_BAR_HEIGHT)
-        .padding(Padding::new(0.0).top(PROGRESS_BAR_HEIGHT))
-        .align_y(Alignment::Center)
-        .style(|theme| iced::widget::container::Style {
-            background: Some(iced::Background::Color(theme::player_bar_bg(theme))),
-            ..Default::default()
-        });
+    #[test]
+    fn player_bar_shrinks_left_before_right() {
+        let wide = PlayerBarLayout::for_width(1_100.0);
+        let narrower = PlayerBarLayout::for_width(820.0);
 
-    // Draw the progress slider after the player bar body so its hover handle
-    // can extend below the rail without being covered by the body background.
-    let bar = iced::widget::stack![main_content, top_progress]
-        .width(Fill)
-        .height(PLAYER_BAR_HEIGHT);
+        assert_eq!(wide.right_width, RIGHT_PREFERRED_WIDTH);
+        assert_eq!(narrower.right_width, RIGHT_PREFERRED_WIDTH);
+        assert!(wide.show_quality);
+        assert!(narrower.left_width < wide.left_width);
+        assert!(matches!(
+            narrower.volume,
+            VolumeLayout::Horizontal { width } if width == HORIZONTAL_VOLUME_MAX_WIDTH
+        ));
+    }
 
-    // Use opaque to block events from reaching underlying widgets without swallowing
-    // interactions inside the player bar itself.
-    opaque(bar)
+    #[test]
+    fn player_bar_shrinks_horizontal_volume_then_switches_vertical() {
+        let shrinking = PlayerBarLayout::for_width(660.0);
+        let threshold = PlayerBarLayout::for_width(638.0);
+        let vertical = PlayerBarLayout::for_width(620.0);
+
+        assert!(matches!(
+            shrinking.volume,
+            VolumeLayout::Horizontal { width }
+                if width > HORIZONTAL_VOLUME_MIN_WIDTH
+                    && width < HORIZONTAL_VOLUME_MAX_WIDTH
+        ));
+        assert!(matches!(
+            threshold.volume,
+            VolumeLayout::Horizontal { width } if width == HORIZONTAL_VOLUME_MIN_WIDTH
+        ));
+        assert_eq!(vertical.volume, VolumeLayout::Vertical);
+        assert!(vertical.show_time);
+    }
+
+    #[test]
+    fn player_bar_hides_quality_before_compressing_right_controls() {
+        let layout = PlayerBarLayout::for_width(820.0);
+
+        assert!(!layout.show_quality);
+        assert_eq!(layout.right_width, RIGHT_PREFERRED_WIDTH);
+    }
+
+    #[test]
+    fn structured_artists_keep_individual_ids() {
+        let artists = vec![
+            ArtistSummary {
+                id: 12,
+                name: "Artist A".to_string(),
+                image_url: String::new(),
+            },
+            ArtistSummary {
+                id: 34,
+                name: "Artist B".to_string(),
+                image_url: String::new(),
+            },
+        ];
+
+        assert_eq!(
+            artist_links("Artist A / Artist B", &artists),
+            vec![
+                ArtistLink {
+                    name: "Artist A".to_string(),
+                    target: ArtistTarget::Id(12),
+                },
+                ArtistLink {
+                    name: "Artist B".to_string(),
+                    target: ArtistTarget::Id(34),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn structured_artists_with_the_same_name_keep_distinct_ids() {
+        let artists = vec![
+            ArtistSummary {
+                id: 12,
+                name: "Shared Name".to_string(),
+                image_url: String::new(),
+            },
+            ArtistSummary {
+                id: 34,
+                name: "Shared Name".to_string(),
+                image_url: String::new(),
+            },
+        ];
+
+        assert_eq!(
+            artist_links("Shared Name / Shared Name", &artists),
+            vec![
+                ArtistLink {
+                    name: "Shared Name".to_string(),
+                    target: ArtistTarget::Id(12),
+                },
+                ArtistLink {
+                    name: "Shared Name".to_string(),
+                    target: ArtistTarget::Id(34),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn string_artists_are_split_trimmed_and_deduplicated() {
+        assert_eq!(
+            artist_links(" Artist A / Artist B / Artist A ", &[]),
+            vec![
+                ArtistLink {
+                    name: "Artist A".to_string(),
+                    target: ArtistTarget::Name("Artist A".to_string()),
+                },
+                ArtistLink {
+                    name: "Artist B".to_string(),
+                    target: ArtistTarget::Name("Artist B".to_string()),
+                },
+            ]
+        );
+    }
 }

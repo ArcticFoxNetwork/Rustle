@@ -354,7 +354,7 @@ impl App {
 
         let player_bar = components::player_bar::view(
             self.playback.current_song.as_ref(),
-            self.current_song_artist_id(),
+            &self.playback.current_artists,
             is_playing,
             display_position,
             duration,

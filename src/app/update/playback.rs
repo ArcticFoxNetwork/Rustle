@@ -40,6 +40,7 @@ impl App {
                         .cloned()
                     {
                         self.set_ncm_scrobble_source(self.current_route_ncm_scrobble_source());
+                        self.extend_queue_artist_metadata(std::slice::from_ref(&song_info));
                         let db_song = Self::ncm_track_to_db_song(&song_info);
                         self.playback.queue.push(db_song);
                         self.persist_queue_snapshot();

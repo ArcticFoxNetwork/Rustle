@@ -4,7 +4,7 @@ use iced::Task;
 use std::time::Duration;
 use tracing::{debug, error, info};
 
-use crate::api::{LoginInfo, NcmClient, PRIVATE_RADAR_PLAYLIST_ID, PlaylistSummary};
+use crate::api::{ArtistSummary, LoginInfo, NcmClient, PRIVATE_RADAR_PLAYLIST_ID, PlaylistSummary};
 use crate::app::message::QrLoginStatus;
 use crate::app::state::UserInfo;
 use crate::app::{App, Message, Route};
@@ -52,6 +52,14 @@ fn format_social_count(value: u64) -> String {
     } else {
         value.to_string()
     }
+}
+
+fn exact_artist_id(keyword: &str, artists: &[ArtistSummary]) -> Option<u64> {
+    let keyword = keyword.trim();
+    artists
+        .iter()
+        .find(|artist| artist.name.trim() == keyword)
+        .map(|artist| artist.id)
 }
 
 const NCM_PLAYLIST_BATCH_SIZE: usize = 120;
@@ -230,17 +238,20 @@ impl App {
 
         if self.is_fm_mode() && !play_now {
             debug!("FM mode: appending {} songs to queue", db_songs.len());
+            self.extend_queue_artist_metadata(tracks);
             self.playback.queue.extend(db_songs);
             self.persist_queue_snapshot();
             return Some(Task::none());
         }
 
         if play_now {
+            self.replace_queue_artist_metadata(tracks);
             self.playback.queue = db_songs;
             self.playback.current_index = Some(0);
             self.persist_queue_snapshot();
             Some(self.update(Message::PlayQueueIndex(0)))
         } else {
+            self.extend_queue_artist_metadata(tracks);
             self.playback.queue.extend(db_songs);
             self.persist_queue_snapshot();
             Some(Task::none())
@@ -1034,6 +1045,7 @@ impl App {
                 self.exit_fm_mode();
                 self.ui.home.current_ncm_playlist_songs = vec![song_info.clone()];
                 self.set_ncm_scrobble_source(None);
+                self.replace_queue_artist_metadata(std::slice::from_ref(song_info));
                 self.playback.queue.clear();
                 self.playback
                     .queue
@@ -1096,12 +1108,10 @@ impl App {
                     Some(Task::perform(
                         async move {
                             client
-                                .search(&keyword, crate::api::SearchType::Artists, 1, 0)
+                                .search(&keyword, crate::api::SearchType::Artists, 20, 0)
                                 .await
                                 .ok()
-                                .and_then(|response| {
-                                    response.artists.first().map(|artist| artist.id)
-                                })
+                                .and_then(|response| exact_artist_id(&keyword, &response.artists))
                         },
                         |result| {
                             if let Some(artist_id) = result {
@@ -2122,5 +2132,30 @@ impl App {
         let id = 0;
         self.ui.image_state.invalidate(kind, id);
         crate::utils::remove_cached_image(&kind.cache_dir(), &kind.file_stem(id));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::exact_artist_id;
+    use crate::api::ArtistSummary;
+
+    #[test]
+    fn artist_name_resolution_prefers_an_exact_match() {
+        let artists = vec![
+            ArtistSummary {
+                id: 1,
+                name: "Artist A Tribute".to_string(),
+                image_url: String::new(),
+            },
+            ArtistSummary {
+                id: 2,
+                name: "Artist A".to_string(),
+                image_url: String::new(),
+            },
+        ];
+
+        assert_eq!(exact_artist_id(" Artist A ", &artists), Some(2));
+        assert_eq!(exact_artist_id("Artist", &artists), None);
     }
 }
