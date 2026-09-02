@@ -449,44 +449,35 @@ pub async fn download_img(
     let temp_path = crate::cache::unique_temp_path(&temp_anchor);
 
     match client.download_img(url, temp_path.clone(), resize).await {
-        Ok(_) => {
-            if let Ok(file) = std::fs::File::open(&temp_path)
-                && let Err(error) = file.sync_all()
-            {
-                error!("Failed to sync downloaded image: {}", error);
-                drop(file);
-                crate::cache::cleanup_temp_file(&temp_path);
-                return None;
-            }
-            // Read the file to detect format
-            match std::fs::read(&temp_path) {
-                Ok(bytes) => {
-                    let ext = detect_image_format(&bytes);
-                    let final_path = parent.join(format!("{}.{}", stem, ext));
-
-                    // Publish atomically, reusing an existing destination when
-                    // another request won the race.
-                    if let Err(e) = crate::cache::publish_or_reuse(&temp_path, &final_path, None) {
-                        error!("Failed to rename temp file: {}", e);
-                        crate::cache::cleanup_temp_file(&temp_path);
-                        return None;
-                    }
-
-                    Some(final_path)
-                }
-                Err(e) => {
-                    error!("Failed to read downloaded image: {}", e);
-                    crate::cache::cleanup_temp_file(&temp_path);
-                    None
-                }
-            }
-        }
+        Ok(_) => publish_downloaded_image(&temp_path, parent, stem),
         Err(e) => {
             error!("Failed to download image: {}", e);
             crate::cache::cleanup_temp_file(&temp_path);
             None
         }
     }
+}
+
+fn publish_downloaded_image(temp_path: &Path, parent: &Path, stem: &str) -> Option<PathBuf> {
+    // `NcmClient::download_img` uses `std::fs::write`, so its writable handle
+    // is already closed when it returns. Do not reopen the file read-only and
+    // call `sync_all`: Windows rejects `FlushFileBuffers` on that handle.
+    let bytes = match std::fs::read(temp_path) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            error!("Failed to read downloaded image: {}", error);
+            crate::cache::cleanup_temp_file(temp_path);
+            return None;
+        }
+    };
+    let ext = detect_image_format(&bytes);
+    let final_path = parent.join(format!("{}.{}", stem, ext));
+    if let Err(error) = crate::cache::publish_or_reuse(temp_path, &final_path, None) {
+        error!("Failed to publish downloaded image: {}", error);
+        crate::cache::cleanup_temp_file(temp_path);
+        return None;
+    }
+    Some(final_path)
 }
 
 // ============================================================================
@@ -630,6 +621,25 @@ mod tests {
 
         assert!(!missing.exists());
         assert!(ColorPalette::from_image_path(&missing).is_none());
+    }
+
+    #[test]
+    fn downloaded_image_is_published_after_the_writer_handle_is_closed() {
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("rustle-image-publish-{nonce}"));
+        std::fs::create_dir_all(&root).unwrap();
+        let temp = crate::cache::unique_temp_path(&root.join("cover"));
+        std::fs::write(&temp, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).unwrap();
+
+        let published = publish_downloaded_image(&temp, &root, "cover").unwrap();
+
+        assert_eq!(published, root.join("cover.png"));
+        assert!(published.exists());
+        assert!(!temp.exists());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]
