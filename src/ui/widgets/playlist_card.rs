@@ -42,8 +42,9 @@ pub fn view<'a, Message: Clone + 'a>(
                 .width(48)
                 .height(48)
                 .style(|theme, _status| svg::Style {
-                    color: Some(theme::icon_muted(theme)),
-                }),
+                    color: Some(theme::opaque_color(theme::icon_muted(theme))),
+                })
+                .opacity(0.4),
         )
         .width(COVER_SIZE)
         .height(COVER_SIZE)
@@ -65,9 +66,10 @@ pub fn view<'a, Message: Clone + 'a>(
                 svg(svg::Handle::from_memory(icons::PLAY.as_bytes()))
                     .width(icon_size)
                     .height(icon_size)
-                    .style(move |_theme, _status| svg::Style {
-                        color: Some(Color::from_rgba(1.0, 1.0, 1.0, opacity)),
-                    }),
+                    .style(|_theme, _status| svg::Style {
+                        color: Some(Color::WHITE),
+                    })
+                    .opacity(opacity),
             )
             .width(PLAY_BUTTON_SIZE)
             .height(PLAY_BUTTON_SIZE)

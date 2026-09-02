@@ -433,8 +433,9 @@ fn build_left_panel<'a>(
                 .width(22)
                 .height(22)
                 .style(|_theme, _status| svg::Style {
-                    color: Some(theme::icon_muted(&iced::Theme::Dark)),
-                }),
+                    color: Some(theme::opaque_color(theme::icon_muted(&iced::Theme::Dark))),
+                })
+                .opacity(0.4),
         )
         .padding(10)
         .style(|_theme, _status| button::Style {
@@ -505,8 +506,11 @@ fn build_right_panel_engine<'a>(
                         .width(64)
                         .height(64)
                         .style(|_theme: &iced::Theme, _status| svg::Style {
-                            color: Some(theme::icon_muted(&iced::Theme::Dark)),
-                        }),
+                            color: Some(theme::opaque_color(
+                                theme::icon_muted(&iced::Theme::Dark,)
+                            )),
+                        })
+                        .opacity(0.4),
                     Space::new().height(16),
                     text("纯音乐，请欣赏")
                         .size(theme::TEXT_SIZE_SUBTITLE)
@@ -627,8 +631,11 @@ fn build_simple_lyrics_panel(
                         .width(64)
                         .height(64)
                         .style(|_theme: &iced::Theme, _status| svg::Style {
-                            color: Some(theme::icon_muted(&iced::Theme::Dark)),
-                        }),
+                            color: Some(theme::opaque_color(
+                                theme::icon_muted(&iced::Theme::Dark,)
+                            )),
+                        })
+                        .opacity(0.4),
                     Space::new().height(16),
                     text("暂无歌词")
                         .size(theme::TEXT_SIZE_SUBTITLE)

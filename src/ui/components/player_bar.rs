@@ -176,8 +176,9 @@ pub fn view(
                     .width(24)
                     .height(24)
                     .style(|theme, _status| svg::Style {
-                        color: Some(theme::icon_muted(theme)),
+                        color: Some(theme::opaque_color(theme::icon_muted(theme))),
                     })
+                    .opacity(0.4),
             )
             .width(56)
             .height(56)

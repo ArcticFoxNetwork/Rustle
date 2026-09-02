@@ -30,8 +30,9 @@ pub fn view_body<'a>(
                 .width(40)
                 .height(40)
                 .style(|_theme, _status| svg::Style {
-                    color: Some(theme::icon_muted(&iced::Theme::Dark)),
-                }),
+                    color: Some(theme::opaque_color(theme::icon_muted(&iced::Theme::Dark))),
+                })
+                .opacity(0.4),
         )
         .width(120)
         .height(120)

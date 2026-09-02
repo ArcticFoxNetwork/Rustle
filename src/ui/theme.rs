@@ -158,6 +158,16 @@ pub fn text_primary(theme: &Theme) -> Color {
     }
 }
 
+/// Return the RGB portion of a color without carrying its alpha channel.
+///
+/// SVG color filters do not consistently apply the alpha component as
+/// transparency across renderers. Callers that need translucent SVGs should
+/// use this for the tint and the SVG widget's `opacity` field for alpha.
+#[inline]
+pub fn opaque_color(color: Color) -> Color {
+    Color::from_rgb(color.r, color.g, color.b)
+}
+
 // Legacy constants for backward compatibility (dark mode defaults)
 pub const BLACK: Color = dark::BACKGROUND;
 pub const BORDER_GRAY: Color = dark::BORDER;

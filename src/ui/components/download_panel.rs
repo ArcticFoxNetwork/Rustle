@@ -655,11 +655,11 @@ fn icon_danger_btn(song_id: i64) -> Element<'static, Message> {
         svg(svg::Handle::from_memory(crate::ui::icons::CLOSE.as_bytes()))
             .width(16)
             .height(16)
-            .style(|_theme, status| svg::Style {
+            .style(|theme, status| svg::Style {
                 color: Some(if status == svg::Status::Hovered {
                     Color::from_rgb(0.94, 0.34, 0.34)
                 } else {
-                    Color::from_rgba(0.5, 0.5, 0.5, 0.8)
+                    theme::text_muted(theme)
                 }),
             }),
     )

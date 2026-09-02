@@ -224,8 +224,9 @@ pub fn build_header(locale: Locale, columns: PlaylistColumns) -> Element<'static
                 .width(16)
                 .height(16)
                 .style(|theme, _status| svg::Style {
-                    color: Some(theme::header_text(theme)),
-                }),
+                    color: Some(theme::opaque_color(theme::header_text(theme))),
+                })
+                .opacity(0.6),
         )
         .width(50)
         .center_x(50)
@@ -397,29 +398,35 @@ fn build_song_row(
     let added_date = song.added_date.clone();
 
     // --- Index or play icon (fixed slot width; content is re-diffed by VirtualList) ---
-    let index_content: Element<'static, Message> = if is_hovered {
-        svg(PLAY_ICON_HANDLE.clone())
-            .width(16)
-            .height(16)
-            .style(|theme, _status| svg::Style {
-                color: Some(theme::text_primary(theme)),
-            })
-            .into()
-    } else if is_playing {
-        svg(PLAY_ICON_HANDLE.clone())
+    // Keep both states mounted and cross-fade them. SVG opacity must be applied
+    // through the widget's opacity field; alpha in `svg::Style::color` is only
+    // a tint in the renderer and is not a reliable transparency control.
+    let hover_progress = animation_progress.clamp(0.0, 1.0);
+    let hovered_icon = svg(PLAY_ICON_HANDLE.clone())
+        .width(16)
+        .height(16)
+        .style(|theme, _status| svg::Style {
+            color: Some(theme::text_primary(theme)),
+        })
+        .opacity(hover_progress);
+    let index_content: Element<'static, Message> = if is_playing {
+        let playing_icon = svg(PLAY_ICON_HANDLE.clone())
             .width(16)
             .height(16)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::ACCENT_PINK),
             })
-            .into()
+            .opacity(1.0 - hover_progress);
+
+        iced::widget::stack![playing_icon, hovered_icon].into()
     } else {
-        text(index_str)
+        let index = text(index_str)
             .size(theme::TEXT_SIZE_BODY_LARGE)
-            .style(|theme| text::Style {
-                color: Some(theme::dimmed_text(theme)),
-            })
-            .into()
+            .style(move |theme| text::Style {
+                color: Some(theme::dimmed_text(theme).scale_alpha(1.0 - hover_progress)),
+            });
+
+        iced::widget::stack![index, hovered_icon].into()
     };
 
     // --- Song cover (use pre-loaded handle, no disk IO) ---
@@ -465,29 +472,50 @@ fn build_song_row(
     };
     let is_liked = liked_songs.is_some_and(|songs| songs.contains(&ncm_song_id));
 
-    // Duration or like button
-    let duration_or_like: Element<'static, Message> = if columns.show_like && is_hovered {
-        let heart_handle = if is_liked {
-            HEART_ICON_HANDLE.clone()
+    // Duration or like button. The duration fades out as the heart fades in,
+    // while the button only becomes actionable once the hover transition has
+    // reached the same midpoint used by the rest of the row.
+    let duration_or_like: Element<'static, Message> = if columns.show_like {
+        let duration_text = text(duration)
+            .size(theme::TEXT_SIZE_BODY)
+            .style(move |theme| text::Style {
+                color: Some(
+                    theme::animated_text(theme, animation_progress * 0.8)
+                        .scale_alpha(1.0 - hover_progress),
+                ),
+            });
+
+        let heart: Element<'static, Message> = if hover_progress > 0.001 {
+            let heart_handle = if is_liked {
+                HEART_ICON_HANDLE.clone()
+            } else {
+                HEART_OUTLINE_ICON_HANDLE.clone()
+            };
+            button(
+                svg(heart_handle)
+                    .width(18)
+                    .height(18)
+                    .style(move |theme, _status| svg::Style {
+                        color: Some(if is_liked {
+                            theme::ACCENT_PINK
+                        } else {
+                            theme::text_primary(theme)
+                        }),
+                    })
+                    .opacity(hover_progress),
+            )
+            .padding(0)
+            .style(transparent_button)
+            .on_press_maybe(is_hovered.then_some(Message::ToggleFavorite(ncm_song_id)))
+            .into()
         } else {
-            HEART_OUTLINE_ICON_HANDLE.clone()
+            Space::new().width(18).height(18).into()
         };
-        button(
-            svg(heart_handle)
-                .width(18)
-                .height(18)
-                .style(move |theme, _status| svg::Style {
-                    color: Some(if is_liked {
-                        theme::ACCENT_PINK
-                    } else {
-                        theme::text_primary(theme)
-                    }),
-                }),
-        )
-        .padding(0)
-        .style(transparent_button)
-        .on_press(Message::ToggleFavorite(ncm_song_id))
-        .into()
+
+        container(iced::widget::stack![duration_text, heart])
+            .width(50)
+            .center_x(50)
+            .into()
     } else {
         text(duration)
             .size(theme::TEXT_SIZE_BODY)

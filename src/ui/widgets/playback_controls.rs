@@ -84,6 +84,7 @@ pub fn play_button_with_buffering(
     let btn_size = size.play_button_size();
     let icon_size = size.play_icon_size();
     let inner_padding = (btn_size - icon_size) / 2.0;
+    let icon_opacity = if show_loading { 0.4 } else { 1.0 };
     // Offset to visually center the triangle (play icon is not symmetric)
     let offset = if is_playing || show_loading {
         0.0
@@ -101,11 +102,12 @@ pub fn play_button_with_buffering(
                 .style(move |theme, _status| svg::Style {
                     // Icon color should contrast with button background
                     color: Some(if show_loading {
-                        theme::icon_muted(theme)
+                        theme::opaque_color(theme::icon_muted(theme))
                     } else {
                         theme::background(theme)
                     }),
-                }),
+                })
+                .opacity(icon_opacity),
         )
         .padding(Padding {
             top: inner_padding,
@@ -153,6 +155,7 @@ pub fn prev_button(size: ControlSize, disabled: bool) -> Element<'static, Messag
     let icon_size = size.skip_icon_size();
     let padding = size.skip_button_padding();
     let radius = size.skip_button_radius();
+    let icon_opacity = if disabled { 0.5 } else { 1.0 };
 
     let btn = button(
         svg(svg::Handle::from_memory(icons::SKIP_PREV.as_bytes()))
@@ -160,11 +163,12 @@ pub fn prev_button(size: ControlSize, disabled: bool) -> Element<'static, Messag
             .height(icon_size)
             .style(move |_theme, _status| svg::Style {
                 color: Some(if disabled {
-                    theme::TEXT_DISABLED
+                    theme::opaque_color(theme::TEXT_DISABLED)
                 } else {
                     theme::text_secondary(_theme)
                 }),
-            }),
+            })
+            .opacity(icon_opacity),
     )
     .padding(padding)
     .style(|_theme, _status| button::Style {
@@ -243,6 +247,7 @@ pub fn favorite_button(
     let radius = size.skip_button_radius();
     let is_liked = favorite.is_some_and(|(_, is_liked)| is_liked);
     let enabled = favorite.is_some();
+    let icon_opacity = if enabled { 1.0 } else { 0.4 };
     let heart_icon = if is_liked {
         icons::HEART
     } else {
@@ -255,13 +260,14 @@ pub fn favorite_button(
             .height(icon_size)
             .style(move |theme, _status| svg::Style {
                 color: Some(if !enabled {
-                    theme::icon_muted(theme)
+                    theme::opaque_color(theme::icon_muted(theme))
                 } else if is_liked {
                     theme::ACCENT_PINK
                 } else {
                     theme::text_secondary(theme)
                 }),
-            }),
+            })
+            .opacity(icon_opacity),
     )
     .padding(padding)
     .style(|_theme, _status| button::Style {
