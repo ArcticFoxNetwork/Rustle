@@ -10,9 +10,45 @@ use iced::advanced::widget::{Tree, Widget, tree};
 use iced::mouse::{self, Cursor};
 use iced::time::Instant;
 use iced::widget::image::{self as image_widget, FilterMethod};
-use iced::{ContentFit, Element, Event, Length, Rectangle, Rotation, Size};
+use iced::{ContentFit, Element, Event, Length, Point, Rectangle, Rotation, Size};
 
 const DEFAULT_DURATION: Duration = Duration::from_millis(280);
+
+/// Positions fitted image content inside its layout bounds.
+///
+/// The normalized coordinates mirror CSS `object-position`: `0.0` aligns the
+/// leading edge, `0.5` centers it, and `1.0` aligns the trailing edge. Values
+/// outside this range are clamped when the image is drawn.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ContentPosition {
+    horizontal: f32,
+    vertical: f32,
+}
+
+impl ContentPosition {
+    pub const TOP_LEFT: Self = Self::new(0.0, 0.0);
+    pub const TOP: Self = Self::new(0.5, 0.0);
+    pub const TOP_RIGHT: Self = Self::new(1.0, 0.0);
+    pub const LEFT: Self = Self::new(0.0, 0.5);
+    pub const CENTER: Self = Self::new(0.5, 0.5);
+    pub const RIGHT: Self = Self::new(1.0, 0.5);
+    pub const BOTTOM_LEFT: Self = Self::new(0.0, 1.0);
+    pub const BOTTOM: Self = Self::new(0.5, 1.0);
+    pub const BOTTOM_RIGHT: Self = Self::new(1.0, 1.0);
+
+    pub const fn new(horizontal: f32, vertical: f32) -> Self {
+        Self {
+            horizontal,
+            vertical,
+        }
+    }
+}
+
+impl Default for ContentPosition {
+    fn default() -> Self {
+        Self::CENTER
+    }
+}
 
 /// An image that keeps the previous handle mounted while the next one fades in.
 pub struct CrossfadeImage {
@@ -21,6 +57,7 @@ pub struct CrossfadeImage {
     height: Length,
     border_radius: iced::border::Radius,
     content_fit: ContentFit,
+    content_position: Option<ContentPosition>,
     filter_method: FilterMethod,
     scale: f32,
     duration: Duration,
@@ -34,6 +71,7 @@ impl CrossfadeImage {
             height: Length::Shrink,
             border_radius: iced::border::Radius::default(),
             content_fit: ContentFit::default(),
+            content_position: None,
             filter_method: FilterMethod::default(),
             scale: 1.0,
             duration: DEFAULT_DURATION,
@@ -55,6 +93,16 @@ impl CrossfadeImage {
     #[must_use]
     pub fn content_fit(mut self, content_fit: ContentFit) -> Self {
         self.content_fit = content_fit;
+        self
+    }
+
+    /// Sets the position of the fitted content within the image bounds.
+    ///
+    /// For [`ContentFit::Cover`], this controls which part remains visible
+    /// after the overflowing axis is clipped.
+    #[must_use]
+    pub fn content_position(mut self, content_position: ContentPosition) -> Self {
+        self.content_position = Some(content_position);
         self
     }
 
@@ -200,30 +248,28 @@ where
         let progress = state.progress.clamp(0.0, 1.0);
 
         if let Some(previous) = state.previous.as_ref() {
-            image_widget::draw(
+            draw_image(
                 renderer,
                 layout,
                 previous,
-                None,
                 self.border_radius,
                 self.content_fit,
+                self.content_position,
                 self.filter_method,
-                Rotation::default(),
                 1.0 - progress,
                 self.scale,
             );
         }
 
         if let Some(current) = state.current.as_ref() {
-            image_widget::draw(
+            draw_image(
                 renderer,
                 layout,
                 current,
-                None,
                 self.border_radius,
                 self.content_fit,
+                self.content_position,
                 self.filter_method,
-                Rotation::default(),
                 progress,
                 self.scale,
             );
@@ -246,15 +292,112 @@ pub fn crossfade_image(handle: Option<image::Handle>) -> CrossfadeImage {
     CrossfadeImage::new(handle)
 }
 
+#[allow(clippy::too_many_arguments)]
+fn draw_image<Renderer>(
+    renderer: &mut Renderer,
+    layout: Layout<'_>,
+    handle: &image::Handle,
+    border_radius: iced::border::Radius,
+    content_fit: ContentFit,
+    content_position: Option<ContentPosition>,
+    filter_method: FilterMethod,
+    opacity: f32,
+    scale: f32,
+) where
+    Renderer: renderer::Renderer + image::Renderer<Handle = image::Handle>,
+{
+    let bounds = layout.bounds();
+    let positioned_bounds = content_position.and_then(|position| {
+        renderer.measure_image(handle).and_then(|image_size| {
+            positioned_image_bounds(image_size, bounds, content_fit, position, scale)
+        })
+    });
+
+    if let Some(drawing_bounds) = positioned_bounds {
+        renderer.draw_image(
+            image::Image {
+                handle: handle.clone(),
+                border_radius,
+                filter_method,
+                rotation: Rotation::default().radians(),
+                opacity,
+            },
+            drawing_bounds,
+            bounds,
+        );
+    } else {
+        image_widget::draw(
+            renderer,
+            layout,
+            handle,
+            None,
+            border_radius,
+            content_fit,
+            filter_method,
+            Rotation::default(),
+            opacity,
+            scale,
+        );
+    }
+}
+
+fn positioned_image_bounds(
+    image_size: Size<u32>,
+    bounds: Rectangle,
+    content_fit: ContentFit,
+    content_position: ContentPosition,
+    scale: f32,
+) -> Option<Rectangle> {
+    if image_size.width == 0
+        || image_size.height == 0
+        || bounds.width <= 0.0
+        || bounds.height <= 0.0
+        || !bounds.x.is_finite()
+        || !bounds.y.is_finite()
+        || !bounds.width.is_finite()
+        || !bounds.height.is_finite()
+        || !content_position.horizontal.is_finite()
+        || !content_position.vertical.is_finite()
+        || !scale.is_finite()
+        || scale < 0.0
+    {
+        return None;
+    }
+
+    let fitted_size = content_fit.fit(
+        Size::new(image_size.width as f32, image_size.height as f32),
+        bounds.size(),
+    );
+    let drawing_size = fitted_size * scale;
+
+    if !drawing_size.width.is_finite() || !drawing_size.height.is_finite() {
+        return None;
+    }
+
+    let horizontal = content_position.horizontal.clamp(0.0, 1.0);
+    let vertical = content_position.vertical.clamp(0.0, 1.0);
+
+    Some(Rectangle::new(
+        Point::new(
+            bounds.x + (bounds.width - drawing_size.width) * horizontal,
+            bounds.y + (bounds.height - drawing_size.height) * vertical,
+        ),
+        drawing_size,
+    ))
+}
+
 fn ease_out_cubic(value: f32) -> f32 {
     1.0 - (1.0 - value).powi(3)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{DEFAULT_DURATION, State, ease_out_cubic};
+    use super::{
+        ContentPosition, DEFAULT_DURATION, State, ease_out_cubic, positioned_image_bounds,
+    };
     use iced::time::Instant;
     use iced::widget::image;
+    use iced::{ContentFit, Point, Rectangle, Size};
 
     #[test]
     fn handle_changes_retain_the_previous_image_until_the_fade_finishes() {
@@ -278,5 +421,128 @@ mod tests {
         assert_eq!(ease_out_cubic(0.0), 0.0);
         assert_eq!(ease_out_cubic(1.0), 1.0);
         assert!(ease_out_cubic(0.5) > 0.5);
+    }
+
+    #[test]
+    fn cover_position_selects_the_visible_vertical_region() {
+        let image_size = Size::new(300, 300);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(300.0, 180.0));
+
+        let top = positioned_image_bounds(
+            image_size,
+            bounds,
+            ContentFit::Cover,
+            ContentPosition::TOP,
+            1.0,
+        )
+        .unwrap();
+        let center = positioned_image_bounds(
+            image_size,
+            bounds,
+            ContentFit::Cover,
+            ContentPosition::CENTER,
+            1.0,
+        )
+        .unwrap();
+        let bottom = positioned_image_bounds(
+            image_size,
+            bounds,
+            ContentFit::Cover,
+            ContentPosition::BOTTOM,
+            1.0,
+        )
+        .unwrap();
+
+        assert_eq!(top.y, 0.0);
+        assert_eq!(center.y, -60.0);
+        assert_eq!(bottom.y, -120.0);
+        assert_eq!(top.size(), Size::new(300.0, 300.0));
+    }
+
+    #[test]
+    fn cover_position_selects_the_visible_horizontal_region() {
+        let image_size = Size::new(300, 300);
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(180.0, 300.0));
+
+        let left = positioned_image_bounds(
+            image_size,
+            bounds,
+            ContentFit::Cover,
+            ContentPosition::LEFT,
+            1.0,
+        )
+        .unwrap();
+        let center = positioned_image_bounds(
+            image_size,
+            bounds,
+            ContentFit::Cover,
+            ContentPosition::CENTER,
+            1.0,
+        )
+        .unwrap();
+        let right = positioned_image_bounds(
+            image_size,
+            bounds,
+            ContentFit::Cover,
+            ContentPosition::RIGHT,
+            1.0,
+        )
+        .unwrap();
+
+        assert_eq!(left.x, 0.0);
+        assert_eq!(center.x, -60.0);
+        assert_eq!(right.x, -120.0);
+    }
+
+    #[test]
+    fn custom_position_is_clamped_and_fill_always_matches_bounds() {
+        let image_size = Size::new(300, 300);
+        let bounds = Rectangle::new(Point::new(10.0, 20.0), Size::new(300.0, 180.0));
+        let clamped = positioned_image_bounds(
+            image_size,
+            bounds,
+            ContentFit::Cover,
+            ContentPosition::new(-1.0, 2.0),
+            1.0,
+        )
+        .unwrap();
+        let filled = positioned_image_bounds(
+            image_size,
+            bounds,
+            ContentFit::Fill,
+            ContentPosition::BOTTOM_RIGHT,
+            1.0,
+        )
+        .unwrap();
+
+        assert_eq!(clamped.x, bounds.x);
+        assert_eq!(clamped.y, bounds.y - 120.0);
+        assert_eq!(filled, bounds);
+    }
+
+    #[test]
+    fn invalid_measurements_fall_back_to_the_default_draw_path() {
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(300.0, 180.0));
+
+        assert!(
+            positioned_image_bounds(
+                Size::new(0, 300),
+                bounds,
+                ContentFit::Cover,
+                ContentPosition::TOP,
+                1.0,
+            )
+            .is_none()
+        );
+        assert!(
+            positioned_image_bounds(
+                Size::new(300, 300),
+                bounds,
+                ContentFit::Cover,
+                ContentPosition::new(f32::NAN, 0.0),
+                1.0,
+            )
+            .is_none()
+        );
     }
 }

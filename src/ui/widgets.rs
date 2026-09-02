@@ -35,7 +35,7 @@ pub use crate::ui::primitives::{
     ProgressRing, VirtualList, VirtualListState, view_progress_ring_styled,
 };
 
-pub use crossfade_image::crossfade_image;
+pub use crossfade_image::{ContentPosition, crossfade_image};
 pub use hover_popup::hover_popup;
 pub use hover_surface::hover_surface;
 pub use play_mode_button::ButtonSize as PlayModeButtonSize;

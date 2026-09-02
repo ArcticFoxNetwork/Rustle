@@ -36,6 +36,7 @@ pub fn view<'a, Message: Clone + 'a>(
         .width(Fill)
         .height(CARD_HEIGHT)
         .content_fit(iced::ContentFit::Cover)
+        .content_position(widgets::ContentPosition::TOP)
         .border_radius(CARD_RADIUS)
         .scale(background_image_scale(hover_progress))
         .into();
