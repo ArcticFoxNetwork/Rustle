@@ -28,11 +28,18 @@ use crate::utils::Source;
 
 /// Song row height constant for virtual list
 pub const SONG_ROW_HEIGHT: f32 = 62.0;
+/// Favorite glyph size is intentionally smaller than its interaction target.
+const FAVORITE_GLYPH_SIZE: f32 = 14.0;
 
 /// Resolve the virtual-list row height from the current design density.
 #[inline]
 fn song_row_height(tokens: UiTokens) -> f32 {
     tokens.size(SONG_ROW_HEIGHT)
+}
+
+#[inline]
+fn favorite_glyph_size(tokens: UiTokens) -> f32 {
+    tokens.size(FAVORITE_GLYPH_SIZE)
 }
 
 /// Pre-cached SVG handles to avoid repeated parsing in render loop
@@ -547,16 +554,27 @@ fn build_song_row(
     // interaction; compact rows keep the favorite action mounted because a
     // tablet/touch surface cannot depend on a hover event to expose it.
     let duration_or_like: Element<'static, Message> = if columns.show_like {
-        let duration_text = text(duration)
-            .size(tokens.text(TextRole::Body))
-            .wrapping(Wrapping::None)
-            .ellipsis(Ellipsis::End)
-            .style(move |theme| text::Style {
-                color: Some(
-                    theme::animated_text(theme, animation_progress * 0.8)
-                        .scale_alpha(1.0 - hover_progress),
-                ),
-            });
+        let favorite_target_size = tokens.target(TargetRole::Icon);
+        let favorite_glyph_size = favorite_glyph_size(tokens);
+        let duration_text: Element<'static, Message> = container(
+            text(duration)
+                .size(tokens.text(TextRole::Body))
+                .wrapping(Wrapping::None)
+                .ellipsis(Ellipsis::End)
+                .style(move |theme| text::Style {
+                    color: Some(
+                        theme::animated_text(theme, animation_progress * 0.8)
+                            .scale_alpha(1.0 - hover_progress),
+                    ),
+                }),
+        )
+        .width(if columns.compact {
+            Length::Fill
+        } else {
+            Length::Fixed(favorite_target_size)
+        })
+        .align_x(iced::alignment::Horizontal::Center)
+        .into();
 
         let heart_handle = if is_liked {
             HEART_ICON_HANDLE.clone()
@@ -566,8 +584,8 @@ fn build_song_row(
         let heart: Element<'static, Message> = if columns.compact {
             button(
                 svg(heart_handle)
-                    .width(tokens.icon(crate::ui::responsive::IconRole::Small))
-                    .height(tokens.icon(crate::ui::responsive::IconRole::Small))
+                    .width(favorite_glyph_size)
+                    .height(favorite_glyph_size)
                     .style(move |theme, _status| svg::Style {
                         color: Some(if is_liked {
                             theme::ACCENT_PINK
@@ -576,8 +594,8 @@ fn build_song_row(
                         }),
                     }),
             )
-            .width(tokens.target(TargetRole::Icon))
-            .height(tokens.target(TargetRole::Icon))
+            .width(favorite_target_size)
+            .height(favorite_target_size)
             .padding(0)
             .style(transparent_button)
             .on_press(Message::ToggleFavorite(ncm_song_id))
@@ -585,8 +603,8 @@ fn build_song_row(
         } else if hover_progress > 0.001 {
             button(
                 svg(heart_handle)
-                    .width(tokens.size(18.0))
-                    .height(tokens.size(18.0))
+                    .width(favorite_glyph_size)
+                    .height(favorite_glyph_size)
                     .style(move |theme, _status| svg::Style {
                         color: Some(if is_liked {
                             theme::ACCENT_PINK
@@ -596,19 +614,21 @@ fn build_song_row(
                     })
                     .opacity(hover_progress),
             )
+            .width(favorite_target_size)
+            .height(favorite_target_size)
             .padding(0)
             .style(transparent_button)
             .on_press_maybe(is_hovered.then_some(Message::ToggleFavorite(ncm_song_id)))
             .into()
         } else {
             Space::new()
-                .width(tokens.size(18.0))
-                .height(tokens.size(18.0))
+                .width(favorite_target_size)
+                .height(favorite_target_size)
                 .into()
         };
 
         if columns.compact {
-            row![duration_text.width(Fill), heart]
+            row![duration_text, heart]
                 .spacing(tokens.space(4.0))
                 .align_y(Alignment::Center)
                 .into()
@@ -740,4 +760,32 @@ pub fn filter_song_indices(songs: &[SongItem], query: &str) -> Option<Vec<usize>
             .filter_map(|(index, song)| song.search_text.contains(&query_lower).then_some(index))
             .collect(),
     )
+}
+
+#[cfg(test)]
+mod favorite_tests {
+    use super::favorite_glyph_size;
+    use crate::ui::responsive::{ResponsiveContext, TargetRole};
+    use iced::Size;
+
+    #[test]
+    fn favorite_glyph_stays_smaller_than_its_hit_target() {
+        let viewports = [
+            Size::new(1_920.0, 1_080.0),
+            Size::new(2_560.0, 1_440.0),
+            Size::new(960.0, 1_080.0),
+            Size::new(768.0, 1_024.0),
+            Size::new(720.0, 800.0),
+            Size::new(960.0, 540.0),
+            Size::new(560.0, 800.0),
+        ];
+
+        for viewport in viewports {
+            let context = ResponsiveContext::from_viewport(viewport);
+            assert!(
+                favorite_glyph_size(context.tokens) < context.tokens.target(TargetRole::Icon),
+                "favorite glyph must not consume its hit target at {viewport:?}"
+            );
+        }
+    }
 }

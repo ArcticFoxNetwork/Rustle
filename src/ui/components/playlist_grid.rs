@@ -7,14 +7,32 @@ use crate::api::PlaylistSummary;
 use crate::app::{ImageState, Message};
 use crate::image::ImageKind;
 use crate::ui::animation::HoverAnimations;
-use crate::ui::responsive::{CardRole, ResponsiveContext};
+use crate::ui::responsive::{CardRole, ResponsiveContext, complete_card_grid_columns};
 use crate::ui::widgets::{self, playlist_card};
 
 const CARD_SPACING: f32 = 24.0;
 const ROW_SPACING: f32 = 32.0;
+const GRID_HORIZONTAL_PADDING: f32 = 64.0;
 
 pub fn visible_column_count(container_width: f32) -> usize {
     widgets::calculate_grid_columns(container_width, playlist_card::CARD_WIDTH, CARD_SPACING)
+}
+
+/// Return the number of complete token-scaled playlist cards that fit.
+///
+/// Full grids and single-row sections deliberately share this entry point so
+/// changing view mode cannot change the column policy.
+pub fn visible_column_count_with_context(
+    container_width: f32,
+    context: ResponsiveContext,
+) -> usize {
+    complete_card_grid_columns(
+        container_width,
+        context,
+        CardRole::Playlist,
+        GRID_HORIZONTAL_PADDING,
+        usize::MAX,
+    )
 }
 
 fn card<'a>(
@@ -86,9 +104,7 @@ pub fn view_single_row_with_context<'a>(
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
     let metrics = context.tokens.card(CardRole::Playlist);
-    let columns = context
-        .grid_columns(container_width, 161.0, 24.0, usize::MAX)
-        .max(1);
+    let columns = visible_column_count_with_context(container_width, context);
     let cards = playlists
         .iter()
         .take(columns)
@@ -151,13 +167,7 @@ pub fn view_with_context<'a>(
         return Space::new().width(Fill).height(metrics.height).into();
     }
 
-    let columns = match context.profile {
-        crate::ui::responsive::LayoutProfile::Tablet
-        | crate::ui::responsive::LayoutProfile::Narrow => 1,
-        _ => context
-            .grid_columns(container_width, 161.0, 24.0, usize::MAX)
-            .max(1),
-    };
+    let columns = visible_column_count_with_context(container_width, context);
     let rows = items
         .chunks(columns)
         .map(|chunk| {
@@ -174,7 +184,9 @@ pub fn view_with_context<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::visible_column_count;
+    use super::{visible_column_count, visible_column_count_with_context};
+    use crate::ui::responsive::{MIN_USABLE_CONTENT_WIDTH, ResponsiveContext};
+    use iced::Size;
 
     #[test]
     fn responsive_row_never_reports_zero_columns() {
@@ -182,5 +194,27 @@ mod tests {
         assert_eq!(visible_column_count(160.0), 1);
         assert!(visible_column_count(900.0) >= 4);
         assert_eq!(visible_column_count(1136.0), 6);
+    }
+
+    #[test]
+    fn contextual_grid_uses_complete_cards_for_validation_viewports() {
+        let fixtures = [
+            (Size::new(1_920.0, 1_080.0), 8),
+            (Size::new(2_560.0, 1_440.0), 8),
+            (Size::new(960.0, 1_080.0), 5),
+            (Size::new(768.0, 1_024.0), 4),
+            (Size::new(720.0, 800.0), 3),
+            (Size::new(960.0, 540.0), 5),
+            (Size::new(560.0, 800.0), 3),
+        ];
+
+        for (viewport, expected_columns) in fixtures {
+            let context = ResponsiveContext::from_viewport(viewport);
+            assert_eq!(
+                visible_column_count_with_context(MIN_USABLE_CONTENT_WIDTH, context),
+                expected_columns,
+                "unexpected complete playlist-card columns for {viewport:?}"
+            );
+        }
     }
 }

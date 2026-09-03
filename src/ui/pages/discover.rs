@@ -1,6 +1,6 @@
 //! Discovery-first home page.
 
-use iced::widget::{Space, column, container, row, text};
+use iced::widget::{Space, column, container, row, scrollable, text};
 use iced::{Color, Element, Fill, Length, Padding};
 
 use crate::api::PRIVATE_RADAR_PLAYLIST_ID;
@@ -9,13 +9,16 @@ use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::components::{feature_card, playlist_grid};
 use crate::ui::responsive::{
-    DISCOVER_TRAILING_SPACE_REDUCTION, LayoutProfile, ResponsiveContext, TextRole, top_bar_height,
+    CardRole, DISCOVER_TRAILING_SPACE_REDUCTION, ResponsiveContext, TextRole,
+    complete_card_grid_columns, top_bar_height,
 };
 use crate::ui::theme;
 use crate::ui::widgets::{self, section_header};
 
 const DAILY_FEATURE_ID: u64 = 0;
 const PERSONAL_FM_FEATURE_ID: u64 = u64::MAX;
+const FEATURE_SCROLL_ID: &str = "discover_feature_scroll";
+const DISCOVER_HORIZONTAL_PADDING: f32 = 64.0;
 
 fn personal_fm_action() -> Message {
     Message::Navigate(crate::ui::components::NavItem::Radio)
@@ -79,6 +82,7 @@ fn view_overview<'a>(
         image_state,
         locale,
         active_personal_fm_cover,
+        content_width,
         context,
     );
 
@@ -148,9 +152,17 @@ fn personal_feature_row<'a>(
     image_state: &'a ImageState,
     locale: Locale,
     active_personal_fm_cover: Option<&'a iced::widget::image::Handle>,
+    content_width: f32,
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
     let tokens = context.tokens;
+    let feature_metrics = tokens.card(CardRole::Feature);
+    let fits_inline = feature_cards_fit(content_width, context);
+    let feature_width = if fits_inline {
+        Length::FillPortion(1)
+    } else {
+        Length::Fixed(feature_metrics.width)
+    };
     let day = chrono::Local::now().format("%d").to_string();
     let daily = feature_card::view_with_context(
         locale.get(Key::DiscoverDailyRecommend).to_string(),
@@ -165,7 +177,7 @@ fn personal_feature_row<'a>(
             Color::from_rgb(0.92, 0.25, 0.43),
             Color::from_rgb(0.48, 0.18, 0.62),
         ),
-        feature_width(context),
+        feature_width,
         state.card_animations.get_progress(&DAILY_FEATURE_ID),
         Message::OpenNcmPlaylist(DAILY_FEATURE_ID),
         Message::PlayDiscoverPlaylist(DAILY_FEATURE_ID),
@@ -190,7 +202,7 @@ fn personal_feature_row<'a>(
             Color::from_rgb(0.18, 0.35, 0.63),
             Color::from_rgb(0.42, 0.18, 0.55),
         ),
-        feature_width(context),
+        feature_width,
         state
             .card_animations
             .get_progress(&PRIVATE_RADAR_PLAYLIST_ID),
@@ -217,7 +229,7 @@ fn personal_feature_row<'a>(
             Color::from_rgb(0.16, 0.46, 0.59),
             Color::from_rgb(0.29, 0.19, 0.55),
         ),
-        feature_width(context),
+        feature_width,
         state.card_animations.get_progress(&PERSONAL_FM_FEATURE_ID),
         personal_fm_action.clone(),
         personal_fm_action,
@@ -226,31 +238,28 @@ fn personal_feature_row<'a>(
         context,
     );
 
-    let gap = tokens.space(18.0);
-    match context.profile {
-        LayoutProfile::Expanded | LayoutProfile::Standard => row![daily, radar, personal_fm]
-            .spacing(gap)
+    let cards = row![daily, radar, personal_fm].spacing(feature_metrics.gap);
+    if fits_inline {
+        cards.width(Fill).into()
+    } else {
+        scrollable(cards)
+            .direction(scrollable::Direction::Horizontal(
+                scrollable::Scrollbar::new().width(0).scroller_width(0),
+            ))
+            .id(iced::widget::Id::new(FEATURE_SCROLL_ID))
             .width(Fill)
-            .into(),
-        LayoutProfile::Compact => column![
-            row![daily, radar].spacing(gap).width(Fill),
-            row![personal_fm].width(Fill),
-        ]
-        .spacing(gap)
-        .width(Fill)
-        .into(),
-        LayoutProfile::Tablet | LayoutProfile::Narrow => column![daily, radar, personal_fm]
-            .spacing(tokens.space(16.0))
-            .width(Fill)
-            .into(),
+            .height(feature_metrics.height)
+            .into()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::personal_fm_action;
+    use super::{feature_cards_fit, personal_fm_action};
     use crate::app::Message;
     use crate::ui::components::NavItem;
+    use crate::ui::responsive::{MIN_USABLE_CONTENT_WIDTH, ResponsiveContext};
+    use iced::Size;
 
     #[test]
     fn personal_fm_card_reuses_sidebar_navigation_action() {
@@ -259,15 +268,38 @@ mod tests {
             Message::Navigate(NavItem::Radio)
         ));
     }
+
+    #[test]
+    fn feature_cards_scroll_as_one_horizontal_sequence_when_three_do_not_fit() {
+        let fixtures = [
+            (Size::new(1_920.0, 1_080.0), true),
+            (Size::new(2_560.0, 1_440.0), true),
+            (Size::new(960.0, 1_080.0), false),
+            (Size::new(768.0, 1_024.0), false),
+            (Size::new(720.0, 800.0), false),
+            (Size::new(960.0, 540.0), false),
+            (Size::new(560.0, 800.0), false),
+        ];
+
+        for (viewport, expected_inline) in fixtures {
+            let context = ResponsiveContext::from_viewport(viewport);
+            assert_eq!(
+                feature_cards_fit(MIN_USABLE_CONTENT_WIDTH, context),
+                expected_inline,
+                "unexpected feature-card composition for {viewport:?}"
+            );
+        }
+    }
 }
 
-fn feature_width(context: ResponsiveContext) -> Length {
-    match context.profile {
-        LayoutProfile::Expanded | LayoutProfile::Standard | LayoutProfile::Compact => {
-            Length::FillPortion(1)
-        }
-        LayoutProfile::Tablet | LayoutProfile::Narrow => Length::Fill,
-    }
+fn feature_cards_fit(content_width: f32, context: ResponsiveContext) -> bool {
+    complete_card_grid_columns(
+        content_width,
+        context,
+        CardRole::Feature,
+        DISCOVER_HORIZONTAL_PADDING,
+        3,
+    ) == 3
 }
 
 fn view_all_playlists<'a>(

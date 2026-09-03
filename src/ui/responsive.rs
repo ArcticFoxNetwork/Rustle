@@ -48,6 +48,14 @@ pub const MIN_USABLE_CONTENT_WIDTH: f32 = 200.0;
 pub const MIN_INTERACTION_TARGET: f32 = 36.0;
 /// Reference-space reduction for the trailing inset of Discover playlist rows.
 pub const DISCOVER_TRAILING_SPACE_REDUCTION: f32 = 5.0;
+/// Reference minimum width for one three-column shortcut table. This is a
+/// composition threshold, not a fixed cell width; cells still share whatever
+/// width the rendered table receives.
+const SHORTCUT_TABLE_MIN_WIDTH: f32 = 520.0;
+/// Reference horizontal inset used by the settings page body.
+const SETTINGS_CONTENT_HORIZONTAL_INSET: f32 = 64.0;
+/// Reference gap between the two shortcut tables.
+const SHORTCUT_TABLE_GAP: f32 = 24.0;
 
 /// A named composition profile selected from logical viewport geometry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,14 +101,6 @@ impl LayoutProfile {
     #[inline]
     pub const fn uses_navigation_drawer(self) -> bool {
         matches!(self, Self::Compact | Self::Tablet | Self::Narrow)
-    }
-
-    /// Whether the top bar needs a second action row. Even in this variant,
-    /// search remains on the same row as back/forward navigation; only the
-    /// account and window actions move to the second row.
-    #[inline]
-    pub const fn uses_wrapped_top_bar(self) -> bool {
-        matches!(self, Self::Tablet | Self::Narrow)
     }
 }
 
@@ -569,12 +569,7 @@ impl ChromeRole {
 /// Return the top-bar height for the current composition profile.
 #[inline]
 pub fn top_bar_height(context: &ResponsiveContext) -> f32 {
-    let base = if context.profile.uses_wrapped_top_bar() {
-        104.0
-    } else {
-        ChromeRole::TopBar.reference()
-    };
-    context.tokens.size(base)
+    context.tokens.chrome(ChromeRole::TopBar)
 }
 
 /// Immutable semantic UI dimensions derived from a [`DensityScale`].
@@ -748,6 +743,40 @@ pub fn calculate_grid_columns_clamped(
     calculate_grid_columns(content_width, card_width, spacing).clamp(1, max_columns.max(1))
 }
 
+/// Calculate complete columns for a token-scaled card family.
+///
+/// The measured content width is authoritative whenever it is available. A
+/// measured scrollable can briefly report the compatibility floor during its
+/// first layout pass, so only that value recovers from the viewport, current
+/// navigation chrome, and the caller's page padding. Profile identity never
+/// forces a column count.
+#[inline]
+pub fn complete_card_grid_columns(
+    content_width: f32,
+    context: ResponsiveContext,
+    card_role: CardRole,
+    fallback_horizontal_padding: f32,
+    max_columns: usize,
+) -> usize {
+    let measured_width = positive_dimension(content_width);
+    let chrome_width = match sidebar_presentation(context.profile, false) {
+        SidebarPresentation::Full => context.tokens.chrome(ChromeRole::Sidebar),
+        SidebarPresentation::Rail => context.tokens.chrome(ChromeRole::SidebarRail),
+        SidebarPresentation::Drawer | SidebarPresentation::Hidden => 0.0,
+    };
+    let fallback_width =
+        (context.width() - chrome_width - context.tokens.space(fallback_horizontal_padding))
+            .max(MIN_USABLE_CONTENT_WIDTH);
+    let effective_width = if measured_width <= MIN_USABLE_CONTENT_WIDTH {
+        fallback_width
+    } else {
+        measured_width
+    };
+    let metrics = context.tokens.card(card_role);
+
+    calculate_grid_columns_clamped(effective_width, metrics.width, metrics.gap, max_columns)
+}
+
 /// Calculate complete columns for detail-page card grids from the measured
 /// content width and the shared viewport policy.
 ///
@@ -758,34 +787,39 @@ pub fn calculate_grid_columns_clamped(
 /// the first layout pass, which keeps a user-resized sidebar respected.
 #[inline]
 pub fn detail_grid_columns(content_width: f32, context: ResponsiveContext) -> usize {
-    if matches!(
-        context.profile,
-        LayoutProfile::Tablet | LayoutProfile::Narrow
-    ) {
-        return 1;
+    complete_card_grid_columns(content_width, context, CardRole::Detail, 96.0, 8)
+}
+
+/// Responsive arrangement for the pair of shortcut tables.
+///
+/// Each table keeps one horizontal three-equal-column row contract. Only the
+/// relationship between the two complete tables changes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShortcutTablesLayout {
+    SideBySide,
+    Stacked,
+}
+
+/// Choose whether two complete shortcut tables fit beside each other after
+/// accounting for the current navigation chrome and settings-page inset.
+#[inline]
+pub fn shortcut_tables_layout(context: ResponsiveContext) -> ShortcutTablesLayout {
+    let chrome_width = match sidebar_presentation(context.profile, false) {
+        SidebarPresentation::Full => context.tokens.chrome(ChromeRole::Sidebar),
+        SidebarPresentation::Rail => context.tokens.chrome(ChromeRole::SidebarRail),
+        SidebarPresentation::Drawer | SidebarPresentation::Hidden => 0.0,
+    };
+    let content_width =
+        (context.width() - chrome_width - context.tokens.space(SETTINGS_CONTENT_HORIZONTAL_INSET))
+            .max(MIN_USABLE_CONTENT_WIDTH);
+    let required_width = context.tokens.size(SHORTCUT_TABLE_MIN_WIDTH) * 2.0
+        + context.tokens.space(SHORTCUT_TABLE_GAP);
+
+    if content_width >= required_width {
+        ShortcutTablesLayout::SideBySide
+    } else {
+        ShortcutTablesLayout::Stacked
     }
-
-    let measured_width = if content_width.is_finite() {
-        content_width
-    } else {
-        0.0
-    };
-    let chrome_width = match context.profile {
-        LayoutProfile::Expanded | LayoutProfile::Standard => {
-            context.tokens.chrome(ChromeRole::Sidebar)
-        }
-        LayoutProfile::Compact => context.tokens.chrome(ChromeRole::SidebarRail),
-        LayoutProfile::Tablet | LayoutProfile::Narrow => 0.0,
-    };
-    let viewport_width =
-        (context.width() - chrome_width - context.tokens.space(96.0)).max(MIN_USABLE_CONTENT_WIDTH);
-    let effective_width = if measured_width <= MIN_USABLE_CONTENT_WIDTH {
-        viewport_width
-    } else {
-        measured_width
-    };
-
-    context.grid_columns(effective_width, 200.0, 20.0, 8)
 }
 
 /// Adaptive arrangement selected when a row's minimum width cannot fit.
@@ -968,16 +1002,63 @@ mod tests {
     }
 
     #[test]
-    fn detail_grid_recovers_from_measured_floor_on_wide_viewports() {
-        let reference = ResponsiveContext::from_viewport(Size::new(1920.0, 1080.0));
-        let two_k = ResponsiveContext::from_viewport(Size::new(2560.0, 1440.0));
+    fn complete_grid_uses_measured_width_instead_of_profile_identity() {
         let compact = ResponsiveContext::from_viewport(Size::new(960.0, 540.0));
         let tablet = ResponsiveContext::from_viewport(Size::new(768.0, 1024.0));
+        let narrow = ResponsiveContext::from_viewport(Size::new(560.0, 800.0));
 
-        assert!(detail_grid_columns(200.0, reference) > 1);
-        assert!(detail_grid_columns(200.0, two_k) > 1);
-        assert!(detail_grid_columns(200.0, compact) > 1);
-        assert_eq!(detail_grid_columns(200.0, tablet), 1);
+        for context in [compact, tablet, narrow] {
+            assert_eq!(
+                complete_card_grid_columns(600.0, context, CardRole::Detail, 96.0, 8),
+                3
+            );
+        }
+    }
+
+    #[test]
+    fn detail_grid_recovers_from_measured_floor_for_validation_viewports() {
+        let fixtures = [
+            (Size::new(1_920.0, 1_080.0), 7),
+            (Size::new(2_560.0, 1_440.0), 7),
+            (Size::new(960.0, 1_080.0), 4),
+            (Size::new(768.0, 1_024.0), 3),
+            (Size::new(720.0, 800.0), 2),
+            (Size::new(960.0, 540.0), 4),
+            (Size::new(560.0, 800.0), 2),
+        ];
+
+        for (viewport, expected_columns) in fixtures {
+            let context = ResponsiveContext::from_viewport(viewport);
+            assert_eq!(
+                detail_grid_columns(MIN_USABLE_CONTENT_WIDTH, context),
+                expected_columns,
+                "unexpected complete detail-card columns for {viewport:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn shortcut_tables_change_pair_arrangement_without_changing_row_columns() {
+        for viewport in [Size::new(1_920.0, 1_080.0), Size::new(2_560.0, 1_440.0)] {
+            assert_eq!(
+                shortcut_tables_layout(ResponsiveContext::from_viewport(viewport)),
+                ShortcutTablesLayout::SideBySide
+            );
+        }
+
+        for viewport in [
+            Size::new(1_120.0, 900.0),
+            Size::new(960.0, 1_080.0),
+            Size::new(768.0, 1_024.0),
+            Size::new(720.0, 800.0),
+            Size::new(960.0, 540.0),
+            Size::new(560.0, 800.0),
+        ] {
+            assert_eq!(
+                shortcut_tables_layout(ResponsiveContext::from_viewport(viewport)),
+                ShortcutTablesLayout::Stacked
+            );
+        }
     }
 
     #[test]
@@ -1049,14 +1130,25 @@ mod tests {
 
     #[test]
     fn drawer_presentation_keeps_navigation_available_in_compact_profiles() {
-        assert_eq!(
-            sidebar_presentation(LayoutProfile::Expanded, false),
-            SidebarPresentation::Full
-        );
-        assert_eq!(
-            sidebar_presentation(LayoutProfile::Compact, false),
-            SidebarPresentation::Rail
-        );
+        let fixtures = [
+            (Size::new(1_920.0, 1_080.0), SidebarPresentation::Full),
+            (Size::new(2_560.0, 1_440.0), SidebarPresentation::Full),
+            (Size::new(960.0, 1_080.0), SidebarPresentation::Rail),
+            (Size::new(768.0, 1_024.0), SidebarPresentation::Rail),
+            (Size::new(720.0, 800.0), SidebarPresentation::Rail),
+            (Size::new(960.0, 540.0), SidebarPresentation::Rail),
+            (Size::new(560.0, 800.0), SidebarPresentation::Hidden),
+        ];
+
+        for (viewport, expected_presentation) in fixtures {
+            let context = ResponsiveContext::from_viewport(viewport);
+            assert_eq!(
+                sidebar_presentation(context.profile, false),
+                expected_presentation,
+                "unexpected sidebar presentation for {viewport:?}"
+            );
+        }
+
         assert_eq!(
             sidebar_presentation(LayoutProfile::Compact, true),
             SidebarPresentation::Drawer
@@ -1066,10 +1158,6 @@ mod tests {
             SidebarPresentation::Drawer
         );
         assert_eq!(
-            sidebar_presentation(LayoutProfile::Narrow, false),
-            SidebarPresentation::Hidden
-        );
-        assert_eq!(
             sidebar_presentation(LayoutProfile::Narrow, true),
             SidebarPresentation::Drawer
         );
@@ -1077,21 +1165,21 @@ mod tests {
 
     #[test]
     fn top_bar_height_is_stable_for_each_density() {
-        assert_approx(
-            top_bar_height(&ResponsiveContext::from_viewport(Size::new(
-                1_920.0, 1_080.0,
-            ))),
-            60.0,
-        );
-        assert_approx(
-            top_bar_height(&ResponsiveContext::from_viewport(Size::new(
-                2_560.0, 1_440.0,
-            ))),
-            80.0,
-        );
-        assert_approx(
-            top_bar_height(&ResponsiveContext::from_viewport(Size::new(960.0, 540.0))),
-            54.0,
-        );
+        let fixtures = [
+            (Size::new(1_920.0, 1_080.0), 60.0),
+            (Size::new(2_560.0, 1_440.0), 80.0),
+            (Size::new(960.0, 1_080.0), 54.0),
+            (Size::new(768.0, 1_024.0), 54.0),
+            (Size::new(720.0, 800.0), 54.0),
+            (Size::new(960.0, 540.0), 54.0),
+            (Size::new(560.0, 800.0), 54.0),
+        ];
+
+        for (viewport, expected_height) in fixtures {
+            assert_approx(
+                top_bar_height(&ResponsiveContext::from_viewport(viewport)),
+                expected_height,
+            );
+        }
     }
 }

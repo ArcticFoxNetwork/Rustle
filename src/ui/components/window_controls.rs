@@ -7,7 +7,10 @@ use iced::{Alignment, Color, ContentFit, Element, Fill, Length, Padding};
 use crate::app::{ImageState, Message, UserInfo};
 use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
-use crate::ui::components::search_bar::{self, SearchBarStyle};
+use crate::ui::components::{
+    cover_image,
+    search_bar::{self, SearchBarStyle},
+};
 use crate::ui::responsive::{
     IconRole, LayoutProfile, ResponsiveContext, TargetRole, TextRole, top_bar_height,
 };
@@ -101,31 +104,10 @@ pub fn view<'a>(
 
     // User info (avatar + username + API-backed membership badge)
     let avatar_size = tokens.size(28.0);
-    let avatar_radius = avatar_size / 2.0;
-    let avatar_icon_size = tokens.icon(IconRole::Small);
-
-    let avatar_elem: Element<'_, Message> = if is_logged_in {
-        if let Some(info) = user_info {
-            if let Some(handle) = image_state.get(ImageKind::UserAvatar, info.user_id) {
-                container(
-                    widgets::crossfade_image(Some(handle.clone()))
-                        .width(Fill)
-                        .height(Fill)
-                        .content_fit(ContentFit::Cover)
-                        .border_radius(avatar_radius),
-                )
-                .width(avatar_size)
-                .height(avatar_size)
-                .into()
-            } else {
-                avatar_placeholder(avatar_size, avatar_radius, avatar_icon_size)
-            }
-        } else {
-            avatar_placeholder(avatar_size, avatar_radius, avatar_icon_size)
-        }
-    } else {
-        avatar_placeholder(avatar_size, avatar_radius, avatar_icon_size)
-    };
+    let avatar_handle = is_logged_in
+        .then(|| user_info.and_then(|info| image_state.get(ImageKind::UserAvatar, info.user_id)))
+        .flatten();
+    let avatar_elem = cover_image::circle(avatar_handle, ImageKind::UserAvatar, avatar_size);
 
     let user_text: Element<'_, Message> = if is_logged_in {
         if let Some(info) = user_info {
@@ -189,13 +171,19 @@ pub fn view<'a>(
         .align_y(Alignment::Center)
         .into()
     };
-    let user_info_widget = button(user_content)
+    let user_info_button = button(user_content)
         .style(|_theme, _status| button::Style {
             background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
             text_color: iced::Color::TRANSPARENT,
             border: iced::Border::default(),
             shadow: iced::Shadow::default(),
             snap: false,
+        })
+        .height(button_size)
+        .padding(if compact_actions {
+            0.0
+        } else {
+            tokens.space(4.0)
         })
         .on_press(if is_logged_in {
             user_info.map_or(Message::OpenSettings, |info| {
@@ -204,10 +192,15 @@ pub fn view<'a>(
         } else {
             Message::ToggleLoginPopup
         });
+    let user_info_button = if compact_actions {
+        user_info_button.width(button_size)
+    } else {
+        user_info_button
+    };
 
     let user_info_widget: Element<'a, Message> = if compact_actions {
         tooltip(
-            user_info_widget,
+            user_info_button,
             text(if is_logged_in {
                 user_info
                     .map(|info| info.nickname.clone())
@@ -220,7 +213,7 @@ pub fn view<'a>(
         )
         .into()
     } else {
-        user_info_widget.into()
+        user_info_button.into()
     };
 
     // Window control buttons (right side)
@@ -341,69 +334,45 @@ pub fn view<'a>(
     } else {
         Space::new().width(0).height(0).into()
     };
-    // One stable row owns navigation, search, account, and window controls on
-    // desktop profiles. On tablet/narrow profiles, search stays beside
-    // back/forward in the first row while account/window actions move below;
-    // this preserves the requested navigation/search relationship without
-    // shrinking fixed circular hit targets.
-    let controls: Element<'a, Message> = if context.profile.uses_wrapped_top_bar() {
-        let navigation_search_row = row![
+    // Navigation, search, account, settings, and native window controls are a
+    // single chrome group at every profile. Search is the only flexible lane;
+    // compact profiles already reduce account identity to the avatar before
+    // any functional control needs to move or disappear.
+    let flexible_gap = if context.profile.is_compact() {
+        tokens.space(4.0)
+    } else {
+        tokens.space(12.0)
+    };
+    let action_gap = if context.profile.is_compact() {
+        tokens.space(4.0)
+    } else {
+        tokens.space(6.0)
+    };
+    let controls: Element<'a, Message> = container(
+        row![
             menu_button,
             nav_buttons,
-            Space::new().width(tokens.space(8.0)),
+            Space::new().width(flexible_gap),
             desktop_search_bar,
-        ]
-        .align_y(Alignment::Center)
-        .width(Fill)
-        .height(Length::Fixed(tokens.size(52.0)));
-        let account_window_row = row![
-            Space::new().width(Fill),
+            Space::new().width(flexible_gap),
             user_info_widget,
-            Space::new().width(tokens.space(6.0)),
+            Space::new().width(action_gap),
             settings_btn,
-            Space::new().width(tokens.space(6.0)),
+            Space::new().width(action_gap),
             minimize_btn,
-            Space::new().width(tokens.space(6.0)),
+            Space::new().width(action_gap),
             maximize_btn,
-            Space::new().width(tokens.space(6.0)),
+            Space::new().width(action_gap),
             close_btn,
         ]
         .align_y(Alignment::Center)
-        .width(Fill)
-        .height(Length::Fixed(tokens.size(52.0)))
-        .padding(Padding::new(0.0).right(tokens.space(12.0)));
-        container(iced::widget::column![
-            navigation_search_row,
-            account_window_row
-        ])
-        .width(Fill)
-        .height(Length::Fixed(top_height))
-        .into()
-    } else {
-        container(
-            row![
-                menu_button,
-                nav_buttons,
-                Space::new().width(tokens.space(12.0)),
-                desktop_search_bar,
-                Space::new().width(tokens.space(12.0)),
-                user_info_widget,
-                Space::new().width(tokens.space(6.0)),
-                settings_btn,
-                Space::new().width(tokens.space(6.0)),
-                minimize_btn,
-                Space::new().width(tokens.space(6.0)),
-                maximize_btn,
-                Space::new().width(tokens.space(6.0)),
-                close_btn,
-            ]
-            .align_y(Alignment::Center),
-        )
-        .width(Fill)
-        .height(Length::Fixed(top_height))
-        .padding(Padding::new(0.0).right(tokens.space(12.0)))
-        .into()
-    };
+        .width(Fill),
+    )
+    .width(Fill)
+    .height(Length::Fixed(top_height))
+    .align_y(Alignment::Center)
+    .padding(Padding::new(0.0).right(tokens.space(12.0)))
+    .into();
 
     // Native Iced scrollbars do not support a top-only track inset. Cover the
     // scrollbar gutter inside the window chrome so the scroll thumb starts
@@ -594,28 +563,3 @@ const CLOSE_ICON: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="current
     <line x1="6" y1="6" x2="18" y2="18"/>
     <line x1="6" y1="18" x2="18" y2="6"/>
 </svg>"#;
-
-/// Circular avatar placeholder with a centered user icon
-fn avatar_placeholder(size: f32, radius: f32, icon_size: f32) -> Element<'static, Message> {
-    container(
-        svg(svg::Handle::from_memory(crate::ui::icons::USER.as_bytes()))
-            .width(icon_size)
-            .height(icon_size)
-            .style(|theme, _status| svg::Style {
-                color: Some(theme::text_secondary(theme)),
-            }),
-    )
-    .width(size)
-    .height(size)
-    .center_x(size)
-    .center_y(size)
-    .style(move |theme| iced::widget::container::Style {
-        background: Some(iced::Background::Color(theme::border_color(theme))),
-        border: iced::Border {
-            radius: radius.into(),
-            ..Default::default()
-        },
-        ..Default::default()
-    })
-    .into()
-}

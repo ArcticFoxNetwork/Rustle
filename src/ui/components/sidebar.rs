@@ -21,6 +21,7 @@ const SIDEBAR_TEXT_SIZE: f32 = 16.0;
 const SIDEBAR_HEADER_TEXT_SIZE: f32 = 14.0;
 const SIDEBAR_ICON_SIZE: f32 = 24.0;
 const SIDEBAR_ITEM_SPACING: f32 = 4.0;
+const RAIL_PLAYLIST_SCROLL_ID: &str = "sidebar_rail_playlist_scroll";
 
 #[derive(Debug, Clone, Copy)]
 struct SidebarMetrics {
@@ -153,9 +154,16 @@ pub fn view(
             context,
             context.tokens.size(sidebar_width.clamp(240.0, 440.0)),
         ),
-        SidebarPresentation::Rail | SidebarPresentation::Drawer => {
-            rail_view(current_route, locale, sidebar_animations, context)
-        }
+        SidebarPresentation::Rail | SidebarPresentation::Drawer => rail_view(
+            current_route,
+            locale,
+            is_logged_in,
+            playlists,
+            user_playlists,
+            image_state,
+            sidebar_animations,
+            context,
+        ),
         SidebarPresentation::Hidden => Space::new().width(0).height(Fill).into(),
     }
 }
@@ -451,33 +459,7 @@ fn full_view(
         )
         .height(Fill)
         .id(iced::widget::Id::new("sidebar_scroll"))
-        .style(|_theme, _status| scrollable::Style {
-            container: iced::widget::container::Style::default(),
-            vertical_rail: scrollable::Rail {
-                background: None,
-                border: iced::Border::default(),
-                scroller: scrollable::Scroller {
-                    // Hidden scrollbar - transparent
-                    background: iced::Background::Color(Color::TRANSPARENT),
-                    border: iced::Border::default(),
-                },
-            },
-            horizontal_rail: scrollable::Rail {
-                background: None,
-                border: iced::Border::default(),
-                scroller: scrollable::Scroller {
-                    background: iced::Background::Color(Color::TRANSPARENT),
-                    border: iced::Border::default(),
-                },
-            },
-            gap: None,
-            auto_scroll: scrollable::AutoScroll {
-                background: iced::Background::Color(Color::TRANSPARENT),
-                border: iced::Border::default(),
-                shadow: iced::Shadow::default(),
-                icon: Color::TRANSPARENT,
-            },
-        }),
+        .style(hidden_scrollable_style),
         SmoothScrollTarget::Native("sidebar_scroll"),
         Message::SmoothScroll,
     );
@@ -505,11 +487,16 @@ fn full_view(
         .into()
 }
 
-/// Render the compact icon rail. Playlist data remains available through the
-/// drawer; route and library actions shown here keep their original messages.
+/// Render the compact icon rail with the same playlist destinations as the
+/// full sidebar. The rail only maps existing data and messages; responsive
+/// policy remains unaware of playlist or image state.
 fn rail_view(
     current_route: &Route,
     locale: Locale,
+    is_logged_in: bool,
+    playlists: &[crate::database::DbPlaylist],
+    user_playlists: &[crate::api::PlaylistSummary],
+    image_state: &ImageState,
     sidebar_animations: &HoverAnimations<SidebarId>,
     context: ResponsiveContext,
 ) -> Element<'static, Message> {
@@ -554,13 +541,66 @@ fn rail_view(
         Message::LibrarySelect(LibraryItem::RecentlyPlayed),
     );
 
+    let mut playlist_buttons = playlists
+        .iter()
+        .map(|playlist| {
+            let id = playlist.id;
+            let cover_handle = u64::try_from(id)
+                .ok()
+                .and_then(|id| image_state.get(ImageKind::LocalPlaylistCover, id));
+            rail_cover_button(
+                cover_handle,
+                ImageKind::LocalPlaylistCover,
+                playlist.name.clone(),
+                matches!(current_route, Route::Playlist(current_id) if *current_id == id),
+                sidebar_animations.get_progress(&SidebarId::Playlist(id)),
+                metrics,
+                SidebarId::Playlist(id),
+                Message::OpenPlaylist(id),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    if is_logged_in {
+        playlist_buttons.extend(user_playlists.iter().map(|playlist| {
+            let id = playlist.id;
+            rail_cover_button(
+                image_state.get(ImageKind::PlaylistCover, id),
+                ImageKind::PlaylistCover,
+                playlist.name.clone(),
+                matches!(current_route, Route::NcmPlaylist(current_id) if *current_id == id),
+                sidebar_animations.get_progress(&SidebarId::UserPlaylist(id)),
+                metrics,
+                SidebarId::UserPlaylist(id),
+                Message::OpenNcmPlaylist(id),
+            )
+        }));
+    }
+
+    let playlist_surface: Element<'static, Message> = crate::ui::widgets::smooth_scroll(
+        scrollable(
+            column(playlist_buttons)
+                .spacing(metrics.item_spacing)
+                .align_x(Alignment::Center)
+                .padding(Padding::new(0.0).bottom(metrics.content_bottom)),
+        )
+        .width(rail_width)
+        .height(Fill)
+        .id(iced::widget::Id::new(RAIL_PLAYLIST_SCROLL_ID))
+        .style(hidden_scrollable_style),
+        SmoothScrollTarget::Native(RAIL_PLAYLIST_SCROLL_ID),
+        Message::SmoothScroll,
+    )
+    .into();
+
     let content = column![
         menu_button,
         Space::new().height(metrics.section_gap),
         column(nav_buttons).spacing(metrics.item_spacing),
         Space::new().height(metrics.section_gap),
         recently_played,
-        Space::new().height(Fill),
+        Space::new().height(metrics.item_spacing),
+        playlist_surface,
     ]
     .align_x(Alignment::Center)
     .padding(Padding::new(metrics.content_padding / 2.0))
@@ -575,6 +615,97 @@ fn rail_view(
     )
     .on_exit(Message::HoverSidebar(None))
     .into()
+}
+
+fn rail_cover_button(
+    cover_handle: Option<&iced::widget::image::Handle>,
+    image_kind: ImageKind,
+    label: String,
+    is_active: bool,
+    hover_progress: f32,
+    metrics: SidebarMetrics,
+    sidebar_id: SidebarId,
+    on_press: Message,
+) -> Element<'static, Message> {
+    let button_size = (metrics.cover_size + metrics.item_spacing).max(metrics.target_size);
+    let cover = crate::ui::components::cover_image::custom(
+        cover_handle,
+        image_kind,
+        metrics.cover_size,
+        metrics.cover_radius,
+    );
+    let button = button(
+        container(cover)
+            .width(button_size)
+            .height(button_size)
+            .center_x(button_size)
+            .center_y(button_size),
+    )
+    .width(button_size)
+    .height(button_size)
+    .padding(0)
+    .style(move |theme, _status| iced::widget::button::Style {
+        background: Some(iced::Background::Color(theme::hover_bg_alpha(
+            theme,
+            if is_active {
+                0.18
+            } else {
+                0.12 * hover_progress
+            },
+        ))),
+        border: iced::Border {
+            radius: (metrics.cover_radius + metrics.item_spacing / 2.0).into(),
+            width: if is_active { 1.0 } else { 0.0 },
+            color: theme::ACCENT_PINK,
+        },
+        ..Default::default()
+    })
+    .on_press(on_press);
+
+    let button: Element<'static, Message> = if is_active {
+        button.into()
+    } else {
+        mouse_area(button)
+            .on_enter(Message::HoverSidebar(Some(sidebar_id)))
+            .on_exit(Message::HoverSidebar(None))
+            .into()
+    };
+
+    tooltip(
+        button,
+        text(label).size(metrics.header_text_size),
+        tooltip::Position::Right,
+    )
+    .into()
+}
+
+fn hidden_scrollable_style(_theme: &iced::Theme, _status: scrollable::Status) -> scrollable::Style {
+    scrollable::Style {
+        container: iced::widget::container::Style::default(),
+        vertical_rail: scrollable::Rail {
+            background: None,
+            border: iced::Border::default(),
+            scroller: scrollable::Scroller {
+                background: iced::Background::Color(Color::TRANSPARENT),
+                border: iced::Border::default(),
+            },
+        },
+        horizontal_rail: scrollable::Rail {
+            background: None,
+            border: iced::Border::default(),
+            scroller: scrollable::Scroller {
+                background: iced::Background::Color(Color::TRANSPARENT),
+                border: iced::Border::default(),
+            },
+        },
+        gap: None,
+        auto_scroll: scrollable::AutoScroll {
+            background: iced::Background::Color(Color::TRANSPARENT),
+            border: iced::Border::default(),
+            shadow: iced::Shadow::default(),
+            icon: Color::TRANSPARENT,
+        },
+    }
 }
 
 fn rail_button(

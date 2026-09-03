@@ -6,6 +6,7 @@
 
 use iced::widget::{
     Space, button, column, container, pick_list, row, scrollable, svg, text, text_input, toggler,
+    tooltip,
 };
 use iced::{Alignment, Background, Border, Color, ContentFit, Element, Fill, Length, Padding};
 
@@ -15,7 +16,8 @@ use crate::i18n::{Key, Language, Locale};
 use crate::image::ImageKind;
 use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::responsive::{
-    LayoutProfile, RadiusRole, ResponsiveContext, TextRole, top_bar_height,
+    RadiusRole, ResponsiveContext, ShortcutTablesLayout, TextRole, shortcut_tables_layout,
+    top_bar_height,
 };
 use crate::ui::{theme, widgets};
 
@@ -511,6 +513,7 @@ fn setting_row<'a>(
                 }),
         ]
         .spacing(tokens.space(4.0))
+        .width(Fill)
         .into()
     } else {
         column![
@@ -520,23 +523,21 @@ fn setting_row<'a>(
                     color: Some(theme::settings_label(theme))
                 }),
         ]
+        .width(Fill)
         .into()
     };
 
-    let content: Element<'a, Message> = if matches!(
-        context.profile,
-        LayoutProfile::Tablet | LayoutProfile::Narrow
-    ) {
-        column![label_section, container(control).width(Fill)]
-            .spacing(tokens.space(10.0))
-            .width(Fill)
-            .into()
-    } else {
-        row![label_section, Space::new().width(Fill), control]
-            .align_y(Alignment::Center)
-            .width(Fill)
-            .into()
-    };
+    // Iced resolves intrinsic/Shrink children before distributing remaining
+    // row width to Fill children. Keeping the control slot compressed and the
+    // label slot flexible creates actual trailing alignment without a
+    // profile-selected second row.
+    let control_slot = container(control)
+        .width(Length::Shrink)
+        .align_x(Alignment::End);
+    let content = row![label_section, control_slot]
+        .spacing(tokens.space(16.0))
+        .align_y(Alignment::Center)
+        .width(Fill);
 
     container(content)
         .padding(
@@ -941,8 +942,8 @@ fn network_section(
 }
 
 /// Setting row with text input - handles lifetime issues by creating owned strings.
-/// Compact profiles stack the label and input so a long label never squeezes
-/// the editable field below its usable width.
+/// The shared setting-row component owns alignment; the input only declares
+/// its intrinsic editable width.
 fn setting_row_with_input<F>(
     context: ResponsiveContext,
     label: &str,
@@ -954,28 +955,13 @@ where
     F: Fn(String) -> Message + 'static + Clone,
 {
     let tokens = context.tokens;
-    let label_text = label.to_string();
     let placeholder_text = placeholder.to_string();
     let value_text = value.to_string();
 
-    let label = text(label_text)
-        .size(tokens.text(TextRole::BodyLarge))
-        .style(|theme| text::Style {
-            color: Some(theme::settings_label(theme)),
-        });
     let input = text_input(placeholder_text, value_text)
         .on_input(on_input)
         .padding([tokens.space(8.0), tokens.space(12.0)])
-        .width(
-            if matches!(
-                context.profile,
-                LayoutProfile::Tablet | LayoutProfile::Narrow
-            ) {
-                Fill
-            } else {
-                Length::Fixed(tokens.size(200.0))
-            },
-        )
+        .width(Length::Fixed(tokens.size(200.0)))
         .style(move |theme, status| {
             let border_color = match status {
                 text_input::Status::Focused { .. } => theme::ACCENT_PINK,
@@ -995,25 +981,7 @@ where
             }
         });
 
-    let content: Element<'_, Message> = if matches!(
-        context.profile,
-        LayoutProfile::Tablet | LayoutProfile::Narrow
-    ) {
-        column![label, input]
-            .spacing(tokens.space(10.0))
-            .width(Fill)
-            .into()
-    } else {
-        row![label, Space::new().width(Fill), input]
-            .align_y(Alignment::Center)
-            .width(Fill)
-            .into()
-    };
-
-    container(content)
-        .padding(Padding::new(tokens.space(16.0)))
-        .width(Fill)
-        .into()
+    setting_row(context, label, None, input.into())
 }
 
 fn storage_section(
@@ -1237,6 +1205,7 @@ fn shortcuts_section(
     editing_keybinding: Option<(Action, ShortcutScope)>,
     context: ResponsiveContext,
 ) -> Element<'static, Message> {
+    let layout = shortcut_tables_layout(context);
     let left_actions = [
         (Action::PlayPause, Key::ActionPlayPause),
         (Action::NextTrack, Key::ActionNextTrack),
@@ -1255,10 +1224,7 @@ fn shortcuts_section(
         (Action::ToggleFullscreen, Key::ActionToggleFullscreen),
     ];
 
-    if matches!(
-        context.profile,
-        LayoutProfile::Tablet | LayoutProfile::Narrow
-    ) {
+    if layout == ShortcutTablesLayout::Stacked {
         column![
             shortcut_table(
                 &left_actions,
@@ -1323,22 +1289,21 @@ fn shortcut_table(
         })
         .collect();
 
-    let header = row![
-        shortcut_header(locale.get(Key::SettingsShortcutFunction), 4, context),
-        shortcut_header(locale.get(Key::SettingsShortcutLocal), 3, context),
-        shortcut_header(locale.get(Key::SettingsShortcutGlobal), 4, context),
-    ]
-    .spacing(context.tokens.space(8.0))
-    .width(Fill);
+    let rows = column(rows).spacing(context.tokens.space(4.0)).width(Fill);
+
+    let header = shortcut_columns(
+        [
+            shortcut_header(locale.get(Key::SettingsShortcutFunction), context),
+            shortcut_header(locale.get(Key::SettingsShortcutLocal), context),
+            shortcut_header(locale.get(Key::SettingsShortcutGlobal), context),
+        ],
+        context,
+    );
 
     container(
-        column![
-            header,
-            divider(context),
-            column(rows).spacing(context.tokens.space(4.0)).width(Fill)
-        ]
-        .spacing(context.tokens.space(8.0))
-        .width(Fill),
+        column![header, divider(context), rows]
+            .spacing(context.tokens.space(8.0))
+            .width(Fill),
     )
     .width(Fill)
     .into()
@@ -1354,21 +1319,27 @@ fn shortcut_row(
     context: ResponsiveContext,
 ) -> Element<'static, Message> {
     let tokens = context.tokens;
-    let action_cell = container(
-        text(action_name.to_string())
+    let action_label = action_name.to_string();
+    let action_cell: Element<'static, Message> = tooltip(
+        text(action_label.clone())
             .size(tokens.text(TextRole::Body))
+            .wrapping(iced::widget::text::Wrapping::None)
+            .ellipsis(iced::widget::text::Ellipsis::End)
             .style(|theme| text::Style {
                 color: Some(theme::settings_label(theme)),
             }),
+        text(action_label)
+            .size(tokens.text(TextRole::Caption))
+            .wrapping(iced::widget::text::Wrapping::None),
+        tooltip::Position::Top,
     )
-    .width(Length::FillPortion(4));
+    .into();
     let local_cell = shortcut_cell(
         action,
         ShortcutScope::Local,
         local_shortcut,
         editing_keybinding == Some((action, ShortcutScope::Local)),
         locale,
-        3,
         context,
     );
     let global_cell = shortcut_cell(
@@ -1377,28 +1348,9 @@ fn shortcut_row(
         global_shortcut,
         editing_keybinding == Some((action, ShortcutScope::Global)),
         locale,
-        4,
         context,
     );
-
-    let content: Element<'static, Message> = if matches!(
-        context.profile,
-        LayoutProfile::Tablet | LayoutProfile::Narrow
-    ) {
-        column![
-            action_cell,
-            row![local_cell, global_cell].spacing(tokens.space(8.0))
-        ]
-        .spacing(tokens.space(8.0))
-        .width(Fill)
-        .into()
-    } else {
-        row![action_cell, local_cell, global_cell]
-            .spacing(tokens.space(8.0))
-            .align_y(Alignment::Center)
-            .width(Fill)
-            .into()
-    };
+    let content = shortcut_columns([action_cell, local_cell, global_cell], context);
 
     container(content)
         .padding(Padding::new(tokens.space(8.0)))
@@ -1406,20 +1358,26 @@ fn shortcut_row(
         .into()
 }
 
-fn shortcut_header(
-    label: &str,
-    width_portion: u16,
+fn shortcut_columns<'a>(
+    cells: [Element<'a, Message>; 3],
     context: ResponsiveContext,
-) -> Element<'static, Message> {
-    container(
-        text(label.to_string())
-            .size(context.tokens.text(TextRole::Label))
-            .style(|theme| text::Style {
-                color: Some(theme::settings_desc(theme)),
-            }),
-    )
-    .width(Length::FillPortion(width_portion))
-    .into()
+) -> Element<'a, Message> {
+    row(cells.map(|cell| container(cell).width(Length::FillPortion(1)).into()))
+        .spacing(context.tokens.space(8.0))
+        .align_y(Alignment::Center)
+        .width(Fill)
+        .into()
+}
+
+fn shortcut_header(label: &str, context: ResponsiveContext) -> Element<'static, Message> {
+    text(label.to_string())
+        .size(context.tokens.text(TextRole::Label))
+        .wrapping(iced::widget::text::Wrapping::None)
+        .ellipsis(iced::widget::text::Ellipsis::End)
+        .style(|theme| text::Style {
+            color: Some(theme::settings_desc(theme)),
+        })
+        .into()
 }
 
 fn shortcut_cell(
@@ -1428,14 +1386,20 @@ fn shortcut_cell(
     shortcut: &str,
     is_editing: bool,
     locale: Locale,
-    width_portion: u16,
     context: ResponsiveContext,
 ) -> Element<'static, Message> {
     let tokens = context.tokens;
+    let display_value = if is_editing {
+        locale.get(Key::SettingsShortcutRecording).to_string()
+    } else {
+        shortcut.to_string()
+    };
     let shortcut_display: Element<'static, Message> = if is_editing {
         container(
-            text(locale.get(Key::SettingsShortcutRecording).to_string())
+            text(display_value.clone())
                 .size(tokens.text(TextRole::Label))
+                .wrapping(iced::widget::text::Wrapping::None)
+                .ellipsis(iced::widget::text::Ellipsis::End)
                 .color(theme::ACCENT_PINK),
         )
         .width(Fill)
@@ -1453,8 +1417,10 @@ fn shortcut_cell(
         .into()
     } else {
         container(
-            text(shortcut.to_string())
+            text(display_value.clone())
                 .size(tokens.text(TextRole::Label))
+                .wrapping(iced::widget::text::Wrapping::None)
+                .ellipsis(iced::widget::text::Ellipsis::End)
                 .style(|theme| text::Style {
                     color: Some(theme::settings_value(theme)),
                 }),
@@ -1475,6 +1441,7 @@ fn shortcut_cell(
 
     let edit_button = button(shortcut_display)
         .width(Fill)
+        .padding(0)
         .style(|_, _| button::Style {
             background: None,
             text_color: Color::WHITE,
@@ -1486,10 +1453,15 @@ fn shortcut_cell(
         } else {
             Message::StartEditingKeybinding(action, scope)
         });
+    let edit_button = tooltip(
+        edit_button,
+        text(display_value)
+            .size(tokens.text(TextRole::Caption))
+            .wrapping(iced::widget::text::Wrapping::None),
+        tooltip::Position::Top,
+    );
 
-    container(edit_button)
-        .width(Length::FillPortion(width_portion))
-        .into()
+    container(edit_button).width(Fill).into()
 }
 
 fn divider(context: ResponsiveContext) -> Element<'static, Message> {

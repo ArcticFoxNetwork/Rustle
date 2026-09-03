@@ -88,8 +88,7 @@ pub fn view<'a>(
             container(left_panel)
                 .width(Length::FillPortion(4))
                 .height(Fill)
-                .padding(tokens.space(40.0))
-                .style(move |theme| lyrics_sheet_style(theme, tokens)),
+                .padding(tokens.space(40.0)),
             container(right_panel)
                 .width(Length::FillPortion(6))
                 .height(Fill)
@@ -97,8 +96,7 @@ pub fn view<'a>(
                     Padding::new(0.0)
                         .left(tokens.space(20.0))
                         .right(tokens.space(40.0)),
-                )
-                .style(move |theme| lyrics_sheet_style(theme, tokens)),
+                ),
         ]
         .width(Fill)
         .height(Fill)
@@ -107,8 +105,7 @@ pub fn view<'a>(
             container(left_panel)
                 .width(Length::FillPortion(3))
                 .height(Fill)
-                .padding(tokens.space(24.0))
-                .style(move |theme| lyrics_sheet_style(theme, tokens)),
+                .padding(tokens.space(24.0)),
             container(right_panel)
                 .width(Length::FillPortion(7))
                 .height(Fill)
@@ -116,8 +113,7 @@ pub fn view<'a>(
                     Padding::new(0.0)
                         .left(tokens.space(12.0))
                         .right(tokens.space(24.0)),
-                )
-                .style(move |theme| lyrics_sheet_style(theme, tokens)),
+                ),
         ]
         .width(Fill)
         .height(Fill)
@@ -130,18 +126,13 @@ pub fn view<'a>(
                     Padding::new(tokens.space(20.0))
                         .top(tokens.space(44.0))
                         .bottom(tokens.space(16.0)),
-                )
-                .style(move |theme| lyrics_sheet_style(theme, tokens)),
-            container(right_panel)
-                .width(Fill)
-                .height(Fill)
-                .padding(
-                    Padding::new(0.0)
-                        .left(tokens.space(16.0))
-                        .right(tokens.space(16.0))
-                        .bottom(tokens.space(16.0)),
-                )
-                .style(move |theme| lyrics_sheet_style(theme, tokens)),
+                ),
+            container(right_panel).width(Fill).height(Fill).padding(
+                Padding::new(0.0)
+                    .left(tokens.space(16.0))
+                    .right(tokens.space(16.0))
+                    .bottom(tokens.space(16.0)),
+            ),
         ]
         .width(Fill)
         .height(Fill)
@@ -366,31 +357,6 @@ pub fn view<'a>(
             .height(Fill)
             .into(),
     )
-}
-
-/// Give the two lyric lanes a calm, elevated sheet over the artwork without
-/// changing the renderer or its measured viewport.
-fn lyrics_sheet_style(
-    theme: &iced::Theme,
-    tokens: crate::ui::responsive::UiTokens,
-) -> iced::widget::container::Style {
-    let mut background = theme::surface_elevated(theme);
-    background.a = 0.82;
-
-    iced::widget::container::Style {
-        background: Some(iced::Background::Color(background)),
-        border: iced::Border {
-            radius: tokens.radius(RadiusRole::Large).into(),
-            width: 1.0,
-            color: theme::panel_border(theme),
-        },
-        shadow: iced::Shadow {
-            color: theme::shadow_color(theme),
-            offset: iced::Vector::new(0.0, tokens.space(8.0)),
-            blur_radius: tokens.space(24.0),
-        },
-        ..Default::default()
-    }
 }
 
 /// Build the left panel with cover, song info, and controls

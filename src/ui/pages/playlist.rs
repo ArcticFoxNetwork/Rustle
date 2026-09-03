@@ -12,7 +12,7 @@ use std::rc::Rc;
 use iced::widget::{
     Space, button, column, container, mouse_area, row, scrollable, svg, text, text_input,
 };
-use iced::{Alignment, Color, Element, Fill, Padding};
+use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
 use crate::app::{ImageState, Message};
 use crate::i18n::{Key, Locale};
@@ -1105,27 +1105,26 @@ pub(crate) fn build_controls<'a>(
         utility_items.push(sort_btn.into());
     }
 
-    let actions = row(action_items)
+    let actions = row(action_items).align_y(Alignment::Center).spacing(0);
+    let utilities = row(utility_items)
         .align_y(Alignment::Center)
         .spacing(0)
-        .width(Fill);
-    let utilities = row(utility_items).align_y(Alignment::Center).spacing(0);
+        .width(Length::Fit);
+    let (action_lane_width, utility_lane_width) = control_bar_lane_widths();
 
-    let controls = container(match context.profile {
-        LayoutProfile::Expanded | LayoutProfile::Standard => Element::from(
-            row![actions, Space::new().width(Fill), utilities].align_y(Alignment::Center),
-        ),
-        LayoutProfile::Compact => Element::from(
-            column![actions, utilities]
-                .spacing(tokens.space(8.0))
-                .align_x(Alignment::End),
-        ),
-        LayoutProfile::Tablet | LayoutProfile::Narrow => Element::from(
-            column![actions, container(utilities).width(Fill)]
-                .spacing(tokens.space(8.0))
-                .align_x(Alignment::Start),
-        ),
-    })
+    // Iced lays out main-axis Fit children before Fill children. Keeping the
+    // utility lane intrinsic reserves its complete width first; the left lane
+    // then receives all remaining space and naturally pushes the tools to the
+    // right without a profile-specific second row.
+    let controls = container(
+        row![
+            container(actions).align_left(action_lane_width),
+            container(utilities).align_right(utility_lane_width),
+        ]
+        .spacing(tokens.space(8.0))
+        .align_y(Alignment::Center)
+        .width(Fill),
+    )
     .width(Fill)
     .padding(
         Padding::new(tokens.space(16.0))
@@ -1135,6 +1134,22 @@ pub(crate) fn build_controls<'a>(
 
     // No background - gradient continues from header
     controls.into()
+}
+
+#[inline]
+const fn control_bar_lane_widths() -> (Length, Length) {
+    (Length::Fill, Length::Fit)
+}
+
+#[cfg(test)]
+mod control_bar_tests {
+    use super::control_bar_lane_widths;
+    use iced::Length;
+
+    #[test]
+    fn utility_lane_keeps_intrinsic_width_while_actions_fill_the_remainder() {
+        assert_eq!(control_bar_lane_widths(), (Length::Fill, Length::Fit));
+    }
 }
 
 /// Build owner avatar placeholder (first letter on pink background)
