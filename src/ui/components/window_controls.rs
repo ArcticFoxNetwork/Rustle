@@ -1,17 +1,21 @@
 //! Window control buttons and navigation bar
 //! Positioned at top of the application with navigation on left, search in center, and controls on right
 
-use iced::widget::{Space, button, container, mouse_area, row, stack, svg, text, tooltip};
+use iced::widget::{Space, button, column, container, mouse_area, row, stack, svg, text, tooltip};
 use iced::{Alignment, Color, ContentFit, Element, Fill, Length, Padding};
 
 use crate::app::{ImageState, Message, UserInfo};
 use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::components::search_bar::{self, SearchBarStyle};
+use crate::ui::responsive::{
+    IconRole, LayoutProfile, ResponsiveContext, TargetRole, TextRole, top_bar_height,
+};
 use crate::ui::{theme, widgets};
 
 /// Build the complete top bar with navigation buttons on left, search bar in center, user info and window controls on right
 pub fn view<'a>(
+    context: ResponsiveContext,
     locale: Locale,
     can_go_back: bool,
     can_go_forward: bool,
@@ -22,9 +26,12 @@ pub fn view<'a>(
     show_background: bool,
     is_maximized: bool,
 ) -> Element<'a, Message> {
-    let button_size = 36;
-    let icon_size = 16;
-    let nav_icon_size = 18;
+    let tokens = context.tokens;
+    let button_size = tokens.target(TargetRole::WindowControl);
+    let icon_size = tokens.icon(IconRole::WindowControl);
+    let nav_icon_size = tokens.icon(IconRole::Medium);
+    let top_height = top_bar_height(&context);
+    let compact_actions = context.profile.is_compact();
     let back_icon_opacity: f32 = if can_go_back { 1.0 } else { 0.5 };
     let forward_icon_opacity: f32 = if can_go_forward { 1.0 } else { 0.5 };
 
@@ -86,15 +93,15 @@ pub fn view<'a>(
     // Keep back and forward as separate circular controls.
     let nav_buttons = container(
         row![back_btn, forward_btn]
-            .spacing(8)
+            .spacing(tokens.space(8.0))
             .align_y(Alignment::Center),
     )
-    .padding(Padding::new(12.0).left(16.0));
+    .padding(Padding::new(tokens.space(12.0)).left(tokens.space(16.0)));
 
     // User info (avatar + username + API-backed membership badge)
-    let avatar_size = 28.0;
+    let avatar_size = tokens.size(28.0);
     let avatar_radius = avatar_size / 2.0;
-    let avatar_icon_size = 14.0;
+    let avatar_icon_size = tokens.icon(IconRole::Small);
 
     let avatar_elem: Element<'_, Message> = if is_logged_in {
         if let Some(info) = user_info {
@@ -130,23 +137,23 @@ pub fn view<'a>(
                 let vip_badge = widgets::crossfade_image(Some(handle.clone()))
                     // Match the adjacent 16px nickname. Width remains Shrink,
                     // so Iced derives it from the official image aspect ratio.
-                    .height(theme::TEXT_SIZE_BODY_LARGE)
+                    .height(tokens.text(TextRole::BodyLarge))
                     .content_fit(ContentFit::Contain);
                 row![
                     text(info.nickname.clone())
-                        .size(theme::TEXT_SIZE_BODY_LARGE)
+                        .size(tokens.text(TextRole::BodyLarge))
                         .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT))
                         .style(|theme| text::Style {
                             color: Some(theme::text_primary(theme))
                         }),
-                    Space::new().width(6),
+                    Space::new().width(tokens.space(6.0)),
                     vip_badge,
                 ]
                 .align_y(Alignment::Center)
                 .into()
             } else {
                 text(info.nickname.clone())
-                    .size(theme::TEXT_SIZE_BODY_LARGE)
+                    .size(tokens.text(TextRole::BodyLarge))
                     .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT))
                     .style(|theme| text::Style {
                         color: Some(theme::text_primary(theme)),
@@ -155,7 +162,7 @@ pub fn view<'a>(
             }
         } else {
             text("未登录")
-                .size(theme::TEXT_SIZE_BODY)
+                .size(tokens.text(TextRole::Body))
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme)),
                 })
@@ -163,29 +170,57 @@ pub fn view<'a>(
         }
     } else {
         text("未登录")
-            .size(theme::TEXT_SIZE_BODY)
+            .size(tokens.text(TextRole::Body))
             .style(|theme| text::Style {
                 color: Some(theme::text_muted(theme)),
             })
             .into()
     };
 
-    let user_info_widget =
-        button(row![avatar_elem, Space::new().width(6), user_text,].align_y(Alignment::Center))
-            .style(|_theme, _status| button::Style {
-                background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-                text_color: iced::Color::TRANSPARENT,
-                border: iced::Border::default(),
-                shadow: iced::Shadow::default(),
-                snap: false,
+    let user_content: Element<'_, Message> = if compact_actions {
+        avatar_elem
+    } else {
+        row![
+            avatar_elem,
+            Space::new().width(tokens.space(6.0)),
+            user_text
+        ]
+        .align_y(Alignment::Center)
+        .into()
+    };
+    let user_info_widget = button(user_content)
+        .style(|_theme, _status| button::Style {
+            background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
+            text_color: iced::Color::TRANSPARENT,
+            border: iced::Border::default(),
+            shadow: iced::Shadow::default(),
+            snap: false,
+        })
+        .on_press(if is_logged_in {
+            user_info.map_or(Message::OpenSettings, |info| {
+                Message::OpenUser(info.user_id)
             })
-            .on_press(if is_logged_in {
-                user_info.map_or(Message::OpenSettings, |info| {
-                    Message::OpenUser(info.user_id)
-                })
+        } else {
+            Message::ToggleLoginPopup
+        });
+
+    let user_info_widget: Element<'a, Message> = if compact_actions {
+        tooltip(
+            user_info_widget,
+            text(if is_logged_in {
+                user_info
+                    .map(|info| info.nickname.clone())
+                    .unwrap_or_else(|| locale.get(Key::NotLoggedIn).to_string())
             } else {
-                Message::ToggleLoginPopup
-            });
+                locale.get(Key::NotLoggedIn).to_string()
+            })
+            .size(tokens.text(TextRole::Caption)),
+            tooltip::Position::Bottom,
+        )
+        .into()
+    } else {
+        user_info_widget.into()
+    };
 
     // Window control buttons (right side)
     let settings_button = button(
@@ -269,36 +304,105 @@ pub fn view<'a>(
     );
 
     // Search bar (left, after nav buttons)
-    let search_bar = search_bar::view(search_query, locale, SearchBarStyle::top_bar());
+    let desktop_search_bar = search_bar::view(
+        search_query,
+        locale,
+        SearchBarStyle::top_bar_scaled(&context, 0.0),
+    );
 
     let drag_region = mouse_area(
         container(Space::new())
             .width(Fill)
-            .height(Length::Fixed(theme::TOP_BAR_HEIGHT)),
+            .height(Length::Fixed(top_height)),
     )
     .on_press(Message::WindowDrag);
 
-    let controls = container(
-        row![
+    let controls: Element<'a, Message> = if context.profile.uses_wrapped_top_bar() {
+        let menu_button: Element<'a, Message> = if context.profile == LayoutProfile::Narrow {
+            let button = button(
+                svg(svg::Handle::from_memory(crate::ui::icons::LIST.as_bytes()))
+                    .width(icon_size)
+                    .height(icon_size)
+                    .style(|theme, _status| svg::Style {
+                        color: Some(theme::text_secondary(theme)),
+                    }),
+            )
+            .width(button_size)
+            .height(button_size)
+            .padding(0)
+            .style(window_button_style)
+            .on_press(Message::ToggleSidebarDrawer);
+            tooltip(
+                animated_window_button(button.into()),
+                locale.get(Key::NavigationMenu),
+                tooltip::Position::Bottom,
+            )
+            .into()
+        } else {
+            Space::new().width(0).height(0).into()
+        };
+        let action_buttons = row![
+            menu_button,
             nav_buttons,
-            Space::new().width(16),
-            search_bar,
-            Space::new().width(12),
+            Space::new().width(Fill),
             user_info_widget,
-            Space::new().width(6),
+            Space::new().width(tokens.space(6.0)),
             settings_btn,
-            Space::new().width(6),
+            Space::new().width(tokens.space(6.0)),
             minimize_btn,
-            Space::new().width(6),
+            Space::new().width(tokens.space(6.0)),
             maximize_btn,
-            Space::new().width(6),
+            Space::new().width(tokens.space(6.0)),
             close_btn,
         ]
-        .align_y(Alignment::Center),
-    )
-    .width(Fill)
-    .height(Length::Fixed(theme::TOP_BAR_HEIGHT))
-    .padding(Padding::new(0.0).right(12.0));
+        .align_y(Alignment::Center);
+        let search_width = (context.width() - tokens.space(32.0)).max(tokens.size(220.0));
+        let search_bar = search_bar::view(
+            search_query,
+            locale,
+            SearchBarStyle::top_bar_scaled(&context, search_width),
+        );
+        container(column![
+            container(action_buttons)
+                .width(Fill)
+                .height(Length::Fixed(tokens.size(52.0)))
+                .padding(Padding::new(0.0).right(tokens.space(8.0))),
+            container(search_bar)
+                .width(Fill)
+                .height(Length::Fixed(tokens.size(44.0)))
+                .padding(
+                    Padding::new(0.0)
+                        .left(tokens.space(16.0))
+                        .right(tokens.space(16.0))
+                ),
+        ])
+        .width(Fill)
+        .height(Length::Fixed(top_height))
+        .into()
+    } else {
+        container(
+            row![
+                nav_buttons,
+                Space::new().width(tokens.space(16.0)),
+                desktop_search_bar,
+                Space::new().width(tokens.space(12.0)),
+                user_info_widget,
+                Space::new().width(tokens.space(6.0)),
+                settings_btn,
+                Space::new().width(tokens.space(6.0)),
+                minimize_btn,
+                Space::new().width(tokens.space(6.0)),
+                maximize_btn,
+                Space::new().width(tokens.space(6.0)),
+                close_btn,
+            ]
+            .align_y(Alignment::Center),
+        )
+        .width(Fill)
+        .height(Length::Fixed(top_height))
+        .padding(Padding::new(0.0).right(tokens.space(12.0)))
+        .into()
+    };
 
     // Native Iced scrollbars do not support a top-only track inset. Cover the
     // scrollbar gutter inside the window chrome so the scroll thumb starts
@@ -306,7 +410,7 @@ pub fn view<'a>(
     let scrollbar_gutter: Element<'a, Message> = if show_background {
         container(
             container(Space::new())
-                .width(theme::TOP_BAR_SCROLLBAR_GUTTER_WIDTH)
+                .width(tokens.size(theme::TOP_BAR_SCROLLBAR_GUTTER_WIDTH))
                 .height(Fill)
                 .style(|active_theme| container::Style {
                     background: Some(iced::Background::Color(theme::background(active_theme))),
@@ -314,7 +418,7 @@ pub fn view<'a>(
                 }),
         )
         .width(Fill)
-        .height(Length::Fixed(theme::TOP_BAR_HEIGHT))
+        .height(Length::Fixed(top_height))
         .align_x(Alignment::End)
         .into()
     } else {
@@ -326,10 +430,10 @@ pub fn view<'a>(
     container(
         stack![drag_region, controls, scrollbar_gutter]
             .width(Fill)
-            .height(Length::Fixed(theme::TOP_BAR_HEIGHT)),
+            .height(Length::Fixed(top_height)),
     )
     .width(Fill)
-    .height(Length::Fixed(theme::TOP_BAR_HEIGHT))
+    .height(Length::Fixed(top_height))
     .style(move |active_theme| container::Style {
         background: show_background
             .then(|| iced::Background::Color(theme::top_bar_background(active_theme))),

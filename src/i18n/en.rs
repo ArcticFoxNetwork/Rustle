@@ -16,6 +16,7 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::NavRadio, "Radio");
     m.insert(Key::NavSettings, "Settings");
     m.insert(Key::NavAudioEngine, "Audio Engine");
+    m.insert(Key::NavigationMenu, "Navigation menu");
 
     // Library - Local
     m.insert(Key::LibraryTitle, "Library");

@@ -1,6 +1,7 @@
 // src/app/update/navigation.rs
 //! Navigation message handlers
 
+use iced::Size;
 use iced::Task;
 
 use crate::app::helpers::open_folder_dialog;
@@ -34,6 +35,8 @@ impl App {
                     return Some(Task::none());
                 };
 
+                self.ui.sidebar_drawer_open = false;
+
                 Some(self.navigate_to_route(route, true))
             }
 
@@ -46,7 +49,20 @@ impl App {
                 let Some(route) = self.route_for_message(message) else {
                     return Some(Task::none());
                 };
+                self.ui.sidebar_drawer_open = false;
                 Some(self.navigate_to_route(route, true))
+            }
+
+            Message::ToggleSidebarDrawer => {
+                self.ui.sidebar_drawer_open = !self.ui.sidebar_drawer_open;
+                self.ui.sidebar_dragging = false;
+                Some(Task::none())
+            }
+
+            Message::CloseSidebarDrawer => {
+                self.ui.sidebar_drawer_open = false;
+                self.ui.sidebar_dragging = false;
+                Some(Task::none())
             }
 
             Message::SearchChanged(query) => {
@@ -77,9 +93,16 @@ impl App {
                 if self.ui.sidebar_dragging {
                     const MIN_WIDTH: f32 = 240.0;
                     const MAX_WIDTH: f32 = 440.0;
+                    let density = crate::ui::responsive::ResponsiveContext::from_viewport(
+                        Size::new(self.core.window_width, self.core.window_height),
+                    )
+                    .density
+                    .value();
                     let old_sidebar_width = self.ui.sidebar_width;
-                    self.ui.sidebar_width = position.x.clamp(MIN_WIDTH, MAX_WIDTH);
-                    let delta = old_sidebar_width - self.ui.sidebar_width;
+                    // `sidebar_width` is stored in reference-design units so
+                    // the same persisted intent scales with a 2K viewport.
+                    self.ui.sidebar_width = (position.x / density).clamp(MIN_WIDTH, MAX_WIDTH);
+                    let delta = (old_sidebar_width - self.ui.sidebar_width) * density;
                     self.ui.discover.content_width =
                         (self.ui.discover.content_width + delta).max(200.0);
                     self.ui.playlist_page.content_width =

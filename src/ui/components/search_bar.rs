@@ -6,6 +6,7 @@ use iced::{Alignment, Element, Fill, Padding};
 
 use crate::app::Message;
 use crate::i18n::{Key, Locale};
+use crate::ui::responsive::{IconRole, ResponsiveContext, TextRole};
 use crate::ui::theme;
 
 pub const TOP_BAR_SEARCH_INPUT_ID: &str = "top_bar_search_input";
@@ -33,6 +34,21 @@ impl SearchBarStyle {
             input_padding: 8.0,
             text_size: theme::TEXT_SIZE_LABEL,
             radius: 18.0,
+        }
+    }
+
+    /// Build a top-bar style from the shared density tokens.
+    pub fn top_bar_scaled(context: &ResponsiveContext, width: f32) -> Self {
+        let tokens = &context.tokens;
+        Self {
+            width,
+            height: tokens.size(36.0),
+            icon_size: tokens.icon(IconRole::Small),
+            horizontal_padding: tokens.space(12.0),
+            icon_spacing: tokens.space(8.0),
+            input_padding: tokens.space(8.0),
+            text_size: tokens.text(TextRole::Label),
+            radius: tokens.size(18.0),
         }
     }
 }

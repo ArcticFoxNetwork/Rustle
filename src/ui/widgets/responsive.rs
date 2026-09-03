@@ -4,26 +4,16 @@ use iced::widget::{Sensor, container, scrollable};
 use iced::{Element, Fill};
 
 use crate::ui::animation::{SmoothScrollEvent, SmoothScrollTarget};
+use crate::ui::responsive::ResponsiveContext;
 use crate::ui::widgets::smooth_scroll;
+
+// Compatibility wrappers keep the existing `ui::widgets` and page callers
+// stable while the pure policy now lives in `ui::responsive`.
+pub use crate::ui::responsive::calculate_grid_columns;
 
 /// Derive usable content width from a measured container size.
 pub fn usable_content_width(size: iced::Size, horizontal_padding: f32) -> f32 {
-    (size.width - horizontal_padding).max(200.0)
-}
-
-/// Calculate how many cards fit into the available width.
-pub fn calculate_grid_columns(content_width: f32, card_width: f32, spacing: f32) -> usize {
-    (((content_width + spacing) / (card_width + spacing)).floor() as usize).max(1)
-}
-
-/// Calculate grid columns and clamp the result to a maximum.
-pub fn calculate_grid_columns_clamped(
-    content_width: f32,
-    card_width: f32,
-    spacing: f32,
-    max_columns: usize,
-) -> usize {
-    calculate_grid_columns(content_width, card_width, spacing).clamp(1, max_columns.max(1))
+    ResponsiveContext::from_viewport(size).usable_content_width(horizontal_padding)
 }
 
 /// Scrollable content that reports its rendered width through [`Sensor`].
@@ -55,7 +45,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::{calculate_grid_columns, calculate_grid_columns_clamped, usable_content_width};
+    use super::{calculate_grid_columns, usable_content_width};
+    use crate::ui::responsive::calculate_grid_columns_clamped;
 
     #[test]
     fn usable_width_respects_padding() {

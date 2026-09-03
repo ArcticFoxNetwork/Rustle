@@ -2,50 +2,80 @@
 //! Theme-aware: adapts to dark/light via theme functions in style closures
 
 use iced::widget::{button, column, container, row, svg, text};
-use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
+use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Size};
 
 use crate::app::{ContextMenuAction, ContextMenuState, Message};
 use crate::i18n::{Key, Locale};
+use crate::ui::responsive::{
+    IconRole, RadiusRole, ResponsiveContext, TargetRole, TextRole, bounded_height, bounded_width,
+};
 use crate::ui::{icons, overlay, theme, widgets};
 use crate::utils::Source;
 
-const W: f32 = 240.0;
-const H: f32 = 36.0;
-const PAD: f32 = 8.0;
-const DIV_V: f32 = 4.0;
-const DIV_X: f32 = 12.0;
+const MENU_WIDTH: f32 = 240.0;
+const PANEL_PADDING: f32 = 8.0;
+const DIVIDER_VERTICAL_PADDING: f32 = 4.0;
+const DIVIDER_HORIZONTAL_PADDING: f32 = 12.0;
+const DIVIDER_COUNT: f32 = 4.0;
 
 pub fn view(menu: &ContextMenuState, locale: Locale, sw: f32, sh: f32) -> Element<'_, Message> {
+    view_responsive(
+        menu,
+        locale,
+        ResponsiveContext::from_viewport(Size::new(sw, sh)),
+    )
+}
+
+/// Render the menu using the same logical viewport and density as the root shell.
+pub fn view_responsive(
+    menu: &ContextMenuState,
+    locale: Locale,
+    context: ResponsiveContext,
+) -> Element<'_, Message> {
+    let tokens = context.tokens;
     let source = menu.source;
     let is_liked = menu.is_liked;
     let can_show_folder = source != Source::Online;
     let can_download = source != Source::Local;
     let can_edit = source == Source::Local;
 
-    let always_items: f32 = 7.0;
-    let mut n = always_items;
+    let always_items: usize = 7;
+    let mut item_count = always_items;
     if can_show_folder {
-        n += 1.0;
+        item_count += 1;
     }
     if can_download {
-        n += 1.0;
+        item_count += 1;
     }
     if can_edit {
-        n += 1.0;
+        item_count += 1;
     }
-    let dv: f32 = 4.0;
-    let mh = n * H + dv * (1.0 + DIV_V * 2.0) + PAD * 2.0;
 
-    let x = if menu.x + W > sw {
-        (menu.x - W - 4.0).max(0.0)
+    let menu_width = bounded_width(
+        tokens.size(MENU_WIDTH),
+        context.width(),
+        tokens.space(PANEL_PADDING),
+    );
+    let item_height = tokens.target(TargetRole::Icon);
+    let divider_height = tokens.space(1.0 + DIVIDER_VERTICAL_PADDING * 2.0);
+    let menu_height = item_count as f32 * item_height
+        + DIVIDER_COUNT * divider_height
+        + tokens.space(PANEL_PADDING * 2.0);
+    let menu_height = bounded_height(menu_height, context.height(), tokens.space(PANEL_PADDING));
+    let edge_gap = tokens.space(4.0);
+
+    let x = if menu.x + menu_width > context.width() {
+        (menu.x - menu_width - edge_gap).max(0.0)
     } else {
         menu.x.max(0.0)
-    };
-    let y = if menu.y + mh > sh {
-        (menu.y - mh - 4.0).max(0.0)
+    }
+    .min((context.width() - menu_width).max(0.0));
+    let y = if menu.y + menu_height > context.height() {
+        (menu.y - menu_height - edge_gap).max(0.0)
     } else {
         menu.y.max(0.0)
-    };
+    }
+    .min((context.height() - menu_height).max(0.0));
 
     let backdrop = iced::widget::mouse_area(
         container(iced::widget::Space::new())
@@ -72,14 +102,16 @@ pub fn view(menu: &ContextMenuState, locale: Locale, sw: f32, sh: f32) -> Elemen
         locale.get(Key::ContextMenuPlayNow),
         Style::Normal,
         msg(PlayNow, id),
+        tokens,
     ));
     items.push(item(
         ic!(icons::SKIP_NEXT),
         locale.get(Key::ContextMenuPlayNext),
         Style::Normal,
         msg(PlayNext, id),
+        tokens,
     ));
-    items.push(div());
+    items.push(div(tokens));
     let (heart_icon, heart_label) = if is_liked {
         (
             ic!(icons::HEART),
@@ -96,33 +128,38 @@ pub fn view(menu: &ContextMenuState, locale: Locale, sw: f32, sh: f32) -> Elemen
         heart_label,
         Style::Normal,
         msg(AddToFavorites, id),
+        tokens,
     ));
     items.push(item(
         ic!(icons::PLUS),
         locale.get(Key::ContextMenuAddPlaylist),
         Style::Normal,
         msg(AddToPlaylist, id),
+        tokens,
     ));
-    items.push(div());
+    items.push(div(tokens));
     items.push(item(
         ic!(icons::USER),
         locale.get(Key::ContextMenuViewArtist),
         Style::Normal,
         msg(ViewArtist, id),
+        tokens,
     ));
     items.push(item(
         ic!(icons::DISC),
         locale.get(Key::ContextMenuViewAlbum),
         Style::Normal,
         msg(ViewAlbum, id),
+        tokens,
     ));
-    items.push(div());
+    items.push(div(tokens));
     if can_show_folder {
         items.push(item(
             ic!(icons::FOLDER),
             locale.get(Key::ContextMenuShowInFolder),
             Style::Normal,
             msg(ShowInFolder, id),
+            tokens,
         ));
     }
     if can_download {
@@ -131,6 +168,7 @@ pub fn view(menu: &ContextMenuState, locale: Locale, sw: f32, sh: f32) -> Elemen
             locale.get(Key::ContextMenuDownload),
             Style::Normal,
             msg(Download, id),
+            tokens,
         ));
     }
     if can_edit {
@@ -139,27 +177,33 @@ pub fn view(menu: &ContextMenuState, locale: Locale, sw: f32, sh: f32) -> Elemen
             locale.get(Key::ContextMenuEditTags),
             Style::Accent,
             msg(EditSongTags, id),
+            tokens,
         ));
     }
-    items.push(div());
+    items.push(div(tokens));
     items.push(item(
         ic!(icons::TRASH),
         locale.get(Key::ContextMenuRemoveFromList),
         Style::Danger,
         msg(RemoveFromList, id),
+        tokens,
     ));
 
-    let panel = container(column(items).spacing(0).padding(PAD))
-        .width(W)
-        .style(|t| container::Style {
-            background: Some(Background::Color(glass(t))),
-            border: Border {
-                radius: 12.0.into(),
-                width: 1.0,
-                color: glass_border(t),
-            },
-            ..Default::default()
-        });
+    let panel = container(
+        column(items)
+            .spacing(0)
+            .padding(tokens.space(PANEL_PADDING)),
+    )
+    .width(menu_width)
+    .style(move |t| container::Style {
+        background: Some(Background::Color(glass(t))),
+        border: Border {
+            radius: tokens.radius(RadiusRole::Medium).into(),
+            width: 1.0,
+            color: glass_border(t),
+        },
+        ..Default::default()
+    });
 
     let positioned = container(panel).padding(Padding::new(0.0).top(y).left(x));
     overlay::block_mouse_events(
@@ -194,6 +238,7 @@ fn item<'a>(
     label: &str,
     style: Style,
     msg: Message,
+    tokens: crate::ui::responsive::UiTokens,
 ) -> Element<'a, Message> {
     let lb = label.to_string();
     let is_accent = style.is_accent();
@@ -202,8 +247,8 @@ fn item<'a>(
         container(
             row![
                 svg(icon)
-                    .width(16)
-                    .height(16)
+                    .width(tokens.icon(IconRole::Small))
+                    .height(tokens.icon(IconRole::Small))
                     .style(move |t, _| svg::Style {
                         color: Some(if is_accent {
                             purple()
@@ -213,16 +258,18 @@ fn item<'a>(
                             theme::text_muted(t)
                         }),
                     }),
-                iced::widget::Space::new().width(12.0),
-                text(lb).size(13.0).style(move |t| text::Style {
-                    color: Some(if is_accent {
-                        accent_text()
-                    } else if is_danger {
-                        theme::ACCENT_PINK
-                    } else {
-                        theme::text_primary(t)
+                iced::widget::Space::new().width(tokens.space(12.0)),
+                text(lb)
+                    .size(tokens.text(TextRole::Body))
+                    .style(move |t| text::Style {
+                        color: Some(if is_accent {
+                            accent_text()
+                        } else if is_danger {
+                            theme::ACCENT_PINK
+                        } else {
+                            theme::text_primary(t)
+                        }),
                     }),
-                }),
             ]
             .align_y(Alignment::Center),
         )
@@ -231,7 +278,7 @@ fn item<'a>(
         .align_y(Alignment::Center),
     )
     .width(Length::Fill)
-    .height(Length::Fixed(H))
+    .height(Length::Fixed(tokens.target(TargetRole::Icon)))
     .style(|_theme, _status| button::Style {
         background: Some(Background::Color(Color::TRANSPARENT)),
         ..Default::default()
@@ -254,7 +301,7 @@ fn item<'a>(
                     progress,
                 ))),
                 border: Border {
-                    radius: 6.0.into(),
+                    radius: tokens.radius(RadiusRole::Small).into(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -276,16 +323,24 @@ fn red_bg() -> Color {
     Color::from_rgba(1.0, 0.08, 0.29, 0.10)
 }
 
-fn div<'a>() -> Element<'a, Message> {
+fn div<'a>(tokens: crate::ui::responsive::UiTokens) -> Element<'a, Message> {
     container(
-        container(iced::widget::Space::new().width(Length::Fill).height(1.0))
-            .height(Length::Fixed(1.0))
-            .style(|t| container::Style {
-                background: Some(Background::Color(glass_border(t))),
-                ..Default::default()
-            }),
+        container(
+            iced::widget::Space::new()
+                .width(Length::Fill)
+                .height(tokens.space(1.0)),
+        )
+        .height(Length::Fixed(tokens.space(1.0)))
+        .style(|t| container::Style {
+            background: Some(Background::Color(glass_border(t))),
+            ..Default::default()
+        }),
     )
-    .padding(Padding::new(DIV_V).left(DIV_X).right(DIV_X))
+    .padding(
+        Padding::new(tokens.space(DIVIDER_VERTICAL_PADDING))
+            .left(tokens.space(DIVIDER_HORIZONTAL_PADDING))
+            .right(tokens.space(DIVIDER_HORIZONTAL_PADDING)),
+    )
     .into()
 }
 

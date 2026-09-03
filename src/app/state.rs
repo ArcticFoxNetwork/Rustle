@@ -1706,6 +1706,8 @@ pub struct UiState {
     pub sidebar_width: f32,
     /// Whether the sidebar resize handle is being dragged
     pub sidebar_dragging: bool,
+    /// Whether the compact navigation drawer is currently open.
+    pub sidebar_drawer_open: bool,
     /// Whether the owned cloud playlists section is expanded
     pub my_playlists_expanded: bool,
     /// Whether the collected cloud playlists section is expanded
@@ -1800,6 +1802,7 @@ impl UiState {
             sidebar_animations: Default::default(),
             sidebar_width: 280.0,
             sidebar_dragging: false,
+            sidebar_drawer_open: false,
             my_playlists_expanded: true,
             collected_playlists_expanded: true,
             cache_stats: None,
@@ -1853,8 +1856,10 @@ impl UiState {
                 cached_shaped_lines: None,
                 // FontSystem will be created asynchronously
                 shared_font_system: None,
-                viewport_width: 800.0,  // Default, will be updated from view
-                viewport_height: 600.0, // Default, will be updated from view
+                // Conservative bootstrap values; the mounted renderer's
+                // Sensor supplies the actual viewport before shaping.
+                viewport_width: 800.0,
+                viewport_height: 600.0,
                 viewport_initialized: false,
                 pending_viewport_size: None,
                 shaped_content_width: 0.0,
@@ -1914,6 +1919,7 @@ impl UiState {
     /// receive input during the transition either.
     pub fn has_blocking_pointer_overlay(&self) -> bool {
         self.queue_visible
+            || self.sidebar_drawer_open
             || self.home.login_popup_open
             || !self.overlay_stack.is_empty()
             || self.context_menu.is_some()
@@ -2394,7 +2400,7 @@ impl Default for DiscoverPageState {
             hot_loading: false,
             official_loading: false,
             data_loaded: false,
-            // Default width, will be updated from WindowResized/Sensor
+            // Default width, will be updated from the measured content Sensor
             // Assumes window width ~1480, sidebar 280, padding 64
             content_width: 1136.0,
         }

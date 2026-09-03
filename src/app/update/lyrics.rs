@@ -100,33 +100,34 @@ impl App {
             Message::WindowResized(size) => {
                 self.core.window_width = size.width;
                 self.core.window_height = size.height;
-                self.ui.lyrics.viewport_width = (size.width * 0.6 - 60.0).max(100.0);
-                self.ui.lyrics.viewport_height = size.height;
-                self.ui.lyrics.viewport_initialized = true;
-
-                if let Some(engine_cell) = &self.ui.lyrics.engine {
-                    let mut engine = engine_cell.borrow_mut();
-                    engine
-                        .line_animations_mut()
-                        .set_viewport_height(size.height);
-
-                    // Force re-layout by invalidating cached dimensions
-                    engine.invalidate_layout();
-                }
-
-                // Fallback widths before Sensor reports the rendered content size.
+                // Layout-only responsive decisions are handled by the root
+                // `Responsive` view. Lyrics renderer dimensions come from its
+                // own `Sensor` so a guessed split ratio cannot overwrite the
+                // actual measured renderer viewport during a resize.
                 const GRID_PADDING: f32 = 64.0;
                 const DETAIL_GRID_PADDING: f32 = 96.0;
-                let available_width = (size.width - self.ui.sidebar_width).max(200.0);
+                let responsive_context =
+                    crate::ui::responsive::ResponsiveContext::from_viewport(*size);
+                let sidebar_width = if responsive_context.profile.is_desktop() {
+                    responsive_context
+                        .tokens
+                        .size(self.ui.sidebar_width.clamp(240.0, 440.0))
+                } else if responsive_context.profile == crate::ui::responsive::LayoutProfile::Tablet
+                    || responsive_context.profile == crate::ui::responsive::LayoutProfile::Compact
+                {
+                    responsive_context
+                        .tokens
+                        .chrome(crate::ui::responsive::ChromeRole::SidebarRail)
+                } else {
+                    0.0
+                };
+                let available_width = (size.width - sidebar_width).max(200.0);
                 self.ui.discover.content_width = (available_width - GRID_PADDING).max(200.0);
                 self.ui.playlist_page.content_width =
                     (available_width - DETAIL_GRID_PADDING).max(200.0);
                 self.ui.search.content_width = (available_width - GRID_PADDING).max(200.0);
 
-                Some(Task::batch([
-                    self.request_lyrics_shaping_for_current_viewport(),
-                    Self::sync_window_maximized_task(),
-                ]))
+                Some(Task::batch([Self::sync_window_maximized_task()]))
             }
 
             // Handle async FontSystem initialization

@@ -13,12 +13,14 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::LazyLock;
 
+use iced::widget::text::{Ellipsis, Wrapping};
 use iced::widget::{Space, button, column, container, mouse_area, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
 use crate::app::{ImageState, Message};
 use crate::i18n::{Key, Locale};
 use crate::ui::animation::{SmoothScrollEvent, SmoothScrollTarget};
+use crate::ui::responsive::{LayoutProfile, ResponsiveContext, TargetRole, TextRole, UiTokens};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::widgets::{VirtualList, VirtualListState};
 use crate::ui::{icons, theme};
@@ -26,6 +28,12 @@ use crate::utils::Source;
 
 /// Song row height constant for virtual list
 pub const SONG_ROW_HEIGHT: f32 = 62.0;
+
+/// Resolve the virtual-list row height from the current design density.
+#[inline]
+fn song_row_height(tokens: UiTokens) -> f32 {
+    tokens.size(SONG_ROW_HEIGHT)
+}
 
 /// Pre-cached SVG handles to avoid repeated parsing in render loop
 static PLAY_ICON_HANDLE: LazyLock<svg::Handle> =
@@ -133,6 +141,8 @@ pub struct PlaylistColumns {
     pub show_added_date: bool,
     /// Show album column
     pub show_album: bool,
+    /// Use a compact detail-row composition while retaining secondary data.
+    pub compact: bool,
 }
 
 impl Default for PlaylistColumns {
@@ -141,6 +151,7 @@ impl Default for PlaylistColumns {
             show_like: true,
             show_added_date: false,
             show_album: true,
+            compact: false,
         }
     }
 }
@@ -152,6 +163,7 @@ impl PlaylistColumns {
             show_like: false,
             show_added_date: true,
             show_album: true,
+            compact: false,
         }
     }
 
@@ -161,27 +173,42 @@ impl PlaylistColumns {
             show_like: true,
             show_added_date: false,
             show_album: true,
+            compact: false,
         }
+    }
+
+    /// Adapt the table columns to the available composition profile.
+    pub fn for_context(self, context: ResponsiveContext) -> Self {
+        let compact = matches!(
+            context.profile,
+            LayoutProfile::Compact | LayoutProfile::Tablet | LayoutProfile::Narrow
+        );
+        Self { compact, ..self }
     }
 }
 
 /// Build the song list header row
-pub fn build_header(locale: Locale, columns: PlaylistColumns) -> Element<'static, Message> {
+pub fn build_header(
+    locale: Locale,
+    columns: PlaylistColumns,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let mut header_items: Vec<Element<'static, Message>> = vec![
         container(
             text(locale.get(Key::PlaylistHeaderNumber))
-                .size(theme::TEXT_SIZE_LABEL)
+                .size(tokens.text(TextRole::Label))
                 .style(|theme| text::Style {
                     color: Some(theme::header_text(theme)),
                 }),
         )
-        .width(48)
-        .center_x(48)
+        .width(tokens.size(48.0))
+        .center_x(tokens.size(48.0))
         .into(),
-        Space::new().width(44).into(), // Cover space
-        Space::new().width(14).into(),
+        Space::new().width(tokens.space(44.0)).into(), // Cover space
+        Space::new().width(tokens.space(14.0)).into(),
         text(locale.get(Key::PlaylistHeaderTitle))
-            .size(theme::TEXT_SIZE_LABEL)
+            .size(tokens.text(TextRole::Label))
             .style(|theme| text::Style {
                 color: Some(theme::header_text(theme)),
             })
@@ -189,30 +216,30 @@ pub fn build_header(locale: Locale, columns: PlaylistColumns) -> Element<'static
         Space::new().width(Fill).into(),
     ];
 
-    if columns.show_album {
+    if columns.show_album && !columns.compact {
         header_items.push(
             container(
                 text(locale.get(Key::PlaylistHeaderAlbum))
-                    .size(theme::TEXT_SIZE_LABEL)
+                    .size(tokens.text(TextRole::Label))
                     .style(|theme| text::Style {
                         color: Some(theme::header_text(theme)),
                     }),
             )
-            .width(200)
+            .width(tokens.size(200.0))
             .into(),
         );
     }
 
-    if columns.show_added_date {
+    if columns.show_added_date && !columns.compact {
         header_items.push(
             container(
                 text(locale.get(Key::PlaylistHeaderAddedDate))
-                    .size(theme::TEXT_SIZE_LABEL)
+                    .size(tokens.text(TextRole::Label))
                     .style(|theme| text::Style {
                         color: Some(theme::header_text(theme)),
                     }),
             )
-            .width(90)
+            .width(tokens.size(90.0))
             .into(),
         );
     }
@@ -221,37 +248,47 @@ pub fn build_header(locale: Locale, columns: PlaylistColumns) -> Element<'static
     header_items.push(
         container(
             svg(CLOCK_ICON_HANDLE.clone())
-                .width(16)
-                .height(16)
+                .width(tokens.icon(crate::ui::responsive::IconRole::Small))
+                .height(tokens.icon(crate::ui::responsive::IconRole::Small))
                 .style(|theme, _status| svg::Style {
                     color: Some(theme::opaque_color(theme::header_text(theme))),
                 })
                 .opacity(0.6_f32),
         )
-        .width(50)
-        .center_x(50)
+        .width(tokens.size(50.0))
+        .center_x(tokens.size(50.0))
         .into(),
     );
 
-    let header = row(header_items)
-        .align_y(Alignment::Center)
-        .padding(Padding::new(14.0).left(20.0).right(24.0));
+    let header = row(header_items).align_y(Alignment::Center).padding(
+        Padding::new(tokens.space(14.0))
+            .left(tokens.space(20.0))
+            .right(tokens.space(24.0)),
+    );
 
     let header_container = container(header).width(Fill);
 
     // Divider line
     let divider = container(Space::new().height(1))
         .width(Fill)
-        .padding(Padding::new(0.0).left(20.0).right(20.0))
+        .padding(
+            Padding::new(0.0)
+                .left(tokens.space(20.0))
+                .right(tokens.space(20.0)),
+        )
         .style(|theme| iced::widget::container::Style {
             background: Some(iced::Background::Color(theme::divider(theme))),
             ..Default::default()
         });
 
-    column![header_container, divider, Space::new().height(8),]
-        .spacing(0)
-        .width(Fill)
-        .into()
+    column![
+        header_container,
+        divider,
+        Space::new().height(tokens.space(8.0)),
+    ]
+    .spacing(0)
+    .width(Fill)
+    .into()
 }
 
 /// Build the virtual song list
@@ -264,20 +301,25 @@ pub fn build_list<'a>(
     columns: PlaylistColumns,
     scroll_state: Rc<RefCell<VirtualListState>>,
     current_playing_id: Option<i64>,
+    context: ResponsiveContext,
 ) -> Element<'a, Message> {
+    let tokens = context.tokens;
+    let row_height = song_row_height(tokens);
     let filtered_indices = filtered_indices.map(Rc::new);
     let song_count = filtered_indices
         .as_ref()
         .map_or(songs.len(), |idx| idx.len());
 
     if song_count == 0 {
-        return container(text("暂无歌曲").size(theme::TEXT_SIZE_BODY).style(|theme| {
-            text::Style {
-                color: Some(theme::dimmed_text(theme)),
-            }
-        }))
+        return container(
+            text("暂无歌曲")
+                .size(tokens.text(TextRole::Body))
+                .style(|theme| text::Style {
+                    color: Some(theme::dimmed_text(theme)),
+                }),
+        )
         .width(Fill)
-        .padding(Padding::new(32.0))
+        .padding(Padding::new(tokens.space(32.0)))
         .center_x(Fill)
         .into();
     }
@@ -291,7 +333,7 @@ pub fn build_list<'a>(
             .unwrap_or(index);
 
         let Some(song) = songs.get(song_index) else {
-            return Space::new().height(SONG_ROW_HEIGHT).into();
+            return Space::new().height(row_height).into();
         };
 
         let is_playing = current_playing_id == Some(song.id);
@@ -306,8 +348,13 @@ pub fn build_list<'a>(
             animation_progress,
             liked_songs,
             columns,
+            tokens,
         ))
-        .padding(Padding::new(1.0).left(12.0).right(12.0))
+        .padding(
+            Padding::new(tokens.space(1.0))
+                .left(tokens.space(12.0))
+                .right(tokens.space(12.0)),
+        )
         .into()
     };
 
@@ -316,7 +363,7 @@ pub fn build_list<'a>(
     let songs_for_visible = songs;
     let image_generation = image_state.generation;
 
-    VirtualList::new(song_count, SONG_ROW_HEIGHT, item_builder)
+    VirtualList::new(song_count, row_height, item_builder)
         .keyed_by(move |index| {
             let song_index = indices_for_key
                 .as_ref()
@@ -386,6 +433,7 @@ fn build_song_row(
     animation_progress: f32,
     liked_songs: Option<&HashSet<u64>>,
     columns: PlaylistColumns,
+    tokens: UiTokens,
 ) -> Element<'static, Message> {
     let song_id = song.id;
 
@@ -403,16 +451,16 @@ fn build_song_row(
     // a tint in the renderer and is not a reliable transparency control.
     let hover_progress = animation_progress.clamp(0.0, 1.0);
     let hovered_icon = svg(PLAY_ICON_HANDLE.clone())
-        .width(16)
-        .height(16)
+        .width(tokens.icon(crate::ui::responsive::IconRole::Small))
+        .height(tokens.icon(crate::ui::responsive::IconRole::Small))
         .style(|theme, _status| svg::Style {
             color: Some(theme::text_primary(theme)),
         })
         .opacity(hover_progress);
     let index_content: Element<'static, Message> = if is_playing {
         let playing_icon = svg(PLAY_ICON_HANDLE.clone())
-            .width(16)
-            .height(16)
+            .width(tokens.icon(crate::ui::responsive::IconRole::Small))
+            .height(tokens.icon(crate::ui::responsive::IconRole::Small))
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::ACCENT_PINK),
             })
@@ -421,7 +469,7 @@ fn build_song_row(
         iced::widget::stack![playing_icon, hovered_icon].into()
     } else {
         let index = text(index_str)
-            .size(theme::TEXT_SIZE_BODY_LARGE)
+            .size(tokens.text(TextRole::BodyLarge))
             .style(move |theme| text::Style {
                 color: Some(theme::dimmed_text(theme).scale_alpha(1.0 - hover_progress)),
             });
@@ -435,14 +483,33 @@ fn build_song_row(
     let cover = crate::ui::components::cover_image::custom(
         cover_handle,
         crate::image::ImageKind::SongCover,
-        44.0,
-        4.0,
+        tokens.size(44.0),
+        tokens.radius(crate::ui::responsive::RadiusRole::Small),
     );
 
     // --- Title info (use pre-truncated strings) ---
+    let compact_secondary = if columns.compact {
+        let mut secondary = display_artist.clone();
+        if !display_album.is_empty() {
+            secondary.push_str(" · ");
+            secondary.push_str(&display_album);
+        }
+        if columns.show_added_date && !added_date.is_empty() {
+            secondary.push_str(" · ");
+            secondary.push_str(&added_date);
+        }
+        Some(secondary)
+    } else {
+        None
+    };
+
+    let secondary_text = compact_secondary.unwrap_or(display_artist);
     let title_info = column![
         text(display_title)
-            .size(theme::TEXT_SIZE_BODY_LARGE)
+            .size(tokens.text(TextRole::BodyLarge))
+            .width(Fill)
+            .wrapping(Wrapping::None)
+            .ellipsis(Ellipsis::End)
             .style(move |theme| text::Style {
                 color: Some(if is_playing {
                     theme::ACCENT_PINK
@@ -453,16 +520,20 @@ fn build_song_row(
             .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
         row![
             super::source_badge::source_badge(song.source),
-            text(display_artist)
-                .size(theme::TEXT_SIZE_LABEL)
+            text(secondary_text)
+                .size(tokens.text(TextRole::Label))
+                .width(Fill)
+                .wrapping(Wrapping::None)
+                .ellipsis(Ellipsis::End)
                 .style(move |theme| text::Style {
                     color: Some(theme::animated_text(theme, animation_progress))
                 }),
         ]
         .align_y(iced::Alignment::Center)
-        .spacing(6),
+        .spacing(tokens.space(6.0))
+        .width(Fill),
     ]
-    .spacing(3);
+    .spacing(tokens.space(3.0));
 
     // --- Like button handling ---
     let ncm_song_id = if song_id < 0 {
@@ -472,12 +543,14 @@ fn build_song_row(
     };
     let is_liked = liked_songs.is_some_and(|songs| songs.contains(&ncm_song_id));
 
-    // Duration or like button. The duration fades out as the heart fades in,
-    // while the button only becomes actionable once the hover transition has
-    // reached the same midpoint used by the rest of the row.
+    // Duration and like button. Desktop keeps the original hover replacement
+    // interaction; compact rows keep the favorite action mounted because a
+    // tablet/touch surface cannot depend on a hover event to expose it.
     let duration_or_like: Element<'static, Message> = if columns.show_like {
         let duration_text = text(duration)
-            .size(theme::TEXT_SIZE_BODY)
+            .size(tokens.text(TextRole::Body))
+            .wrapping(Wrapping::None)
+            .ellipsis(Ellipsis::End)
             .style(move |theme| text::Style {
                 color: Some(
                     theme::animated_text(theme, animation_progress * 0.8)
@@ -485,16 +558,35 @@ fn build_song_row(
                 ),
             });
 
-        let heart: Element<'static, Message> = if hover_progress > 0.001 {
-            let heart_handle = if is_liked {
-                HEART_ICON_HANDLE.clone()
-            } else {
-                HEART_OUTLINE_ICON_HANDLE.clone()
-            };
+        let heart_handle = if is_liked {
+            HEART_ICON_HANDLE.clone()
+        } else {
+            HEART_OUTLINE_ICON_HANDLE.clone()
+        };
+        let heart: Element<'static, Message> = if columns.compact {
             button(
                 svg(heart_handle)
-                    .width(18)
-                    .height(18)
+                    .width(tokens.icon(crate::ui::responsive::IconRole::Small))
+                    .height(tokens.icon(crate::ui::responsive::IconRole::Small))
+                    .style(move |theme, _status| svg::Style {
+                        color: Some(if is_liked {
+                            theme::ACCENT_PINK
+                        } else {
+                            theme::text_primary(theme)
+                        }),
+                    }),
+            )
+            .width(tokens.target(TargetRole::Icon))
+            .height(tokens.target(TargetRole::Icon))
+            .padding(0)
+            .style(transparent_button)
+            .on_press(Message::ToggleFavorite(ncm_song_id))
+            .into()
+        } else if hover_progress > 0.001 {
+            button(
+                svg(heart_handle)
+                    .width(tokens.size(18.0))
+                    .height(tokens.size(18.0))
                     .style(move |theme, _status| svg::Style {
                         color: Some(if is_liked {
                             theme::ACCENT_PINK
@@ -509,16 +601,28 @@ fn build_song_row(
             .on_press_maybe(is_hovered.then_some(Message::ToggleFavorite(ncm_song_id)))
             .into()
         } else {
-            Space::new().width(18).height(18).into()
+            Space::new()
+                .width(tokens.size(18.0))
+                .height(tokens.size(18.0))
+                .into()
         };
 
-        container(iced::widget::stack![duration_text, heart])
-            .width(50)
-            .center_x(50)
-            .into()
+        if columns.compact {
+            row![duration_text.width(Fill), heart]
+                .spacing(tokens.space(4.0))
+                .align_y(Alignment::Center)
+                .into()
+        } else {
+            container(iced::widget::stack![duration_text, heart])
+                .width(tokens.size(50.0))
+                .center_x(tokens.size(50.0))
+                .into()
+        }
     } else {
         text(duration)
-            .size(theme::TEXT_SIZE_BODY)
+            .size(tokens.text(TextRole::Body))
+            .wrapping(Wrapping::None)
+            .ellipsis(Ellipsis::End)
             .style(move |theme| text::Style {
                 color: Some(theme::animated_text(theme, animation_progress * 0.8)),
             })
@@ -527,41 +631,60 @@ fn build_song_row(
 
     // --- Build row content (flattened structure) ---
     let mut row_items: Vec<Element<'static, Message>> = vec![
-        container(index_content).width(48).center_x(48).into(),
+        container(index_content)
+            .width(tokens.size(48.0))
+            .center_x(tokens.size(48.0))
+            .into(),
         cover,
-        Space::new().width(14).into(),
+        Space::new().width(tokens.space(14.0)).into(),
         title_info.width(Fill).into(),
     ];
 
-    if columns.show_album {
+    if columns.show_album && !columns.compact {
         row_items.push(
             text(display_album)
-                .size(theme::TEXT_SIZE_BODY)
+                .size(tokens.text(TextRole::Body))
+                .wrapping(Wrapping::None)
+                .ellipsis(Ellipsis::End)
                 .style(move |theme| text::Style {
                     color: Some(theme::animated_text(theme, animation_progress)),
                 })
-                .width(200)
+                .width(tokens.size(200.0))
                 .into(),
         );
     }
 
-    if columns.show_added_date {
+    if columns.show_added_date && !columns.compact {
         row_items.push(
             text(added_date)
-                .size(theme::TEXT_SIZE_BODY)
+                .size(tokens.text(TextRole::Body))
+                .wrapping(Wrapping::None)
+                .ellipsis(Ellipsis::End)
                 .style(move |theme| text::Style {
                     color: Some(theme::animated_text(theme, animation_progress)),
                 })
-                .width(90)
+                .width(tokens.size(90.0))
                 .into(),
         );
     }
 
-    row_items.push(container(duration_or_like).width(50).center_x(50).into());
+    let duration_slot_width = if columns.show_like && columns.compact {
+        tokens.size(50.0) + tokens.target(TargetRole::Icon) + tokens.space(4.0)
+    } else {
+        tokens.size(50.0)
+    };
+    row_items.push(
+        container(duration_or_like)
+            .width(duration_slot_width)
+            .center_x(duration_slot_width)
+            .into(),
+    );
 
-    let row_content = row(row_items)
-        .align_y(Alignment::Center)
-        .padding(Padding::new(8.0).left(8.0).right(12.0));
+    let row_content = row(row_items).align_y(Alignment::Center).padding(
+        Padding::new(tokens.space(8.0))
+            .left(tokens.space(8.0))
+            .right(tokens.space(12.0)),
+    );
 
     // --- Outer button with animated background ---
     let btn = button(row_content)
@@ -576,7 +699,9 @@ fn build_song_row(
             button::Style {
                 background: Some(iced::Background::Color(bg_color)),
                 border: iced::Border {
-                    radius: 4.0.into(),
+                    radius: tokens
+                        .radius(crate::ui::responsive::RadiusRole::Small)
+                        .into(),
                     ..Default::default()
                 },
                 text_color: theme::text_primary(theme),

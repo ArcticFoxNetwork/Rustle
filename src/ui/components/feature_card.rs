@@ -3,10 +3,11 @@
 use iced::widget::{Space, button, column, container, mouse_area, row, svg, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
+use crate::ui::responsive::{
+    CardRole, IconRole, RadiusRole, ResponsiveContext, TargetRole, TextRole,
+};
 use crate::ui::{icons, theme, widgets};
 
-const CARD_HEIGHT: f32 = 180.0;
-const CARD_RADIUS: f32 = 14.0;
 const PLAY_BUTTON_SIZE: f32 = 42.0;
 const PLAY_BUTTON_START_OFFSET: f32 = 12.0;
 const PLAY_BUTTON_END_OFFSET: f32 = 6.0;
@@ -28,43 +29,84 @@ pub fn view<'a, Message: Clone + 'a>(
     on_hover: Message,
     on_unhover: Message,
 ) -> Element<'a, Message> {
+    view_with_context(
+        title,
+        subtitle,
+        badge,
+        icon,
+        cover_handle,
+        gradient,
+        width,
+        hover_progress,
+        on_click,
+        on_play,
+        on_hover,
+        on_unhover,
+        ResponsiveContext::new(iced::Size::new(1920.0, 1080.0)),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn view_with_context<'a, Message: Clone + 'a>(
+    title: String,
+    subtitle: String,
+    badge: Option<String>,
+    icon: &'static str,
+    cover_handle: Option<&'a iced::widget::image::Handle>,
+    gradient: (Color, Color),
+    width: Length,
+    hover_progress: f32,
+    on_click: Message,
+    on_play: Message,
+    on_hover: Message,
+    on_unhover: Message,
+    context: ResponsiveContext,
+) -> Element<'a, Message> {
+    let tokens = context.tokens;
+    let metrics = tokens.card(CardRole::Feature);
+    let card_height = metrics.height;
+    let card_radius = metrics.radius.max(tokens.radius(RadiusRole::Medium));
+    let play_button_size = tokens
+        .target(TargetRole::Icon)
+        .max(tokens.size(PLAY_BUTTON_SIZE));
+
     let fallback = container(Space::new())
         .width(Fill)
-        .height(CARD_HEIGHT)
-        .style(move |_theme| gradient_style(gradient));
+        .height(card_height)
+        .style(move |_theme| gradient_style(gradient, card_radius));
     let cover: Element<'a, Message> = widgets::crossfade_image(cover_handle.cloned())
         .width(Fill)
-        .height(CARD_HEIGHT)
+        .height(card_height)
         .content_fit(iced::ContentFit::Cover)
         .content_position(widgets::ContentPosition::TOP)
-        .border_radius(CARD_RADIUS)
+        .border_radius(card_radius)
         .scale(background_image_scale(hover_progress))
         .into();
     let background = iced::widget::stack![fallback, cover];
 
     let scrim = container(Space::new())
         .width(Fill)
-        .height(CARD_HEIGHT)
-        .style(|_theme| scrim_style());
+        .height(card_height)
+        .style(move |_theme| scrim_style(card_radius));
 
     let icon = svg(svg::Handle::from_memory(icon.as_bytes()))
-        .width(24)
-        .height(24)
+        .width(tokens.icon(IconRole::Large))
+        .height(tokens.icon(IconRole::Large))
         .style(|_theme, _status| svg::Style {
             color: Some(Color::WHITE),
         });
     let title = text(title)
-        .size(theme::TEXT_SIZE_TITLE)
+        .size(tokens.text(TextRole::Title))
         .color(Color::WHITE)
         .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT));
     let mut top = row![icon, title]
-        .spacing(9)
+        .spacing(tokens.space(9.0))
         .align_y(Alignment::Center)
         .width(Fill);
     if let Some(badge) = badge {
         top = top.push(Space::new().width(Fill)).push(
             text(badge)
-                .size(theme::TEXT_SIZE_DISPLAY)
+                .size(tokens.text(TextRole::Display))
                 .color(Color::from_rgba(1.0, 1.0, 1.0, 0.72))
                 .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT)),
         );
@@ -72,7 +114,7 @@ pub fn view<'a, Message: Clone + 'a>(
 
     let play: Element<'a, Message> = if hover_progress > 0.001 {
         let opacity = hover_progress.clamp(0.0, 1.0);
-        let icon_size = play_icon_size(opacity);
+        let icon_size = tokens.icon(IconRole::Medium).max(play_icon_size(opacity));
         let play_button = button(
             container(
                 svg(svg::Handle::from_memory(icons::PLAY.as_bytes()))
@@ -83,30 +125,34 @@ pub fn view<'a, Message: Clone + 'a>(
                     })
                     .opacity(opacity),
             )
-            .width(PLAY_BUTTON_SIZE)
-            .height(PLAY_BUTTON_SIZE)
-            .center_x(PLAY_BUTTON_SIZE)
-            .center_y(PLAY_BUTTON_SIZE),
+            .width(play_button_size)
+            .height(play_button_size)
+            .center_x(play_button_size)
+            .center_y(play_button_size),
         )
         .padding(0)
-        .style(move |_theme, status| play_button_style(opacity, status))
+        .style(move |_theme, status| play_button_style(opacity, status, play_button_size / 2.0))
         .on_press(on_play);
 
         container(play_button)
-            .width(PLAY_BUTTON_SIZE)
-            .height(PLAY_BUTTON_SIZE + PLAY_BUTTON_START_OFFSET)
-            .padding(Padding::new(0.0).top(play_button_offset(opacity)))
+            .width(play_button_size)
+            .height(play_button_size + tokens.space(PLAY_BUTTON_START_OFFSET))
+            .padding(Padding::new(0.0).top(play_button_offset_for(
+                opacity,
+                tokens.space(PLAY_BUTTON_START_OFFSET),
+                tokens.space(PLAY_BUTTON_END_OFFSET),
+            )))
             .into()
     } else {
         Space::new()
-            .width(PLAY_BUTTON_SIZE)
-            .height(PLAY_BUTTON_SIZE + PLAY_BUTTON_START_OFFSET)
+            .width(play_button_size)
+            .height(play_button_size + tokens.space(PLAY_BUTTON_START_OFFSET))
             .into()
     };
 
     let bottom = row![
         text(subtitle)
-            .size(theme::TEXT_SIZE_BODY)
+            .size(tokens.text(TextRole::Body))
             .color(Color::from_rgba(1.0, 1.0, 1.0, 0.82)),
         Space::new().width(Fill),
         play,
@@ -116,31 +162,31 @@ pub fn view<'a, Message: Clone + 'a>(
 
     let foreground = container(column![top, Space::new().height(Fill), bottom])
         .width(Fill)
-        .height(CARD_HEIGHT)
-        .padding(16);
+        .height(card_height)
+        .padding(tokens.space(16.0));
     let content = iced::widget::stack![background, scrim, foreground];
 
     let card = button(content)
         .padding(0)
         .width(width)
-        .height(CARD_HEIGHT)
-        .style(|_theme, _status| iced::widget::button::Style {
+        .height(card_height)
+        .style(move |_theme, _status| iced::widget::button::Style {
             background: None,
             border: iced::Border {
-                radius: CARD_RADIUS.into(),
+                radius: card_radius.into(),
                 ..Default::default()
             },
             ..Default::default()
         })
         .on_press(on_click);
 
-    mouse_area(container(card).style(move |_theme| shadow_style(hover_progress)))
+    mouse_area(container(card).style(move |_theme| shadow_style(hover_progress, card_radius)))
         .on_enter(on_hover.clone())
         .on_exit(on_unhover)
         .into()
 }
 
-fn gradient_style(colors: (Color, Color)) -> iced::widget::container::Style {
+fn gradient_style(colors: (Color, Color), radius: f32) -> iced::widget::container::Style {
     iced::widget::container::Style {
         background: Some(iced::Background::Gradient(iced::Gradient::Linear(
             iced::gradient::Linear::new(std::f32::consts::PI * 0.82)
@@ -148,14 +194,14 @@ fn gradient_style(colors: (Color, Color)) -> iced::widget::container::Style {
                 .add_stop(1.0, colors.1),
         ))),
         border: iced::Border {
-            radius: CARD_RADIUS.into(),
+            radius: radius.into(),
             ..Default::default()
         },
         ..Default::default()
     }
 }
 
-fn scrim_style() -> iced::widget::container::Style {
+fn scrim_style(radius: f32) -> iced::widget::container::Style {
     iced::widget::container::Style {
         background: Some(iced::Background::Gradient(iced::Gradient::Linear(
             iced::gradient::Linear::new(std::f32::consts::FRAC_PI_2)
@@ -163,17 +209,17 @@ fn scrim_style() -> iced::widget::container::Style {
                 .add_stop(1.0, Color::from_rgba(0.0, 0.0, 0.0, 0.62)),
         ))),
         border: iced::Border {
-            radius: CARD_RADIUS.into(),
+            radius: radius.into(),
             ..Default::default()
         },
         ..Default::default()
     }
 }
 
-fn shadow_style(hover_progress: f32) -> iced::widget::container::Style {
+fn shadow_style(hover_progress: f32, radius: f32) -> iced::widget::container::Style {
     iced::widget::container::Style {
         border: iced::Border {
-            radius: CARD_RADIUS.into(),
+            radius: radius.into(),
             ..Default::default()
         },
         shadow: iced::Shadow {
@@ -186,8 +232,16 @@ fn shadow_style(hover_progress: f32) -> iced::widget::container::Style {
 }
 
 fn play_button_offset(hover_progress: f32) -> f32 {
+    play_button_offset_for(
+        hover_progress,
+        PLAY_BUTTON_START_OFFSET,
+        PLAY_BUTTON_END_OFFSET,
+    )
+}
+
+fn play_button_offset_for(hover_progress: f32, start: f32, end: f32) -> f32 {
     let progress = hover_progress.clamp(0.0, 1.0);
-    PLAY_BUTTON_START_OFFSET + (PLAY_BUTTON_END_OFFSET - PLAY_BUTTON_START_OFFSET) * progress
+    start + (end - start) * progress
 }
 
 // Keep SVG raster bounds stable across the hover animation. Subpixel image
@@ -203,6 +257,7 @@ fn background_image_scale(hover_progress: f32) -> f32 {
 fn play_button_style(
     opacity: f32,
     status: iced::widget::button::Status,
+    radius: f32,
 ) -> iced::widget::button::Style {
     let status_alpha = match status {
         iced::widget::button::Status::Hovered => 0.98,
@@ -218,7 +273,7 @@ fn play_button_style(
             alpha,
         ))),
         border: iced::Border {
-            radius: 21.0.into(),
+            radius: radius.into(),
             ..Default::default()
         },
         shadow: iced::Shadow {

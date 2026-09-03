@@ -141,6 +141,10 @@ pub enum Message {
     OpenSettingsWithCloseLyrics,
     /// Open audio engine page
     OpenAudioEngine,
+    /// Toggle the responsive navigation drawer.
+    ToggleSidebarDrawer,
+    /// Close the responsive navigation drawer without changing the route.
+    CloseSidebarDrawer,
 
     // ============ Settings ============
     /// Update close behavior
@@ -973,6 +977,8 @@ impl std::fmt::Debug for Message {
             Self::MouseMoved(_) => simple!("MouseMoved"),
             Self::OpenSettings => simple!("OpenSettings"),
             Self::OpenSettingsWithCloseLyrics => simple!("OpenSettingsWithCloseLyrics"),
+            Self::ToggleSidebarDrawer => simple!("ToggleSidebarDrawer"),
+            Self::CloseSidebarDrawer => simple!("CloseSidebarDrawer"),
             Self::OpenAudioEngine => simple!("OpenAudioEngine"),
 
             // Settings - most are simple

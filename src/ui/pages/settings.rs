@@ -14,43 +14,76 @@ use crate::features::{Action, KeyBindings, Settings, ShortcutScope};
 use crate::i18n::{Key, Language, Locale};
 use crate::image::ImageKind;
 use crate::ui::animation::SmoothScrollTarget;
+use crate::ui::responsive::{
+    LayoutProfile, RadiusRole, ResponsiveContext, TextRole, top_bar_height,
+};
 use crate::ui::{theme, widgets};
 
 /// Settings page view with fixed header and all sections on one scrollable page
-pub fn view(
-    settings: &Settings,
+pub fn view<'a>(
+    settings: &'a Settings,
     audio_devices: Vec<(String, String)>,
     font_families: Vec<String>,
     active_section: SettingsSection,
     locale: Locale,
     editing_keybinding: Option<(Action, ShortcutScope)>,
     is_logged_in: bool,
-    user_info: Option<&crate::app::UserInfo>,
-    image_state: &ImageState,
-    cache_stats: Option<&crate::cache::CacheStats>,
-) -> Element<'static, Message> {
+    user_info: Option<&'a crate::app::UserInfo>,
+    image_state: &'a ImageState,
+    cache_stats: Option<&'a crate::cache::CacheStats>,
+    context: ResponsiveContext,
+) -> Element<'a, Message> {
+    view_for_context(
+        settings,
+        &audio_devices,
+        &font_families,
+        active_section,
+        locale,
+        editing_keybinding,
+        is_logged_in,
+        user_info,
+        image_state,
+        cache_stats,
+        context,
+    )
+}
+
+fn view_for_context<'a>(
+    settings: &'a Settings,
+    audio_devices: &[(String, String)],
+    font_families: &[String],
+    active_section: SettingsSection,
+    locale: Locale,
+    editing_keybinding: Option<(Action, ShortcutScope)>,
+    is_logged_in: bool,
+    user_info: Option<&'a crate::app::UserInfo>,
+    image_state: &'a ImageState,
+    cache_stats: Option<&'a crate::cache::CacheStats>,
+    context: ResponsiveContext,
+) -> Element<'a, Message> {
+    let tokens = context.tokens;
     // Fixed header: title + tabs
     let header = column![
         text(locale.get(Key::SettingsTitle).to_string())
-            .size(theme::TEXT_SIZE_HERO)
+            .size(tokens.text(TextRole::Hero))
             .style(|theme| text::Style {
                 color: Some(theme::settings_title(theme))
             }),
-        Space::new().height(24),
-        tab_bar(active_section, locale),
+        Space::new().height(tokens.space(24.0)),
+        tab_bar(active_section, locale, context),
     ]
     .width(Fill);
 
     let header_container = container(header)
         .width(Fill)
         .padding(
-            Padding::new(40.0)
-                .top(70.0)
-                .right(32.0)
-                .bottom(20.0)
-                .left(32.0),
+            Padding::new(tokens.space(40.0))
+                .top(top_bar_height(&context))
+                .right(tokens.space(32.0))
+                .bottom(tokens.space(20.0))
+                .left(tokens.space(32.0)),
         )
-        .style(|theme| container::Style {
+        .style(move |theme| container::Style {
             background: Some(Background::Color(theme::background(theme))),
             ..Default::default()
         });
@@ -58,21 +91,25 @@ pub fn view(
     // All sections on one page
     let all_sections = all_sections_content(
         settings,
-        &audio_devices,
-        &font_families,
+        audio_devices,
+        font_families,
         locale,
         editing_keybinding,
         is_logged_in,
         user_info,
         image_state,
         cache_stats,
+        context,
     );
 
     let scrollable_content = crate::ui::widgets::smooth_scroll(
         scrollable(
-            container(all_sections)
-                .width(Fill)
-                .padding(Padding::new(20.0).right(32.0).bottom(60.0).left(32.0)),
+            container(all_sections).width(Fill).padding(
+                Padding::new(tokens.space(20.0))
+                    .right(tokens.space(32.0))
+                    .bottom(tokens.space(60.0))
+                    .left(tokens.space(32.0)),
+            ),
         )
         .width(Fill)
         .height(Fill)
@@ -98,7 +135,12 @@ pub fn view(
 }
 
 /// Tab bar with continuous bottom line - active tab portion highlighted
-fn tab_bar(active_section: SettingsSection, locale: Locale) -> Element<'static, Message> {
+fn tab_bar(
+    active_section: SettingsSection,
+    locale: Locale,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let tabs = [
         (
             SettingsSection::Account,
@@ -135,15 +177,17 @@ fn tab_bar(active_section: SettingsSection, locale: Locale) -> Element<'static, 
             let is_active = *section == active_section;
 
             let tab_button = button(
-                container(text(label.to_string()).size(theme::TEXT_SIZE_BODY).style(
-                    move |theme| text::Style {
-                        color: Some(if is_active {
-                            theme::ACCENT_PINK
-                        } else {
-                            theme::settings_inactive_tab(theme)
+                container(
+                    text(label.to_string())
+                        .size(tokens.text(TextRole::Body))
+                        .style(move |theme| text::Style {
+                            color: Some(if is_active {
+                                theme::ACCENT_PINK
+                            } else {
+                                theme::settings_inactive_tab(theme)
+                            }),
                         }),
-                    },
-                ))
+                )
                 .width(Fill)
                 .center_x(Fill),
             )
@@ -162,7 +206,7 @@ fn tab_bar(active_section: SettingsSection, locale: Locale) -> Element<'static, 
                 }
             })
             .on_press(Message::ScrollToSection(*section))
-            .padding([12, 0])
+            .padding([tokens.space(12.0), 0.0])
             .width(Fill);
 
             let underline = container(Space::new().height(2))
@@ -177,7 +221,7 @@ fn tab_bar(active_section: SettingsSection, locale: Locale) -> Element<'static, 
                 });
 
             container(column![tab_button, underline].spacing(0).width(Fill))
-                .width(90)
+                .width(tokens.size(90.0))
                 .into()
         })
         .collect();
@@ -189,6 +233,7 @@ fn tab_bar(active_section: SettingsSection, locale: Locale) -> Element<'static, 
                 .width(0)
                 .scroller_width(0),
         ))
+        .id(iced::widget::Id::new("settings_tabs_scroll"))
         .width(Fill)
         .into()
 }
@@ -204,70 +249,71 @@ fn all_sections_content(
     user_info: Option<&crate::app::UserInfo>,
     image_state: &ImageState,
     cache_stats: Option<&crate::cache::CacheStats>,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
     use crate::app::SettingsSection;
     column![
         // Account section
         container(column![
-            section_header(locale.get(Key::SettingsAccountTitle)),
-            Space::new().height(16),
-            account_section(is_logged_in, user_info, image_state, locale),
+            section_header(locale.get(Key::SettingsAccountTitle), context),
+            Space::new().height(context.tokens.space(16.0)),
+            account_section(is_logged_in, user_info, image_state, locale, context),
         ])
         .id(SettingsSection::Account.widget_id()),
-        Space::new().height(40),
+        Space::new().height(context.tokens.space(40.0)),
         // Playback section
         container(column![
-            section_header(locale.get(Key::SettingsPlaybackTitle)),
-            Space::new().height(16),
-            playback_section(settings, locale),
+            section_header(locale.get(Key::SettingsPlaybackTitle), context),
+            Space::new().height(context.tokens.space(16.0)),
+            playback_section(settings, locale, context),
         ])
         .id(SettingsSection::Playback.widget_id()),
-        Space::new().height(40),
+        Space::new().height(context.tokens.space(40.0)),
         // Display section
         container(column![
-            section_header(locale.get(Key::SettingsDisplayTitle)),
-            Space::new().height(16),
-            display_section(settings, font_families, locale),
+            section_header(locale.get(Key::SettingsDisplayTitle), context),
+            Space::new().height(context.tokens.space(16.0)),
+            display_section(settings, font_families, locale, context),
         ])
         .id(SettingsSection::Display.widget_id()),
-        Space::new().height(40),
+        Space::new().height(context.tokens.space(40.0)),
         // System section
         container(column![
-            section_header(locale.get(Key::SettingsSystemTitle)),
-            Space::new().height(16),
-            system_section(settings, audio_devices, locale),
+            section_header(locale.get(Key::SettingsSystemTitle), context),
+            Space::new().height(context.tokens.space(16.0)),
+            system_section(settings, audio_devices, locale, context),
         ])
         .id(SettingsSection::System.widget_id()),
-        Space::new().height(40),
+        Space::new().height(context.tokens.space(40.0)),
         // Network section
         container(column![
-            section_header(locale.get(Key::SettingsNetworkTitle)),
-            Space::new().height(16),
-            network_section(settings, locale),
+            section_header(locale.get(Key::SettingsNetworkTitle), context),
+            Space::new().height(context.tokens.space(16.0)),
+            network_section(settings, locale, context),
         ])
         .id(SettingsSection::Network.widget_id()),
-        Space::new().height(40),
+        Space::new().height(context.tokens.space(40.0)),
         // Storage section
         container(column![
-            section_header(locale.get(Key::SettingsStorageTitle)),
-            Space::new().height(16),
-            storage_section(settings, locale, cache_stats),
+            section_header(locale.get(Key::SettingsStorageTitle), context),
+            Space::new().height(context.tokens.space(16.0)),
+            storage_section(settings, locale, cache_stats, context),
         ])
         .id(SettingsSection::Storage.widget_id()),
-        Space::new().height(40),
+        Space::new().height(context.tokens.space(40.0)),
         // Shortcuts section
         container(column![
-            section_header(locale.get(Key::SettingsShortcutsTitle)),
-            Space::new().height(16),
-            shortcuts_section(&settings.keybindings, locale, editing_keybinding),
+            section_header(locale.get(Key::SettingsShortcutsTitle), context),
+            Space::new().height(context.tokens.space(16.0)),
+            shortcuts_section(&settings.keybindings, locale, editing_keybinding, context),
         ])
         .id(SettingsSection::Shortcuts.widget_id()),
-        Space::new().height(40),
+        Space::new().height(context.tokens.space(40.0)),
         // About section
         container(column![
-            section_header(locale.get(Key::SettingsAboutTitle)),
-            Space::new().height(16),
-            about_section(locale),
+            section_header(locale.get(Key::SettingsAboutTitle), context),
+            Space::new().height(context.tokens.space(16.0)),
+            about_section(locale, context),
         ])
         .id(SettingsSection::About.widget_id()),
     ]
@@ -281,7 +327,9 @@ fn account_section(
     user_info: Option<&crate::app::UserInfo>,
     image_state: &ImageState,
     locale: Locale,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
+    let tokens = context.tokens;
     // Account section
     if is_logged_in {
         if let Some(info) = user_info {
@@ -294,29 +342,29 @@ fn account_section(
                         .width(Fill)
                         .height(Fill)
                         .content_fit(iced::ContentFit::Cover)
-                        .border_radius(24.0),
+                        .border_radius(tokens.radius(RadiusRole::Large)),
                 )
-                .width(48)
-                .height(48)
+                .width(tokens.target(crate::ui::responsive::TargetRole::Icon))
+                .height(tokens.target(crate::ui::responsive::TargetRole::Icon))
             } else {
                 container(
                     svg(iced::widget::svg::Handle::from_memory(
                         crate::ui::icons::USER.as_bytes(),
                     ))
-                    .width(24)
-                    .height(24)
+                    .width(tokens.icon(crate::ui::responsive::IconRole::Medium))
+                    .height(tokens.icon(crate::ui::responsive::IconRole::Medium))
                     .style(|_theme, _status| iced::widget::svg::Style {
                         color: Some(theme::text_secondary(_theme)),
                     }),
                 )
-                .width(48)
-                .height(48)
-                .center_x(48)
-                .center_y(48)
-                .style(|_theme| iced::widget::container::Style {
+                .width(tokens.target(crate::ui::responsive::TargetRole::Icon))
+                .height(tokens.target(crate::ui::responsive::TargetRole::Icon))
+                .center_x(tokens.target(crate::ui::responsive::TargetRole::Icon))
+                .center_y(tokens.target(crate::ui::responsive::TargetRole::Icon))
+                .style(move |_theme| iced::widget::container::Style {
                     background: Some(iced::Background::Color(theme::BORDER_GRAY)),
                     border: iced::Border {
-                        radius: 24.0.into(),
+                        radius: tokens.radius(RadiusRole::Large).into(),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -336,7 +384,7 @@ fn account_section(
                         // Slightly taller than the account text while staying
                         // subordinate to the 48px avatar. Intrinsic width keeps
                         // Black Vinyl VIP and SVIP at their own proportions.
-                        .height(theme::TEXT_SIZE_BODY_LARGE + 2.0)
+                        .height(tokens.text(TextRole::BodyLarge) + tokens.space(2.0))
                         .content_fit(ContentFit::Contain)
                         .into()
                 })
@@ -344,14 +392,15 @@ fn account_section(
 
             column![
                 setting_row(
+                    context,
                     locale.get(Key::SettingsAccountLoggedInAs),
                     None,
                     row![
                         avatar,
-                        Space::new().width(12),
+                        Space::new().width(tokens.space(12.0)),
                         column![
                             text(info.nickname.clone())
-                                .size(theme::TEXT_SIZE_BODY_LARGE)
+                                .size(tokens.text(TextRole::BodyLarge))
                                 .style(|theme| text::Style {
                                     color: Some(theme::text_primary(theme))
                                 }),
@@ -361,16 +410,17 @@ fn account_section(
                     .align_y(Alignment::Center)
                     .into()
                 ),
-                divider(),
+                divider(context),
                 setting_row(
+                    context,
                     locale.get(Key::SettingsAccountLogout),
                     None,
                     button(
                         text(locale.get(Key::SettingsAccountLogout).to_string())
-                            .size(theme::TEXT_SIZE_BODY)
+                            .size(tokens.text(TextRole::Body))
                     )
                     .style(theme::button_danger)
-                    .padding([8, 16])
+                    .padding([tokens.space(8.0), tokens.space(16.0)])
                     .on_press(Message::Logout)
                     .into()
                 ),
@@ -381,25 +431,27 @@ fn account_section(
             // Logged in but no info yet
             column![
                 setting_row(
+                    context,
                     locale.get(Key::SettingsAccountLoggedInAs),
                     None,
                     text("Loading...")
-                        .size(theme::TEXT_SIZE_BODY)
+                        .size(tokens.text(TextRole::Body))
                         .style(|theme| text::Style {
                             color: Some(theme::text_primary(theme))
                         })
                         .into()
                 ),
-                divider(),
+                divider(context),
                 setting_row(
+                    context,
                     locale.get(Key::SettingsAccountLogout),
                     None,
                     button(
                         text(locale.get(Key::SettingsAccountLogout).to_string())
-                            .size(theme::TEXT_SIZE_BODY)
+                            .size(tokens.text(TextRole::Body))
                     )
                     .style(theme::button_danger)
-                    .padding([8, 16])
+                    .padding([tokens.space(8.0), tokens.space(16.0)])
                     .on_press(Message::Logout)
                     .into()
                 ),
@@ -409,22 +461,25 @@ fn account_section(
         }
     } else {
         column![setting_row(
+            context,
             locale.get(Key::SettingsAccountNotLoggedIn),
             None,
-            button(text(locale.get(Key::ClickToLogin).to_string()).size(theme::TEXT_SIZE_BODY))
-                .style(theme::primary_button)
-                .padding([8, 16])
-                .on_press(Message::ToggleLoginPopup)
-                .into()
+            button(
+                text(locale.get(Key::ClickToLogin).to_string()).size(tokens.text(TextRole::Body))
+            )
+            .style(theme::primary_button)
+            .padding([tokens.space(8.0), tokens.space(16.0)])
+            .on_press(Message::ToggleLoginPopup)
+            .into()
         ),]
         .spacing(0)
         .into()
     }
 }
 
-fn section_header(title: &str) -> Element<'static, Message> {
+fn section_header(title: &str, context: ResponsiveContext) -> Element<'static, Message> {
     text(title.to_string())
-        .size(theme::TEXT_SIZE_SUBTITLE)
+        .size(context.tokens.text(TextRole::Subtitle))
         .style(|theme| text::Style {
             color: Some(theme::settings_section_title(theme)),
         })
@@ -433,32 +488,34 @@ fn section_header(title: &str) -> Element<'static, Message> {
 
 /// Setting row with label on left and control on right
 fn setting_row<'a>(
+    context: ResponsiveContext,
     label: &str,
     description: Option<&str>,
     control: Element<'a, Message>,
 ) -> Element<'a, Message> {
+    let tokens = context.tokens;
     let label_text = label.to_string();
     let desc_text = description.map(|d| d.to_string());
 
     let label_section: Element<'a, Message> = if let Some(desc) = desc_text {
         column![
             text(label_text)
-                .size(theme::TEXT_SIZE_BODY_LARGE)
+                .size(tokens.text(TextRole::BodyLarge))
                 .style(|theme| text::Style {
                     color: Some(theme::settings_label(theme))
                 }),
             text(desc)
-                .size(theme::TEXT_SIZE_CAPTION)
+                .size(tokens.text(TextRole::Caption))
                 .style(|theme| text::Style {
                     color: Some(theme::settings_desc(theme))
                 }),
         ]
-        .spacing(4)
+        .spacing(tokens.space(4.0))
         .into()
     } else {
         column![
             text(label_text)
-                .size(theme::TEXT_SIZE_BODY_LARGE)
+                .size(tokens.text(TextRole::BodyLarge))
                 .style(|theme| text::Style {
                     color: Some(theme::settings_label(theme))
                 }),
@@ -466,17 +523,39 @@ fn setting_row<'a>(
         .into()
     };
 
-    container(
-        row![label_section, Space::new().width(Fill), control,]
+    let content: Element<'a, Message> = if matches!(
+        context.profile,
+        LayoutProfile::Tablet | LayoutProfile::Narrow
+    ) {
+        column![label_section, container(control).width(Fill)]
+            .spacing(tokens.space(10.0))
+            .width(Fill)
+            .into()
+    } else {
+        row![label_section, Space::new().width(Fill), control]
             .align_y(Alignment::Center)
-            .width(Fill),
-    )
-    .padding([16, 0])
-    .into()
+            .width(Fill)
+            .into()
+    };
+
+    container(content)
+        .padding(
+            Padding::new(tokens.space(16.0))
+                .top(tokens.space(16.0))
+                .bottom(tokens.space(16.0)),
+        )
+        .width(Fill)
+        .into()
 }
 
-fn playback_section(settings: &Settings, locale: Locale) -> Element<'static, Message> {
+fn playback_section(
+    settings: &Settings,
+    locale: Locale,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
     use crate::features::MusicQuality;
+
+    let tokens = context.tokens;
 
     // Build music quality options
     let quality_options: Vec<String> = MusicQuality::all()
@@ -488,6 +567,7 @@ fn playback_section(settings: &Settings, locale: Locale) -> Element<'static, Mes
 
     column![
         setting_row(
+            context,
             locale.get(Key::SettingsMusicQuality),
             Some(locale.get(Key::SettingsMusicQualityDesc)),
             styled_pick_list(quality_options, Some(current_quality), |value| {
@@ -495,47 +575,51 @@ fn playback_section(settings: &Settings, locale: Locale) -> Element<'static, Mes
                 Message::UpdateMusicQuality(quality)
             },)
         ),
-        divider(),
+        divider(context),
         setting_row(
+            context,
             locale.get(Key::SettingsFadeInOut),
             Some(locale.get(Key::SettingsFadeInOutDesc)),
             toggler(settings.playback.fade_in_out)
                 .on_toggle(Message::UpdateFadeInOut)
-                .size(theme::TEXT_SIZE_TITLE)
+                .size(tokens.text(TextRole::Title))
                 .into()
         ),
-        divider(),
+        divider(context),
         setting_row(
+            context,
             locale.get(Key::SettingsAutomix),
             Some(locale.get(Key::SettingsAutomixDesc)),
             toggler(settings.playback.automix_enabled)
                 .on_toggle(Message::UpdateAutomixEnabled)
-                .size(theme::TEXT_SIZE_TITLE)
+                .size(tokens.text(TextRole::Title))
                 .into()
         ),
-        divider(),
+        divider(context),
         setting_row(
+            context,
             locale.get(Key::SettingsVolumeNormalization),
             Some(locale.get(Key::SettingsVolumeNormalizationDesc)),
             toggler(settings.playback.volume_normalization)
                 .on_toggle(Message::UpdateVolumeNormalization)
-                .size(theme::TEXT_SIZE_TITLE)
+                .size(tokens.text(TextRole::Title))
                 .into()
         ),
-        divider(),
+        divider(context),
         // Audio Engine entry - clickable row to navigate to audio engine page
-        audio_engine_entry_row(locale),
+        audio_engine_entry_row(locale, context),
     ]
     .spacing(0)
     .into()
 }
 
 /// Audio engine entry row - clickable to navigate to audio engine page
-fn audio_engine_entry_row(locale: Locale) -> Element<'static, Message> {
+fn audio_engine_entry_row(locale: Locale, context: ResponsiveContext) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let content = row![
         // Title only
         text(locale.get(Key::AudioEngineTitle).to_string())
-            .size(theme::TEXT_SIZE_BODY_LARGE)
+            .size(tokens.text(TextRole::BodyLarge))
             .style(|theme| text::Style {
                 color: Some(theme::settings_label(theme))
             }),
@@ -544,8 +628,8 @@ fn audio_engine_entry_row(locale: Locale) -> Element<'static, Message> {
         svg(svg::Handle::from_memory(
             crate::ui::icons::CHEVRON_RIGHT.as_bytes()
         ))
-        .width(20)
-        .height(20)
+        .width(tokens.icon(crate::ui::responsive::IconRole::Medium))
+        .height(tokens.icon(crate::ui::responsive::IconRole::Medium))
         .style(|theme, _status| svg::Style {
             color: Some(theme::settings_desc(theme)),
         }),
@@ -553,7 +637,7 @@ fn audio_engine_entry_row(locale: Locale) -> Element<'static, Message> {
     .align_y(Alignment::Center)
     .width(Fill);
 
-    button(container(content).padding([16, 0]))
+    button(container(content).padding([tokens.space(16.0), 0.0]))
         .width(Fill)
         .padding(0)
         .style(|theme, status| {
@@ -577,8 +661,11 @@ fn display_section(
     settings: &Settings,
     font_families: &[String],
     locale: Locale,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
     use crate::features::CloseBehavior;
+
+    let tokens = context.tokens;
 
     let close_behavior_options = vec![
         locale.get(Key::SettingsCloseBehaviorAsk).to_string(),
@@ -602,15 +689,17 @@ fn display_section(
 
     column![
         setting_row(
+            context,
             locale.get(Key::SettingsDarkMode),
             None,
             toggler(settings.display.dark_mode)
                 .on_toggle(Message::UpdateDarkMode)
-                .size(theme::TEXT_SIZE_TITLE)
+                .size(tokens.text(TextRole::Title))
                 .into()
         ),
-        divider(),
+        divider(context),
         setting_row(
+            context,
             locale.get(Key::SettingsLanguage),
             None,
             styled_pick_list(
@@ -626,17 +715,19 @@ fn display_section(
                 },
             )
         ),
-        divider(),
+        divider(context),
         setting_row(
+            context,
             locale.get(Key::SettingsPowerSavingMode),
             Some(locale.get(Key::SettingsPowerSavingModeDesc)),
             toggler(settings.display.power_saving_mode)
                 .on_toggle(Message::UpdatePowerSavingMode)
-                .size(theme::TEXT_SIZE_TITLE)
+                .size(tokens.text(TextRole::Title))
                 .into()
         ),
-        divider(),
+        divider(context),
         setting_row(
+            context,
             locale.get(Key::SettingsLyricsFontFamily),
             None,
             styled_pick_list(
@@ -667,8 +758,9 @@ fn display_section(
                 },
             )
         ),
-        divider(),
+        divider(context),
         setting_row(
+            context,
             locale.get(Key::SettingsCloseBehavior),
             None,
             styled_pick_list(
@@ -695,7 +787,10 @@ fn system_section(
     settings: &Settings,
     audio_devices: &[(String, String)],
     locale: Locale,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
+    let tokens = context.tokens;
+
     let default_device_label = locale.get(Key::SettingsDefaultDevice).to_string();
 
     // Build display names list (descriptions) and keep track of internal names
@@ -721,6 +816,7 @@ fn system_section(
 
     column![
         setting_row(
+            context,
             locale.get(Key::SettingsAudioDevice),
             None,
             styled_pick_list(display_names, Some(current_display), move |display_value| {
@@ -737,11 +833,12 @@ fn system_section(
             },)
         ),
         setting_row(
+            context,
             locale.get(Key::SettingsDiscordRichPresence),
             Some(locale.get(Key::SettingsDiscordRichPresenceDesc)),
             toggler(settings.system.discord_enabled)
                 .on_toggle(Message::UpdateDiscordEnabled)
-                .size(theme::TEXT_SIZE_TITLE)
+                .size(tokens.text(TextRole::Title))
                 .into(),
         ),
     ]
@@ -749,7 +846,11 @@ fn system_section(
     .into()
 }
 
-fn network_section(settings: &Settings, locale: Locale) -> Element<'static, Message> {
+fn network_section(
+    settings: &Settings,
+    locale: Locale,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
     use crate::features::ProxyType;
 
     let proxy_types = vec![
@@ -782,6 +883,7 @@ fn network_section(settings: &Settings, locale: Locale) -> Element<'static, Mess
     let proxy_password = settings.network.proxy_password.clone().unwrap_or_default();
 
     let mut items: Vec<Element<'static, Message>> = vec![setting_row(
+        context,
         locale.get(Key::SettingsProxyType),
         None,
         styled_pick_list(proxy_types, Some(current_proxy_type), move |value| {
@@ -801,29 +903,33 @@ fn network_section(settings: &Settings, locale: Locale) -> Element<'static, Mess
     )];
 
     if show_proxy_details {
-        items.push(divider());
+        items.push(divider(context));
         items.push(setting_row_with_input(
+            context,
             locale.get(Key::SettingsProxyHost),
             "127.0.0.1",
             &proxy_host,
             Message::UpdateProxyHost,
         ));
-        items.push(divider());
+        items.push(divider(context));
         items.push(setting_row_with_input(
+            context,
             locale.get(Key::SettingsProxyPort),
             "1080",
             &proxy_port,
             Message::UpdateProxyPort,
         ));
-        items.push(divider());
+        items.push(divider(context));
         items.push(setting_row_with_input(
+            context,
             locale.get(Key::SettingsProxyUsername),
             "",
             &proxy_username,
             Message::UpdateProxyUsername,
         ));
-        items.push(divider());
+        items.push(divider(context));
         items.push(setting_row_with_input(
+            context,
             locale.get(Key::SettingsProxyPassword),
             "",
             &proxy_password,
@@ -834,8 +940,11 @@ fn network_section(settings: &Settings, locale: Locale) -> Element<'static, Mess
     column(items).spacing(0).into()
 }
 
-/// Setting row with text input - handles lifetime issues by creating owned strings
+/// Setting row with text input - handles lifetime issues by creating owned strings.
+/// Compact profiles stack the label and input so a long label never squeezes
+/// the editable field below its usable width.
 fn setting_row_with_input<F>(
+    context: ResponsiveContext,
     label: &str,
     placeholder: &str,
     value: &str,
@@ -844,55 +953,76 @@ fn setting_row_with_input<F>(
 where
     F: Fn(String) -> Message + 'static + Clone,
 {
+    let tokens = context.tokens;
     let label_text = label.to_string();
     let placeholder_text = placeholder.to_string();
     let value_text = value.to_string();
 
-    container(
-        row![
-            column![
-                text(label_text)
-                    .size(theme::TEXT_SIZE_BODY_LARGE)
-                    .style(|theme| text::Style {
-                        color: Some(theme::settings_label(theme))
-                    }),
-            ],
-            Space::new().width(Fill),
-            text_input(placeholder_text, value_text)
-                .on_input(on_input)
-                .padding([8, 12])
-                .width(200)
-                .style(|theme, status| {
-                    let border_color = match status {
-                        text_input::Status::Focused { .. } => theme::ACCENT_PINK,
-                        text_input::Status::Hovered => theme::settings_input_border_hover(theme),
-                        _ => theme::settings_input_border(theme),
-                    };
-                    text_input::Style {
-                        background: iced::Background::Color(theme::settings_input_bg(theme)),
-                        border: Border {
-                            color: border_color,
-                            width: 1.0,
-                            radius: 4.0.into(),
-                        },
-                        placeholder: theme::settings_desc(theme),
-                        value: theme::settings_label(theme),
-                        selection: theme::ACCENT_PINK,
-                    }
-                }),
-        ]
-        .align_y(Alignment::Center)
-        .width(Fill),
-    )
-    .padding([16, 0])
-    .into()
+    let label = text(label_text)
+        .size(tokens.text(TextRole::BodyLarge))
+        .style(|theme| text::Style {
+            color: Some(theme::settings_label(theme)),
+        });
+    let input = text_input(placeholder_text, value_text)
+        .on_input(on_input)
+        .padding([tokens.space(8.0), tokens.space(12.0)])
+        .width(
+            if matches!(
+                context.profile,
+                LayoutProfile::Tablet | LayoutProfile::Narrow
+            ) {
+                Fill
+            } else {
+                Length::Fixed(tokens.size(200.0))
+            },
+        )
+        .style(move |theme, status| {
+            let border_color = match status {
+                text_input::Status::Focused { .. } => theme::ACCENT_PINK,
+                text_input::Status::Hovered => theme::settings_input_border_hover(theme),
+                _ => theme::settings_input_border(theme),
+            };
+            text_input::Style {
+                background: iced::Background::Color(theme::settings_input_bg(theme)),
+                border: Border {
+                    color: border_color,
+                    width: 1.0,
+                    radius: tokens.radius(RadiusRole::Small).into(),
+                },
+                placeholder: theme::settings_desc(theme),
+                value: theme::settings_label(theme),
+                selection: theme::ACCENT_PINK,
+            }
+        });
+
+    let content: Element<'_, Message> = if matches!(
+        context.profile,
+        LayoutProfile::Tablet | LayoutProfile::Narrow
+    ) {
+        column![label, input]
+            .spacing(tokens.space(10.0))
+            .width(Fill)
+            .into()
+    } else {
+        row![label, Space::new().width(Fill), input]
+            .align_y(Alignment::Center)
+            .width(Fill)
+            .into()
+    };
+
+    container(content)
+        .padding(Padding::new(tokens.space(16.0)))
+        .width(Fill)
+        .into()
 }
 
 fn storage_section(
     settings: &Settings,
     locale: Locale,
     cache_stats: Option<&crate::cache::CacheStats>,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
+    let tokens = context.tokens;
     // Get cache directory path
     let cache_dir = crate::utils::cache_dir();
     let cache_path_str = cache_dir.to_string_lossy().to_string();
@@ -906,28 +1036,31 @@ fn storage_section(
 
     column![
         setting_row(
+            context,
             locale.get(Key::SettingsCacheLocation),
             None,
             text(cache_path_str)
-                .size(theme::TEXT_SIZE_BODY)
+                .size(tokens.text(TextRole::Body))
                 .style(|theme| text::Style {
                     color: Some(theme::settings_value(theme))
                 })
                 .into()
         ),
-        divider(),
+        divider(context),
         setting_row(
+            context,
             locale.get(Key::SettingsCacheSize),
             None,
             text(cache_size_str)
-                .size(theme::TEXT_SIZE_BODY)
+                .size(tokens.text(TextRole::Body))
                 .style(|theme| text::Style {
                     color: Some(theme::settings_value(theme))
                 })
                 .into()
         ),
-        divider(),
+        divider(context),
         setting_row(
+            context,
             locale.get(Key::SettingsMaxCache),
             None,
             styled_pick_list(
@@ -944,34 +1077,40 @@ fn storage_section(
                 },
             )
         ),
-        divider(),
+        divider(context),
         // Download location
         {
             let dl_dir = settings.storage.effective_download_dir();
             let dl_path = dl_dir.to_string_lossy().to_string();
             setting_row(
+                context,
                 locale.get(Key::SettingsDownloadLocation),
                 Some(locale.get(Key::SettingsDownloadLocationDesc)),
                 row![
                     text(dl_path)
-                        .size(theme::TEXT_SIZE_BODY)
+                        .size(tokens.text(TextRole::Body))
+                        .width(Fill)
+                        .wrapping(iced::widget::text::Wrapping::None)
+                        .ellipsis(iced::widget::text::Ellipsis::End)
                         .style(|theme| text::Style {
                             color: Some(theme::settings_value(theme))
                         }),
                     button(
                         text(locale.get(Key::SettingsDownloadChange).to_string())
-                            .size(theme::TEXT_SIZE_BODY)
+                            .size(tokens.text(TextRole::Body))
                     )
                     .style(theme::secondary_button)
-                    .padding([4, 12])
+                    .height(tokens.target(crate::ui::responsive::TargetRole::Control))
+                    .padding([tokens.space(4.0), tokens.space(12.0)])
                     .on_press(Message::UpdateDownloadDirDialog),
                 ]
-                .spacing(8)
+                .spacing(tokens.space(8.0))
                 .align_y(iced::Alignment::Center)
+                .width(Fill)
                 .into(),
             )
         },
-        divider(),
+        divider(context),
         // Download quality
         {
             let current_quality = settings.storage.download_quality.display_name().to_string();
@@ -980,6 +1119,7 @@ fn storage_section(
                 .map(|q| q.display_name().to_string())
                 .collect();
             setting_row(
+                context,
                 locale.get(Key::SettingsDownloadQuality),
                 None,
                 styled_pick_list(qualities, Some(current_quality), |value| {
@@ -989,15 +1129,17 @@ fn storage_section(
                 }),
             )
         },
-        divider(),
+        divider(context),
         setting_row(
+            context,
             locale.get(Key::SettingsClearCache),
             Some(locale.get(Key::SettingsClearCacheDesc)),
             button(
-                text(locale.get(Key::SettingsClearButton).to_string()).size(theme::TEXT_SIZE_BODY)
+                text(locale.get(Key::SettingsClearButton).to_string())
+                    .size(tokens.text(TextRole::Body))
             )
             .style(theme::button_danger)
-            .padding([8, 16])
+            .padding([tokens.space(8.0), tokens.space(16.0)])
             .on_press(Message::ClearCache)
             .into()
         ),
@@ -1019,8 +1161,9 @@ fn format_size_bytes(bytes: u64) -> String {
     }
 }
 
-fn about_section(_locale: Locale) -> Element<'static, Message> {
+fn about_section(_locale: Locale, context: ResponsiveContext) -> Element<'static, Message> {
     use std::sync::LazyLock;
+    let tokens = context.tokens;
 
     static ICON_DATA: &[u8] = include_bytes!("../../../assets/icons/icon_256.png");
     static ICON_HANDLE: LazyLock<iced::widget::image::Handle> =
@@ -1028,12 +1171,12 @@ fn about_section(_locale: Locale) -> Element<'static, Message> {
 
     let icon = container(
         widgets::crossfade_image(Some(ICON_HANDLE.clone()))
-            .width(240)
-            .height(240),
+            .width(tokens.size(240.0))
+            .height(tokens.size(240.0)),
     )
-    .style(|_theme| container::Style {
+    .style(move |_theme| container::Style {
         border: Border {
-            radius: 16.0.into(),
+            radius: tokens.radius(RadiusRole::Large).into(),
             ..Default::default()
         },
         ..Default::default()
@@ -1042,28 +1185,28 @@ fn about_section(_locale: Locale) -> Element<'static, Message> {
 
     // App name
     let app_name = text("Rustle")
-        .size(theme::TEXT_SIZE_TITLE)
+        .size(tokens.text(TextRole::Title))
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         });
 
     // Version
     let version = text(format!("v{}", env!("CARGO_PKG_VERSION")))
-        .size(theme::TEXT_SIZE_BODY)
+        .size(tokens.text(TextRole::Body))
         .style(|theme| text::Style {
             color: Some(theme::settings_desc(theme)),
         });
 
     // Description
     let description = text("A modern music player built with Rust & Iced")
-        .size(theme::TEXT_SIZE_LABEL)
+        .size(tokens.text(TextRole::Label))
         .style(|theme| text::Style {
             color: Some(theme::settings_desc(theme)),
         });
 
     // Copyright
     let copyright = text("2025-2026 FXS")
-        .size(theme::TEXT_SIZE_CAPTION)
+        .size(tokens.text(TextRole::Caption))
         .style(|theme| text::Style {
             color: Some(theme::settings_desc(theme)),
         });
@@ -1071,20 +1214,20 @@ fn about_section(_locale: Locale) -> Element<'static, Message> {
     container(
         column![
             icon,
-            Space::new().height(16),
+            Space::new().height(tokens.space(16.0)),
             app_name,
-            Space::new().height(4),
+            Space::new().height(tokens.space(4.0)),
             version,
-            Space::new().height(12),
+            Space::new().height(tokens.space(12.0)),
             description,
-            Space::new().height(8),
+            Space::new().height(tokens.space(8.0)),
             copyright,
         ]
         .align_x(Alignment::Center),
     )
     .width(Fill)
     .center_x(Fill)
-    .padding([40, 0])
+    .padding([tokens.space(40.0), 0.0])
     .into()
 }
 
@@ -1092,6 +1235,7 @@ fn shortcuts_section(
     keybindings: &KeyBindings,
     locale: Locale,
     editing_keybinding: Option<(Action, ShortcutScope)>,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
     let left_actions = [
         (Action::PlayPause, Key::ActionPlayPause),
@@ -1111,13 +1255,50 @@ fn shortcuts_section(
         (Action::ToggleFullscreen, Key::ActionToggleFullscreen),
     ];
 
-    row![
-        shortcut_table(&left_actions, keybindings, locale, editing_keybinding),
-        Space::new().width(24),
-        shortcut_table(&right_actions, keybindings, locale, editing_keybinding),
-    ]
-    .width(Fill)
-    .into()
+    if matches!(
+        context.profile,
+        LayoutProfile::Tablet | LayoutProfile::Narrow
+    ) {
+        column![
+            shortcut_table(
+                &left_actions,
+                keybindings,
+                locale,
+                editing_keybinding,
+                context
+            ),
+            Space::new().height(context.tokens.space(16.0)),
+            shortcut_table(
+                &right_actions,
+                keybindings,
+                locale,
+                editing_keybinding,
+                context
+            ),
+        ]
+        .width(Fill)
+        .into()
+    } else {
+        row![
+            shortcut_table(
+                &left_actions,
+                keybindings,
+                locale,
+                editing_keybinding,
+                context
+            ),
+            Space::new().width(context.tokens.space(24.0)),
+            shortcut_table(
+                &right_actions,
+                keybindings,
+                locale,
+                editing_keybinding,
+                context
+            ),
+        ]
+        .width(Fill)
+        .into()
+    }
 }
 
 fn shortcut_table(
@@ -1125,6 +1306,7 @@ fn shortcut_table(
     keybindings: &KeyBindings,
     locale: Locale,
     editing_keybinding: Option<(Action, ShortcutScope)>,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
     let rows: Vec<Element<'static, Message>> = actions
         .iter()
@@ -1136,22 +1318,27 @@ fn shortcut_table(
                 &keybindings.display_global_for_action(action),
                 editing_keybinding,
                 locale,
+                context,
             )
         })
         .collect();
 
     let header = row![
-        shortcut_header(locale.get(Key::SettingsShortcutFunction), 4),
-        shortcut_header(locale.get(Key::SettingsShortcutLocal), 3),
-        shortcut_header(locale.get(Key::SettingsShortcutGlobal), 4),
+        shortcut_header(locale.get(Key::SettingsShortcutFunction), 4, context),
+        shortcut_header(locale.get(Key::SettingsShortcutLocal), 3, context),
+        shortcut_header(locale.get(Key::SettingsShortcutGlobal), 4, context),
     ]
-    .spacing(8)
+    .spacing(context.tokens.space(8.0))
     .width(Fill);
 
     container(
-        column![header, divider(), column(rows).spacing(4).width(Fill)]
-            .spacing(8)
-            .width(Fill),
+        column![
+            header,
+            divider(context),
+            column(rows).spacing(context.tokens.space(4.0)).width(Fill)
+        ]
+        .spacing(context.tokens.space(8.0))
+        .width(Fill),
     )
     .width(Fill)
     .into()
@@ -1164,46 +1351,69 @@ fn shortcut_row(
     global_shortcut: &str,
     editing_keybinding: Option<(Action, ShortcutScope)>,
     locale: Locale,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
-    container(
-        row![
-            container(
-                text(action_name.to_string())
-                    .size(theme::TEXT_SIZE_BODY)
-                    .style(|theme| text::Style {
-                        color: Some(theme::settings_label(theme))
-                    }),
-            )
-            .width(Length::FillPortion(4)),
-            shortcut_cell(
-                action,
-                ShortcutScope::Local,
-                local_shortcut,
-                editing_keybinding == Some((action, ShortcutScope::Local)),
-                locale,
-                3,
-            ),
-            shortcut_cell(
-                action,
-                ShortcutScope::Global,
-                global_shortcut,
-                editing_keybinding == Some((action, ShortcutScope::Global)),
-                locale,
-                4,
-            ),
-        ]
-        .spacing(8)
-        .align_y(Alignment::Center)
-        .width(Fill),
+    let tokens = context.tokens;
+    let action_cell = container(
+        text(action_name.to_string())
+            .size(tokens.text(TextRole::Body))
+            .style(|theme| text::Style {
+                color: Some(theme::settings_label(theme)),
+            }),
     )
-    .padding([8, 0])
-    .into()
+    .width(Length::FillPortion(4));
+    let local_cell = shortcut_cell(
+        action,
+        ShortcutScope::Local,
+        local_shortcut,
+        editing_keybinding == Some((action, ShortcutScope::Local)),
+        locale,
+        3,
+        context,
+    );
+    let global_cell = shortcut_cell(
+        action,
+        ShortcutScope::Global,
+        global_shortcut,
+        editing_keybinding == Some((action, ShortcutScope::Global)),
+        locale,
+        4,
+        context,
+    );
+
+    let content: Element<'static, Message> = if matches!(
+        context.profile,
+        LayoutProfile::Tablet | LayoutProfile::Narrow
+    ) {
+        column![
+            action_cell,
+            row![local_cell, global_cell].spacing(tokens.space(8.0))
+        ]
+        .spacing(tokens.space(8.0))
+        .width(Fill)
+        .into()
+    } else {
+        row![action_cell, local_cell, global_cell]
+            .spacing(tokens.space(8.0))
+            .align_y(Alignment::Center)
+            .width(Fill)
+            .into()
+    };
+
+    container(content)
+        .padding(Padding::new(tokens.space(8.0)))
+        .width(Fill)
+        .into()
 }
 
-fn shortcut_header(label: &str, width_portion: u16) -> Element<'static, Message> {
+fn shortcut_header(
+    label: &str,
+    width_portion: u16,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
     container(
         text(label.to_string())
-            .size(theme::TEXT_SIZE_LABEL)
+            .size(context.tokens.text(TextRole::Label))
             .style(|theme| text::Style {
                 color: Some(theme::settings_desc(theme)),
             }),
@@ -1219,20 +1429,22 @@ fn shortcut_cell(
     is_editing: bool,
     locale: Locale,
     width_portion: u16,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let shortcut_display: Element<'static, Message> = if is_editing {
         container(
             text(locale.get(Key::SettingsShortcutRecording).to_string())
-                .size(theme::TEXT_SIZE_LABEL)
+                .size(tokens.text(TextRole::Label))
                 .color(theme::ACCENT_PINK),
         )
         .width(Fill)
         .center_x(Fill)
-        .padding([4, 12])
-        .style(|theme| container::Style {
+        .padding([tokens.space(4.0), tokens.space(12.0)])
+        .style(move |theme| container::Style {
             background: Some(Background::Color(theme::shortcut_key_bg(theme))),
             border: Border {
-                radius: 4.0.into(),
+                radius: tokens.radius(RadiusRole::Small).into(),
                 width: 1.0,
                 color: theme::ACCENT_PINK,
             },
@@ -1242,18 +1454,18 @@ fn shortcut_cell(
     } else {
         container(
             text(shortcut.to_string())
-                .size(theme::TEXT_SIZE_LABEL)
+                .size(tokens.text(TextRole::Label))
                 .style(|theme| text::Style {
                     color: Some(theme::settings_value(theme)),
                 }),
         )
         .width(Fill)
         .center_x(Fill)
-        .padding([4, 12])
-        .style(|theme| container::Style {
+        .padding([tokens.space(4.0), tokens.space(12.0)])
+        .style(move |theme| container::Style {
             background: Some(Background::Color(theme::shortcut_bg(theme))),
             border: Border {
-                radius: 4.0.into(),
+                radius: tokens.radius(RadiusRole::Small).into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -1280,8 +1492,8 @@ fn shortcut_cell(
         .into()
 }
 
-fn divider() -> Element<'static, Message> {
-    container(Space::new().width(Fill).height(1))
+fn divider(context: ResponsiveContext) -> Element<'static, Message> {
+    container(Space::new().width(Fill).height(context.tokens.space(1.0)))
         .style(|theme| container::Style {
             background: Some(Background::Color(theme::shortcut_bg(theme))),
             ..Default::default()

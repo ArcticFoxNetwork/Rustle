@@ -6,9 +6,7 @@
 use iced::widget::{button, container, svg, text, tooltip};
 use iced::{Color, Element};
 
-use crate::app::Message;
-use crate::features::PlayMode;
-use crate::ui::{icons, theme};
+use crate::ui::theme;
 
 /// Size variant for play mode button
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -17,6 +15,10 @@ pub enum ButtonSize {
     Small,
     /// Large size for lyrics page (22px icon)
     Large,
+    /// Density-scaled small control used by the player bar.
+    ScaledSmall(f32),
+    /// Density-scaled large control used by full-screen control surfaces.
+    ScaledLarge(f32),
 }
 
 impl ButtonSize {
@@ -24,6 +26,8 @@ impl ButtonSize {
         match self {
             Self::Small => 20.0,
             Self::Large => 22.0,
+            Self::ScaledSmall(scale) => 20.0 * scale.max(0.1),
+            Self::ScaledLarge(scale) => 22.0 * scale.max(0.1),
         }
     }
 
@@ -31,6 +35,8 @@ impl ButtonSize {
         match self {
             Self::Small => 8.0,
             Self::Large => 10.0,
+            Self::ScaledSmall(scale) => 8.0 * scale.max(0.1),
+            Self::ScaledLarge(scale) => 10.0 * scale.max(0.1),
         }
     }
 
@@ -40,28 +46,15 @@ impl ButtonSize {
 }
 
 /// Build the play mode button with tooltip
-pub fn view(play_mode: PlayMode, size: ButtonSize, is_fm_mode: bool) -> Element<'static, Message> {
-    let (play_mode_icon, play_mode_tooltip) = if is_fm_mode {
-        (icons::RADIO, "私人FM")
-    } else {
-        let icon = match play_mode {
-            PlayMode::Sequential => icons::PLAY_SEQUENTIAL,
-            PlayMode::LoopAll => icons::LOOP_ALL,
-            PlayMode::LoopOne => icons::LOOP_ONE,
-            PlayMode::Shuffle => icons::SHUFFLE,
-        };
-        (icon, play_mode.display_name())
-    };
-
+pub fn view<M: Clone + 'static>(
+    play_mode_icon: &'static str,
+    play_mode_tooltip: &'static str,
+    size: ButtonSize,
+    on_press: M,
+) -> Element<'static, M> {
     let icon_size = size.icon_size();
     let padding = size.padding();
     let radius = size.radius();
-
-    let on_press = if is_fm_mode {
-        Message::ShowWarningToast("私人FM模式下无法更改播放模式".to_string())
-    } else {
-        Message::CyclePlayMode
-    };
 
     let button = button(
         svg(svg::Handle::from_memory(play_mode_icon.as_bytes()))

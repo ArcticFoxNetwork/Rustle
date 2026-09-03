@@ -2,10 +2,11 @@
 
 use iced::border::Radius;
 use iced::widget::{button, column, container, row, text, text_input};
-use iced::{Border, Color, Element, Length};
+use iced::{Border, Color, Element, Length, Size};
 
 use crate::app::{Message, SongEditDialogState};
 use crate::i18n::{Key, Locale};
+use crate::ui::responsive::{LayoutProfile, RadiusRole, ResponsiveContext, TextRole};
 use crate::ui::{theme, widgets};
 
 const COVER_SIZE: f32 = 192.0;
@@ -14,42 +15,91 @@ const COVER_SIZE: f32 = 192.0;
 
 /// Content-only edit body (used by unified overlay — header/footer from modal_section).
 pub fn view_edit_body(e: &SongEditDialogState, locale: Locale) -> Element<'_, Message> {
+    view_edit_body_responsive(
+        e,
+        locale,
+        ResponsiveContext::new(Size::new(1_920.0, 1_080.0)),
+    )
+}
+
+/// Content-only song editor body with token-scaled fields and a stacked compact layout.
+pub fn view_edit_body_responsive(
+    e: &SongEditDialogState,
+    locale: Locale,
+    context: ResponsiveContext,
+) -> Element<'_, Message> {
+    let tokens = context.tokens;
     let id = e.song_id;
-    row![
-        edit_cover_block(&e.cover_path, locale.get(Key::SongEditCoverReplace), id),
-        spacer(32.0),
-        column![
-            inp(locale.get(Key::SongEditLabelTitle), &e.title, id, "title"),
-            inp(
-                locale.get(Key::SongEditLabelArtist),
-                &e.artist,
+    let fields = column![
+        inp(
+            locale.get(Key::SongEditLabelTitle),
+            &e.title,
+            id,
+            "title",
+            tokens,
+        ),
+        inp(
+            locale.get(Key::SongEditLabelArtist),
+            &e.artist,
+            id,
+            "artist",
+            tokens,
+        ),
+        inp(
+            locale.get(Key::SongEditLabelAlbum),
+            &e.album,
+            id,
+            "album",
+            tokens,
+        ),
+        spacer(tokens, 2.0),
+        row![
+            inp2(
+                "年份",
+                &e.year.map_or_else(String::new, |y| y.to_string()),
                 id,
-                "artist"
+                "year",
+                tokens,
             ),
-            inp(locale.get(Key::SongEditLabelAlbum), &e.album, id, "album"),
-            spacer(2.0),
-            row![
-                inp2(
-                    "年份",
-                    &e.year.map_or_else(String::new, |y| y.to_string()),
-                    id,
-                    "year"
-                ),
-                spacer(16.0),
-                inp2(
-                    "曲目号",
-                    &e.track_number.map_or_else(String::new, |n| n.to_string()),
-                    id,
-                    "track_number"
-                ),
-            ],
-            spacer(2.0),
-            inp("流派", &e.genre, id, "genre"),
-        ]
-        .width(Length::Fill),
+            spacer(tokens, 16.0),
+            inp2(
+                "曲目号",
+                &e.track_number.map_or_else(String::new, |n| n.to_string()),
+                id,
+                "track_number",
+                tokens,
+            ),
+        ],
+        spacer(tokens, 2.0),
+        inp("流派", &e.genre, id, "genre", tokens),
     ]
-    .padding(24)
-    .into()
+    .width(Length::Fill);
+
+    let cover = edit_cover_block(
+        &e.cover_path,
+        locale.get(Key::SongEditCoverReplace),
+        id,
+        tokens,
+    );
+
+    let body: Element<'_, Message> = if matches!(
+        context.profile,
+        LayoutProfile::Tablet | LayoutProfile::Narrow
+    ) {
+        column![
+            cover,
+            iced::widget::Space::new().height(tokens.space(24.0)),
+            fields
+        ]
+        .width(Length::Fill)
+        .into()
+    } else {
+        row![cover, spacer(tokens, 32.0), fields]
+            .align_y(iced::Alignment::Start)
+            .into()
+    };
+
+    container(body).padding(tokens.space(24.0)).into()
 }
 
 // ── Cover ──────────────────────────────────────────
@@ -58,7 +108,9 @@ fn edit_cover_block<'a>(
     path: &Option<std::path::PathBuf>,
     replace_label: &str,
     song_id: i64,
+    tokens: crate::ui::responsive::UiTokens,
 ) -> Element<'a, Message> {
+    let cover_size = tokens.size(COVER_SIZE);
     let handle = path
         .as_ref()
         .filter(|p| p.exists())
@@ -66,31 +118,31 @@ fn edit_cover_block<'a>(
     let img = crate::ui::components::cover_image::custom(
         handle.as_ref(),
         crate::image::ImageKind::SongCover,
-        COVER_SIZE,
-        12.0,
+        cover_size,
+        tokens.radius(RadiusRole::Medium),
     );
     let label = replace_label.to_string();
-    let replace_button = button(text(label).size(11.0))
+    let replace_button = button(text(label).size(tokens.text(TextRole::Caption)))
         .style(dim_btn)
-        .padding([4, 12])
+        .padding([tokens.space(4.0), tokens.space(12.0)])
         .on_press(Message::PickSongEditCover(song_id));
     let replace_button =
-        widgets::hover_surface(replace_button).style(|theme, progress| container::Style {
+        widgets::hover_surface(replace_button).style(move |theme, progress| container::Style {
             background: Some(iced::Background::Color(theme::lerp_color(
                 Color::TRANSPARENT,
                 theme::surface_hover(theme),
                 progress,
             ))),
-            border: r(8.0),
+            border: r(tokens.radius(RadiusRole::Medium)),
             ..Default::default()
         });
 
     column![
         container(img)
-            .width(COVER_SIZE)
-            .height(COVER_SIZE)
-            .style(cover_border),
-        spacer(6.0),
+            .width(cover_size)
+            .height(cover_size)
+            .style(move |theme| cover_border(theme, tokens.radius(RadiusRole::Medium))),
+        iced::widget::Space::new().height(tokens.space(6.0)),
         replace_button,
     ]
     .into()
@@ -98,33 +150,53 @@ fn edit_cover_block<'a>(
 
 // ── Fields ─────────────────────────────────────────
 
-fn inp<'a>(label: &str, value: &str, sid: i64, field: &'static str) -> Element<'a, Message> {
+fn inp<'a>(
+    label: &str,
+    value: &str,
+    sid: i64,
+    field: &'static str,
+    tokens: crate::ui::responsive::UiTokens,
+) -> Element<'a, Message> {
     let l = label.to_string();
     let v = value.to_string();
     column![
-        text(l).size(11.0).style(st(theme::text_secondary)),
-        spacer(4.0),
+        text(l)
+            .size(tokens.text(TextRole::Caption))
+            .style(st(theme::text_secondary)),
+        iced::widget::Space::new().height(tokens.space(4.0)),
         text_input("", v)
             .on_input(move |x| msg_f(sid, field, x))
-            .padding([8, 10])
-            .style(inp_s),
-        spacer(10.0),
+            .id(format!("song_edit_{field}"))
+            .padding([tokens.space(8.0), tokens.space(10.0)])
+            .size(tokens.text(TextRole::Body))
+            .style(move |theme, status| inp_s(theme, status, tokens.radius(RadiusRole::Medium))),
+        iced::widget::Space::new().height(tokens.space(10.0)),
     ]
     .width(Length::Fill)
     .into()
 }
 
-fn inp2<'a>(label: &str, value: &str, sid: i64, field: &'static str) -> Element<'a, Message> {
+fn inp2<'a>(
+    label: &str,
+    value: &str,
+    sid: i64,
+    field: &'static str,
+    tokens: crate::ui::responsive::UiTokens,
+) -> Element<'a, Message> {
     let l = label.to_string();
     let v = value.to_string();
     column![
-        text(l).size(11.0).style(st(theme::text_secondary)),
-        spacer(4.0),
+        text(l)
+            .size(tokens.text(TextRole::Caption))
+            .style(st(theme::text_secondary)),
+        iced::widget::Space::new().height(tokens.space(4.0)),
         text_input("", v)
             .on_input(move |x| msg_f(sid, field, x))
-            .width(Length::Fixed(90.0))
-            .padding([8, 10])
-            .style(inp_s),
+            .id(format!("song_edit_{field}"))
+            .width(Length::Fixed(tokens.size(90.0)))
+            .padding([tokens.space(8.0), tokens.space(10.0)])
+            .size(tokens.text(TextRole::Body))
+            .style(move |theme, status| inp_s(theme, status, tokens.radius(RadiusRole::Medium))),
     ]
     .into()
 }
@@ -153,7 +225,7 @@ fn dim_btn(t: &iced::Theme, s: button::Status) -> button::Style {
     }
 }
 
-fn inp_s(t: &iced::Theme, s: text_input::Status) -> text_input::Style {
+fn inp_s(t: &iced::Theme, s: text_input::Status, radius: f32) -> text_input::Style {
     let purple = Color::from_rgba(0.659, 0.333, 0.969, 1.0);
     let c = match s {
         text_input::Status::Focused { .. } => Color::from_rgba(0.659, 0.333, 0.969, 0.50),
@@ -165,7 +237,7 @@ fn inp_s(t: &iced::Theme, s: text_input::Status) -> text_input::Style {
         border: Border {
             color: c,
             width: 1.0,
-            radius: Radius::new(8.0),
+            radius: Radius::new(radius),
         },
         placeholder: theme::TEXT_MUTED,
         value: theme::text_primary(t),
@@ -189,18 +261,19 @@ fn r(v: f32) -> Border {
         ..Default::default()
     }
 }
-fn spacer<'a>(w: f32) -> Element<'a, Message> {
-    iced::widget::Space::new().width(w).height(w).into()
+fn spacer<'a>(tokens: crate::ui::responsive::UiTokens, w: f32) -> Element<'a, Message> {
+    let size = tokens.space(w);
+    iced::widget::Space::new().width(size).height(size).into()
 }
 
 fn st(f: fn(&iced::Theme) -> Color) -> impl Fn(&iced::Theme) -> text::Style {
     move |t| text::Style { color: Some(f(t)) }
 }
 
-fn cover_border(t: &iced::Theme) -> container::Style {
+fn cover_border(t: &iced::Theme, radius: f32) -> container::Style {
     container::Style {
         border: Border {
-            radius: Radius::new(12.0),
+            radius: Radius::new(radius),
             width: 1.0,
             color: glass_border(t),
         },

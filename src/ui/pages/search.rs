@@ -3,6 +3,7 @@
 //! Displays search results for songs, artists, albums, and playlists
 //! with tabbed navigation and pagination.
 
+use iced::widget::text::{Ellipsis, Wrapping};
 use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Background, Border, Element, Fill, Length, Padding};
 
@@ -11,6 +12,7 @@ use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::animation::{SmoothScrollEvent, SmoothScrollTarget};
 use crate::ui::components::cover_image;
+use crate::ui::responsive::{CardRole, LayoutProfile, ResponsiveContext, TextRole};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{theme, widgets};
 
@@ -25,64 +27,107 @@ pub fn view<'a>(
     state: &'a SearchPageState,
     image_state: &'a ImageState,
     locale: Locale,
+    context: ResponsiveContext,
 ) -> Element<'a, Message> {
+    view_for_context(state, image_state, locale, context)
+}
+
+fn view_for_context<'a>(
+    state: &'a SearchPageState,
+    image_state: &'a ImageState,
+    locale: Locale,
+    context: ResponsiveContext,
+) -> Element<'a, Message> {
+    let tokens = context.tokens;
     if state.keyword.is_empty() {
-        return empty_search_state(locale);
+        return empty_search_state(locale, context);
     }
 
-    // Fixed header section (Title + Tabs), matching the settings page header.
-    let header_section = container(column![
+    let title = text(&state.keyword)
+        .size(tokens.text(TextRole::Hero))
+        .style(|theme| iced::widget::text::Style {
+            color: Some(theme::text_primary(theme)),
+        })
+        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
+    let related = text(format!(" {}", locale.get(Key::SearchRelated)))
+        .size(tokens.text(TextRole::TitleLarge))
+        .style(|theme| iced::widget::text::Style {
+            color: Some(theme::text_muted(theme)),
+        });
+    let title_row: Element<'a, Message> = if matches!(
+        context.profile,
+        LayoutProfile::Tablet | LayoutProfile::Narrow
+    ) {
+        column![title.width(Fill).wrapping(Wrapping::WordOrGlyph), related]
+            .spacing(tokens.space(4.0))
+            .into()
+    } else {
         row![
-            text(&state.keyword)
-                .size(theme::TEXT_SIZE_HERO)
-                .style(|theme| iced::widget::text::Style {
-                    color: Some(theme::text_primary(theme)),
-                })
-                .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
-            text(format!(" {}", locale.get(Key::SearchRelated)))
-                .size(theme::TEXT_SIZE_TITLE_LARGE)
-                .style(|theme| iced::widget::text::Style {
-                    color: Some(theme::text_muted(theme)),
-                }),
+            title
+                .width(Fill)
+                .wrapping(Wrapping::None)
+                .ellipsis(Ellipsis::End),
+            related
         ]
-        .align_y(Alignment::Center),
-        Space::new().height(24),
-        search_tabs(state.active_tab, locale),
-    ])
-    .width(Fill)
-    .padding(
-        Padding::new(40.0)
-            .top(70.0)
-            .right(32.0)
-            .bottom(20.0)
-            .left(32.0),
-    )
-    .style(|theme| container::Style {
-        background: Some(Background::Color(theme::background(theme))),
-        ..Default::default()
-    });
+        .align_y(Alignment::Center)
+        .into()
+    };
+    let title_and_tabs: Element<'a, Message> = if matches!(
+        context.profile,
+        LayoutProfile::Tablet | LayoutProfile::Narrow
+    ) {
+        column![
+            title_row,
+            Space::new().height(tokens.space(16.0)),
+            search_tabs(state.active_tab, locale, context)
+        ]
+        .into()
+    } else {
+        column![
+            title_row,
+            Space::new().height(tokens.space(24.0)),
+            search_tabs(state.active_tab, locale, context)
+        ]
+        .into()
+    };
+
+    // Header section (title + tabs), with a stacked title in portrait layouts.
+    let header_section = container(title_and_tabs)
+        .width(Fill)
+        .padding(
+            Padding::new(tokens.space(40.0))
+                .top(tokens.space(70.0))
+                .right(tokens.space(32.0))
+                .bottom(tokens.space(20.0))
+                .left(tokens.space(32.0)),
+        )
+        .style(|theme| container::Style {
+            background: Some(Background::Color(theme::background(theme))),
+            ..Default::default()
+        });
 
     // Content area
     let content: Element<'a, Message> = if state.loading {
-        loading_state()
+        loading_state(context)
     } else {
         match state.active_tab {
             SearchTab::Songs => {
                 if state.tracks.is_empty() {
-                    empty_results_state(&state.keyword)
+                    empty_results_state(&state.keyword, context)
                 } else {
                     // Use VirtualList for high performance song list
                     let song_count = state.tracks.len();
                     let songs = &state.tracks;
                     let song_animations = &state.song_animations;
                     let current_page = state.current_page;
+                    let song_row_height = tokens.size(SONG_ROW_HEIGHT);
 
-                    let table_header = search_table_header();
+                    let table_header = search_table_header(context);
 
                     let virtual_list =
-                        VirtualList::new(song_count, SONG_ROW_HEIGHT, move |index| {
+                        VirtualList::new(song_count, song_row_height, move |index| {
                             if index >= songs.len() {
-                                return Space::new().into();
+                                return Space::new().height(song_row_height).into();
                             }
 
                             let song = &songs[index];
@@ -101,7 +146,7 @@ pub fn view<'a>(
                             let quality_badge: Element<'static, Message> = quality_label
                                 .map(|label| -> Element<'static, Message> {
                                     text(label)
-                                        .size(theme::TEXT_SIZE_CAPTION)
+                                        .size(tokens.text(TextRole::Caption))
                                         .style(|_theme| iced::widget::text::Style {
                                             color: Some(theme::ACCENT),
                                         })
@@ -115,7 +160,7 @@ pub fn view<'a>(
                                     Space::new().width(0).into()
                                 } else {
                                     text(availability_label)
-                                        .size(theme::TEXT_SIZE_CAPTION)
+                                        .size(tokens.text(TextRole::Caption))
                                         .style(move |theme| iced::widget::text::Style {
                                             color: Some(if availability_restricted {
                                                 theme::ACCENT_PINK
@@ -125,60 +170,16 @@ pub fn view<'a>(
                                         })
                                         .into()
                                 };
-                            let badges = row![quality_badge, availability_badge,].spacing(6);
-
-                            let song_row = button(
-                                row![
-                                    text(format!("{:02}", index_num))
-                                        .size(theme::TEXT_SIZE_LABEL)
-                                        .style(|theme| iced::widget::text::Style {
-                                            color: Some(theme::text_muted(theme)),
-                                        })
-                                        .width(40),
-                                    column![
-                                        text(song.title.as_str())
-                                            .size(theme::TEXT_SIZE_BODY)
-                                            .style(move |theme| {
-                                                iced::widget::text::Style {
-                                                    color: Some(theme::animated_text(
-                                                        theme,
-                                                        hover_progress,
-                                                    )),
-                                                }
-                                            }),
-                                        badges,
-                                    ]
-                                    .width(Fill),
-                                    text(song.artist_names())
-                                        .size(theme::TEXT_SIZE_LABEL)
-                                        .style(|theme| iced::widget::text::Style {
-                                            color: Some(theme::text_secondary(theme)),
-                                        })
-                                        .width(Length::FillPortion(2)),
-                                    text(song.album.name.as_str())
-                                        .size(theme::TEXT_SIZE_LABEL)
-                                        .style(|theme| iced::widget::text::Style {
-                                            color: Some(theme::text_muted(theme)),
-                                        })
-                                        .width(Length::FillPortion(2)),
-                                    text(duration_str)
-                                        .size(theme::TEXT_SIZE_LABEL)
-                                        .style(|theme| iced::widget::text::Style {
-                                            color: Some(theme::text_muted(theme)),
-                                        })
-                                        .width(60),
-                                ]
-                                .spacing(12)
-                                .align_y(Alignment::Center)
-                                .padding(Padding::new(10.0).left(12.0).right(12.0)),
-                            )
-                            .style(move |theme, status| {
-                                song_row_style(theme, status, hover_progress)
-                            })
-                            .on_press(Message::PlaySearchSong(song.id))
-                            .width(Fill);
-
-                            Element::from(song_row)
+                            let song_row = search_song_row(
+                                song,
+                                index_num,
+                                duration_str,
+                                quality_badge,
+                                availability_badge,
+                                hover_progress,
+                                context,
+                            );
+                            song_row
                         })
                         .keyed_by(move |index| {
                             songs
@@ -210,24 +211,27 @@ pub fn view<'a>(
 
                     let list_section = column![
                         table_header,
-                        Space::new().height(8),
+                        Space::new().height(tokens.space(8.0)),
                         container(virtual_list).height(Fill).width(Fill),
                     ]
-                    .padding(Padding::new(32.0).top(0.0));
+                    .padding(Padding::new(tokens.space(32.0)).top(0.0));
 
                     if state.total_count > PAGE_SIZE {
                         column![
                             list_section.height(Fill),
-                            Space::new().height(16),
-                            pagination(state),
-                            Space::new().height(32),
+                            Space::new().height(tokens.space(16.0)),
+                            pagination(state, context),
+                            Space::new().height(tokens.space(32.0)),
                         ]
                         .height(Fill)
                         .into()
                     } else {
-                        column![list_section.height(Fill), Space::new().height(32),]
-                            .height(Fill)
-                            .into()
+                        column![
+                            list_section.height(Fill),
+                            Space::new().height(tokens.space(32.0)),
+                        ]
+                        .height(Fill)
+                        .into()
                     }
                 }
             }
@@ -245,17 +249,20 @@ pub fn view<'a>(
                     SearchTab::Songs => true,
                 };
                 let content = if is_empty {
-                    empty_results_state(&state.keyword)
+                    empty_results_state(&state.keyword, context)
                 } else {
-                    let grid = grid_results(state, image_state, state.active_tab);
+                    let grid = grid_results(state, image_state, state.active_tab, context);
                     let mut col = column![grid];
 
                     if state.total_count > PAGE_SIZE {
-                        col = col.push(Space::new().height(24)).push(pagination(state));
+                        col = col
+                            .push(Space::new().height(tokens.space(24.0)))
+                            .push(pagination(state, context));
                     }
-                    col = col.push(Space::new().height(40));
+                    col = col.push(Space::new().height(tokens.space(40.0)));
 
-                    col.padding(Padding::new(32.0).top(0.0)).into()
+                    col.padding(Padding::new(tokens.space(32.0)).top(0.0))
+                        .into()
                 };
 
                 widgets::measured_scrollable(
@@ -275,8 +282,141 @@ pub fn view<'a>(
         .into()
 }
 
+fn search_song_row<'a>(
+    song: &'a crate::api::Track,
+    index_num: u32,
+    duration: String,
+    quality_badge: Element<'static, Message>,
+    availability_badge: Element<'static, Message>,
+    hover_progress: f32,
+    context: ResponsiveContext,
+) -> Element<'a, Message> {
+    let tokens = context.tokens;
+    let badges = row![quality_badge, availability_badge]
+        .spacing(tokens.space(6.0))
+        .width(Fill);
+
+    let row_content: Element<'a, Message> = if matches!(
+        context.profile,
+        LayoutProfile::Tablet | LayoutProfile::Narrow
+    ) {
+        let metadata = format!("{} · {}", song.artist_names(), song.album.name);
+        row![
+            text(format!("{:02}", index_num))
+                .size(tokens.text(TextRole::Label))
+                .width(tokens.size(36.0))
+                .style(|theme| iced::widget::text::Style {
+                    color: Some(theme::text_muted(theme)),
+                }),
+            column![
+                text(song.title.as_str())
+                    .size(tokens.text(TextRole::BodyLarge))
+                    .width(Fill)
+                    .wrapping(iced::widget::text::Wrapping::None)
+                    .ellipsis(iced::widget::text::Ellipsis::End)
+                    .style(move |theme| iced::widget::text::Style {
+                        color: Some(theme::animated_text(theme, hover_progress)),
+                    }),
+                badges,
+                text(metadata)
+                    .size(tokens.text(TextRole::Caption))
+                    .width(Fill)
+                    .wrapping(iced::widget::text::Wrapping::None)
+                    .ellipsis(iced::widget::text::Ellipsis::End)
+                    .style(|theme| iced::widget::text::Style {
+                        color: Some(theme::text_secondary(theme)),
+                    }),
+            ]
+            .spacing(tokens.space(3.0))
+            .width(Fill),
+            text(duration)
+                .size(tokens.text(TextRole::Label))
+                .width(tokens.size(60.0))
+                .wrapping(iced::widget::text::Wrapping::None)
+                .ellipsis(iced::widget::text::Ellipsis::End)
+                .style(|theme| iced::widget::text::Style {
+                    color: Some(theme::text_muted(theme)),
+                }),
+        ]
+        .spacing(tokens.space(8.0))
+        .align_y(Alignment::Center)
+        .into()
+    } else {
+        row![
+            text(format!("{:02}", index_num))
+                .size(tokens.text(TextRole::Label))
+                .style(|theme| iced::widget::text::Style {
+                    color: Some(theme::text_muted(theme)),
+                })
+                .width(tokens.size(40.0)),
+            column![
+                text(song.title.as_str())
+                    .size(tokens.text(TextRole::Body))
+                    .width(Fill)
+                    .wrapping(iced::widget::text::Wrapping::None)
+                    .ellipsis(iced::widget::text::Ellipsis::End)
+                    .style(move |theme| iced::widget::text::Style {
+                        color: Some(theme::animated_text(theme, hover_progress)),
+                    }),
+                badges,
+            ]
+            .width(Fill),
+            text(song.artist_names())
+                .size(tokens.text(TextRole::Label))
+                .width(Length::FillPortion(2))
+                .wrapping(iced::widget::text::Wrapping::None)
+                .ellipsis(iced::widget::text::Ellipsis::End)
+                .style(|theme| iced::widget::text::Style {
+                    color: Some(theme::text_secondary(theme)),
+                }),
+            text(song.album.name.as_str())
+                .size(tokens.text(TextRole::Label))
+                .width(Length::FillPortion(2))
+                .wrapping(iced::widget::text::Wrapping::None)
+                .ellipsis(iced::widget::text::Ellipsis::End)
+                .style(|theme| iced::widget::text::Style {
+                    color: Some(theme::text_muted(theme)),
+                }),
+            text(duration)
+                .size(tokens.text(TextRole::Label))
+                .width(tokens.size(60.0))
+                .wrapping(iced::widget::text::Wrapping::None)
+                .ellipsis(iced::widget::text::Ellipsis::End)
+                .style(|theme| iced::widget::text::Style {
+                    color: Some(theme::text_muted(theme)),
+                }),
+        ]
+        .spacing(tokens.space(12.0))
+        .align_y(Alignment::Center)
+        .into()
+    };
+
+    button(row_content)
+        .style(move |theme, status| {
+            song_row_style(
+                theme,
+                status,
+                hover_progress,
+                tokens.radius(crate::ui::responsive::RadiusRole::Small),
+            )
+        })
+        .on_press(Message::PlaySearchSong(song.id))
+        .width(Fill)
+        .padding(
+            Padding::new(tokens.space(10.0))
+                .left(tokens.space(12.0))
+                .right(tokens.space(12.0)),
+        )
+        .into()
+}
+
 /// Search tabs component
-fn search_tabs(active_tab: SearchTab, locale: Locale) -> Element<'static, Message> {
+fn search_tabs(
+    active_tab: SearchTab,
+    locale: Locale,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let tabs = [
         (SearchTab::Songs, Key::SearchTabSongs),
         (SearchTab::Artists, Key::SearchTabArtists),
@@ -295,7 +435,7 @@ fn search_tabs(active_tab: SearchTab, locale: Locale) -> Element<'static, Messag
             let tab_button = button(
                 container(
                     text(locale.get(*label_key).to_string())
-                        .size(theme::TEXT_SIZE_BODY)
+                        .size(tokens.text(TextRole::Body))
                         .style(move |theme| iced::widget::text::Style {
                             color: Some(if is_active {
                                 theme::ACCENT_PINK
@@ -322,7 +462,7 @@ fn search_tabs(active_tab: SearchTab, locale: Locale) -> Element<'static, Messag
                 }
             })
             .on_press(Message::SearchTabChanged(tab_clone))
-            .padding([12, 0])
+            .padding([tokens.space(12.0), 0.0])
             .width(Fill);
 
             let underline = container(Space::new().height(2))
@@ -337,7 +477,7 @@ fn search_tabs(active_tab: SearchTab, locale: Locale) -> Element<'static, Messag
                 });
 
             container(column![tab_button, underline].spacing(0).width(Fill))
-                .width(100)
+                .width(tokens.size(100.0))
                 .into()
         })
         .collect();
@@ -348,47 +488,70 @@ fn search_tabs(active_tab: SearchTab, locale: Locale) -> Element<'static, Messag
                 .width(0)
                 .scroller_width(0),
         ))
+        .id(iced::widget::Id::new("search_tabs_scroll"))
         .width(Fill)
         .into()
 }
 
 /// Search table header
-fn search_table_header() -> Element<'static, Message> {
-    row![
+fn search_table_header(context: ResponsiveContext) -> Element<'static, Message> {
+    let tokens = context.tokens;
+    let mut items: Vec<Element<'static, Message>> = vec![
         text("#")
-            .size(theme::TEXT_SIZE_CAPTION)
+            .size(tokens.text(TextRole::Caption))
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_muted(theme)),
             })
-            .width(40),
+            .width(tokens.size(40.0))
+            .into(),
         text("标题")
-            .size(theme::TEXT_SIZE_CAPTION)
+            .size(tokens.text(TextRole::Caption))
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_muted(theme)),
             })
-            .width(Fill),
-        text("歌手")
-            .size(theme::TEXT_SIZE_CAPTION)
-            .style(|theme| iced::widget::text::Style {
-                color: Some(theme::text_muted(theme)),
-            })
-            .width(Length::FillPortion(2)),
-        text("专辑")
-            .size(theme::TEXT_SIZE_CAPTION)
-            .style(|theme| iced::widget::text::Style {
-                color: Some(theme::text_muted(theme)),
-            })
-            .width(Length::FillPortion(2)),
+            .width(Fill)
+            .into(),
+    ];
+    if !matches!(
+        context.profile,
+        LayoutProfile::Tablet | LayoutProfile::Narrow
+    ) {
+        items.push(
+            text("歌手")
+                .size(tokens.text(TextRole::Caption))
+                .style(|theme| iced::widget::text::Style {
+                    color: Some(theme::text_muted(theme)),
+                })
+                .width(Length::FillPortion(2))
+                .into(),
+        );
+        items.push(
+            text("专辑")
+                .size(tokens.text(TextRole::Caption))
+                .style(|theme| iced::widget::text::Style {
+                    color: Some(theme::text_muted(theme)),
+                })
+                .width(Length::FillPortion(2))
+                .into(),
+        );
+    }
+    items.push(
         text("时长")
-            .size(theme::TEXT_SIZE_CAPTION)
+            .size(tokens.text(TextRole::Caption))
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_muted(theme)),
             })
-            .width(60),
-    ]
-    .spacing(12)
-    .padding(Padding::new(8.0).left(12.0).right(12.0))
-    .into()
+            .width(tokens.size(60.0))
+            .into(),
+    );
+    row(items)
+        .spacing(tokens.space(12.0))
+        .padding(
+            Padding::new(tokens.space(8.0))
+                .left(tokens.space(12.0))
+                .right(tokens.space(12.0)),
+        )
+        .into()
 }
 
 /// Song row style with hover animation
@@ -396,6 +559,7 @@ fn song_row_style(
     theme: &iced::Theme,
     status: button::Status,
     hover_progress: f32,
+    radius: f32,
 ) -> button::Style {
     let bg = match status {
         button::Status::Hovered | button::Status::Pressed => {
@@ -408,7 +572,7 @@ fn song_row_style(
         background: Some(iced::Background::Color(bg)),
         text_color: theme::text_primary(theme),
         border: iced::Border {
-            radius: 8.0.into(),
+            radius: radius.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -420,6 +584,7 @@ fn grid_results<'a>(
     state: &'a SearchPageState,
     image_state: &'a ImageState,
     tab: SearchTab,
+    context: ResponsiveContext,
 ) -> Element<'a, Message> {
     let items: Vec<GridItemRef<'a>> = match tab {
         SearchTab::Albums => state.albums.iter().map(GridItemRef::Album).collect(),
@@ -431,11 +596,16 @@ fn grid_results<'a>(
     };
     let kind = search_image_kind(tab);
 
-    const CARD_WIDTH: f32 = 160.0;
-    const CARD_SPACING: f32 = 24.0;
-    const ROW_SPACING: f32 = 32.0;
+    let tokens = context.tokens;
+    let card_metrics = context.tokens.card(CardRole::Detail);
+    let card_width = tokens.size(160.0);
+    let card_spacing = tokens.space(24.0);
+    let row_spacing = tokens.space(32.0);
 
-    let columns = widgets::calculate_grid_columns(state.content_width, CARD_WIDTH, CARD_SPACING);
+    let columns = match context.profile {
+        LayoutProfile::Tablet | LayoutProfile::Narrow => 1,
+        _ => context.grid_columns(state.content_width, 160.0, 24.0, usize::MAX),
+    };
 
     let mut rows: Vec<Element<'a, Message>> = Vec::new();
 
@@ -448,25 +618,29 @@ fn grid_results<'a>(
             let item_tab = tab;
 
             let cover_handle = image_state.get(kind, item_id);
-            let card = grid_card(*item, cover_handle, kind, hover_progress, item_id, item_tab);
+            let card = grid_card(
+                *item,
+                cover_handle,
+                kind,
+                hover_progress,
+                item_id,
+                item_tab,
+                card_width,
+                card_metrics.radius,
+                tokens,
+            );
             row_items.push(card);
-
-            if row_items.len() < columns * 2 - 1 {
-                row_items.push(Space::new().width(CARD_SPACING).into());
-            }
         }
 
-        // Fill remaining space
-        let items_in_row = chunk.len();
-        if items_in_row < columns {
-            for _ in items_in_row..columns {
-                row_items.push(Space::new().width(CARD_SPACING).into());
-                row_items.push(Space::new().width(CARD_WIDTH).into());
+        let mut spaced_row = Vec::with_capacity(row_items.len().saturating_mul(2));
+        for (index, item) in row_items.into_iter().enumerate() {
+            if index > 0 {
+                spaced_row.push(Space::new().width(card_spacing).into());
             }
+            spaced_row.push(item);
         }
-
-        rows.push(row(row_items).into());
-        rows.push(Space::new().height(ROW_SPACING).into());
+        rows.push(row(spaced_row).into());
+        rows.push(Space::new().height(row_spacing).into());
     }
 
     column(rows).into()
@@ -480,40 +654,46 @@ fn grid_card<'a>(
     hover_progress: f32,
     item_id: u64,
     tab: SearchTab,
+    card_width: f32,
+    card_radius: f32,
+    tokens: crate::ui::responsive::UiTokens,
 ) -> Element<'a, Message> {
-    const CARD_WIDTH: f32 = 160.0;
     let has_cover = cover_handle.is_some();
 
-    let cover: Element<'a, Message> =
-        container(cover_image::custom(cover_handle, kind, CARD_WIDTH, 8.0))
-            .width(CARD_WIDTH)
-            .height(CARD_WIDTH)
-            .style(move |theme| {
-                if has_cover {
-                    cover_card_style(theme, hover_progress)
-                } else {
-                    cover_placeholder_style(theme, hover_progress)
-                }
-            })
-            .into();
+    let cover: Element<'a, Message> = container(cover_image::custom(
+        cover_handle,
+        kind,
+        card_width,
+        card_radius,
+    ))
+    .width(card_width)
+    .height(card_width)
+    .style(move |theme| {
+        if has_cover {
+            cover_card_style(theme, hover_progress, card_radius, tokens)
+        } else {
+            cover_placeholder_style(theme, hover_progress, card_radius, tokens)
+        }
+    })
+    .into();
 
     let card_content = column![
         cover,
-        Space::new().height(8),
+        Space::new().height(tokens.space(8.0)),
         text(item.name())
-            .size(theme::TEXT_SIZE_BODY)
+            .size(tokens.text(TextRole::Body))
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_primary(theme)),
             })
-            .width(CARD_WIDTH),
+            .width(card_width),
         text(item.subtitle())
-            .size(theme::TEXT_SIZE_CAPTION)
+            .size(tokens.text(TextRole::Caption))
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_muted(theme)),
             })
-            .width(CARD_WIDTH),
+            .width(card_width),
     ]
-    .width(CARD_WIDTH);
+    .width(card_width);
 
     let card_btn = button(card_content)
         .padding(0)
@@ -588,19 +768,33 @@ fn search_image_kind(tab: SearchTab) -> ImageKind {
 }
 
 /// Cover placeholder style
-fn cover_placeholder_style(theme: &iced::Theme, hover_progress: f32) -> container::Style {
+fn cover_placeholder_style(
+    theme: &iced::Theme,
+    hover_progress: f32,
+    radius: f32,
+    tokens: crate::ui::responsive::UiTokens,
+) -> container::Style {
     cover_base_style(
         theme,
         hover_progress,
         iced::Background::Color(theme::surface(theme)),
+        radius,
+        tokens,
     )
 }
 
-fn cover_card_style(theme: &iced::Theme, hover_progress: f32) -> container::Style {
+fn cover_card_style(
+    theme: &iced::Theme,
+    hover_progress: f32,
+    radius: f32,
+    tokens: crate::ui::responsive::UiTokens,
+) -> container::Style {
     cover_base_style(
         theme,
         hover_progress,
         iced::Background::Color(iced::Color::TRANSPARENT),
+        radius,
+        tokens,
     )
 }
 
@@ -608,25 +802,27 @@ fn cover_base_style(
     theme: &iced::Theme,
     hover_progress: f32,
     background: iced::Background,
+    radius: f32,
+    tokens: crate::ui::responsive::UiTokens,
 ) -> container::Style {
-    let shadow_blur = 8.0 + 8.0 * hover_progress;
+    let shadow_blur = tokens.size(8.0 + 8.0 * hover_progress);
     let shadow_alpha = if theme::is_dark_theme(theme) {
         0.2 + 0.2 * hover_progress
     } else {
         0.08 + 0.08 * hover_progress
     };
-    let scale_offset = -2.0 * hover_progress;
+    let scale_offset = -tokens.size(2.0 * hover_progress);
 
     container::Style {
         background: Some(background),
         border: iced::Border {
-            radius: 8.0.into(),
+            radius: radius.into(),
             width: 1.0,
             color: theme::border_color(theme),
         },
         shadow: iced::Shadow {
             color: iced::Color::from_rgba(0.0, 0.0, 0.0, shadow_alpha),
-            offset: iced::Vector::new(0.0, 4.0 + scale_offset),
+            offset: iced::Vector::new(0.0, tokens.size(4.0) + scale_offset),
             blur_radius: shadow_blur,
         },
         ..Default::default()
@@ -634,15 +830,20 @@ fn cover_base_style(
 }
 
 /// Pagination component
-fn pagination<'a>(state: &'a SearchPageState) -> Element<'a, Message> {
+fn pagination<'a>(state: &'a SearchPageState, context: ResponsiveContext) -> Element<'a, Message> {
+    let tokens = context.tokens;
     let total_pages = state.total_count.div_ceil(PAGE_SIZE);
     let current_page = state.current_page;
 
     let mut items: Vec<Element<'a, Message>> = Vec::new();
 
     // Previous button
-    let prev_btn = button(text("上一页").size(theme::TEXT_SIZE_LABEL))
-        .padding(Padding::new(8.0).left(16.0).right(16.0))
+    let prev_btn = button(text("上一页").size(tokens.text(TextRole::Label)))
+        .padding(
+            Padding::new(tokens.space(8.0))
+                .left(tokens.space(16.0))
+                .right(tokens.space(16.0)),
+        )
         .style(theme::secondary_button)
         .on_press_maybe(if current_page > 0 {
             Some(Message::SearchPageChanged(current_page - 1))
@@ -654,7 +855,7 @@ fn pagination<'a>(state: &'a SearchPageState) -> Element<'a, Message> {
     // Page info
     items.push(
         text(format!("{} / {}", current_page + 1, total_pages))
-            .size(theme::TEXT_SIZE_BODY)
+            .size(tokens.text(TextRole::Body))
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_secondary(theme)),
             })
@@ -662,8 +863,12 @@ fn pagination<'a>(state: &'a SearchPageState) -> Element<'a, Message> {
     );
 
     // Next button
-    let next_btn = button(text("下一页").size(theme::TEXT_SIZE_LABEL))
-        .padding(Padding::new(8.0).left(16.0).right(16.0))
+    let next_btn = button(text("下一页").size(tokens.text(TextRole::Label)))
+        .padding(
+            Padding::new(tokens.space(8.0))
+                .left(tokens.space(16.0))
+                .right(tokens.space(16.0)),
+        )
         .style(theme::secondary_button)
         .on_press_maybe(if current_page + 1 < total_pages {
             Some(Message::SearchPageChanged(current_page + 1))
@@ -672,36 +877,42 @@ fn pagination<'a>(state: &'a SearchPageState) -> Element<'a, Message> {
         });
     items.push(next_btn.into());
 
-    container(row(items).spacing(16).align_y(Alignment::Center))
-        .width(Fill)
-        .align_x(Alignment::Center)
-        .into()
+    container(
+        row(items)
+            .spacing(tokens.space(16.0))
+            .align_y(Alignment::Center),
+    )
+    .width(Fill)
+    .align_x(Alignment::Center)
+    .into()
 }
 
 /// Loading state
-fn loading_state<'a>() -> Element<'a, Message> {
+fn loading_state<'a>(context: ResponsiveContext) -> Element<'a, Message> {
+    let tokens = context.tokens;
     container(
         text("搜索中...")
-            .size(theme::TEXT_SIZE_BODY_LARGE)
+            .size(tokens.text(TextRole::BodyLarge))
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_muted(theme)),
             }),
     )
     .width(Fill)
-    .height(200)
+    .height(tokens.size(200.0))
     .center_x(Fill)
-    .center_y(200)
+    .center_y(tokens.size(200.0))
     .into()
 }
 
 /// Empty search state (no keyword entered)
-fn empty_search_state<'a>(_locale: Locale) -> Element<'a, Message> {
+fn empty_search_state<'a>(_locale: Locale, context: ResponsiveContext) -> Element<'a, Message> {
+    let tokens = context.tokens;
     container(
         column![
-            text("🔍").size(theme::TEXT_SIZE_DISPLAY),
-            Space::new().height(16),
+            text("🔍").size(tokens.text(TextRole::Display)),
+            Space::new().height(tokens.space(16.0)),
             text("输入关键词开始搜索")
-                .size(theme::TEXT_SIZE_BODY_LARGE)
+                .size(tokens.text(TextRole::BodyLarge))
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_muted(theme)),
                 }),
@@ -717,13 +928,16 @@ fn empty_search_state<'a>(_locale: Locale) -> Element<'a, Message> {
 }
 
 /// Empty results state
-fn empty_results_state<'a>(keyword: &str) -> Element<'a, Message> {
+fn empty_results_state<'a>(keyword: &str, context: ResponsiveContext) -> Element<'a, Message> {
+    let tokens = context.tokens;
     container(
         column![
-            text("🔍").size(theme::TEXT_SIZE_DISPLAY),
-            Space::new().height(16),
+            text("🔍").size(tokens.text(TextRole::Display)),
+            Space::new().height(tokens.space(16.0)),
             text(format!("未找到 \"{}\" 的相关结果", keyword))
-                .size(theme::TEXT_SIZE_BODY_LARGE)
+                .size(tokens.text(TextRole::BodyLarge))
+                .width(Fill)
+                .wrapping(Wrapping::WordOrGlyph)
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_muted(theme)),
                 }),
@@ -731,8 +945,8 @@ fn empty_results_state<'a>(keyword: &str) -> Element<'a, Message> {
         .align_x(Alignment::Center),
     )
     .width(Fill)
-    .height(200)
+    .height(tokens.size(200.0))
     .center_x(Fill)
-    .center_y(200)
+    .center_y(tokens.size(200.0))
     .into()
 }

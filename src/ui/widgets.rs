@@ -42,10 +42,7 @@ pub use play_mode_button::ButtonSize as PlayModeButtonSize;
 pub use playback_controls::ControlSize;
 pub use playlist_card::view as playlist_card;
 pub use progress_slider::SliderSize;
-pub use responsive::{
-    calculate_grid_columns, calculate_grid_columns_clamped, measured_scrollable,
-    usable_content_width,
-};
+pub use responsive::{calculate_grid_columns, measured_scrollable, usable_content_width};
 pub use smooth_scroll::smooth_scroll;
 pub use toast::{Toast, view_toast};
 pub use vertical_slider::vertical_slider;

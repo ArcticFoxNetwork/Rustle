@@ -8,7 +8,7 @@
 //! - Professional spectrum analyzer (FFT-based)
 
 use iced::widget::canvas::{self, Canvas, Frame, Geometry, Path, Stroke, Text};
-use iced::widget::{Space, column, container, pick_list, row, scrollable, text, toggler};
+use iced::widget::{Space, column, container, pick_list, row, scrollable, slider, text, toggler};
 use iced::{Alignment, Background, Color, Element, Fill, Length, Padding, Point, Theme};
 
 use crate::app::Message;
@@ -19,6 +19,7 @@ use crate::audio::{
 use crate::features::{EqualizerPreset, Settings};
 use crate::i18n::{Key, Locale};
 use crate::ui::animation::SmoothScrollTarget;
+use crate::ui::responsive::{LayoutProfile, ResponsiveContext, TextRole, top_bar_height};
 use crate::ui::theme;
 use crate::ui::widgets::vertical_slider;
 
@@ -51,14 +52,16 @@ const SPECTRUM_DB_LABELS: [(i32, &str); 5] = [
 ];
 
 /// Audio Engine page view
-pub fn view(
-    settings: &Settings,
+pub fn view<'a>(
+    settings: &'a Settings,
     locale: Locale,
     analysis_data: Option<AudioAnalysisData>,
-) -> Element<'static, Message> {
+    context: ResponsiveContext,
+) -> Element<'a, Message> {
+    let tokens = context.tokens;
     // Header with just title
     let header = text(locale.get(Key::AudioEngineTitle).to_string())
-        .size(theme::TEXT_SIZE_TITLE_LARGE)
+        .size(tokens.text(TextRole::TitleLarge))
         .style(|theme| text::Style {
             color: Some(theme::settings_title(theme)),
         });
@@ -66,11 +69,11 @@ pub fn view(
     let header_container = container(header)
         .width(Fill)
         .padding(
-            Padding::new(40.0)
-                .top(70.0)
-                .right(32.0)
-                .bottom(20.0)
-                .left(32.0),
+            Padding::new(tokens.space(40.0))
+                .top(top_bar_height(&context))
+                .right(tokens.space(32.0))
+                .bottom(tokens.space(20.0))
+                .left(tokens.space(32.0)),
         )
         .style(|theme| container::Style {
             background: Some(Background::Color(theme::background(theme))),
@@ -96,8 +99,8 @@ pub fn view(
     // Main content with equalizer and audio visualization
     let content = column![
         // Equalizer section
-        equalizer_section(settings, locale),
-        Space::new().height(40),
+        equalizer_section(settings, locale, context),
+        Space::new().height(tokens.space(40.0)),
         // Audio visualization section
         audio_visualization_section(
             left_level,
@@ -106,7 +109,8 @@ pub fn view(
             sample_rate,
             decay,
             bars_mode,
-            locale
+            locale,
+            context,
         ),
     ]
     .spacing(0)
@@ -114,9 +118,12 @@ pub fn view(
 
     let scrollable_content = crate::ui::widgets::smooth_scroll(
         scrollable(
-            container(content)
-                .width(Fill)
-                .padding(Padding::new(20.0).right(32.0).bottom(60.0).left(32.0)),
+            container(content).width(Fill).padding(
+                Padding::new(tokens.space(20.0))
+                    .right(tokens.space(32.0))
+                    .bottom(tokens.space(60.0))
+                    .left(tokens.space(32.0)),
+            ),
         )
         .width(Fill)
         .height(Fill)
@@ -137,7 +144,12 @@ pub fn view(
 }
 
 /// Equalizer section with title
-fn equalizer_section(settings: &Settings, locale: Locale) -> Element<'static, Message> {
+fn equalizer_section(
+    settings: &Settings,
+    locale: Locale,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let eq_enabled = settings.playback.equalizer_enabled;
     let eq_preset = settings.playback.equalizer_preset;
     let eq_values = settings.playback.equalizer_values;
@@ -146,22 +158,22 @@ fn equalizer_section(settings: &Settings, locale: Locale) -> Element<'static, Me
     // Section title row with toggle and preset
     let title_row = row![
         text(locale.get(Key::AudioEngineEqualizer).to_string())
-            .size(theme::TEXT_SIZE_SUBTITLE)
+            .size(tokens.text(TextRole::Subtitle))
             .style(|theme| text::Style {
                 color: Some(theme::settings_title(theme))
             }),
-        Space::new().width(24),
+        Space::new().width(tokens.space(24.0)),
         toggler(eq_enabled)
             .on_toggle(Message::UpdateEqualizerEnabled)
-            .size(theme::TEXT_SIZE_SUBTITLE),
-        Space::new().width(8),
+            .size(tokens.text(TextRole::Subtitle)),
+        Space::new().width(tokens.space(8.0)),
         text(if eq_enabled { "ON" } else { "OFF" })
-            .size(theme::TEXT_SIZE_LABEL)
+            .size(tokens.text(TextRole::Label))
             .style(|theme| text::Style {
                 color: Some(theme::settings_desc(theme))
             }),
         Space::new().width(Fill),
-        preset_picker(eq_preset),
+        preset_picker(eq_preset, context),
     ]
     .align_y(Alignment::Center)
     .width(Fill);
@@ -169,12 +181,12 @@ fn equalizer_section(settings: &Settings, locale: Locale) -> Element<'static, Me
     // Equalizer content
     let eq_content: Element<'static, Message> = if eq_enabled {
         column![
-            Space::new().height(24),
+            Space::new().height(tokens.space(24.0)),
             // EQ Curve visualization
-            eq_curve_canvas(eq_values),
-            Space::new().height(24),
+            eq_curve_canvas(eq_values, context),
+            Space::new().height(tokens.space(24.0)),
             // Sliders row with preamp
-            sliders_with_preamp(eq_values, preamp),
+            sliders_with_preamp(eq_values, preamp, context),
         ]
         .spacing(0)
         .width(Fill)
@@ -182,13 +194,13 @@ fn equalizer_section(settings: &Settings, locale: Locale) -> Element<'static, Me
     } else {
         container(
             text(locale.get(Key::AudioEngineEqualizerDisabled).to_string())
-                .size(theme::TEXT_SIZE_BODY)
+                .size(tokens.text(TextRole::Body))
                 .style(|theme| text::Style {
                     color: Some(theme::settings_desc(theme)),
                 }),
         )
         .width(Fill)
-        .height(100)
+        .height(tokens.size(100.0))
         .center_x(Fill)
         .center_y(100)
         .into()
@@ -209,8 +221,9 @@ fn audio_visualization_section(
     decay: f32,
     bars_mode: bool,
     locale: Locale,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
-    use iced::widget::slider;
+    let tokens = context.tokens;
 
     // Separator line
     let separator = container(Space::new().width(Fill).height(1)).style(|theme| container::Style {
@@ -220,77 +233,110 @@ fn audio_visualization_section(
 
     // Section title
     let title = text(locale.get(Key::AudioEngineSpectrum).to_string())
-        .size(theme::TEXT_SIZE_SUBTITLE)
+        .size(tokens.text(TextRole::Subtitle))
         .style(|theme| text::Style {
             color: Some(theme::settings_title(theme)),
         });
 
     // Mode dropdown (bars/line) - like equalizer preset picker
-    let mode_picker = spectrum_mode_picker(bars_mode);
+    let mode_picker = spectrum_mode_picker(bars_mode, context);
 
     // Spectrum analyzer canvas (main visualization)
-    let spectrum_height = 280.0;
-    let spectrum = Canvas::new(SpectrumAnalyzer {
+    let spectrum_height = tokens.size(280.0);
+    let spectrum: Element<'static, Message> = Canvas::new(SpectrumAnalyzer {
         spectrum_db,
         sample_rate,
         bars_mode,
     })
     .width(Fill)
-    .height(Length::Fixed(spectrum_height));
+    .height(Length::Fixed(spectrum_height))
+    .into();
 
     // Volume meters on the left (same height as spectrum graph area)
-    let meter_height = spectrum_height - 50.0; // Account for top/bottom margins
-    let meters = column![
-        Space::new().height(10.0), // Align with graph top margin
+    let meter_height = (spectrum_height - tokens.space(50.0)).max(tokens.size(120.0));
+    let meters: Element<'static, Message> = column![
+        Space::new().height(tokens.space(10.0)), // Align with graph top margin
         row![
-            volume_meter_view("L", left_level, meter_height),
-            Space::new().width(8),
-            volume_meter_view("R", right_level, meter_height),
+            volume_meter_view("L", left_level, meter_height, context),
+            Space::new().width(tokens.space(8.0)),
+            volume_meter_view("R", right_level, meter_height, context),
         ]
         .align_y(Alignment::Start),
     ]
-    .align_x(Alignment::Center);
+    .align_x(Alignment::Center)
+    .into();
 
     // Decay slider
     let decay_label = text("Decay")
-        .size(theme::TEXT_SIZE_CAPTION)
+        .size(tokens.text(TextRole::Caption))
         .style(|theme| text::Style {
             color: Some(theme::settings_desc(theme)),
         });
     let decay_slider = slider(0.0..=0.95, decay, Message::UpdateSpectrumDecay)
         .step(0.01_f32)
-        .width(Length::Fixed(120.0));
+        .width(Length::Fixed(tokens.size(120.0)));
 
     column![
         separator,
-        Space::new().height(24),
+        Space::new().height(tokens.space(24.0)),
         row![title, Space::new().width(Fill), mode_picker,]
             .align_y(Alignment::Center)
             .width(Fill),
-        Space::new().height(16),
-        // Volume meters on left, spectrum in center (dB labels on right side of spectrum)
-        row![meters, Space::new().width(16), spectrum,]
-            .align_y(Alignment::Start)
-            .width(Fill),
-        Space::new().height(12),
-        row![decay_label, Space::new().width(8), decay_slider,].align_y(Alignment::Center),
+        Space::new().height(tokens.space(16.0)),
+        visualization_lanes(meters, spectrum, context),
+        Space::new().height(tokens.space(12.0)),
+        row![
+            decay_label,
+            Space::new().width(tokens.space(8.0)),
+            decay_slider,
+        ]
+        .align_y(Alignment::Center)
+        .width(Fill),
     ]
     .spacing(0)
     .width(Fill)
     .into()
 }
 
+fn visualization_lanes(
+    meters: Element<'static, Message>,
+    spectrum: Element<'static, Message>,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
+    let tokens = context.tokens;
+    match context.profile {
+        LayoutProfile::Expanded | LayoutProfile::Standard => {
+            row![meters, Space::new().width(tokens.space(16.0)), spectrum,]
+                .align_y(Alignment::Start)
+                .width(Fill)
+                .into()
+        }
+        LayoutProfile::Compact | LayoutProfile::Tablet | LayoutProfile::Narrow => {
+            column![meters, Space::new().height(tokens.space(12.0)), spectrum,]
+                .spacing(0)
+                .width(Fill)
+                .into()
+        }
+    }
+}
+
 /// Volume meter view for a single channel
-fn volume_meter_view(label: &'static str, level: f32, height: f32) -> Element<'static, Message> {
+fn volume_meter_view(
+    label: &'static str,
+    level: f32,
+    height: f32,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
+    let tokens = context.tokens;
     column![
         text(label)
-            .size(theme::TEXT_SIZE_CAPTION)
+            .size(tokens.text(TextRole::Caption))
             .style(|theme| text::Style {
                 color: Some(theme::settings_desc(theme))
             }),
-        Space::new().height(8),
+        Space::new().height(tokens.space(8.0)),
         Canvas::new(VolumeMeter { level })
-            .width(Length::Fixed(24.0))
+            .width(Length::Fixed(tokens.size(24.0)))
             .height(Length::Fixed(height)),
     ]
     .spacing(0)
@@ -299,13 +345,17 @@ fn volume_meter_view(label: &'static str, level: f32, height: f32) -> Element<'s
 }
 
 /// Preset picker dropdown
-fn preset_picker(current: EqualizerPreset) -> Element<'static, Message> {
+fn preset_picker(
+    current: EqualizerPreset,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let presets: Vec<EqualizerPreset> = EqualizerPreset::all().to_vec();
 
     pick_list(Some(current), presets, |preset| preset.to_string())
         .on_select(Message::UpdateEqualizerPreset)
-        .text_size(theme::TEXT_SIZE_BODY)
-        .padding([8, 16])
+        .text_size(tokens.text(TextRole::Body))
+        .padding([tokens.space(8.0), tokens.space(16.0)])
         .style(theme::settings_pick_list)
         .menu_style(theme::settings_pick_list_menu)
         .into()
@@ -328,7 +378,8 @@ impl std::fmt::Display for SpectrumMode {
 }
 
 /// Spectrum mode picker dropdown
-fn spectrum_mode_picker(bars_mode: bool) -> Element<'static, Message> {
+fn spectrum_mode_picker(bars_mode: bool, context: ResponsiveContext) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let modes = vec![SpectrumMode::Bars, SpectrumMode::Line];
     let current = if bars_mode {
         SpectrumMode::Bars
@@ -338,18 +389,18 @@ fn spectrum_mode_picker(bars_mode: bool) -> Element<'static, Message> {
 
     pick_list(Some(current), modes, |mode| mode.to_string())
         .on_select(|mode| Message::UpdateSpectrumBarsMode(mode == SpectrumMode::Bars))
-        .text_size(theme::TEXT_SIZE_BODY)
-        .padding([8, 16])
+        .text_size(tokens.text(TextRole::Body))
+        .padding([tokens.space(8.0), tokens.space(16.0)])
         .style(theme::settings_pick_list)
         .menu_style(theme::settings_pick_list_menu)
         .into()
 }
 
 /// EQ curve visualization using Canvas
-fn eq_curve_canvas(eq_values: [f32; 10]) -> Element<'static, Message> {
+fn eq_curve_canvas(eq_values: [f32; 10], context: ResponsiveContext) -> Element<'static, Message> {
     Canvas::new(EqCurve { values: eq_values })
         .width(Fill)
-        .height(Length::Fixed(120.0))
+        .height(Length::Fixed(context.tokens.size(120.0)))
         .into()
 }
 
@@ -835,18 +886,25 @@ fn format_db(value: f32) -> String {
     }
 }
 
-/// Sliders row with preamp and separator
-fn sliders_with_preamp(eq_values: [f32; 10], preamp: f32) -> Element<'static, Message> {
-    // Preamp slider with value display
+/// Render the ten EQ bands and preamp using the profile's composition policy.
+fn sliders_with_preamp(
+    eq_values: [f32; 10],
+    preamp: f32,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
+    let tokens = context.tokens;
+    let slider_height = tokens.size(180.0);
+    let slider_width = tokens.size(40.0);
+
     let preamp_slider = column![
         text("PREAMP")
-            .size(theme::TEXT_SIZE_CAPTION)
+            .size(tokens.text(TextRole::Caption))
             .style(|theme| text::Style {
                 color: Some(theme::settings_desc(theme))
             }),
-        Space::new().height(4),
+        Space::new().height(tokens.space(4.0)),
         text(format_db(preamp))
-            .size(theme::TEXT_SIZE_MICRO)
+            .size(tokens.text(TextRole::Micro))
             .style(move |theme| text::Style {
                 color: Some(if preamp != 0.0 {
                     theme::ACCENT_PINK
@@ -854,41 +912,62 @@ fn sliders_with_preamp(eq_values: [f32; 10], preamp: f32) -> Element<'static, Me
                     theme::settings_value(theme)
                 })
             }),
-        Space::new().height(4),
+        Space::new().height(tokens.space(4.0)),
         vertical_slider(-12.0..=12.0, preamp, Message::UpdateEqualizerPreamp)
             .step(0.5)
-            .width(40)
-            .height(180),
+            .width(slider_width)
+            .height(slider_height),
     ]
     .spacing(0)
     .align_x(Alignment::Center)
-    .width(Length::Fixed(60.0));
+    .width(Length::Fixed(tokens.size(60.0)));
 
-    // Separator line
-    let separator = container(Space::new().width(1).height(200)).style(|theme| container::Style {
+    let separator = container(
+        Space::new()
+            .width(tokens.size(1.0))
+            .height(slider_height + tokens.space(20.0)),
+    )
+    .style(|theme| container::Style {
         background: Some(Background::Color(theme::divider(theme))),
         ..Default::default()
     });
 
-    // EQ band sliders
     let band_sliders: Vec<Element<'static, Message>> = (0..10)
-        .map(|i| {
-            let value = eq_values[i];
-            let freq = FREQ_LABELS[i];
-            vertical_slider_band(i, value, freq, eq_values)
-        })
+        .map(|i| vertical_slider_band(i, eq_values[i], FREQ_LABELS[i], eq_values, context))
         .collect();
 
-    row![
-        preamp_slider,
-        Space::new().width(16),
-        separator,
-        Space::new().width(16),
-        row(band_sliders).spacing(0).width(Fill),
-    ]
-    .align_y(Alignment::End)
-    .width(Fill)
-    .into()
+    match context.profile {
+        LayoutProfile::Expanded | LayoutProfile::Standard | LayoutProfile::Compact => row![
+            preamp_slider,
+            Space::new().width(tokens.space(16.0)),
+            separator,
+            Space::new().width(tokens.space(16.0)),
+            row(band_sliders).spacing(tokens.space(4.0)).width(Fill),
+        ]
+        .align_y(Alignment::End)
+        .width(Fill)
+        .into(),
+        LayoutProfile::Tablet => {
+            let mut bands = band_sliders.into_iter();
+            let first_row = row(bands.by_ref().take(5).collect::<Vec<_>>())
+                .spacing(tokens.space(4.0))
+                .width(Fill);
+            let second_row = row(bands.collect::<Vec<_>>())
+                .spacing(tokens.space(4.0))
+                .width(Fill);
+            column![
+                row![preamp_slider, first_row]
+                    .spacing(tokens.space(12.0))
+                    .align_y(Alignment::End)
+                    .width(Fill),
+                second_row,
+            ]
+            .spacing(tokens.space(16.0))
+            .width(Fill)
+            .into()
+        }
+        LayoutProfile::Narrow => horizontal_eq_surface(eq_values, preamp, context),
+    }
 }
 
 /// Single vertical slider band with label and value display
@@ -897,11 +976,13 @@ fn vertical_slider_band(
     value: f32,
     freq_label: &'static str,
     eq_values: [f32; 10],
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
+    let tokens = context.tokens;
     column![
         // Value display above slider
         text(format_db(value))
-            .size(theme::TEXT_SIZE_MICRO)
+            .size(tokens.text(TextRole::Micro))
             .style(move |theme| text::Style {
                 color: Some(if value != 0.0 {
                     theme::ACCENT_PINK
@@ -911,7 +992,7 @@ fn vertical_slider_band(
             })
             .align_x(Alignment::Center)
             .width(Fill),
-        Space::new().height(4),
+        Space::new().height(tokens.space(4.0)),
         // Vertical slider
         vertical_slider(-12.0..=12.0, value, move |v| {
             let mut new_values = eq_values;
@@ -919,12 +1000,12 @@ fn vertical_slider_band(
             Message::UpdateEqualizerValues(new_values)
         })
         .step(0.5)
-        .width(40)
-        .height(180),
-        Space::new().height(8),
+        .width(tokens.size(40.0))
+        .height(tokens.size(180.0)),
+        Space::new().height(tokens.space(8.0)),
         // Frequency label
         text(freq_label)
-            .size(theme::TEXT_SIZE_CAPTION)
+            .size(tokens.text(TextRole::Caption))
             .style(|theme| text::Style {
                 color: Some(theme::settings_desc(theme))
             })
@@ -934,5 +1015,82 @@ fn vertical_slider_band(
     .spacing(0)
     .align_x(Alignment::Center)
     .width(Fill)
+    .into()
+}
+
+fn horizontal_eq_surface(
+    eq_values: [f32; 10],
+    preamp: f32,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
+    let tokens = context.tokens;
+    let mut controls: Vec<Element<'static, Message>> = Vec::with_capacity(11);
+    controls.push(horizontal_slider_band(
+        "PREAMP",
+        preamp,
+        Message::UpdateEqualizerPreamp,
+        context,
+    ));
+    for (index, value) in eq_values.into_iter().enumerate() {
+        let label = FREQ_LABELS[index];
+        let values = eq_values;
+        controls.push(horizontal_slider_band(
+            label,
+            value,
+            move |new_value| {
+                let mut next = values;
+                next[index] = new_value;
+                Message::UpdateEqualizerValues(next)
+            },
+            context,
+        ));
+    }
+
+    scrollable(
+        row(controls)
+            .spacing(tokens.space(12.0))
+            .padding(tokens.space(4.0)),
+    )
+    .direction(iced::widget::scrollable::Direction::Horizontal(
+        iced::widget::scrollable::Scrollbar::new()
+            .width(0)
+            .scroller_width(0),
+    ))
+    .id(iced::widget::Id::new("audio_eq_horizontal_scroll"))
+    .width(Fill)
+    .into()
+}
+
+fn horizontal_slider_band<F>(
+    label: &'static str,
+    value: f32,
+    on_change: F,
+    context: ResponsiveContext,
+) -> Element<'static, Message>
+where
+    F: Fn(f32) -> Message + 'static,
+{
+    let tokens = context.tokens;
+    column![
+        text(label)
+            .size(tokens.text(TextRole::Caption))
+            .style(|theme| text::Style {
+                color: Some(theme::settings_desc(theme)),
+            }),
+        text(format_db(value))
+            .size(tokens.text(TextRole::Micro))
+            .style(move |theme| text::Style {
+                color: Some(if value != 0.0 {
+                    theme::ACCENT_PINK
+                } else {
+                    theme::settings_value(theme)
+                }),
+            }),
+        slider(-12.0..=12.0, value, on_change)
+            .step(0.5)
+            .width(tokens.size(120.0)),
+    ]
+    .spacing(tokens.space(4.0))
+    .width(Length::Fixed(tokens.size(140.0)))
     .into()
 }

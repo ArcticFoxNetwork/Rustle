@@ -18,12 +18,15 @@ use iced::advanced::renderer;
 use iced::advanced::widget::{Operation, Tree, Widget};
 use iced::border::Radius;
 use iced::mouse::{self, Cursor, Interaction};
-use iced::widget::{button, column, container, mouse_area, opaque, row, text};
+use iced::widget::{button, column, container, mouse_area, opaque, row, scrollable, text};
 use iced::{
     Alignment, Background, Border, Color, Element, Event, Length, Rectangle, Shadow, Size, Vector,
 };
 
 use crate::app::Message;
+use crate::ui::responsive::{
+    RadiusRole, ResponsiveContext, TargetRole, TextRole, bounded_height, bounded_width,
+};
 use crate::ui::{theme, widgets};
 
 // ============================================================================
@@ -332,12 +335,43 @@ pub fn modal_view<'a>(
     content: Element<'a, Message>,
     on_dismiss: Message,
 ) -> Element<'a, Message> {
+    modal_view_responsive(
+        ResponsiveContext::new(Size::new(1_920.0, 1_080.0)),
+        config,
+        content,
+        on_dismiss,
+    )
+}
+
+/// Render a modal bounded by the current logical viewport.
+pub fn modal_view_responsive<'a>(
+    context: ResponsiveContext,
+    config: &ModalConfig,
+    content: Element<'a, Message>,
+    on_dismiss: Message,
+) -> Element<'a, Message> {
     let bg = backdrop_color();
-    let border_radius = config.border_radius;
+    let tokens = context.tokens;
+    let panel_width = bounded_width(
+        tokens.size(config.width),
+        context.width(),
+        tokens.space(16.0),
+    );
+    let compact_height = bounded_height(tokens.size(720.0), context.height(), tokens.space(56.0));
+    let border_radius = tokens.size(config.border_radius);
+
+    let content = if context.profile.is_compact() {
+        scrollable(container(content).width(Length::Fill))
+            .id(iced::widget::Id::new("modal_body_scroll"))
+            .height(Length::Fixed(compact_height))
+            .into()
+    } else {
+        content
+    };
 
     let panel = opaque(
         container(content)
-            .width(Length::Fixed(config.width))
+            .width(Length::Fixed(panel_width))
             .style(move |t| container::Style {
                 background: Some(Background::Color(theme::surface(t))),
                 border: Border {
@@ -347,8 +381,8 @@ pub fn modal_view<'a>(
                 },
                 shadow: Shadow {
                     color: Color::from_rgba(0.0, 0.0, 0.0, 0.4),
-                    offset: iced::Vector::new(0.0, 8.0),
-                    blur_radius: 32.0,
+                    offset: iced::Vector::new(0.0, tokens.size(8.0)),
+                    blur_radius: tokens.size(32.0),
                 },
                 ..Default::default()
             }),
@@ -377,20 +411,45 @@ pub fn modal_view<'a>(
 
 /// Header bar: title left, close button (✕) right.
 pub fn modal_header(title: String, on_close: Message) -> Element<'static, Message> {
-    let close_button = button(text("✕").size(16.0).style(|theme| text::Style {
-        color: Some(theme::text_muted(theme)),
-    }))
+    modal_header_responsive(
+        ResponsiveContext::new(Size::new(1_920.0, 1_080.0)),
+        title,
+        on_close,
+    )
+}
+
+/// Header bar with density-aware typography and a stable close hit target.
+pub fn modal_header_responsive(
+    context: ResponsiveContext,
+    title: String,
+    on_close: Message,
+) -> Element<'static, Message> {
+    let tokens = context.tokens;
+    let close_size = tokens.target(TargetRole::WindowControl);
+    let close_button = button(
+        container(
+            text("✕")
+                .size(tokens.text(TextRole::Subtitle))
+                .style(|theme| text::Style {
+                    color: Some(theme::text_muted(theme)),
+                }),
+        )
+        .width(close_size)
+        .height(close_size)
+        .center_x(close_size)
+        .center_y(close_size),
+    )
     .style(close_btn_style)
-    .padding([6, 10])
+    .padding(0)
     .on_press(on_close);
     let close_button =
-        widgets::hover_surface(close_button).style(|theme, progress| container::Style {
+        widgets::hover_surface(close_button).style(move |theme, progress| container::Style {
             background: Some(Background::Color(theme::hover_bg_alpha(
                 theme,
                 0.08 * progress,
             ))),
             border: Border {
-                radius: 6.0.into(),
+                radius: tokens.radius(RadiusRole::Small).into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -398,33 +457,54 @@ pub fn modal_header(title: String, on_close: Message) -> Element<'static, Messag
 
     container(
         row![
-            text(title).size(14.0).style(|theme| text::Style {
-                color: Some(theme::text_primary(theme))
-            }),
+            text(title)
+                .size(tokens.text(TextRole::BodyLarge))
+                .style(|theme| text::Style {
+                    color: Some(theme::text_primary(theme))
+                }),
             iced::widget::Space::new().width(Length::Fill),
             close_button,
         ]
         .align_y(Alignment::Center)
-        .padding([14, 20]),
+        .padding([tokens.space(14.0), tokens.space(20.0)]),
     )
     .into()
 }
 
 /// Footer bar: divider line + right-aligned buttons.
 pub fn modal_footer<'a>(buttons: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+    modal_footer_responsive(ResponsiveContext::new(Size::new(1_920.0, 1_080.0)), buttons)
+}
+
+/// Footer bar with token-scaled spacing.
+pub fn modal_footer_responsive<'a>(
+    context: ResponsiveContext,
+    buttons: Vec<Element<'a, Message>>,
+) -> Element<'a, Message> {
+    let tokens = context.tokens;
     let mut row_children: Vec<Element<'a, Message>> =
         vec![iced::widget::Space::new().width(Length::Fill).into()];
     row_children.extend(buttons);
     let btn_row = row(row_children)
         .align_y(Alignment::Center)
-        .spacing(12)
-        .padding([14, 20]);
-    column![divider(), btn_row].into()
+        .spacing(tokens.space(12.0))
+        .padding([tokens.space(14.0), tokens.space(20.0)]);
+    column![divider_responsive(context), btn_row].into()
 }
 
 /// Content area with standard padding.
 pub fn modal_body<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
-    container(content).padding(24).into()
+    modal_body_responsive(ResponsiveContext::new(Size::new(1_920.0, 1_080.0)), content)
+}
+
+/// Content area with density-aware standard padding.
+pub fn modal_body_responsive<'a>(
+    context: ResponsiveContext,
+    content: Element<'a, Message>,
+) -> Element<'a, Message> {
+    container(content)
+        .padding(context.tokens.space(24.0))
+        .into()
 }
 
 /// Full modal layout: header + divider + body + footer.
@@ -434,16 +514,45 @@ pub fn modal_section<'a>(
     body: Element<'a, Message>,
     footer: Element<'a, Message>,
 ) -> Element<'a, Message> {
-    column![modal_header(title, on_close), divider(), body, footer].into()
+    modal_section_responsive(
+        ResponsiveContext::new(Size::new(1_920.0, 1_080.0)),
+        title,
+        on_close,
+        body,
+        footer,
+    )
 }
 
-fn divider() -> Element<'static, Message> {
-    container(iced::widget::Space::new().width(Length::Fill).height(1))
-        .style(|theme| container::Style {
-            background: Some(Background::Color(theme::divider(theme))),
-            ..Default::default()
-        })
-        .into()
+/// Full modal layout with density-aware header, body, and footer spacing.
+pub fn modal_section_responsive<'a>(
+    context: ResponsiveContext,
+    title: String,
+    on_close: Message,
+    body: Element<'a, Message>,
+    footer: Element<'a, Message>,
+) -> Element<'a, Message> {
+    column![
+        modal_header_responsive(context, title, on_close),
+        divider_responsive(context),
+        body,
+        footer
+    ]
+    .into()
+}
+
+fn divider_responsive(context: ResponsiveContext) -> Element<'static, Message> {
+    let line_size = context.tokens.space(1.0);
+    container(
+        iced::widget::Space::new()
+            .width(Length::Fill)
+            .height(line_size),
+    )
+    .height(Length::Fixed(line_size))
+    .style(|theme| container::Style {
+        background: Some(Background::Color(theme::divider(theme))),
+        ..Default::default()
+    })
+    .into()
 }
 
 fn close_btn_style(_: &iced::Theme, _status: button::Status) -> button::Style {

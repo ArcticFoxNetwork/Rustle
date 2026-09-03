@@ -5,16 +5,17 @@ use iced::widget::{Space, container, mouse_area, stack};
 use iced::{Alignment, Element, Fill, Length};
 
 use crate::app::Message;
+use crate::ui::responsive::ResponsiveContext;
 
-pub fn view<'a>() -> Element<'a, Message> {
+pub fn view<'a>(context: ResponsiveContext) -> Element<'a, Message> {
     if !crate::platform::window::needs_manual_resize_handles() {
         return Space::new().width(0).height(0).into();
     }
 
     use iced::window::Direction;
 
-    const EDGE_SIZE: f32 = 3.0;
-    const CORNER_SIZE: f32 = 10.0;
+    let edge_size = context.tokens.size(3.0).max(3.0);
+    let corner_size = context.tokens.size(10.0).max(10.0);
 
     fn handle<'a>(
         direction: Direction,
@@ -41,7 +42,7 @@ pub fn view<'a>() -> Element<'a, Message> {
             Direction::North,
             Interaction::ResizingVertically,
             Length::Fill,
-            Length::Fixed(EDGE_SIZE),
+            Length::Fixed(edge_size),
             Alignment::Center,
             Alignment::Start,
         ),
@@ -49,14 +50,14 @@ pub fn view<'a>() -> Element<'a, Message> {
             Direction::South,
             Interaction::ResizingVertically,
             Length::Fill,
-            Length::Fixed(EDGE_SIZE),
+            Length::Fixed(edge_size),
             Alignment::Center,
             Alignment::End,
         ),
         handle(
             Direction::West,
             Interaction::ResizingHorizontally,
-            Length::Fixed(EDGE_SIZE),
+            Length::Fixed(edge_size),
             Length::Fill,
             Alignment::Start,
             Alignment::Center,
@@ -64,7 +65,7 @@ pub fn view<'a>() -> Element<'a, Message> {
         handle(
             Direction::East,
             Interaction::ResizingHorizontally,
-            Length::Fixed(EDGE_SIZE),
+            Length::Fixed(edge_size),
             Length::Fill,
             Alignment::End,
             Alignment::Center,
@@ -72,32 +73,32 @@ pub fn view<'a>() -> Element<'a, Message> {
         handle(
             Direction::NorthWest,
             Interaction::ResizingDiagonallyDown,
-            Length::Fixed(CORNER_SIZE),
-            Length::Fixed(CORNER_SIZE),
+            Length::Fixed(corner_size),
+            Length::Fixed(corner_size),
             Alignment::Start,
             Alignment::Start,
         ),
         handle(
             Direction::NorthEast,
             Interaction::ResizingDiagonallyUp,
-            Length::Fixed(CORNER_SIZE),
-            Length::Fixed(CORNER_SIZE),
+            Length::Fixed(corner_size),
+            Length::Fixed(corner_size),
             Alignment::End,
             Alignment::Start,
         ),
         handle(
             Direction::SouthWest,
             Interaction::ResizingDiagonallyUp,
-            Length::Fixed(CORNER_SIZE),
-            Length::Fixed(CORNER_SIZE),
+            Length::Fixed(corner_size),
+            Length::Fixed(corner_size),
             Alignment::Start,
             Alignment::End,
         ),
         handle(
             Direction::SouthEast,
             Interaction::ResizingDiagonallyDown,
-            Length::Fixed(CORNER_SIZE),
-            Length::Fixed(CORNER_SIZE),
+            Length::Fixed(corner_size),
+            Length::Fixed(corner_size),
             Alignment::End,
             Alignment::End,
         ),

@@ -27,6 +27,10 @@ impl App {
                     if can_dismiss {
                         return Some(Task::done(Message::DismissTopModal));
                     }
+
+                    if self.ui.sidebar_drawer_open {
+                        return Some(Task::done(Message::CloseSidebarDrawer));
+                    }
                 }
 
                 // If editing a keybinding, capture the key press for that

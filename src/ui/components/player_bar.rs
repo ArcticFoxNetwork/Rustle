@@ -10,10 +10,13 @@ use crate::api::ArtistSummary;
 use crate::app::Message;
 use crate::database::DbSong;
 use crate::features::PlayMode;
+use crate::ui::responsive::{ChromeRole, IconRole, ResponsiveContext, TextRole, UiTokens};
 use crate::ui::theme::BOLD_WEIGHT;
-use crate::ui::widgets::{self, ControlSize, SliderSize};
+use crate::ui::widgets::{self, ControlSize, PlayModeButtonSize, SliderSize};
 use crate::ui::{icons, theme};
 use crate::utils;
+
+use super::playback_controls::play_mode_button;
 
 /// Player bar height
 pub const PLAYER_BAR_HEIGHT: f32 = 80.0;
@@ -54,32 +57,51 @@ struct PlayerBarLayout {
 
 impl PlayerBarLayout {
     fn for_width(total_width: f32) -> Self {
-        let fixed_chrome = CONTENT_HORIZONTAL_PADDING + SECTION_SPACING * 2.0;
-        let side_width = (total_width - fixed_chrome - CENTER_CONTROLS_WIDTH).max(0.0);
+        Self::for_width_scaled(total_width, 1.0)
+    }
 
-        let (left_width, right_width) = if side_width >= LEFT_MIN_WIDTH + RIGHT_PREFERRED_WIDTH {
-            (
-                (side_width - RIGHT_PREFERRED_WIDTH).min(LEFT_MAX_WIDTH),
-                RIGHT_PREFERRED_WIDTH,
-            )
-        } else if side_width >= LEFT_MIN_WIDTH + RIGHT_VERTICAL_MIN_WIDTH {
-            (LEFT_MIN_WIDTH, side_width - LEFT_MIN_WIDTH)
+    fn for_width_scaled(total_width: f32, density: f32) -> Self {
+        let density = if density.is_finite() && density > 0.0 {
+            density
         } else {
-            let right_width = side_width.min(RIGHT_VERTICAL_MIN_WIDTH);
+            1.0
+        };
+        let fixed_chrome = (CONTENT_HORIZONTAL_PADDING + SECTION_SPACING * 2.0) * density;
+        let center_controls_width = CENTER_CONTROLS_WIDTH * density;
+        let left_max_width = LEFT_MAX_WIDTH * density;
+        let left_min_width = LEFT_MIN_WIDTH * density;
+        let right_preferred_width = RIGHT_PREFERRED_WIDTH * density;
+        let right_vertical_min_width = RIGHT_VERTICAL_MIN_WIDTH * density;
+        let right_horizontal_min_width = RIGHT_HORIZONTAL_MIN_WIDTH * density;
+        let right_vertical_with_time_width = RIGHT_VERTICAL_WITH_TIME_WIDTH * density;
+        let horizontal_volume_min_width = HORIZONTAL_VOLUME_MIN_WIDTH * density;
+        let horizontal_volume_max_width = HORIZONTAL_VOLUME_MAX_WIDTH * density;
+        let right_horizontal_fixed_width = RIGHT_HORIZONTAL_FIXED_WIDTH * density;
+        let side_width = (total_width - fixed_chrome - center_controls_width).max(0.0);
+
+        let (left_width, right_width) = if side_width >= left_min_width + right_preferred_width {
+            (
+                (side_width - right_preferred_width).min(left_max_width),
+                right_preferred_width,
+            )
+        } else if side_width >= left_min_width + right_vertical_min_width {
+            (left_min_width, side_width - left_min_width)
+        } else {
+            let right_width = side_width.min(right_vertical_min_width);
             (side_width - right_width, right_width)
         };
 
-        let (show_time, volume) = if right_width >= RIGHT_HORIZONTAL_MIN_WIDTH {
+        let (show_time, volume) = if right_width >= right_horizontal_min_width {
             (
                 true,
                 VolumeLayout::Horizontal {
-                    width: (right_width - RIGHT_HORIZONTAL_FIXED_WIDTH)
-                        .clamp(HORIZONTAL_VOLUME_MIN_WIDTH, HORIZONTAL_VOLUME_MAX_WIDTH),
+                    width: (right_width - right_horizontal_fixed_width)
+                        .clamp(horizontal_volume_min_width, horizontal_volume_max_width),
                 },
             )
         } else {
             (
-                right_width >= RIGHT_VERTICAL_WITH_TIME_WIDTH,
+                right_width >= right_vertical_with_time_width,
                 VolumeLayout::Vertical,
             )
         };
@@ -157,6 +179,7 @@ fn artist_links(artist_text: &str, structured_artists: &[ArtistSummary]) -> Vec<
 
 /// Build the player bar
 pub fn view(
+    context: ResponsiveContext,
     current_song: Option<&DbSong>,
     current_artists: &[ArtistSummary],
     is_playing: bool,
@@ -180,6 +203,8 @@ pub fn view(
     let current_artists = current_artists.to_vec();
     let current_song_cover = current_song_cover.cloned();
     let current_quality = current_quality.cloned();
+    let tokens = context.tokens;
+    let bar_height = tokens.chrome(ChromeRole::PlayerBar);
 
     let body = responsive(move |size| {
         build_body(
@@ -196,21 +221,25 @@ pub fn view(
             current_quality.as_ref(),
             &current_time,
             &total_time,
-            PlayerBarLayout::for_width(size.width),
+            tokens,
+            PlayerBarLayout::for_width_scaled(size.width, tokens.density().value()),
         )
     })
     .width(Fill)
     .height(Fill);
 
-    const PROGRESS_BAR_HEIGHT: f32 = 8.0;
-    let top_progress = container(widgets::progress_slider::view_with_gradient(
+    let progress_bar_height = tokens.size(8.0);
+    let top_progress = container(widgets::progress_slider::view_with_gradient_scaled(
         position,
         download_progress,
         SliderSize::Edge,
         progress_colors,
+        tokens.density().value(),
+        Message::SeekPreview,
+        Message::SeekRelease,
     ))
     .width(Fill)
-    .height(PROGRESS_BAR_HEIGHT)
+    .height(progress_bar_height)
     .style(|theme| iced::widget::container::Style {
         background: Some(iced::Background::Color(theme::player_bar_bg(theme))),
         ..Default::default()
@@ -218,10 +247,10 @@ pub fn view(
 
     let main_content = container(body)
         .width(Fill)
-        .height(PLAYER_BAR_HEIGHT)
-        .padding(Padding::new(0.0).top(PROGRESS_BAR_HEIGHT))
+        .height(bar_height)
+        .padding(Padding::new(0.0).top(progress_bar_height))
         .align_y(Alignment::Center)
-        .style(|theme| iced::widget::container::Style {
+        .style(move |theme| iced::widget::container::Style {
             background: Some(iced::Background::Color(theme::player_bar_bg(theme))),
             ..Default::default()
         });
@@ -230,7 +259,7 @@ pub fn view(
     // can extend below the rail without being covered by the body background.
     let bar = iced::widget::stack![main_content, top_progress]
         .width(Fill)
-        .height(PLAYER_BAR_HEIGHT);
+        .height(bar_height);
 
     // Use opaque to block events from reaching underlying widgets without swallowing
     // interactions inside the player bar itself.
@@ -252,6 +281,7 @@ fn build_body(
     current_quality: Option<&crate::app::ResolvedAudioQuality>,
     current_time: &str,
     total_time: &str,
+    tokens: UiTokens,
     layout: PlayerBarLayout,
 ) -> Element<'static, Message> {
     let song_info = build_song_info(
@@ -260,6 +290,7 @@ fn build_body(
         current_song_cover,
         current_quality,
         layout.show_quality,
+        tokens,
     );
 
     let left_section = container(song_info)
@@ -269,14 +300,25 @@ fn build_body(
 
     // The responsive allocator protects this lane before either side is
     // allowed to consume it.
+    let mode_button = play_mode_button(
+        play_mode,
+        PlayModeButtonSize::ScaledSmall(tokens.density().value()),
+        is_fm_mode,
+    );
+    let prev_action = (!is_first_song || !is_fm_mode).then_some(Message::PrevSong);
+    let favorite_state = current_favorite.map(|(_, liked)| liked);
+    let favorite_action = current_favorite.map(|(song_id, _)| Message::ToggleFavorite(song_id));
     let controls = widgets::playback_controls::view_player_bar(
         is_playing,
         is_buffering,
-        ControlSize::Small,
-        is_fm_mode,
-        is_first_song,
-        play_mode,
-        current_favorite,
+        ControlSize::ScaledSmall(tokens.density().value()),
+        is_fm_mode && is_first_song,
+        mode_button,
+        prev_action,
+        Message::TogglePlayback,
+        Message::NextSong,
+        favorite_state,
+        favorite_action,
     );
 
     let center_section = container(controls)
@@ -290,12 +332,17 @@ fn build_body(
         layout.right_width,
         layout.show_time,
         layout.volume,
+        tokens,
     );
 
     row![left_section, center_section, right_section]
-        .spacing(SECTION_SPACING)
+        .spacing(tokens.space(SECTION_SPACING))
         .align_y(Alignment::Center)
-        .padding(Padding::new(0.0).left(16.0).right(16.0))
+        .padding(
+            Padding::new(0.0)
+                .left(tokens.space(16.0))
+                .right(tokens.space(16.0)),
+        )
         .width(Fill)
         .height(Fill)
         .into()
@@ -307,11 +354,12 @@ fn build_song_info(
     current_song_cover: Option<&iced::widget::image::Handle>,
     current_quality: Option<&crate::app::ResolvedAudioQuality>,
     show_quality: bool,
+    tokens: UiTokens,
 ) -> Element<'static, Message> {
     let Some(song) = current_song else {
         let placeholder = column![
             text("No song playing")
-                .size(theme::TEXT_SIZE_BODY)
+                .size(tokens.text(TextRole::Body))
                 .width(Fill)
                 .wrapping(Wrapping::None)
                 .ellipsis(Ellipsis::End)
@@ -319,7 +367,7 @@ fn build_song_info(
                     color: Some(theme::text_muted(theme))
                 }),
             text("Select a song to play")
-                .size(theme::TEXT_SIZE_CAPTION)
+                .size(tokens.text(TextRole::Caption))
                 .width(Fill)
                 .wrapping(Wrapping::None)
                 .ellipsis(Ellipsis::End)
@@ -327,32 +375,32 @@ fn build_song_info(
                     color: Some(theme::text_muted(theme))
                 }),
         ]
-        .spacing(2)
+        .spacing(tokens.space(2.0))
         .width(Fill);
 
         return row![
             container(
                 svg(svg::Handle::from_memory(icons::MUSIC.as_bytes()))
-                    .width(24)
-                    .height(24)
+                    .width(tokens.icon(IconRole::Large))
+                    .height(tokens.icon(IconRole::Large))
                     .style(|theme, _status| svg::Style {
                         color: Some(theme::opaque_color(theme::icon_muted(theme))),
                     })
                     .opacity(0.4_f32),
             )
-            .width(56)
-            .height(56)
-            .center_x(56)
-            .center_y(56)
-            .style(|theme| iced::widget::container::Style {
+            .width(tokens.size(56.0))
+            .height(tokens.size(56.0))
+            .center_x(tokens.size(56.0))
+            .center_y(tokens.size(56.0))
+            .style(move |theme| iced::widget::container::Style {
                 background: Some(iced::Background::Color(theme::surface_container(theme))),
                 border: iced::Border {
-                    radius: 4.0.into(),
+                    radius: tokens.size(4.0).into(),
                     ..Default::default()
                 },
                 ..Default::default()
             }),
-            Space::new().width(12),
+            Space::new().width(tokens.space(12.0)),
             placeholder
         ]
         .align_y(Alignment::Center)
@@ -364,15 +412,15 @@ fn build_song_info(
     let song = song.clone();
 
     // Cover - clickable to open lyrics page
-    let cover_size = crate::image::CoverSize::Medium;
-    let cover_content: Element<'static, Message> = crate::ui::components::cover_image::cover(
+    let cover_px = tokens.size(56.0);
+    let cover_radius = tokens.size(8.0);
+    let cover_content: Element<'static, Message> = crate::ui::components::cover_image::custom(
         current_song_cover,
         crate::image::ImageKind::SongCover,
-        cover_size,
+        cover_px,
+        cover_radius,
     );
 
-    let cover_px = cover_size.px();
-    let cover_radius = cover_size.radius();
     let expand_overlay = widgets::hover_surface(Space::new().width(cover_px).height(cover_px))
         .style(move |_theme, progress| iced::widget::container::Style {
             background: Some(iced::Background::Color(Color::from_rgba(
@@ -389,7 +437,7 @@ fn build_song_info(
         })
         .svg_overlay(
             svg::Handle::from_memory(COVER_EXPAND_CHEVRON.as_bytes()),
-            iced::Size::new(24.0, 12.0),
+            iced::Size::new(tokens.size(24.0), tokens.size(12.0)),
             Color::WHITE,
         );
 
@@ -403,9 +451,9 @@ fn build_song_info(
 
     let title_btn = button(
         text(song.title.clone())
-            .size(theme::TEXT_SIZE_BODY)
+            .size(tokens.text(TextRole::Body))
             .width(Fill)
-            .height(20)
+            .height(tokens.size(20.0))
             .wrapping(Wrapping::None)
             .ellipsis(Ellipsis::End)
             .style(|theme| text::Style {
@@ -439,9 +487,9 @@ fn build_song_info(
     }
 
     let artist_line: Element<'static, Message> = rich_text(artist_spans)
-        .size(theme::TEXT_SIZE_CAPTION)
+        .size(tokens.text(TextRole::Caption))
         .width(Fill)
-        .height(18)
+        .height(tokens.size(18.0))
         .wrapping(Wrapping::None)
         .ellipsis(Ellipsis::End)
         .style(|theme| text::Style {
@@ -454,15 +502,19 @@ fn build_song_info(
         .into();
 
     let song_details = column![title_btn, artist_line]
-        .spacing(2)
+        .spacing(tokens.space(2.0))
         .width(Fill)
         .clip(true);
 
-    row![cover_btn, Space::new().width(12), song_details]
-        .align_y(Alignment::Center)
-        .width(Fill)
-        .clip(true)
-        .into()
+    row![
+        cover_btn,
+        Space::new().width(tokens.space(12.0)),
+        song_details
+    ]
+    .align_y(Alignment::Center)
+    .width(Fill)
+    .clip(true)
+    .into()
 }
 
 fn build_right_section(
@@ -472,15 +524,21 @@ fn build_right_section(
     right_width: f32,
     show_time: bool,
     volume_layout: VolumeLayout,
+    tokens: UiTokens,
 ) -> Element<'static, Message> {
     let volume_area: Element<'static, Message> = match volume_layout {
         VolumeLayout::Horizontal { width } => {
-            let volume_icon = volume_icon();
+            let volume_icon = volume_icon(tokens);
             iced::widget::mouse_area(
                 row![
                     volume_icon,
-                    Space::new().width(8),
-                    widgets::progress_slider::volume_slider(volume, width)
+                    Space::new().width(tokens.space(8.0)),
+                    widgets::progress_slider::volume_slider_scaled(
+                        volume,
+                        width,
+                        tokens.density().value(),
+                        Message::SetVolume,
+                    )
                 ]
                 .align_y(Alignment::Center)
                 .width(Length::Shrink),
@@ -491,19 +549,20 @@ fn build_right_section(
         VolumeLayout::Vertical => {
             let anchor = iced::widget::mouse_area(
                 widgets::hover_surface(
-                    container(volume_icon())
-                        .width(36)
-                        .height(36)
+                    container(volume_icon(tokens))
+                        .width(tokens.target(crate::ui::responsive::TargetRole::Icon))
+                        .height(tokens.target(crate::ui::responsive::TargetRole::Icon))
                         .align_x(Alignment::Center)
                         .align_y(Alignment::Center),
                 )
-                .style(|theme, progress| iced::widget::container::Style {
+                .style(move |theme, progress| iced::widget::container::Style {
                     background: Some(iced::Background::Color(theme::hover_bg_alpha(
                         theme,
                         0.12 * progress,
                     ))),
                     border: iced::Border {
-                        radius: 18.0.into(),
+                        radius: (tokens.target(crate::ui::responsive::TargetRole::Icon) / 2.0)
+                            .into(),
                         ..Default::default()
                     },
                     ..Default::default()
@@ -513,15 +572,21 @@ fn build_right_section(
             .interaction(mouse::Interaction::Pointer);
 
             let popup = iced::widget::mouse_area(
-                container(widgets::progress_slider::vertical_volume_slider(
+                container(widgets::progress_slider::vertical_volume_slider_scaled(
                     volume,
-                    VERTICAL_VOLUME_SLIDER_HEIGHT,
+                    tokens.size(VERTICAL_VOLUME_SLIDER_HEIGHT),
+                    tokens.density().value(),
+                    Message::SetVolume,
                 ))
-                .padding(Padding::new(10.0).left(12.0).right(12.0))
-                .style(|theme| iced::widget::container::Style {
+                .padding(
+                    Padding::new(tokens.space(10.0))
+                        .left(tokens.space(12.0))
+                        .right(tokens.space(12.0)),
+                )
+                .style(move |theme| iced::widget::container::Style {
                     background: Some(iced::Background::Color(theme::surface_elevated(theme))),
                     border: iced::Border {
-                        radius: 12.0.into(),
+                        radius: tokens.size(12.0).into(),
                         width: 1.0,
                         color: theme::border_color(theme),
                     },
@@ -535,41 +600,44 @@ fn build_right_section(
             )
             .on_scroll(move |delta| Message::SetVolume(volume_after_scroll(volume, delta)));
 
-            widgets::hover_popup(anchor, popup).gap(8.0).into()
+            widgets::hover_popup(anchor, popup)
+                .gap(tokens.space(8.0))
+                .into()
         }
     };
 
     let queue_btn = button(
         svg(svg::Handle::from_memory(icons::QUEUE.as_bytes()))
-            .width(20)
-            .height(20)
+            .width(tokens.icon(IconRole::Medium))
+            .height(tokens.icon(IconRole::Medium))
             .style(|theme, _status| svg::Style {
                 color: Some(theme::text_secondary(theme)),
             }),
     )
-    .padding(8)
+    .padding(tokens.space(8.0))
     .style(|_theme, _status| button::Style {
         background: Some(iced::Background::Color(Color::TRANSPARENT)),
         ..Default::default()
     })
     .on_press(Message::ToggleQueue);
-    let queue_btn =
-        widgets::hover_surface(queue_btn).style(|theme, progress| iced::widget::container::Style {
+    let queue_btn = widgets::hover_surface(queue_btn).style(move |theme, progress| {
+        iced::widget::container::Style {
             background: Some(iced::Background::Color(theme::hover_bg_alpha(
                 theme,
                 0.12 * progress,
             ))),
             border: iced::Border {
-                radius: 18.0.into(),
+                radius: tokens.size(18.0).into(),
                 ..Default::default()
             },
             ..Default::default()
-        });
+        }
+    });
 
     let controls: Element<'static, Message> = if show_time {
         let time = container(
             text(format!("{current_time} / {total_time}"))
-                .size(theme::TEXT_SIZE_CAPTION)
+                .size(tokens.text(TextRole::Caption))
                 .width(Fill)
                 .wrapping(Wrapping::None)
                 .ellipsis(Ellipsis::End)
@@ -578,23 +646,27 @@ fn build_right_section(
                     color: Some(theme::text_muted(theme)),
                 }),
         )
-        .width(TIME_WIDTH);
+        .width(tokens.size(TIME_WIDTH));
 
         row![
             time,
-            Space::new().width(8),
+            Space::new().width(tokens.space(8.0)),
             volume_area,
-            Space::new().width(12),
+            Space::new().width(tokens.space(12.0)),
             queue_btn,
         ]
         .align_y(Alignment::Center)
         .width(Length::Shrink)
         .into()
     } else {
-        row![volume_area, Space::new().width(12), queue_btn]
-            .align_y(Alignment::Center)
-            .width(Length::Shrink)
-            .into()
+        row![
+            volume_area,
+            Space::new().width(tokens.space(12.0)),
+            queue_btn
+        ]
+        .align_y(Alignment::Center)
+        .width(Length::Shrink)
+        .into()
     };
 
     container(controls)
@@ -605,10 +677,10 @@ fn build_right_section(
         .into()
 }
 
-fn volume_icon() -> iced::widget::Svg<'static, iced::Theme> {
+fn volume_icon(tokens: UiTokens) -> iced::widget::Svg<'static, iced::Theme> {
     svg(svg::Handle::from_memory(icons::VOLUME.as_bytes()))
-        .width(20)
-        .height(20)
+        .width(tokens.icon(IconRole::Medium))
+        .height(tokens.icon(IconRole::Medium))
         .style(|theme, _status| svg::Style {
             color: Some(theme::text_secondary(theme)),
         })

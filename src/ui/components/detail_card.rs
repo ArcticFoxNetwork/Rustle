@@ -6,6 +6,7 @@ use iced::{Color, Element};
 use crate::app::Message;
 use crate::image::ImageKind;
 use crate::ui::components::cover_image;
+use crate::ui::responsive::{CardMetrics, CardRole, ResponsiveContext, TextRole, UiTokens};
 use crate::ui::theme;
 
 /// Width shared by the cover cards on detail pages.
@@ -28,24 +29,73 @@ pub fn view<'a>(
     image_kind: ImageKind,
     on_press: Message,
 ) -> Element<'a, Message> {
-    let cover = cover_image::custom(cover_handle, image_kind, CARD_WIDTH, COVER_RADIUS);
+    view_with_metrics(
+        name,
+        subtitle,
+        cover_handle,
+        image_kind,
+        on_press,
+        CardMetrics {
+            width: CARD_WIDTH,
+            height: CARD_WIDTH,
+            gap: CARD_SPACING,
+            radius: COVER_RADIUS,
+        },
+        UiTokens::default(),
+    )
+}
+
+/// Render a detail card with dimensions derived from the shared responsive
+/// token set.
+pub fn view_with_context<'a>(
+    name: String,
+    subtitle: String,
+    cover_handle: Option<&'a iced::widget::image::Handle>,
+    image_kind: ImageKind,
+    on_press: Message,
+    context: ResponsiveContext,
+) -> Element<'a, Message> {
+    view_with_metrics(
+        name,
+        subtitle,
+        cover_handle,
+        image_kind,
+        on_press,
+        context.tokens.card(CardRole::Detail),
+        context.tokens,
+    )
+}
+
+fn view_with_metrics<'a>(
+    name: String,
+    subtitle: String,
+    cover_handle: Option<&'a iced::widget::image::Handle>,
+    image_kind: ImageKind,
+    on_press: Message,
+    metrics: CardMetrics,
+    tokens: UiTokens,
+) -> Element<'a, Message> {
+    let card_width = metrics.width;
+    let card_radius = metrics.radius;
+
+    let cover = cover_image::custom(cover_handle, image_kind, card_width, card_radius);
 
     button(
         column![
             cover,
-            Space::new().height(COVER_TEXT_SPACING),
+            Space::new().height(tokens.space(COVER_TEXT_SPACING)),
             text(name)
-                .size(theme::TEXT_SIZE_BODY_LARGE)
+                .size(tokens.text(TextRole::BodyLarge))
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_primary(theme)),
                 }),
             text(subtitle)
-                .size(theme::TEXT_SIZE_BODY)
+                .size(tokens.text(TextRole::Body))
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_secondary(theme)),
                 }),
         ]
-        .width(CARD_WIDTH),
+        .width(card_width),
     )
     .padding(0)
     .style(|_theme, _status| iced::widget::button::Style {

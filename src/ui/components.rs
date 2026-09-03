@@ -25,6 +25,7 @@ pub mod exit_dialog;
 pub mod feature_card;
 pub mod importing_card;
 pub mod login_popup;
+pub mod playback_controls;
 pub mod player_bar;
 pub mod playlist_grid;
 pub mod playlist_view;
@@ -38,5 +39,4 @@ pub mod window_controls;
 pub mod window_resize_handles;
 
 pub use importing_card::ImportingPlaylist;
-pub use player_bar::PLAYER_BAR_HEIGHT;
 pub use sidebar::{LibraryItem, NavItem};

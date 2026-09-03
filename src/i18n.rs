@@ -63,6 +63,7 @@ pub enum Key {
     NavDownloads,
     NavSettings,
     NavAudioEngine,
+    NavigationMenu,
 
     // Library - Local
     LibraryTitle,

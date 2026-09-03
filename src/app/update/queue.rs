@@ -15,10 +15,15 @@ impl App {
 
                 // When opening the queue, scroll to center the current song
                 if self.ui.queue_visible {
-                    let offset = crate::ui::components::queue_panel::calculate_scroll_offset(
-                        self.playback.queue.len(),
-                        self.playback.current_index,
+                    let context = crate::ui::responsive::ResponsiveContext::from_viewport(
+                        iced::Size::new(self.core.window_width, self.core.window_height),
                     );
+                    let offset =
+                        crate::ui::components::queue_panel::calculate_scroll_offset_for_context(
+                            self.playback.queue.len(),
+                            self.playback.current_index,
+                            context,
+                        );
                     return Some(iced::widget::operation::snap_to(
                         iced::widget::Id::new(
                             crate::ui::components::queue_panel::QUEUE_SCROLLABLE_ID,

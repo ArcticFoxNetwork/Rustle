@@ -1,14 +1,18 @@
 //! Download management panel — matching settings page layout conventions
 
+use iced::widget::text::{Ellipsis, Wrapping};
 use iced::widget::{Space, button, column, container, row, scrollable, svg, text};
 use iced::{Alignment, Background, Color, Element, Length, Padding};
 
 use crate::app::{DownloadTab, ImageState, Message};
 use crate::download::{DownloadManager, DownloadStatus, DownloadTask};
 use crate::i18n::{Key, Locale};
-use crate::image::{CoverSize, ImageKind};
+use crate::image::ImageKind;
 use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::cover_image;
+use crate::ui::responsive::{
+    LayoutProfile, RadiusRole, ResponsiveContext, TargetRole, TextRole, top_bar_height,
+};
 use crate::ui::theme;
 
 pub fn download_panel(
@@ -16,20 +20,22 @@ pub fn download_panel(
     manager: &DownloadManager,
     tab: DownloadTab,
     image_state: &ImageState,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let header = column![
         text(locale.get(Key::DownloadPanelTitle))
-            .size(theme::TEXT_SIZE_HERO)
+            .size(tokens.text(TextRole::Hero))
             .style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
             }),
         text("管理你的本地离线音乐库")
-            .size(theme::TEXT_SIZE_LABEL)
+            .size(tokens.text(TextRole::Label))
             .style(|theme| text::Style {
                 color: Some(theme::text_muted(theme))
             }),
     ]
-    .spacing(6);
+    .spacing(tokens.space(6.0));
 
     let active_count = manager.active.len() + manager.pending.len();
     let completed_count = manager.completed.len();
@@ -38,6 +44,7 @@ pub fn download_panel(
         format!("{} ({})", locale.get(Key::DownloadActive), active_count),
         tab == DownloadTab::Active,
         Message::SwitchDownloadTab(DownloadTab::Active),
+        context,
     );
     let tab_done = make_tab_button(
         format!(
@@ -47,60 +54,61 @@ pub fn download_panel(
         ),
         tab == DownloadTab::Completed,
         Message::SwitchDownloadTab(DownloadTab::Completed),
+        context,
     );
     let tab_failed = make_tab_button(
         format!("{} ({})", locale.get(Key::DownloadFailed), failed_count),
         tab == DownloadTab::Failed,
         Message::SwitchDownloadTab(DownloadTab::Failed),
+        context,
     );
 
     let body: Element<'static, Message> = match tab {
         DownloadTab::Active => {
             if active_count == 0 {
-                empty_placeholder(locale.get(Key::DownloadNoActive).to_string())
+                empty_placeholder(locale.get(Key::DownloadNoActive).to_string(), context)
             } else {
                 let cards = manager
                     .active
                     .iter()
-                    .map(|task| build_active_card(task, image_state, locale))
+                    .map(|task| build_active_card(task, image_state, locale, context))
                     .chain(
                         manager
                             .pending
                             .iter()
-                            .map(|task| build_pending_card(task, image_state, locale)),
+                            .map(|task| build_pending_card(task, image_state, locale, context)),
                     )
                     .collect::<Vec<_>>();
-                column(cards).spacing(16).into()
+                column(cards).spacing(tokens.space(16.0)).into()
             }
         }
         DownloadTab::Completed => {
             if manager.completed.is_empty() {
-                empty_placeholder(locale.get(Key::DownloadNoCompleted).to_string())
+                empty_placeholder(locale.get(Key::DownloadNoCompleted).to_string(), context)
             } else {
                 column(
                     manager
                         .completed
                         .iter()
-                        .take(100)
-                        .map(|t| build_completed_card(t, image_state))
+                        .map(|t| build_completed_card(t, image_state, context))
                         .collect::<Vec<_>>(),
                 )
-                .spacing(8)
+                .spacing(tokens.space(8.0))
                 .into()
             }
         }
         DownloadTab::Failed => {
             if manager.failed.is_empty() {
-                empty_placeholder(locale.get(Key::DownloadNoFailed).to_string())
+                empty_placeholder(locale.get(Key::DownloadNoFailed).to_string(), context)
             } else {
                 column(
                     manager
                         .failed
                         .iter()
-                        .map(|t| build_failed_card(t, image_state, locale))
+                        .map(|t| build_failed_card(t, image_state, locale, context))
                         .collect::<Vec<_>>(),
                 )
-                .spacing(12)
+                .spacing(tokens.space(12.0))
                 .into()
             }
         }
@@ -110,18 +118,25 @@ pub fn download_panel(
     let header_container = container(
         column![
             header,
-            Space::new().height(24),
-            row![tab_active, tab_done, tab_failed].spacing(0)
+            Space::new().height(tokens.space(24.0)),
+            scrollable(row![tab_active, tab_done, tab_failed].spacing(0))
+                .direction(iced::widget::scrollable::Direction::Horizontal(
+                    iced::widget::scrollable::Scrollbar::new()
+                        .width(0)
+                        .scroller_width(0),
+                ))
+                .id(iced::widget::Id::new("downloads_tabs_scroll"))
+                .width(Length::Fill),
         ]
         .width(Length::Fill),
     )
     .width(Length::Fill)
     .padding(
-        Padding::new(40.0)
-            .top(70.0)
-            .right(32.0)
-            .bottom(20.0)
-            .left(32.0),
+        Padding::new(tokens.space(40.0))
+            .top(top_bar_height(&context))
+            .right(tokens.space(32.0))
+            .bottom(tokens.space(20.0))
+            .left(tokens.space(32.0)),
     )
     .style(|theme| container::Style {
         background: Some(Background::Color(theme::background(theme))),
@@ -131,9 +146,12 @@ pub fn download_panel(
     // Scrollable body — matches settings scrollable_content
     let scrollable_content = crate::ui::widgets::smooth_scroll(
         scrollable(
-            container(body)
-                .width(Length::Fill)
-                .padding(Padding::new(20.0).right(32.0).bottom(60.0).left(32.0)),
+            container(body).width(Length::Fill).padding(
+                Padding::new(tokens.space(20.0))
+                    .right(tokens.space(32.0))
+                    .bottom(tokens.space(60.0))
+                    .left(tokens.space(32.0)),
+            ),
         )
         .width(Length::Fill)
         .height(Length::Fill)
@@ -153,25 +171,32 @@ pub fn download_panel(
     .into()
 }
 
-fn empty_placeholder(msg: String) -> Element<'static, Message> {
+fn empty_placeholder(msg: String, context: ResponsiveContext) -> Element<'static, Message> {
+    let tokens = context.tokens;
     container(
         text(msg)
-            .size(theme::TEXT_SIZE_BODY)
+            .size(tokens.text(TextRole::Body))
             .style(|theme| text::Style {
                 color: Some(theme::text_muted(theme)),
             }),
     )
     .width(Length::Fill)
     .center_x(Length::Fill)
-    .padding(60)
+    .padding(tokens.space(60.0))
     .into()
 }
 
 // ── Tabs (matches settings ACCENT_PINK style) ────────────────────────────────
 
-fn make_tab_button(label: String, active: bool, msg: Message) -> Element<'static, Message> {
+fn make_tab_button(
+    label: String,
+    active: bool,
+    msg: Message,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let underline: Element<'static, Message> = if active {
-        container(Space::new().height(2))
+        container(Space::new().height(tokens.size(2.0)))
             .width(Length::Fill)
             .style(|_theme: &iced::Theme| container::Style {
                 background: Some(Background::Color(theme::ACCENT_PINK)),
@@ -184,7 +209,7 @@ fn make_tab_button(label: String, active: bool, msg: Message) -> Element<'static
     column![
         button(
             text(label)
-                .size(theme::TEXT_SIZE_BODY)
+                .size(tokens.text(TextRole::Body))
                 .style(move |theme| text::Style {
                     color: Some(if active {
                         theme::ACCENT_PINK
@@ -194,7 +219,7 @@ fn make_tab_button(label: String, active: bool, msg: Message) -> Element<'static
                 }),
         )
         .on_press(msg)
-        .padding([12, 0])
+        .padding([tokens.space(12.0), 0.0])
         .style(|_theme, status| {
             let bg = if status == button::Status::Hovered {
                 Background::Color(Color::from_rgba(1.0, 0.08, 0.55, 0.05))
@@ -208,7 +233,7 @@ fn make_tab_button(label: String, active: bool, msg: Message) -> Element<'static
         }),
         underline,
     ]
-    .width(110)
+    .width(tokens.size(110.0))
     .align_x(Alignment::Center)
     .into()
 }
@@ -219,7 +244,9 @@ fn build_active_card(
     task: &DownloadTask,
     image_state: &ImageState,
     locale: Locale,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let (progress, speed) = match &task.status {
         DownloadStatus::Active { progress, speed } => (*progress, speed.clone()),
         _ => (0.0, String::new()),
@@ -230,20 +257,22 @@ fn build_active_card(
 
     let (cover_kind, cover_id) =
         crate::image::song_cover_key(task.song_id).unwrap_or((ImageKind::SongCover, 0));
-    let cover = cover_image::cover(
-        image_state.get(cover_kind, cover_id),
-        cover_kind,
-        CoverSize::Medium,
-    );
+    let cover = download_cover(image_state.get(cover_kind, cover_id), cover_kind, tokens);
 
     let info = column![
         text(title)
-            .size(theme::TEXT_SIZE_BODY_LARGE)
+            .size(tokens.text(TextRole::BodyLarge))
+            .width(Length::Fill)
+            .wrapping(Wrapping::None)
+            .ellipsis(Ellipsis::End)
             .style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
             }),
         text(artist)
-            .size(theme::TEXT_SIZE_LABEL)
+            .size(tokens.text(TextRole::Label))
+            .width(Length::Fill)
+            .wrapping(Wrapping::None)
+            .ellipsis(Ellipsis::End)
             .style(|theme| text::Style {
                 color: Some(theme::text_secondary(theme))
             }),
@@ -256,7 +285,7 @@ fn build_active_card(
     let empty_portion = 1000u16.saturating_sub(fill_portion);
     let bar = container(
         row![
-            container(Space::new().height(4))
+            container(Space::new().height(tokens.size(4.0)))
                 .width(Length::FillPortion(fill_portion))
                 .style(|_theme| container::Style {
                     background: Some(Background::Color(theme::ACCENT_PINK)),
@@ -266,10 +295,10 @@ fn build_active_card(
         ]
         .width(Length::Fill),
     )
-    .style(|_theme| container::Style {
+    .style(move |_theme| container::Style {
         background: Some(Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.06))),
         border: iced::Border {
-            radius: 4.0.into(),
+            radius: tokens.radius(RadiusRole::Small).into(),
             ..Default::default()
         },
         ..Default::default()
@@ -280,117 +309,143 @@ fn build_active_card(
     let progress_info = column![
         row![
             text(format!("{:.1} MB / {:.1} MB", downloaded_mb, total_mb))
-                .size(theme::TEXT_SIZE_CAPTION)
+                .size(tokens.text(TextRole::Caption))
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme))
                 }),
             Space::new().width(Length::Fill),
             text(format!("{} {}", locale.get(Key::DownloadSpeed), speed))
-                .size(theme::TEXT_SIZE_CAPTION)
+                .size(tokens.text(TextRole::Caption))
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme))
                 }),
             text("·")
-                .size(theme::TEXT_SIZE_CAPTION)
+                .size(tokens.text(TextRole::Caption))
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme))
                 }),
             text(format!("{}%", pct))
-                .size(theme::TEXT_SIZE_CAPTION)
+                .size(tokens.text(TextRole::Caption))
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme))
                 }),
         ],
-        Space::new().height(4),
+        Space::new().height(tokens.space(4.0)),
         bar,
     ]
-    .spacing(2);
+    .spacing(tokens.space(2.0));
 
-    let cancel_btn = icon_danger_btn(song_id);
+    let cancel_btn = icon_danger_btn(song_id, tokens);
 
-    container(
-        row![
+    let card_content: Element<'static, Message> = match context.profile {
+        LayoutProfile::Tablet | LayoutProfile::Narrow => column![
+            row![cover, info.width(Length::Fill), cancel_btn]
+                .align_y(Alignment::Center)
+                .spacing(tokens.space(16.0)),
+            progress_info,
+        ]
+        .spacing(tokens.space(10.0))
+        .width(Length::Fill)
+        .into(),
+        LayoutProfile::Expanded | LayoutProfile::Standard | LayoutProfile::Compact => row![
             cover,
-            column![info, progress_info].spacing(10).width(Length::Fill),
+            column![info, progress_info]
+                .spacing(tokens.space(10.0))
+                .width(Length::Fill),
             cancel_btn,
         ]
         .align_y(Alignment::Center)
-        .spacing(16),
-    )
-    .padding(16)
-    .style(|theme| container::Style {
-        background: Some(Background::Color(theme::panel_bg(theme))),
-        border: iced::Border {
-            radius: 12.0.into(),
-            width: 1.0,
-            color: theme::panel_border(theme),
-        },
-        ..Default::default()
-    })
-    .into()
+        .spacing(tokens.space(16.0))
+        .into(),
+    };
+
+    container(card_content)
+        .padding(tokens.space(16.0))
+        .style(move |theme| container::Style {
+            background: Some(Background::Color(theme::panel_bg(theme))),
+            border: iced::Border {
+                radius: tokens.radius(RadiusRole::Medium).into(),
+                width: 1.0,
+                color: theme::panel_border(theme),
+            },
+            ..Default::default()
+        })
+        .into()
 }
 
 fn build_pending_card(
     task: &DownloadTask,
     image_state: &ImageState,
     locale: Locale,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let title = task.metadata.title.clone();
     let artist = task.metadata.artist.clone();
     let song_id = task.song_id;
 
     let (cover_kind, cover_id) =
         crate::image::song_cover_key(task.song_id).unwrap_or((ImageKind::SongCover, 0));
-    let cover = cover_image::cover(
-        image_state.get(cover_kind, cover_id),
-        cover_kind,
-        CoverSize::Medium,
-    );
+    let cover = download_cover(image_state.get(cover_kind, cover_id), cover_kind, tokens);
 
     let info = column![
         text(title)
-            .size(theme::TEXT_SIZE_BODY_LARGE)
+            .size(tokens.text(TextRole::BodyLarge))
+            .width(Length::Fill)
+            .wrapping(Wrapping::None)
+            .ellipsis(Ellipsis::End)
             .style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
             }),
         row![
             text(artist)
-                .size(theme::TEXT_SIZE_LABEL)
+                .size(tokens.text(TextRole::Label))
+                .width(Length::Fill)
+                .wrapping(Wrapping::None)
+                .ellipsis(Ellipsis::End)
                 .style(|theme| text::Style {
                     color: Some(theme::text_secondary(theme))
                 }),
             text("·")
-                .size(theme::TEXT_SIZE_CAPTION)
+                .size(tokens.text(TextRole::Caption))
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme))
                 }),
             text(locale.get(Key::DownloadPending))
-                .size(theme::TEXT_SIZE_CAPTION)
+                .size(tokens.text(TextRole::Caption))
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme))
                 }),
             text("·")
-                .size(theme::TEXT_SIZE_CAPTION)
+                .size(tokens.text(TextRole::Caption))
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme))
                 }),
-            quality_badge_el(task.quality.display_name(), quality_color(task.quality)),
+            quality_badge_el(
+                task.quality.display_name(),
+                quality_color(task.quality),
+                tokens
+            ),
         ]
-        .spacing(8)
+        .spacing(tokens.space(8.0))
         .align_y(Alignment::Center),
     ]
-    .spacing(4);
+    .spacing(tokens.space(4.0));
 
     container(
-        row![cover, info.width(Length::Fill), icon_danger_btn(song_id),]
-            .align_y(Alignment::Center)
-            .spacing(16),
+        row![
+            cover,
+            info.width(Length::Fill),
+            icon_danger_btn(song_id, tokens),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(tokens.space(16.0)),
     )
-    .padding(16)
-    .style(|theme| container::Style {
+    .padding(tokens.space(16.0))
+    .style(move |theme| container::Style {
         background: Some(Background::Color(theme::panel_bg(theme))),
         border: iced::Border {
-            radius: 12.0.into(),
+            radius: tokens.radius(RadiusRole::Medium).into(),
             width: 1.0,
             color: theme::panel_border(theme),
         },
@@ -404,7 +459,9 @@ fn build_pending_card(
 fn build_completed_card(
     task: &DownloadTask,
     image_state: &ImageState,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let title = task.metadata.title.clone();
     let artist = task.metadata.artist.clone();
     let quality = task.quality;
@@ -417,94 +474,130 @@ fn build_completed_card(
 
     let title_row = row![
         text(title)
-            .size(theme::TEXT_SIZE_BODY)
+            .size(tokens.text(TextRole::Body))
+            .width(Length::Fill)
+            .wrapping(Wrapping::None)
+            .ellipsis(Ellipsis::End)
             .style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
             }),
-        quality_badge_el(quality.display_name(), quality_color(quality)),
+        quality_badge_el(quality.display_name(), quality_color(quality), tokens),
     ]
-    .spacing(8)
+    .spacing(tokens.space(8.0))
+    .align_y(Alignment::Center);
+
+    let artist_text = text(artist)
+        .size(tokens.text(TextRole::Label))
+        .width(Length::Fill)
+        .wrapping(Wrapping::None)
+        .ellipsis(Ellipsis::End)
+        .style(|theme| text::Style {
+            color: Some(theme::text_muted(theme)),
+        });
+
+    let metadata = row![
+        text(size_str)
+            .size(tokens.text(TextRole::Caption))
+            .style(|theme| text::Style {
+                color: Some(theme::text_muted(theme)),
+            }),
+        text("·")
+            .size(tokens.text(TextRole::Caption))
+            .style(|theme| text::Style {
+                color: Some(theme::text_muted(theme)),
+            }),
+        text(downloaded_time)
+            .size(tokens.text(TextRole::Caption))
+            .width(Length::Fill)
+            .wrapping(Wrapping::None)
+            .ellipsis(Ellipsis::End)
+            .style(|theme| text::Style {
+                color: Some(theme::text_muted(theme)),
+            }),
+    ]
+    .spacing(tokens.space(8.0))
     .align_y(Alignment::Center);
 
     // Action buttons using SVG icons
     let actions = row![
-        svg_btn(crate::ui::icons::PLAY, Message::PlaySong(song_id)),
-        svg_btn(crate::ui::icons::EDIT, Message::EditSongTags(song_id)),
+        svg_btn(crate::ui::icons::PLAY, Message::PlaySong(song_id), tokens),
+        svg_btn(
+            crate::ui::icons::EDIT,
+            Message::EditSongTags(song_id),
+            tokens
+        ),
         svg_btn(
             crate::ui::icons::TRASH,
-            Message::DeleteDownloadHistory(song_id)
+            Message::DeleteDownloadHistory(song_id),
+            tokens,
         ),
     ]
-    .spacing(4);
+    .spacing(tokens.space(4.0));
 
     let (cover_kind, cover_id) =
         crate::image::song_cover_key(task.song_id).unwrap_or((ImageKind::SongCover, 0));
-    let cover = cover_image::cover(
-        image_state.get(cover_kind, cover_id),
-        cover_kind,
-        CoverSize::Medium,
-    );
+    let cover = download_cover(image_state.get(cover_kind, cover_id), cover_kind, tokens);
 
-    container(
-        row![
-            cover,
-            column![
-                title_row,
-                row![
-                    text(artist)
-                        .size(theme::TEXT_SIZE_LABEL)
-                        .style(|theme| text::Style {
-                            color: Some(theme::text_muted(theme))
-                        }),
-                    text("·")
-                        .size(theme::TEXT_SIZE_CAPTION)
-                        .style(|theme| text::Style {
-                            color: Some(theme::text_muted(theme))
-                        }),
-                    text(size_str)
-                        .size(theme::TEXT_SIZE_CAPTION)
-                        .style(|theme| text::Style {
-                            color: Some(theme::text_muted(theme))
-                        }),
-                    text("·")
-                        .size(theme::TEXT_SIZE_CAPTION)
-                        .style(|theme| text::Style {
-                            color: Some(theme::text_muted(theme))
-                        }),
-                    text(downloaded_time)
-                        .size(theme::TEXT_SIZE_CAPTION)
-                        .style(|theme| text::Style {
-                            color: Some(theme::text_muted(theme))
-                        }),
-                ]
-                .spacing(8)
-                .align_y(Alignment::Center),
+    let content: Element<'static, Message> = match context.profile {
+        LayoutProfile::Tablet | LayoutProfile::Narrow => column![
+            row![
+                cover,
+                column![title_row, artist_text]
+                    .spacing(tokens.space(4.0))
+                    .width(Length::Fill),
+                actions
             ]
-            .spacing(4)
-            .width(Length::Fill),
-            actions,
+            .align_y(Alignment::Center)
+            .spacing(tokens.space(16.0)),
+            metadata,
         ]
-        .align_y(Alignment::Center)
-        .spacing(16),
-    )
-    .padding(12)
-    .style(|theme| container::Style {
-        background: Some(Background::Color(theme::panel_bg(theme))),
-        border: iced::Border {
-            radius: 12.0.into(),
-            width: 0.0,
-            color: Color::TRANSPARENT,
-        },
-        ..Default::default()
-    })
-    .into()
+        .width(Length::Fill)
+        .spacing(tokens.space(8.0))
+        .into(),
+        LayoutProfile::Expanded | LayoutProfile::Standard | LayoutProfile::Compact => {
+            let details = row![
+                artist_text,
+                text("·")
+                    .size(tokens.text(TextRole::Caption))
+                    .style(|theme| text::Style {
+                        color: Some(theme::text_muted(theme)),
+                    }),
+                metadata,
+            ]
+            .spacing(tokens.space(8.0))
+            .align_y(Alignment::Center);
+            let info = column![title_row, details]
+                .spacing(tokens.space(4.0))
+                .width(Length::Fill);
+
+            row![cover, info, actions]
+                .align_y(Alignment::Center)
+                .spacing(tokens.space(16.0))
+                .into()
+        }
+    };
+
+    container(content)
+        .padding(tokens.space(12.0))
+        .style(move |theme| container::Style {
+            background: Some(Background::Color(theme::panel_bg(theme))),
+            border: iced::Border {
+                radius: tokens.radius(RadiusRole::Medium).into(),
+                width: 0.0,
+                color: Color::TRANSPARENT,
+            },
+            ..Default::default()
+        })
+        .into()
 }
 
 fn build_failed_card(
     task: &DownloadTask,
     image_state: &ImageState,
     locale: Locale,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let title = task.metadata.title.clone();
     let artist = task.metadata.artist.clone();
     let song_id = task.song_id;
@@ -515,60 +608,72 @@ fn build_failed_card(
 
     let (cover_kind, cover_id) =
         crate::image::song_cover_key(task.song_id).unwrap_or((ImageKind::SongCover, 0));
-    let cover = cover_image::cover(
-        image_state.get(cover_kind, cover_id),
-        cover_kind,
-        CoverSize::Medium,
-    );
+    let cover = download_cover(image_state.get(cover_kind, cover_id), cover_kind, tokens);
 
     let info = column![
         row![
             text(title)
-                .size(theme::TEXT_SIZE_BODY_LARGE)
+                .size(tokens.text(TextRole::BodyLarge))
+                .width(Length::Fill)
+                .wrapping(Wrapping::None)
+                .ellipsis(Ellipsis::End)
                 .style(|theme| text::Style {
                     color: Some(theme::text_primary(theme))
                 }),
-            quality_badge_el(task.quality.display_name(), quality_color(task.quality)),
+            quality_badge_el(
+                task.quality.display_name(),
+                quality_color(task.quality),
+                tokens
+            ),
         ]
-        .spacing(8)
+        .spacing(tokens.space(8.0))
         .align_y(Alignment::Center),
         row![
             text(artist)
-                .size(theme::TEXT_SIZE_LABEL)
+                .size(tokens.text(TextRole::Label))
+                .width(Length::Fill)
+                .wrapping(Wrapping::None)
+                .ellipsis(Ellipsis::End)
                 .style(|theme| text::Style {
                     color: Some(theme::text_secondary(theme))
                 }),
             text("·")
-                .size(theme::TEXT_SIZE_CAPTION)
+                .size(tokens.text(TextRole::Caption))
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme))
                 }),
             text(locale.get(Key::DownloadFailed))
-                .size(theme::TEXT_SIZE_CAPTION)
+                .size(tokens.text(TextRole::Caption))
                 .style(|_theme| text::Style {
                     color: Some(Color::from_rgb(0.94, 0.34, 0.34))
                 }),
         ]
-        .spacing(8)
+        .spacing(tokens.space(8.0))
         .align_y(Alignment::Center),
         text(error)
-            .size(theme::TEXT_SIZE_CAPTION)
+            .size(tokens.text(TextRole::Caption))
+            .width(Length::Fill)
+            .wrapping(Wrapping::WordOrGlyph)
             .style(|theme| text::Style {
                 color: Some(theme::text_muted(theme))
             }),
     ]
-    .spacing(4);
+    .spacing(tokens.space(4.0));
 
     container(
-        row![cover, info.width(Length::Fill), icon_danger_btn(song_id),]
-            .align_y(Alignment::Center)
-            .spacing(16),
+        row![
+            cover,
+            info.width(Length::Fill),
+            icon_danger_btn(song_id, tokens),
+        ]
+        .align_y(Alignment::Center)
+        .spacing(tokens.space(16.0)),
     )
-    .padding(16)
-    .style(|theme| container::Style {
+    .padding(tokens.space(16.0))
+    .style(move |theme| container::Style {
         background: Some(Background::Color(theme::panel_bg(theme))),
         border: iced::Border {
-            radius: 12.0.into(),
+            radius: tokens.radius(RadiusRole::Medium).into(),
             width: 1.0,
             color: theme::panel_border(theme),
         },
@@ -593,14 +698,35 @@ fn quality_color(quality: crate::features::settings::MusicQuality) -> Color {
     }
 }
 
-fn quality_badge_el(label: &'static str, color: Color) -> Element<'static, Message> {
+fn download_cover(
+    handle: Option<&iced::widget::image::Handle>,
+    kind: ImageKind,
+    tokens: crate::ui::responsive::UiTokens,
+) -> Element<'static, Message> {
+    cover_image::custom(
+        handle,
+        kind,
+        tokens.size(56.0),
+        tokens.radius(RadiusRole::Medium),
+    )
+}
+
+fn quality_badge_el(
+    label: &'static str,
+    color: Color,
+    tokens: crate::ui::responsive::UiTokens,
+) -> Element<'static, Message> {
     let (r, g, b) = (color.r, color.g, color.b);
-    container(text(label).size(theme::TEXT_SIZE_MICRO).color(color))
-        .padding(Padding::new(1.0).left(6.0).right(6.0))
+    container(text(label).size(tokens.text(TextRole::Micro)).color(color))
+        .padding(
+            Padding::new(tokens.space(1.0))
+                .left(tokens.space(6.0))
+                .right(tokens.space(6.0)),
+        )
         .style(move |_theme| container::Style {
             background: Some(Background::Color(Color::from_rgba(r, g, b, 0.15))),
             border: iced::Border {
-                radius: 4.0.into(),
+                radius: tokens.radius(RadiusRole::Small).into(),
                 width: 1.0,
                 color: Color::from_rgba(r, g, b, 0.25),
             },
@@ -621,18 +747,24 @@ fn format_size(bytes: u64) -> String {
 
 // ── Button helpers (SVG icons, no emoji) ─────────────────────────────────
 
-fn svg_btn(icon_svg: &'static str, msg: Message) -> Element<'static, Message> {
+fn svg_btn(
+    icon_svg: &'static str,
+    msg: Message,
+    tokens: crate::ui::responsive::UiTokens,
+) -> Element<'static, Message> {
     button(
         svg(svg::Handle::from_memory(icon_svg.as_bytes()))
-            .width(14)
-            .height(14)
+            .width(tokens.icon(crate::ui::responsive::IconRole::Small))
+            .height(tokens.icon(crate::ui::responsive::IconRole::Small))
             .style(|theme, _status| svg::Style {
                 color: Some(theme::text_secondary(theme)),
             }),
     )
     .on_press(msg)
-    .padding([6, 10])
-    .style(|theme, status| {
+    .width(tokens.target(TargetRole::Control))
+    .height(tokens.target(TargetRole::Control))
+    .padding([tokens.space(6.0), tokens.space(10.0)])
+    .style(move |theme, status| {
         let bg = if status == button::Status::Hovered {
             Background::Color(theme::surface(theme))
         } else {
@@ -641,7 +773,7 @@ fn svg_btn(icon_svg: &'static str, msg: Message) -> Element<'static, Message> {
         button::Style {
             background: Some(bg),
             border: iced::Border {
-                radius: 8.0.into(),
+                radius: tokens.radius(RadiusRole::Medium).into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -650,11 +782,14 @@ fn svg_btn(icon_svg: &'static str, msg: Message) -> Element<'static, Message> {
     .into()
 }
 
-fn icon_danger_btn(song_id: i64) -> Element<'static, Message> {
+fn icon_danger_btn(
+    song_id: i64,
+    tokens: crate::ui::responsive::UiTokens,
+) -> Element<'static, Message> {
     button(
         svg(svg::Handle::from_memory(crate::ui::icons::CLOSE.as_bytes()))
-            .width(16)
-            .height(16)
+            .width(tokens.icon(crate::ui::responsive::IconRole::Small))
+            .height(tokens.icon(crate::ui::responsive::IconRole::Small))
             .style(|theme, status| svg::Style {
                 color: Some(if status == svg::Status::Hovered {
                     Color::from_rgb(0.94, 0.34, 0.34)
@@ -664,9 +799,9 @@ fn icon_danger_btn(song_id: i64) -> Element<'static, Message> {
             }),
     )
     .on_press(Message::DownloadCancel(song_id))
-    .width(40)
-    .height(40)
-    .style(|_theme, status| {
+    .width(tokens.target(TargetRole::Control))
+    .height(tokens.target(TargetRole::Control))
+    .style(move |_theme, status| {
         let bg = if status == button::Status::Hovered {
             Background::Color(Color::from_rgba(0.94, 0.34, 0.34, 0.1))
         } else {
@@ -675,7 +810,7 @@ fn icon_danger_btn(song_id: i64) -> Element<'static, Message> {
         button::Style {
             background: Some(bg),
             border: iced::Border {
-                radius: 100.0.into(),
+                radius: tokens.radius(RadiusRole::Pill).into(),
                 ..Default::default()
             },
             ..Default::default()

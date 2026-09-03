@@ -12,11 +12,12 @@ use crate::image::ImageKind;
 use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::{cover_image, detail_card, detail_description};
 use crate::ui::pages::playlist::{self, DetailGradientSnapshot, PlaylistView};
+use crate::ui::responsive::{LayoutProfile, ResponsiveContext, TextRole};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{theme, widgets};
 
 pub fn view<'a>(
-    user: &PlaylistView,
+    user: &'a PlaylistView,
     image_state: &'a ImageState,
     _song_animations: &'a crate::ui::animation::HoverAnimations<i64>,
     _icon_animations: &crate::ui::animation::HoverAnimations<crate::app::IconId>,
@@ -32,9 +33,32 @@ pub fn view<'a>(
     description_expanded: bool,
     gradient_source: Option<DetailGradientSnapshot>,
     gradient_progress: f32,
+    context: ResponsiveContext,
 ) -> Element<'a, Message> {
-    let header = build_header(user, image_state, description_expanded, locale);
-    let body = build_playlist_grid(user, image_state, content_width);
+    view_for_context(
+        user,
+        image_state,
+        locale,
+        content_width,
+        description_expanded,
+        gradient_source,
+        gradient_progress,
+        context,
+    )
+}
+
+fn view_for_context<'a>(
+    user: &'a PlaylistView,
+    image_state: &'a ImageState,
+    locale: Locale,
+    content_width: f32,
+    description_expanded: bool,
+    gradient_source: Option<DetailGradientSnapshot>,
+    gradient_progress: f32,
+    context: ResponsiveContext,
+) -> Element<'a, Message> {
+    let header = build_header(user, image_state, description_expanded, locale, context);
+    let body = build_playlist_grid(user, image_state, content_width, context);
 
     let gradient_target = user.gradient_snapshot();
     let gradient_section = container(header).width(Fill).style(move |theme| {
@@ -52,8 +76,15 @@ fn build_header(
     image_state: &ImageState,
     description_expanded: bool,
     locale: Locale,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
-    let avatar_size = 216.0;
+    let tokens = context.tokens;
+    let avatar_size = match context.profile {
+        LayoutProfile::Expanded | LayoutProfile::Standard => tokens.size(216.0),
+        LayoutProfile::Compact => tokens.size(192.0),
+        LayoutProfile::Tablet => tokens.size(176.0),
+        LayoutProfile::Narrow => tokens.size(152.0),
+    };
     let avatar = circular_avatar(
         image_state.get(ImageKind::UserAvatar, user.creator_id),
         &user.name,
@@ -61,7 +92,7 @@ fn build_header(
     );
 
     let title = text(user.name.clone())
-        .size(theme::TEXT_SIZE_DISPLAY_LARGE.min(84.0))
+        .size(tokens.text(TextRole::DisplayLarge).min(tokens.size(84.0)))
         .style(|theme| iced::widget::text::Style {
             color: Some(theme::text_primary(theme)),
         })
@@ -72,7 +103,7 @@ fn build_header(
             .clone()
             .unwrap_or_else(|| "关注 0 · 粉丝 0".to_string()),
     )
-    .size(theme::TEXT_SIZE_TITLE)
+    .size(tokens.text(TextRole::Title))
     .style(|theme| iced::widget::text::Style {
         color: Some(theme::text_secondary(theme)),
     });
@@ -96,7 +127,7 @@ fn build_header(
         let is_long = line_count > 2;
 
         let desc_widget = text(desc_text)
-            .size(theme::TEXT_SIZE_BODY_LARGE)
+            .size(tokens.text(TextRole::BodyLarge))
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_muted(theme)),
             })
@@ -115,7 +146,7 @@ fn build_header(
                             .width(4)
                             .scroller_width(4),
                     ))
-                    .height(150)
+                    .height(tokens.size(150.0))
                     .id(iced::widget::Id::new("user_description_scroll")),
                     SmoothScrollTarget::Native("user_description_scroll"),
                     Message::SmoothScroll,
@@ -163,17 +194,35 @@ fn build_header(
     .align_x(Alignment::Start)
     .width(Fill);
 
-    row![avatar, Space::new().width(28), info]
-        .align_y(Alignment::Center)
-        .padding(Padding::new(48.0).top(84.0).bottom(28.0))
-        .into()
+    if context.profile.is_desktop() {
+        row![avatar, Space::new().width(tokens.space(28.0)), info]
+            .align_y(Alignment::Center)
+            .padding(
+                Padding::new(tokens.space(48.0))
+                    .top(tokens.space(84.0))
+                    .bottom(tokens.space(28.0)),
+            )
+            .into()
+    } else {
+        column![avatar, Space::new().height(tokens.space(20.0)), info]
+            .align_x(Alignment::Start)
+            .width(Fill)
+            .padding(
+                Padding::new(tokens.space(24.0))
+                    .top(tokens.space(48.0))
+                    .bottom(tokens.space(24.0)),
+            )
+            .into()
+    }
 }
 
 fn build_playlist_grid<'a>(
     user: &PlaylistView,
     image_state: &'a ImageState,
     content_width: f32,
+    context: ResponsiveContext,
 ) -> Element<'a, Message> {
+    let tokens = context.tokens;
     if user.user_playlists.is_empty() {
         return container(
             text("暂无歌单")
@@ -189,32 +238,39 @@ fn build_playlist_grid<'a>(
 
     let card_width = detail_card::CARD_WIDTH;
     let card_spacing = detail_card::CARD_SPACING;
-    let columns_per_row =
-        widgets::calculate_grid_columns_clamped(content_width, card_width, card_spacing, 8);
+    let columns_per_row = match context.profile {
+        LayoutProfile::Tablet | LayoutProfile::Narrow => 1,
+        _ => context.grid_columns(content_width, card_width, card_spacing, 8),
+    };
 
     let title = text("歌单")
-        .size(theme::TEXT_SIZE_TITLE_LARGE)
+        .size(tokens.text(TextRole::TitleLarge))
         .style(|theme| iced::widget::text::Style {
             color: Some(theme::text_primary(theme)),
         })
         .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     let mut rows = column![title, Space::new().height(20)]
-        .spacing(18)
-        .padding(Padding::new(40.0).left(48.0).right(48.0));
+        .spacing(tokens.space(18.0))
+        .padding(
+            Padding::new(tokens.space(40.0))
+                .left(tokens.space(48.0))
+                .right(tokens.space(48.0)),
+        );
 
     for chunk in user.user_playlists.chunks(columns_per_row) {
         let mut row_items: Vec<Element<'a, Message>> = Vec::new();
         for playlist in chunk {
             let cover_handle = image_state.get(ImageKind::PlaylistCover, playlist.id);
-            row_items.push(detail_card::view(
+            row_items.push(detail_card::view_with_context(
                 playlist.name.clone(),
                 playlist.creator.nickname.clone(),
                 cover_handle,
                 ImageKind::PlaylistCover,
                 Message::OpenNcmPlaylist(playlist.id),
+                context,
             ));
-            row_items.push(Space::new().width(card_spacing).into());
+            row_items.push(Space::new().width(tokens.space(card_spacing)).into());
         }
         if !row_items.is_empty() {
             row_items.pop();

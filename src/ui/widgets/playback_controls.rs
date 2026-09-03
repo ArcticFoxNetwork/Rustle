@@ -6,11 +6,7 @@
 use iced::widget::{Space, button, container, row, svg};
 use iced::{Alignment, Color, Element, Padding};
 
-use crate::app::Message;
-use crate::features::PlayMode;
 use crate::ui::{icons, theme};
-
-use super::play_mode_button::{self, ButtonSize as PlayModeButtonSize};
 
 /// Size variant for playback controls
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -19,6 +15,10 @@ pub enum ControlSize {
     Small,
     /// Large size for lyrics page (64px play button)
     Large,
+    /// Density-scaled small controls for high-resolution player chrome.
+    ScaledSmall(f32),
+    /// Density-scaled large controls for high-resolution full-screen surfaces.
+    ScaledLarge(f32),
 }
 
 impl ControlSize {
@@ -26,6 +26,8 @@ impl ControlSize {
         match self {
             Self::Small => 40.0,
             Self::Large => 64.0,
+            Self::ScaledSmall(scale) => 40.0 * scale.max(0.1),
+            Self::ScaledLarge(scale) => 64.0 * scale.max(0.1),
         }
     }
 
@@ -33,6 +35,8 @@ impl ControlSize {
         match self {
             Self::Small => 20.0,
             Self::Large => 28.0,
+            Self::ScaledSmall(scale) => 20.0 * scale.max(0.1),
+            Self::ScaledLarge(scale) => 28.0 * scale.max(0.1),
         }
     }
 
@@ -40,6 +44,8 @@ impl ControlSize {
         match self {
             Self::Small => 20.0,
             Self::Large => 28.0,
+            Self::ScaledSmall(scale) => 20.0 * scale.max(0.1),
+            Self::ScaledLarge(scale) => 28.0 * scale.max(0.1),
         }
     }
 
@@ -47,6 +53,8 @@ impl ControlSize {
         match self {
             Self::Small => 8.0,
             Self::Large => 12.0,
+            Self::ScaledSmall(scale) => 8.0 * scale.max(0.1),
+            Self::ScaledLarge(scale) => 12.0 * scale.max(0.1),
         }
     }
 
@@ -54,6 +62,8 @@ impl ControlSize {
         match self {
             Self::Small => 20.0,
             Self::Large => 26.0,
+            Self::ScaledSmall(scale) => 20.0 * scale.max(0.1),
+            Self::ScaledLarge(scale) => 26.0 * scale.max(0.1),
         }
     }
 
@@ -61,16 +71,23 @@ impl ControlSize {
         match self {
             Self::Small => 8.0,
             Self::Large => 16.0,
+            Self::ScaledSmall(scale) => 8.0 * scale.max(0.1),
+            Self::ScaledLarge(scale) => 16.0 * scale.max(0.1),
         }
+    }
+
+    fn is_small(&self) -> bool {
+        matches!(self, Self::Small | Self::ScaledSmall(_))
     }
 }
 
 /// Build the play/pause button with buffering state
-pub fn play_button_with_buffering(
+pub fn play_button_with_buffering<M: Clone + 'static>(
     is_playing: bool,
     is_buffering: bool,
     size: ControlSize,
-) -> Element<'static, Message> {
+    on_press: M,
+) -> Element<'static, M> {
     // Only show loading icon when playing AND buffering
     let show_loading = is_playing && is_buffering;
     let play_icon = if show_loading {
@@ -88,7 +105,7 @@ pub fn play_button_with_buffering(
     // Offset to visually center the triangle (play icon is not symmetric)
     let offset = if is_playing || show_loading {
         0.0
-    } else if size == ControlSize::Small {
+    } else if size.is_small() {
         2.0
     } else {
         3.0
@@ -123,7 +140,7 @@ pub fn play_button_with_buffering(
         background: Some(iced::Background::Color(Color::TRANSPARENT)),
         ..Default::default()
     })
-    .on_press(Message::TogglePlayback);
+    .on_press(on_press);
 
     // Always enable button - user can pause even during buffering
     super::hover_surface(btn)
@@ -151,7 +168,11 @@ pub fn play_button_with_buffering(
 }
 
 /// Build the previous song button
-pub fn prev_button(size: ControlSize, disabled: bool) -> Element<'static, Message> {
+pub fn prev_button<M: Clone + 'static>(
+    size: ControlSize,
+    disabled: bool,
+    on_press: Option<M>,
+) -> Element<'static, M> {
     let icon_size = size.skip_icon_size();
     let padding = size.skip_button_padding();
     let radius = size.skip_button_radius();
@@ -179,7 +200,7 @@ pub fn prev_button(size: ControlSize, disabled: bool) -> Element<'static, Messag
     let btn = if disabled {
         btn
     } else {
-        btn.on_press(Message::PrevSong)
+        btn.on_press_maybe(on_press)
     };
 
     super::hover_surface(btn)
@@ -199,7 +220,7 @@ pub fn prev_button(size: ControlSize, disabled: bool) -> Element<'static, Messag
 }
 
 /// Build the next song button
-pub fn next_button(size: ControlSize) -> Element<'static, Message> {
+pub fn next_button<M: Clone + 'static>(size: ControlSize, on_press: M) -> Element<'static, M> {
     let icon_size = size.skip_icon_size();
     let padding = size.skip_button_padding();
     let radius = size.skip_button_radius();
@@ -217,7 +238,7 @@ pub fn next_button(size: ControlSize) -> Element<'static, Message> {
         background: Some(iced::Background::Color(Color::TRANSPARENT)),
         ..Default::default()
     })
-    .on_press(Message::NextSong);
+    .on_press(on_press);
 
     super::hover_surface(btn)
         .style(move |theme, progress| container::Style {
@@ -236,16 +257,17 @@ pub fn next_button(size: ControlSize) -> Element<'static, Message> {
 
 /// Build the favorite button used by the player bar.
 ///
-/// `favorite` contains the NCM song ID and current favorite state. Local songs
-/// and an empty player pass `None`, which keeps the button visible but disabled.
-pub fn favorite_button(
+/// `favorite` contains the current favorite state. The caller supplies the
+/// application action separately; `None` keeps the button visible but disabled.
+pub fn favorite_button<M: Clone + 'static>(
     size: ControlSize,
-    favorite: Option<(u64, bool)>,
-) -> Element<'static, Message> {
+    favorite: Option<bool>,
+    on_press: Option<M>,
+) -> Element<'static, M> {
     let icon_size = size.skip_icon_size();
     let padding = size.skip_button_padding();
     let radius = size.skip_button_radius();
-    let is_liked = favorite.is_some_and(|(_, is_liked)| is_liked);
+    let is_liked = favorite.unwrap_or(false);
     let enabled = favorite.is_some();
     let icon_opacity: f32 = if enabled { 1.0 } else { 0.4 };
     let heart_icon = if is_liked {
@@ -275,11 +297,7 @@ pub fn favorite_button(
         ..Default::default()
     });
 
-    let btn = if let Some((song_id, _)) = favorite {
-        btn.on_press(Message::ToggleFavorite(song_id))
-    } else {
-        btn
-    };
+    let btn = btn.on_press_maybe(on_press);
 
     super::hover_surface(btn)
         .enabled(enabled)
@@ -298,56 +316,73 @@ pub fn favorite_button(
 }
 
 /// Build the player bar controls, including play mode and favorite actions.
-pub fn view_player_bar(
+pub fn view_player_bar<M: Clone + 'static>(
     is_playing: bool,
     is_buffering: bool,
     size: ControlSize,
-    is_fm_mode: bool,
-    is_first_song: bool,
-    play_mode: PlayMode,
-    favorite: Option<(u64, bool)>,
-) -> Element<'static, Message> {
+    prev_disabled: bool,
+    play_mode_button: Element<'static, M>,
+    prev_action: Option<M>,
+    play_action: M,
+    next_action: M,
+    favorite: Option<bool>,
+    favorite_action: Option<M>,
+) -> Element<'static, M> {
     let spacing = size.spacing();
-    let prev_disabled = is_fm_mode && is_first_song;
 
     row![
-        play_mode_button::view(play_mode, PlayModeButtonSize::Small, is_fm_mode),
+        play_mode_button,
         Space::new().width(spacing),
-        prev_button(size, prev_disabled),
+        prev_button(size, prev_disabled, prev_action),
         Space::new().width(spacing),
-        play_button_with_buffering(is_playing, is_buffering, size),
+        play_button_with_buffering(is_playing, is_buffering, size, play_action),
         Space::new().width(spacing),
-        next_button(size),
+        next_button(size, next_action),
         Space::new().width(spacing),
-        favorite_button(size, favorite),
+        favorite_button(size, favorite, favorite_action),
     ]
     .align_y(Alignment::Center)
     .into()
 }
 
 /// Build the complete playback controls row with buffering state
-pub fn view(
+pub fn view<M: Clone + 'static>(
     is_playing: bool,
     is_buffering: bool,
     size: ControlSize,
-    is_fm_mode: bool,
-    is_first_song: bool,
-) -> Element<'static, Message> {
+    prev_disabled: bool,
+    prev_action: Option<M>,
+    play_action: M,
+    next_action: M,
+) -> Element<'static, M> {
     let spacing = size.spacing();
-    let prev_disabled = is_fm_mode && is_first_song;
 
     row![
-        prev_button(size, prev_disabled),
+        prev_button(size, prev_disabled, prev_action),
         Space::new().width(spacing),
-        play_button_with_buffering(is_playing, is_buffering, size),
+        play_button_with_buffering(is_playing, is_buffering, size, play_action),
         Space::new().width(spacing),
-        next_button(size),
+        next_button(size, next_action),
     ]
     .align_y(Alignment::Center)
     .into()
 }
 
 /// Build the complete playback controls row (prev, play, next)
-pub fn view_simple(is_playing: bool, size: ControlSize) -> Element<'static, Message> {
-    view(is_playing, false, size, false, false)
+pub fn view_simple<M: Clone + 'static>(
+    is_playing: bool,
+    size: ControlSize,
+    prev_action: Option<M>,
+    play_action: M,
+    next_action: M,
+) -> Element<'static, M> {
+    view(
+        is_playing,
+        false,
+        size,
+        prev_action.is_none(),
+        prev_action,
+        play_action,
+        next_action,
+    )
 }

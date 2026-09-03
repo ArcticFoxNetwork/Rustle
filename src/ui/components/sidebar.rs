@@ -1,7 +1,9 @@
 //! Left sidebar navigation component
 //! Dark gray panel with logo, menu, library section, and user profile
 
-use iced::widget::{Space, button, column, container, mouse_area, row, scrollable, svg, text};
+use iced::widget::{
+    Space, button, column, container, mouse_area, row, scrollable, svg, text, tooltip,
+};
 use iced::{Alignment, Color, Element, Fill, Padding};
 
 use crate::app::{ImageState, Message, Route, SidebarId};
@@ -9,12 +11,64 @@ use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::animation::{HoverAnimations, SmoothScrollTarget};
 use crate::ui::components::importing_card::{self, ImportingPlaylist};
+use crate::ui::responsive::{
+    ChromeRole, IconRole, ResponsiveContext, SidebarPresentation, TargetRole, TextRole,
+    bounded_width, sidebar_presentation,
+};
 use crate::ui::theme::{self, BOLD_WEIGHT};
 
 const SIDEBAR_TEXT_SIZE: f32 = 16.0;
 const SIDEBAR_HEADER_TEXT_SIZE: f32 = 14.0;
 const SIDEBAR_ICON_SIZE: f32 = 24.0;
 const SIDEBAR_ITEM_SPACING: f32 = 4.0;
+
+#[derive(Debug, Clone, Copy)]
+struct SidebarMetrics {
+    text_size: f32,
+    header_text_size: f32,
+    title_size: f32,
+    icon_size: f32,
+    icon_gap: f32,
+    item_spacing: f32,
+    content_padding: f32,
+    logo_icon_size: f32,
+    logo_gap: f32,
+    logo_bottom: f32,
+    section_gap: f32,
+    button_padding: f32,
+    button_horizontal_padding: f32,
+    header_padding: f32,
+    content_bottom: f32,
+    cover_size: f32,
+    cover_radius: f32,
+    target_size: f32,
+}
+
+impl SidebarMetrics {
+    fn from_context(context: &ResponsiveContext) -> Self {
+        let tokens = &context.tokens;
+        Self {
+            text_size: tokens.text(TextRole::BodyLarge),
+            header_text_size: tokens.text(TextRole::Body),
+            title_size: tokens.text(TextRole::Title),
+            icon_size: tokens.icon(IconRole::Large),
+            icon_gap: tokens.space(16.0),
+            item_spacing: tokens.space(SIDEBAR_ITEM_SPACING),
+            content_padding: tokens.space(16.0),
+            logo_icon_size: tokens.size(30.0),
+            logo_gap: tokens.space(12.0),
+            logo_bottom: tokens.space(32.0),
+            section_gap: tokens.space(22.0),
+            button_padding: tokens.space(10.0),
+            button_horizontal_padding: tokens.space(14.0),
+            header_padding: tokens.space(10.0),
+            content_bottom: tokens.space(14.0),
+            cover_size: tokens.size(42.0),
+            cover_radius: tokens.size(5.0),
+            target_size: tokens.target(TargetRole::Icon),
+        }
+    }
+}
 
 /// Navigation menu items
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -68,7 +122,7 @@ impl LibraryItem {
     }
 }
 
-/// Build the sidebar component
+/// Build the profile-specific sidebar presentation.
 pub fn view(
     current_route: &Route,
     locale: Locale,
@@ -81,7 +135,111 @@ pub fn view(
     sidebar_width: f32,
     my_playlists_expanded: bool,
     collected_playlists_expanded: bool,
+    context: ResponsiveContext,
+    drawer_open: bool,
 ) -> Element<'static, Message> {
+    match sidebar_presentation(context.profile, drawer_open) {
+        SidebarPresentation::Full => full_view(
+            current_route,
+            locale,
+            is_logged_in,
+            importing_playlist,
+            playlists,
+            user_playlists,
+            image_state,
+            sidebar_animations,
+            my_playlists_expanded,
+            collected_playlists_expanded,
+            context,
+            context.tokens.size(sidebar_width.clamp(240.0, 440.0)),
+        ),
+        SidebarPresentation::Rail | SidebarPresentation::Drawer => {
+            rail_view(current_route, locale, sidebar_animations, context)
+        }
+        SidebarPresentation::Hidden => Space::new().width(0).height(Fill).into(),
+    }
+}
+
+/// Render the complete playlist/navigation drawer as an overlay surface.
+pub fn drawer_view(
+    current_route: &Route,
+    locale: Locale,
+    is_logged_in: bool,
+    importing_playlist: Option<&ImportingPlaylist>,
+    playlists: &[crate::database::DbPlaylist],
+    user_playlists: &[crate::api::PlaylistSummary],
+    image_state: &ImageState,
+    sidebar_animations: &HoverAnimations<SidebarId>,
+    sidebar_width: f32,
+    my_playlists_expanded: bool,
+    collected_playlists_expanded: bool,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
+    if !context.profile.uses_navigation_drawer() {
+        return Space::new().width(0).height(0).into();
+    }
+
+    let drawer_width = bounded_width(
+        context.tokens.size(sidebar_width.max(320.0)),
+        context.width(),
+        context.tokens.space(16.0),
+    )
+    .max(context.tokens.size(240.0).min(context.width()));
+    let drawer = full_view(
+        current_route,
+        locale,
+        is_logged_in,
+        importing_playlist,
+        playlists,
+        user_playlists,
+        image_state,
+        sidebar_animations,
+        my_playlists_expanded,
+        collected_playlists_expanded,
+        context,
+        drawer_width / context.density.value(),
+    );
+    let backdrop = mouse_area(
+        container(Space::new().width(Fill).height(Fill))
+            .width(Fill)
+            .height(Fill)
+            .style(|theme| iced::widget::container::Style {
+                background: Some(theme::overlay_backdrop(theme, 0.56).into()),
+                ..Default::default()
+            }),
+    )
+    .on_press(Message::CloseSidebarDrawer);
+
+    crate::ui::overlay::block_mouse_events(
+        iced::widget::stack![
+            backdrop,
+            container(drawer)
+                .width(drawer_width)
+                .height(Fill)
+                .style(theme::sidebar),
+        ]
+        .width(Fill)
+        .height(Fill)
+        .into(),
+    )
+}
+
+fn full_view(
+    current_route: &Route,
+    locale: Locale,
+    is_logged_in: bool,
+    importing_playlist: Option<&ImportingPlaylist>,
+    playlists: &[crate::database::DbPlaylist],
+    user_playlists: &[crate::api::PlaylistSummary],
+    image_state: &ImageState,
+    sidebar_animations: &HoverAnimations<SidebarId>,
+    my_playlists_expanded: bool,
+    collected_playlists_expanded: bool,
+    context: ResponsiveContext,
+    rendered_width: f32,
+) -> Element<'static, Message> {
+    let sidebar_width = rendered_width.max(context.tokens.chrome(ChromeRole::Sidebar));
+    let metrics = SidebarMetrics::from_context(&context);
     // Logo section
     let logo_content = row![
         // Pink music icon
@@ -89,27 +247,33 @@ pub fn view(
             svg(svg::Handle::from_memory(
                 crate::ui::icons::MUSIC_LOGO.as_bytes()
             ))
-            .width(30)
-            .height(30)
+            .width(metrics.logo_icon_size)
+            .height(metrics.logo_icon_size)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::ACCENT_PINK),
             })
         ),
-        Space::new().width(12),
+        Space::new().width(metrics.logo_gap),
         text(locale.get(Key::AppName))
-            .size(theme::TEXT_SIZE_TITLE)
+            .size(metrics.title_size)
             .style(|theme| text::Style {
                 color: Some(theme::text_primary(theme))
             })
             .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
     ]
     .align_y(Alignment::Center)
-    .padding(Padding::new(22.0).bottom(32.0));
+    .padding(Padding::new(metrics.content_padding).bottom(metrics.logo_bottom));
 
     let logo = mouse_area(logo_content).on_press(Message::WindowDrag);
 
     // Main navigation menu with hover animations
-    let nav_items = [NavItem::Home, NavItem::Radio, NavItem::Downloads];
+    let nav_items = [
+        NavItem::Home,
+        NavItem::Radio,
+        NavItem::Downloads,
+        NavItem::Settings,
+        NavItem::AudioEngine,
+    ];
     let nav_menu = column(nav_items.into_iter().enumerate().map(|(idx, item)| {
         let is_active = matches!(current_route.nav_item(), Some(active) if active == item);
         let hover_progress = sidebar_animations.get_progress(&SidebarId::Nav(idx));
@@ -120,13 +284,14 @@ pub fn view(
             hover_progress,
             SidebarId::Nav(idx),
             Message::Navigate(item),
+            metrics,
         )
     }))
-    .spacing(SIDEBAR_ITEM_SPACING);
+    .spacing(metrics.item_spacing);
 
     // Library section header
     let library_header = text(locale.get(Key::LibraryTitle))
-        .size(SIDEBAR_HEADER_TEXT_SIZE)
+        .size(metrics.header_text_size)
         .style(|theme| text::Style {
             color: Some(theme::text_muted(theme)),
         })
@@ -143,6 +308,7 @@ pub fn view(
         recently_played_progress,
         SidebarId::Library(0),
         Message::LibrarySelect(recently_played_item),
+        metrics,
     );
 
     // Import local playlist button - use same animated style as nav buttons
@@ -154,6 +320,7 @@ pub fn view(
         import_progress,
         SidebarId::Library(1),
         Message::ImportLocalPlaylist,
+        metrics,
     );
 
     // Build library section with proper spacing (same as nav_menu)
@@ -170,14 +337,14 @@ pub fn view(
         let id = playlist.id;
         let is_active = matches!(current_route, Route::Playlist(current_id) if *current_id == id);
         let hover_progress = sidebar_animations.get_progress(&SidebarId::Playlist(id));
-        let s = crate::image::CoverSize::Tiny;
         let cover_handle = u64::try_from(id)
             .ok()
             .and_then(|id| image_state.get(ImageKind::LocalPlaylistCover, id));
-        let cover_el = Some(crate::ui::components::cover_image::cover(
+        let cover_el = Some(crate::ui::components::cover_image::custom(
             cover_handle,
             ImageKind::LocalPlaylistCover,
-            s,
+            metrics.cover_size,
+            metrics.cover_radius,
         ));
         library_items.push(sidebar_button_animated_opt_cover(
             crate::ui::icons::MUSIC,
@@ -187,18 +354,23 @@ pub fn view(
             hover_progress,
             SidebarId::Playlist(id),
             Message::OpenPlaylist(id),
+            metrics,
         ));
     }
 
     library_items.push(import_playlist_btn);
 
     // Library section with spacing matching nav_menu
-    let library_section = column(library_items).spacing(SIDEBAR_ITEM_SPACING);
+    let library_section = column(library_items).spacing(metrics.item_spacing);
 
     // Build scrollable content (only library and cloud playlists, not logo/nav)
     let mut scrollable_items: Vec<Element<'static, Message>> = vec![
         container(library_header)
-            .padding(Padding::new(0.0).left(16.0).bottom(10.0))
+            .padding(
+                Padding::new(0.0)
+                    .left(metrics.content_padding)
+                    .bottom(metrics.header_padding),
+            )
             .into(),
         library_section.into(),
     ];
@@ -218,11 +390,11 @@ pub fn view(
                     matches!(current_route, Route::NcmPlaylist(current_id) if *current_id == id);
                 let hover_progress = sidebar_animations.get_progress(&SidebarId::UserPlaylist(id));
 
-                let s = crate::image::CoverSize::Tiny;
-                let cover_el = crate::ui::components::cover_image::cover(
+                let cover_el = crate::ui::components::cover_image::custom(
                     image_state.get(ImageKind::PlaylistCover, id),
                     ImageKind::PlaylistCover,
-                    s,
+                    metrics.cover_size,
+                    metrics.cover_radius,
                 );
                 sidebar_button_animated_opt_cover(
                     crate::ui::icons::MUSIC,
@@ -232,83 +404,93 @@ pub fn view(
                     hover_progress,
                     SidebarId::UserPlaylist(id),
                     Message::OpenNcmPlaylist(id),
+                    metrics,
                 )
             };
 
-        scrollable_items.push(Space::new().height(18).into());
+        scrollable_items.push(Space::new().height(context.tokens.space(18.0)).into());
 
         // "My Playlists" section (owned)
         scrollable_items.push(collapsible_section_header(
             locale.get(Key::CloudPlaylistsTitle).to_string(),
             my_playlists_expanded,
             Message::ToggleMyPlaylistsSection,
+            metrics,
         ));
         if my_playlists_expanded {
             let my_items: Vec<Element<'static, Message>> = owned_playlists
                 .into_iter()
                 .map(render_playlist_btn)
                 .collect();
-            scrollable_items.push(column(my_items).spacing(SIDEBAR_ITEM_SPACING).into());
+            scrollable_items.push(column(my_items).spacing(metrics.item_spacing).into());
         }
 
         // "Collected Playlists" section
         if !collected_playlists.is_empty() {
-            scrollable_items.push(Space::new().height(18).into());
+            scrollable_items.push(Space::new().height(context.tokens.space(18.0)).into());
             scrollable_items.push(collapsible_section_header(
                 locale.get(Key::CollectedPlaylistsTitle).to_string(),
                 collected_playlists_expanded,
                 Message::ToggleCollectedPlaylistsSection,
+                metrics,
             ));
             if collected_playlists_expanded {
                 let collected_items: Vec<Element<'static, Message>> = collected_playlists
                     .into_iter()
                     .map(render_playlist_btn)
                     .collect();
-                scrollable_items.push(column(collected_items).spacing(SIDEBAR_ITEM_SPACING).into());
+                scrollable_items.push(column(collected_items).spacing(metrics.item_spacing).into());
             }
         }
     }
 
     // Scrollable area for library and cloud playlists only (hidden scrollbar)
     let scrollable_content = crate::ui::widgets::smooth_scroll(
-        scrollable(column(scrollable_items).padding(Padding::new(0.0).bottom(14.0)))
-            .height(Fill)
-            .id(iced::widget::Id::new("sidebar_scroll"))
-            .style(|_theme, _status| scrollable::Style {
-                container: iced::widget::container::Style::default(),
-                vertical_rail: scrollable::Rail {
-                    background: None,
-                    border: iced::Border::default(),
-                    scroller: scrollable::Scroller {
-                        // Hidden scrollbar - transparent
-                        background: iced::Background::Color(Color::TRANSPARENT),
-                        border: iced::Border::default(),
-                    },
-                },
-                horizontal_rail: scrollable::Rail {
-                    background: None,
-                    border: iced::Border::default(),
-                    scroller: scrollable::Scroller {
-                        background: iced::Background::Color(Color::TRANSPARENT),
-                        border: iced::Border::default(),
-                    },
-                },
-                gap: None,
-                auto_scroll: scrollable::AutoScroll {
+        scrollable(
+            column(scrollable_items).padding(Padding::new(0.0).bottom(metrics.content_bottom)),
+        )
+        .height(Fill)
+        .id(iced::widget::Id::new("sidebar_scroll"))
+        .style(|_theme, _status| scrollable::Style {
+            container: iced::widget::container::Style::default(),
+            vertical_rail: scrollable::Rail {
+                background: None,
+                border: iced::Border::default(),
+                scroller: scrollable::Scroller {
+                    // Hidden scrollbar - transparent
                     background: iced::Background::Color(Color::TRANSPARENT),
                     border: iced::Border::default(),
-                    shadow: iced::Shadow::default(),
-                    icon: Color::TRANSPARENT,
                 },
-            }),
+            },
+            horizontal_rail: scrollable::Rail {
+                background: None,
+                border: iced::Border::default(),
+                scroller: scrollable::Scroller {
+                    background: iced::Background::Color(Color::TRANSPARENT),
+                    border: iced::Border::default(),
+                },
+            },
+            gap: None,
+            auto_scroll: scrollable::AutoScroll {
+                background: iced::Background::Color(Color::TRANSPARENT),
+                border: iced::Border::default(),
+                shadow: iced::Shadow::default(),
+                icon: Color::TRANSPARENT,
+            },
+        }),
         SmoothScrollTarget::Native("sidebar_scroll"),
         Message::SmoothScroll,
     );
 
-    let top_content = column![logo, nav_menu, Space::new().height(22), scrollable_content,]
-        .padding(Padding::new(16.0).bottom(0.0))
-        .width(sidebar_width)
-        .height(Fill);
+    let top_content = column![
+        logo,
+        nav_menu,
+        Space::new().height(metrics.section_gap),
+        scrollable_content,
+    ]
+    .padding(Padding::new(metrics.content_padding).bottom(0.0))
+    .width(sidebar_width)
+    .height(Fill);
 
     let content = container(top_content).width(sidebar_width).height(Fill);
 
@@ -323,11 +505,151 @@ pub fn view(
         .into()
 }
 
+/// Render the compact icon rail. Playlist data remains available through the
+/// drawer; route and library actions shown here keep their original messages.
+fn rail_view(
+    current_route: &Route,
+    locale: Locale,
+    sidebar_animations: &HoverAnimations<SidebarId>,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
+    let metrics = SidebarMetrics::from_context(&context);
+    let rail_width = context.tokens.chrome(ChromeRole::SidebarRail);
+
+    let menu_button = rail_button(
+        crate::ui::icons::LIST,
+        locale.get(Key::NavigationMenu).to_string(),
+        false,
+        0.0,
+        metrics,
+        SidebarId::Library(usize::MAX),
+        Message::ToggleSidebarDrawer,
+    );
+
+    let nav_items = [
+        NavItem::Home,
+        NavItem::Radio,
+        NavItem::Downloads,
+        NavItem::Settings,
+        NavItem::AudioEngine,
+    ];
+    let nav_buttons: Vec<Element<'static, Message>> = nav_items
+        .into_iter()
+        .enumerate()
+        .map(|(idx, item)| {
+            let active = current_route.nav_item() == Some(item);
+            rail_button(
+                item.icon_svg(),
+                locale.get(item.i18n_key()).to_string(),
+                active,
+                sidebar_animations.get_progress(&SidebarId::Nav(idx)),
+                metrics,
+                SidebarId::Nav(idx),
+                Message::Navigate(item),
+            )
+        })
+        .collect();
+
+    let recently_played = rail_button(
+        LibraryItem::RecentlyPlayed.icon_svg(),
+        locale.get(Key::LibraryRecentlyPlayed).to_string(),
+        matches!(current_route, Route::RecentlyPlayed),
+        sidebar_animations.get_progress(&SidebarId::Library(0)),
+        metrics,
+        SidebarId::Library(0),
+        Message::LibrarySelect(LibraryItem::RecentlyPlayed),
+    );
+
+    let content = column![
+        menu_button,
+        Space::new().height(metrics.section_gap),
+        column(nav_buttons).spacing(metrics.item_spacing),
+        Space::new().height(metrics.section_gap),
+        recently_played,
+        Space::new().height(Fill),
+    ]
+    .align_x(Alignment::Center)
+    .padding(Padding::new(metrics.content_padding / 2.0))
+    .width(rail_width)
+    .height(Fill);
+
+    mouse_area(
+        container(content)
+            .width(rail_width)
+            .height(Fill)
+            .style(theme::sidebar),
+    )
+    .on_exit(Message::HoverSidebar(None))
+    .into()
+}
+
+fn rail_button(
+    icon_svg: &'static str,
+    label: String,
+    is_active: bool,
+    hover_progress: f32,
+    metrics: SidebarMetrics,
+    sidebar_id: SidebarId,
+    on_press: Message,
+) -> Element<'static, Message> {
+    let icon = svg(svg::Handle::from_memory(icon_svg.as_bytes()))
+        .width(metrics.icon_size)
+        .height(metrics.icon_size)
+        .style(move |theme, _status| svg::Style {
+            color: Some(if is_active {
+                theme::text_primary(theme)
+            } else {
+                theme::animated_brightness(theme, hover_progress)
+            }),
+        });
+    let icon: Element<'static, Message> = container(icon)
+        .center_x(metrics.target_size)
+        .center_y(metrics.target_size)
+        .into();
+    let button = button(icon)
+        .width(metrics.target_size)
+        .height(metrics.target_size)
+        .padding(0)
+        .style(move |theme, _status| iced::widget::button::Style {
+            background: Some(iced::Background::Color(theme::hover_bg_alpha(
+                theme,
+                if is_active {
+                    0.12
+                } else {
+                    0.12 * hover_progress
+                },
+            ))),
+            border: iced::Border {
+                radius: (metrics.target_size / 2.0).into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .on_press(on_press);
+
+    let button: Element<'static, Message> = if is_active {
+        button.into()
+    } else {
+        mouse_area(button)
+            .on_enter(Message::HoverSidebar(Some(sidebar_id)))
+            .on_exit(Message::HoverSidebar(None))
+            .into()
+    };
+
+    tooltip(
+        button,
+        text(label).size(metrics.header_text_size),
+        tooltip::Position::Right,
+    )
+    .into()
+}
+
 /// Create a compact clickable header for a collapsible cloud playlist section.
 fn collapsible_section_header(
     label: String,
     is_expanded: bool,
     on_press: Message,
+    metrics: SidebarMetrics,
 ) -> Element<'static, Message> {
     let chevron = if is_expanded {
         crate::ui::icons::CHEVRON_DOWN
@@ -337,15 +659,15 @@ fn collapsible_section_header(
 
     let content = row![
         text(label)
-            .size(SIDEBAR_HEADER_TEXT_SIZE)
+            .size(metrics.header_text_size)
             .style(|theme| text::Style {
                 color: Some(theme::text_muted(theme)),
             })
             .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
             .width(Fill),
         svg(svg::Handle::from_memory(chevron.as_bytes()))
-            .width(16)
-            .height(16)
+            .width(metrics.header_text_size)
+            .height(metrics.header_text_size)
             .style(|theme, _status| svg::Style {
                 color: Some(theme::text_muted(theme)),
             }),
@@ -354,7 +676,11 @@ fn collapsible_section_header(
 
     let header = button(content)
         .width(Fill)
-        .padding(Padding::new(4.0).left(16.0).right(12.0))
+        .padding(
+            Padding::new(metrics.content_padding / 4.0)
+                .left(metrics.content_padding)
+                .right(metrics.content_padding * 0.75),
+        )
         .style(|theme, status| iced::widget::button::Style {
             background: match status {
                 iced::widget::button::Status::Hovered => {
@@ -375,7 +701,11 @@ fn collapsible_section_header(
     // surface, so the highlighted area itself is less tall.
     container(header)
         .width(Fill)
-        .padding(Padding::new(2.0).left(0.0).right(0.0))
+        .padding(
+            Padding::new(metrics.content_padding / 8.0)
+                .left(0.0)
+                .right(0.0),
+        )
         .into()
 }
 
@@ -388,6 +718,7 @@ fn sidebar_button_animated(
     hover_progress: f32,
     sidebar_id: SidebarId,
     on_press: Message,
+    metrics: SidebarMetrics,
 ) -> Element<'static, Message> {
     sidebar_button_animated_opt_cover(
         icon_svg,
@@ -397,6 +728,7 @@ fn sidebar_button_animated(
         hover_progress,
         sidebar_id,
         on_press,
+        metrics,
     )
 }
 
@@ -408,12 +740,13 @@ fn sidebar_button_animated_opt_cover(
     hover_progress: f32,
     sidebar_id: SidebarId,
     on_press: Message,
+    metrics: SidebarMetrics,
 ) -> Element<'static, Message> {
     let icon: Element<'static, Message> = match cover_icon {
         Some(el) => el,
         None => svg(svg::Handle::from_memory(fallback_svg.as_bytes()))
-            .width(SIDEBAR_ICON_SIZE)
-            .height(SIDEBAR_ICON_SIZE)
+            .width(metrics.icon_size)
+            .height(metrics.icon_size)
             .style(move |theme, _status| svg::Style {
                 color: Some(if is_active {
                     theme::text_primary(theme)
@@ -425,7 +758,7 @@ fn sidebar_button_animated_opt_cover(
     };
 
     let label_text = text(label)
-        .size(SIDEBAR_TEXT_SIZE)
+        .size(metrics.text_size)
         .style(move |theme| text::Style {
             color: Some(if is_active {
                 theme::text_primary(theme)
@@ -435,9 +768,13 @@ fn sidebar_button_animated_opt_cover(
         })
         .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
-    let content = row![icon, Space::new().width(16), label_text]
+    let content = row![icon, Space::new().width(metrics.icon_gap), label_text]
         .align_y(Alignment::Center)
-        .padding(Padding::new(10.0).left(14.0).right(14.0));
+        .padding(
+            Padding::new(metrics.button_padding)
+                .left(metrics.button_horizontal_padding)
+                .right(metrics.button_horizontal_padding),
+        );
 
     // Use button for proper click feedback and cursor
     let btn = button(content)

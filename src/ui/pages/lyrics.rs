@@ -16,8 +16,11 @@ use crate::features::lyrics::engine::{LyricLineData, LyricsEngine};
 use crate::ui::effects::textured_background::TexturedBackgroundProgram;
 use crate::ui::icons;
 use crate::ui::overlay;
+use crate::ui::responsive::{
+    IconRole, LayoutProfile, RadiusRole, ResponsiveContext, TargetRole, TextRole,
+};
 use crate::ui::theme::{self, BOLD_WEIGHT};
-use crate::ui::widgets::{self, ControlSize, PlayModeButtonSize, SliderSize};
+use crate::ui::widgets::{self, ControlSize, SliderSize};
 
 /// Build the lyrics page view
 ///
@@ -48,6 +51,7 @@ pub fn view<'a>(
     download_progress: Option<f32>,
     is_fm_mode: bool,
     is_maximized: bool,
+    context: ResponsiveContext,
 ) -> Element<'a, Message> {
     let left_panel = build_left_panel(
         song,
@@ -60,61 +64,106 @@ pub fn view<'a>(
         is_liked,
         download_progress,
         is_fm_mode,
+        context,
     );
     let right_panel = if power_saving_mode {
         // Power saving mode: use simple text rendering
-        build_simple_lyrics_panel(cached_engine_lines, position * duration_secs * 1000.0)
+        build_simple_lyrics_panel(
+            cached_engine_lines,
+            position * duration_secs * 1000.0,
+            context,
+        )
     } else {
         build_right_panel_engine(
             cached_engine_lines,
             lyrics_engine,
             position * duration_secs * 1000.0,
+            context,
         )
     };
 
-    // Main layout: left panel (40%) + right panel (60%)
-    let content_row = row![
-        container(left_panel)
-            .width(Length::FillPortion(4))
-            .height(Fill)
-            .padding(40),
-        container(right_panel)
-            .width(Length::FillPortion(6))
-            .height(Fill)
-            .padding(Padding::new(0.0).left(20.0).right(40.0)),
-    ]
-    .width(Fill)
-    .height(Fill);
-
-    let content = container(content_row).width(Fill).height(Fill);
+    let tokens = context.tokens;
+    let content: Element<'a, Message> = match context.profile {
+        LayoutProfile::Expanded | LayoutProfile::Standard => row![
+            container(left_panel)
+                .width(Length::FillPortion(4))
+                .height(Fill)
+                .padding(tokens.space(40.0)),
+            container(right_panel)
+                .width(Length::FillPortion(6))
+                .height(Fill)
+                .padding(
+                    Padding::new(0.0)
+                        .left(tokens.space(20.0))
+                        .right(tokens.space(40.0)),
+                ),
+        ]
+        .width(Fill)
+        .height(Fill)
+        .into(),
+        LayoutProfile::Compact => row![
+            container(left_panel)
+                .width(Length::FillPortion(3))
+                .height(Fill)
+                .padding(tokens.space(24.0)),
+            container(right_panel)
+                .width(Length::FillPortion(7))
+                .height(Fill)
+                .padding(
+                    Padding::new(0.0)
+                        .left(tokens.space(12.0))
+                        .right(tokens.space(24.0)),
+                ),
+        ]
+        .width(Fill)
+        .height(Fill)
+        .into(),
+        LayoutProfile::Tablet | LayoutProfile::Narrow => column![
+            container(left_panel)
+                .width(Fill)
+                .height(Length::Shrink)
+                .padding(
+                    Padding::new(tokens.space(20.0))
+                        .top(tokens.space(44.0))
+                        .bottom(tokens.space(16.0)),
+                ),
+            container(right_panel).width(Fill).height(Fill).padding(
+                Padding::new(0.0)
+                    .left(tokens.space(16.0))
+                    .right(tokens.space(16.0))
+                    .bottom(tokens.space(16.0)),
+            ),
+        ]
+        .width(Fill)
+        .height(Fill)
+        .into(),
+    };
 
     const TITLE_BAR_HEIGHT: f32 = 64.0;
-    const TOP_BAR_PADDING_X: f32 = 20.0;
-    const TOP_BAR_PADDING_Y: f32 = 14.0;
-    const WINDOW_BUTTON_SIZE: f32 = 36.0;
-    const WINDOW_ICON_SIZE: f32 = 15.0;
-    const BACK_BUTTON_SIZE: f32 = 36.0;
-    const BACK_ICON_SIZE: f32 = 22.0;
+    let title_bar_height = tokens.size(TITLE_BAR_HEIGHT);
+    let window_button_size = tokens.target(TargetRole::WindowControl);
+    let window_icon_size = tokens.icon(IconRole::WindowControl);
+    let back_icon_size = tokens.icon(IconRole::Large);
 
     let title_bar_drag_region = mouse_area(
         container(Space::new())
             .width(Fill)
-            .height(Length::Fixed(TITLE_BAR_HEIGHT)),
+            .height(Length::Fixed(title_bar_height)),
     )
     .on_press(Message::WindowDrag);
 
     // Back button overlay in top-left corner
     let back_btn = button(
         svg(svg::Handle::from_memory(icons::CHEVRON_DOWN.as_bytes()))
-            .width(BACK_ICON_SIZE)
-            .height(BACK_ICON_SIZE)
+            .width(back_icon_size)
+            .height(back_icon_size)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::text_primary(_theme)),
             }),
     )
-    .width(BACK_BUTTON_SIZE)
-    .height(BACK_BUTTON_SIZE)
-    .style(|_theme, status| {
+    .width(window_button_size)
+    .height(window_button_size)
+    .style(move |_theme, status| {
         let bg = match status {
             button::Status::Hovered => Color::from_rgba(1.0, 1.0, 1.0, 0.12),
             button::Status::Pressed => Color::from_rgba(1.0, 1.0, 1.0, 0.2),
@@ -123,7 +172,7 @@ pub fn view<'a>(
         button::Style {
             background: Some(iced::Background::Color(bg)),
             border: iced::Border {
-                radius: 24.0.into(),
+                radius: tokens.radius(RadiusRole::Pill).into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -195,27 +244,27 @@ pub fn view<'a>(
 
     let settings_btn = button(
         svg(svg::Handle::from_memory(icons::SETTINGS.as_bytes()))
-            .width(WINDOW_ICON_SIZE)
-            .height(WINDOW_ICON_SIZE)
+            .width(window_icon_size)
+            .height(window_icon_size)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::text_primary(_theme)),
             }),
     )
-    .width(WINDOW_BUTTON_SIZE)
-    .height(WINDOW_BUTTON_SIZE)
+    .width(window_button_size)
+    .height(window_button_size)
     .style(icon_btn_style)
     .on_press(Message::OpenSettingsWithCloseLyrics);
 
     let minimize_btn = button(
         svg(svg::Handle::from_memory(icons::MINIMIZE.as_bytes()))
-            .width(WINDOW_ICON_SIZE)
-            .height(WINDOW_ICON_SIZE)
+            .width(window_icon_size)
+            .height(window_icon_size)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::text_primary(_theme)),
             }),
     )
-    .width(WINDOW_BUTTON_SIZE)
-    .height(WINDOW_BUTTON_SIZE)
+    .width(window_button_size)
+    .height(window_button_size)
     .style(icon_btn_style)
     .on_press(Message::WindowMinimize);
 
@@ -223,37 +272,37 @@ pub fn view<'a>(
         svg(svg::Handle::from_memory(
             icons::maximize_restore(is_maximized).as_bytes(),
         ))
-        .width(WINDOW_ICON_SIZE)
-        .height(WINDOW_ICON_SIZE)
+        .width(window_icon_size)
+        .height(window_icon_size)
         .style(|_theme, _status| svg::Style {
             color: Some(theme::text_primary(_theme)),
         }),
     )
-    .width(WINDOW_BUTTON_SIZE)
-    .height(WINDOW_BUTTON_SIZE)
+    .width(window_button_size)
+    .height(window_button_size)
     .style(icon_btn_style)
     .on_press(Message::WindowMaximize);
 
     let close_btn = button(
         svg(svg::Handle::from_memory(icons::CLOSE.as_bytes()))
-            .width(WINDOW_ICON_SIZE)
-            .height(WINDOW_ICON_SIZE)
+            .width(window_icon_size)
+            .height(window_icon_size)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::text_primary(_theme)),
             }),
     )
-    .width(WINDOW_BUTTON_SIZE)
-    .height(WINDOW_BUTTON_SIZE)
+    .width(window_button_size)
+    .height(window_button_size)
     .style(close_btn_style)
     .on_press(Message::RequestClose);
 
     let top_right_buttons = row![
         settings_btn,
-        Space::new().width(4),
+        Space::new().width(tokens.space(4.0)),
         minimize_btn,
-        Space::new().width(4),
+        Space::new().width(tokens.space(4.0)),
         maximize_btn,
-        Space::new().width(4),
+        Space::new().width(tokens.space(4.0)),
         close_btn,
     ]
     .align_y(Alignment::Center);
@@ -261,9 +310,9 @@ pub fn view<'a>(
     let top_bar = row![back_btn, Space::new().width(Fill), top_right_buttons,]
         .align_y(Alignment::Center)
         .padding(
-            Padding::new(TOP_BAR_PADDING_Y)
-                .left(TOP_BAR_PADDING_X)
-                .right(TOP_BAR_PADDING_X),
+            Padding::new(tokens.space(14.0))
+                .left(tokens.space(20.0))
+                .right(tokens.space(20.0)),
         );
 
     let content_with_overlay = iced::widget::stack![
@@ -274,7 +323,7 @@ pub fn view<'a>(
     .width(Fill)
     .height(Fill);
 
-    let slide_offset = (1.0 - animation_progress) * 30.0;
+    let slide_offset = (1.0 - animation_progress) * tokens.space(30.0);
 
     let background_layer: Element<'a, Message> = if power_saving_mode {
         let background = bg_colors.primary;
@@ -322,22 +371,30 @@ fn build_left_panel<'a>(
     is_liked: bool,
     download_progress: Option<f32>,
     is_fm_mode: bool,
+    context: ResponsiveContext,
 ) -> Element<'a, Message> {
+    let tokens = context.tokens;
     let current_time = crate::utils::format_time(position * duration_secs);
     let total_time = crate::utils::format_time(duration_secs);
 
-    let s = crate::image::CoverSize::ExtraLarge;
     let (cover_kind, cover_id) =
         crate::image::song_cover_key(song.id).unwrap_or((crate::image::ImageKind::SongCover, 0));
-    let cover = crate::ui::components::cover_image::cover(
+    let cover_px = if context.profile.is_desktop() {
+        tokens.size(400.0)
+    } else {
+        let available = (context.width() - tokens.space(48.0)).max(0.0);
+        available.max(tokens.size(160.0)).min(tokens.size(320.0))
+    };
+    let cover = crate::ui::components::cover_image::custom(
         image_state.get(cover_kind, cover_id),
         cover_kind,
-        s,
+        cover_px,
+        tokens.radius(RadiusRole::Large),
     );
 
     // Song title
     let title = text(&song.title)
-        .size(theme::TEXT_SIZE_TITLE_LARGE)
+        .size(tokens.text(TextRole::TitleLarge))
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         })
@@ -349,7 +406,7 @@ fn build_left_panel<'a>(
         .or_else(|| Some(Message::OpenArtistByName(song.artist.clone())));
     let artist: Element<'a, Message> = button(
         text(&song.artist)
-            .size(theme::TEXT_SIZE_SUBTITLE)
+            .size(tokens.text(TextRole::Subtitle))
             .style(|theme| text::Style {
                 color: Some(theme::text_secondary(theme)),
             }),
@@ -363,18 +420,25 @@ fn build_left_panel<'a>(
     .into();
 
     // Progress bar - using unified widget with download progress
-    let progress_slider =
-        widgets::progress_slider::view(position, download_progress, SliderSize::Full);
+    let progress_slider = widgets::progress_slider::view_with_gradient_scaled(
+        position,
+        download_progress,
+        SliderSize::Full,
+        None,
+        tokens.density().value(),
+        Message::SeekPreview,
+        Message::SeekRelease,
+    );
 
     let time_row = row![
         text(current_time)
-            .size(theme::TEXT_SIZE_CAPTION)
+            .size(tokens.text(TextRole::Caption))
             .style(|theme| text::Style {
                 color: Some(theme::text_muted(theme))
             }),
         Space::new().width(Fill),
         text(total_time)
-            .size(theme::TEXT_SIZE_CAPTION)
+            .size(tokens.text(TextRole::Caption))
             .style(|theme| text::Style {
                 color: Some(theme::text_muted(theme))
             }),
@@ -382,11 +446,21 @@ fn build_left_panel<'a>(
     .width(Fill);
 
     // Playback controls - using unified widgets
-    let playback_controls = widgets::playback_controls::view_simple(is_playing, ControlSize::Large);
+    let playback_controls = widgets::playback_controls::view_simple(
+        is_playing,
+        ControlSize::ScaledLarge(tokens.density().value()),
+        Some(Message::PrevSong),
+        Message::TogglePlayback,
+        Message::NextSong,
+    );
 
-    // Play mode button - using unified widget
-    let play_mode_btn =
-        widgets::play_mode_button::view(play_mode, PlayModeButtonSize::Large, is_fm_mode);
+    // Play mode button - the application boundary maps domain state/actions
+    // into the generic widget.
+    let play_mode_btn = crate::ui::components::playback_controls::play_mode_button(
+        play_mode,
+        widgets::PlayModeButtonSize::ScaledLarge(tokens.density().value()),
+        is_fm_mode,
+    );
 
     // Like button - only for NCM songs (negative ID)
     let like_btn: Element<'a, Message> = if song.id < 0 {
@@ -403,14 +477,14 @@ fn build_left_panel<'a>(
         };
         button(
             svg(svg::Handle::from_memory(heart_icon.as_bytes()))
-                .width(22)
-                .height(22)
+                .width(tokens.icon(IconRole::Large))
+                .height(tokens.icon(IconRole::Large))
                 .style(move |_theme, _status| svg::Style {
                     color: Some(heart_color),
                 }),
         )
-        .padding(10)
-        .style(|theme, status| {
+        .padding(tokens.space(10.0))
+        .style(move |theme, status| {
             let bg = match status {
                 button::Status::Hovered => theme::hover_bg(theme),
                 _ => Color::TRANSPARENT,
@@ -418,7 +492,7 @@ fn build_left_panel<'a>(
             button::Style {
                 background: Some(iced::Background::Color(bg)),
                 border: iced::Border {
-                    radius: 21.0.into(),
+                    radius: tokens.radius(RadiusRole::Pill).into(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -430,18 +504,18 @@ fn build_left_panel<'a>(
         // Local songs - show disabled like button
         button(
             svg(svg::Handle::from_memory(icons::HEART.as_bytes()))
-                .width(22)
-                .height(22)
+                .width(tokens.icon(IconRole::Large))
+                .height(tokens.icon(IconRole::Large))
                 .style(|_theme, _status| svg::Style {
                     color: Some(theme::opaque_color(theme::icon_muted(&iced::Theme::Dark))),
                 })
                 .opacity(0.4_f32),
         )
-        .padding(10)
-        .style(|_theme, _status| button::Style {
+        .padding(tokens.space(10.0))
+        .style(move |_theme, _status| button::Style {
             background: Some(iced::Background::Color(Color::TRANSPARENT)),
             border: iced::Border {
-                radius: 21.0.into(),
+                radius: tokens.radius(RadiusRole::Pill).into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -449,43 +523,60 @@ fn build_left_panel<'a>(
         .into()
     };
 
-    let controls = row![
-        play_mode_btn,
-        Space::new().width(Fill),
-        playback_controls,
-        Space::new().width(Fill),
-        like_btn,
-    ]
-    .align_y(Alignment::Center)
-    .width(Fill);
+    let controls: Element<'a, Message> = if context.profile.is_narrow() {
+        row![play_mode_btn, playback_controls, like_btn]
+            .spacing(tokens.space(8.0))
+            .align_y(Alignment::Center)
+            .width(Fill)
+            .into()
+    } else {
+        row![
+            play_mode_btn,
+            Space::new().width(Fill),
+            playback_controls,
+            Space::new().width(Fill),
+            like_btn,
+        ]
+        .align_y(Alignment::Center)
+        .width(Fill)
+        .into()
+    };
 
     // Content container with max width
     let content = column![
         cover,
-        Space::new().height(24),
+        Space::new().height(tokens.space(24.0)),
         title,
-        Space::new().height(4),
+        Space::new().height(tokens.space(4.0)),
         artist,
-        Space::new().height(24),
+        Space::new().height(tokens.space(24.0)),
         progress_slider,
-        Space::new().height(4),
+        Space::new().height(tokens.space(4.0)),
         time_row,
-        Space::new().height(20),
+        Space::new().height(tokens.space(20.0)),
         controls,
     ]
-    .width(Fill)
-    .width(Fill.max(400));
+    .width(Fill.max(tokens.size(400.0)));
 
-    // Assemble left panel - center the content vertically
-    column![
-        Space::new().height(Fill),
-        content,
-        Space::new().height(Fill),
-    ]
-    .align_x(Alignment::Center)
-    .width(Fill)
-    .height(Fill)
-    .into()
+    // Keep the large desktop panel centered. Compact profiles use a natural
+    // height so the renderer gets the remaining viewport instead of losing
+    // space to two unconstrained Fill spacers.
+    if context.profile.is_desktop() {
+        column![
+            Space::new().height(Fill),
+            content,
+            Space::new().height(Fill),
+        ]
+        .align_x(Alignment::Center)
+        .width(Fill)
+        .height(Fill)
+        .into()
+    } else {
+        container(content)
+            .align_x(Alignment::Center)
+            .width(Fill)
+            .into()
+    }
 }
 
 /// Build the right panel with the engine
@@ -494,7 +585,9 @@ fn build_right_panel_engine<'a>(
     cached_engine_lines: Option<&Arc<Vec<LyricLineData>>>,
     lyrics_engine: Option<&'a std::cell::RefCell<LyricsEngine>>,
     current_time_ms: f32,
+    context: ResponsiveContext,
 ) -> Element<'a, Message> {
+    let tokens = context.tokens;
     // Check if we have cached engine lines
     let engine_lines = match cached_engine_lines {
         Some(arc) if !arc.is_empty() => arc,
@@ -503,17 +596,17 @@ fn build_right_panel_engine<'a>(
             return container(
                 column![
                     svg(svg::Handle::from_memory(icons::MUSIC.as_bytes()))
-                        .width(64)
-                        .height(64)
+                        .width(tokens.icon(IconRole::Hero))
+                        .height(tokens.icon(IconRole::Hero))
                         .style(|_theme: &iced::Theme, _status| svg::Style {
                             color: Some(theme::opaque_color(
                                 theme::icon_muted(&iced::Theme::Dark,)
                             )),
                         })
                         .opacity(0.4_f32),
-                    Space::new().height(16),
+                    Space::new().height(tokens.space(16.0)),
                     text("纯音乐，请欣赏")
-                        .size(theme::TEXT_SIZE_SUBTITLE)
+                        .size(tokens.text(TextRole::Subtitle))
                         .style(|theme| text::Style {
                             color: Some(theme::text_muted(theme))
                         }),
@@ -546,6 +639,10 @@ fn build_right_panel_engine<'a>(
         )
         .on_show(Message::LyricsViewportResized)
         .on_resize(Message::LyricsViewportResized);
+        let content = container(content)
+            .id(iced::widget::Id::new("lyrics_renderer"))
+            .width(Fill)
+            .height(Fill);
 
         mouse_area(content)
             .on_scroll(|delta| {
@@ -558,7 +655,7 @@ fn build_right_panel_engine<'a>(
             .into()
     } else {
         // Fallback: show simple text-based lyrics without engine
-        build_simple_lyrics_panel_from_engine_lines(engine_lines, current_time_ms)
+        build_simple_lyrics_panel_from_engine_lines(engine_lines, current_time_ms, context)
     }
 }
 
@@ -567,7 +664,9 @@ fn build_right_panel_engine<'a>(
 fn build_simple_lyrics_panel_from_engine_lines(
     engine_lines: &[LyricLineData],
     current_time_ms: f32,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let current_time = current_time_ms as u64;
 
     // Find current line
@@ -591,9 +690,9 @@ fn build_simple_lyrics_panel_from_engine_lines(
             .map(|(is_active, line_text)| {
                 let opacity = if is_active { 1.0 } else { 0.5 };
                 let size = if is_active {
-                    theme::TEXT_SIZE_TITLE_LARGE
+                    tokens.text(TextRole::TitleLarge)
                 } else {
-                    theme::TEXT_SIZE_TITLE - 2.0
+                    (tokens.text(TextRole::Title) - tokens.space(2.0)).max(11.0)
                 };
 
                 text(line_text)
@@ -603,14 +702,14 @@ fn build_simple_lyrics_panel_from_engine_lines(
             })
             .collect::<Vec<_>>(),
     )
-    .spacing(12)
+    .spacing(tokens.space(12.0))
     .align_x(Alignment::Start)
     .into();
 
     container(lines_column)
         .width(Length::Fill)
         .height(Length::Fill)
-        .padding(20)
+        .padding(tokens.space(20.0))
         .into()
 }
 
@@ -619,7 +718,9 @@ fn build_simple_lyrics_panel_from_engine_lines(
 fn build_simple_lyrics_panel(
     cached_engine_lines: Option<&Arc<Vec<LyricLineData>>>,
     current_time_ms: f32,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
+    let tokens = context.tokens;
     // Check if we have cached engine lines
     let engine_lines = match cached_engine_lines {
         Some(arc) if !arc.is_empty() => arc,
@@ -628,17 +729,17 @@ fn build_simple_lyrics_panel(
             return container(
                 column![
                     svg(svg::Handle::from_memory(icons::MUSIC.as_bytes()))
-                        .width(64)
-                        .height(64)
+                        .width(tokens.icon(IconRole::Hero))
+                        .height(tokens.icon(IconRole::Hero))
                         .style(|_theme: &iced::Theme, _status| svg::Style {
                             color: Some(theme::opaque_color(
                                 theme::icon_muted(&iced::Theme::Dark,)
                             )),
                         })
                         .opacity(0.4_f32),
-                    Space::new().height(16),
+                    Space::new().height(tokens.space(16.0)),
                     text("暂无歌词")
-                        .size(theme::TEXT_SIZE_SUBTITLE)
+                        .size(tokens.text(TextRole::Subtitle))
                         .style(|theme| text::Style {
                             color: Some(theme::text_muted(theme))
                         }),
@@ -688,9 +789,9 @@ fn build_simple_lyrics_panel(
             .map(|(is_active, line_text, translated)| {
                 let opacity = if is_active { 1.0 } else { 0.35 };
                 let size = if is_active {
-                    theme::TEXT_SIZE_HERO
+                    tokens.text(TextRole::Hero)
                 } else {
-                    theme::TEXT_SIZE_TITLE_LARGE
+                    tokens.text(TextRole::TitleLarge)
                 };
                 let weight = if is_active {
                     BOLD_WEIGHT
@@ -707,10 +808,10 @@ fn build_simple_lyrics_panel(
                     column![
                         main_text,
                         text(trans)
-                            .size(theme::TEXT_SIZE_SUBTITLE)
+                            .size(tokens.text(TextRole::Subtitle))
                             .color(Color::from_rgba(1.0, 1.0, 1.0, opacity * 0.7))
                     ]
-                    .spacing(6)
+                    .spacing(tokens.space(6.0))
                     .into()
                 } else {
                     main_text.into()
@@ -718,8 +819,8 @@ fn build_simple_lyrics_panel(
             })
             .collect::<Vec<_>>(),
     )
-    .spacing(24)
-    .padding(40)
+    .spacing(tokens.space(24.0))
+    .padding(tokens.space(40.0))
     .align_x(Alignment::Start)
     .into();
 

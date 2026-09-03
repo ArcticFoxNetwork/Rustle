@@ -16,6 +16,7 @@ use crate::ui::components::{
     playlist_view::{self, PlaylistColumns},
 };
 use crate::ui::pages::playlist::{self, ArtistPageTab, DetailGradientSnapshot, PlaylistView};
+use crate::ui::responsive::{LayoutProfile, ResponsiveContext, TextRole};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{theme, widgets};
 
@@ -23,10 +24,10 @@ pub fn view<'a>(
     artist: &'a PlaylistView,
     image_state: &'a ImageState,
     song_animations: &'a crate::ui::animation::HoverAnimations<i64>,
-    icon_animations: &crate::ui::animation::HoverAnimations<crate::app::IconId>,
-    search_animation: &crate::ui::animation::SingleHoverAnimation,
+    icon_animations: &'a crate::ui::animation::HoverAnimations<crate::app::IconId>,
+    search_animation: &'a crate::ui::animation::SingleHoverAnimation,
     search_expanded: bool,
-    search_query: &str,
+    search_query: &'a str,
     liked_songs: Option<&'a HashSet<u64>>,
     locale: Locale,
     scroll_state: Rc<RefCell<widgets::VirtualListState>>,
@@ -36,8 +37,49 @@ pub fn view<'a>(
     description_expanded: bool,
     gradient_source: Option<DetailGradientSnapshot>,
     gradient_progress: f32,
+    context: ResponsiveContext,
 ) -> Element<'a, Message> {
-    let header = build_header(artist, image_state, description_expanded, locale);
+    view_for_context(
+        artist,
+        image_state,
+        song_animations,
+        icon_animations,
+        search_animation,
+        search_expanded,
+        search_query,
+        liked_songs,
+        locale,
+        scroll_state,
+        current_user_id,
+        current_playing_id,
+        content_width,
+        description_expanded,
+        gradient_source,
+        gradient_progress,
+        context,
+    )
+}
+
+fn view_for_context<'a>(
+    artist: &'a PlaylistView,
+    image_state: &'a ImageState,
+    song_animations: &'a crate::ui::animation::HoverAnimations<i64>,
+    icon_animations: &'a crate::ui::animation::HoverAnimations<crate::app::IconId>,
+    search_animation: &'a crate::ui::animation::SingleHoverAnimation,
+    search_expanded: bool,
+    search_query: &'a str,
+    liked_songs: Option<&'a HashSet<u64>>,
+    locale: Locale,
+    scroll_state: Rc<RefCell<widgets::VirtualListState>>,
+    current_user_id: Option<u64>,
+    current_playing_id: Option<i64>,
+    content_width: f32,
+    description_expanded: bool,
+    gradient_source: Option<DetailGradientSnapshot>,
+    gradient_progress: f32,
+    context: ResponsiveContext,
+) -> Element<'a, Message> {
+    let header = build_header(artist, image_state, description_expanded, locale, context);
     let controls = playlist::build_controls(
         artist,
         icon_animations,
@@ -46,9 +88,10 @@ pub fn view<'a>(
         search_query,
         locale,
         current_user_id,
+        context,
     );
 
-    let tabs = build_tabs(artist.artist_tab);
+    let tabs = build_tabs(artist.artist_tab, context);
     let header_and_controls = column![header, controls, tabs].spacing(0).width(Fill);
 
     let gradient_target = artist.gradient_snapshot();
@@ -66,8 +109,8 @@ pub fn view<'a>(
     let body: Element<'a, Message> = match artist.artist_tab {
         ArtistPageTab::TopSongs => {
             let filtered_indices = playlist_view::filter_song_indices(&artist.songs, search_query);
-            let columns = PlaylistColumns::online();
-            let song_list_header = playlist_view::build_header(locale, columns);
+            let columns = PlaylistColumns::online().for_context(context);
+            let song_list_header = playlist_view::build_header(locale, columns, context);
             let song_list = playlist_view::build_list(
                 &artist.songs,
                 filtered_indices,
@@ -77,6 +120,7 @@ pub fn view<'a>(
                 columns,
                 scroll_state,
                 current_playing_id,
+                context,
             );
 
             column![song_list_header, song_list]
@@ -84,7 +128,7 @@ pub fn view<'a>(
                 .width(Fill)
                 .into()
         }
-        ArtistPageTab::Albums => build_albums_view(artist, image_state, content_width),
+        ArtistPageTab::Albums => build_albums_view(artist, image_state, content_width, context),
     };
 
     column![gradient_section, body]
@@ -98,8 +142,15 @@ fn build_header(
     image_state: &ImageState,
     description_expanded: bool,
     locale: Locale,
+    context: ResponsiveContext,
 ) -> Element<'static, Message> {
-    let avatar_size = 216.0;
+    let tokens = context.tokens;
+    let avatar_size = match context.profile {
+        LayoutProfile::Expanded | LayoutProfile::Standard => tokens.size(216.0),
+        LayoutProfile::Compact => tokens.size(192.0),
+        LayoutProfile::Tablet => tokens.size(176.0),
+        LayoutProfile::Narrow => tokens.size(152.0),
+    };
     let avatar_handle = artist
         .owner_artist_id
         .and_then(|id| image_state.get(ImageKind::ArtistCover, id));
@@ -111,7 +162,7 @@ fn build_header(
     );
 
     let title = text(artist.name.clone())
-        .size(theme::TEXT_SIZE_DISPLAY_LARGE.min(84.0))
+        .size(tokens.text(TextRole::DisplayLarge).min(tokens.size(84.0)))
         .style(|theme| iced::widget::text::Style {
             color: Some(theme::text_primary(theme)),
         })
@@ -128,7 +179,7 @@ fn build_header(
     } else {
         stats_text
     })
-    .size(theme::TEXT_SIZE_TITLE)
+    .size(tokens.text(TextRole::Title))
     .style(|theme| iced::widget::text::Style {
         color: Some(theme::text_secondary(theme)),
     });
@@ -152,7 +203,7 @@ fn build_header(
         let is_long = line_count > 2;
 
         let desc_widget = text(desc_text)
-            .size(theme::TEXT_SIZE_BODY_LARGE)
+            .size(tokens.text(TextRole::BodyLarge))
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_muted(theme)),
             })
@@ -171,7 +222,7 @@ fn build_header(
                             .width(4)
                             .scroller_width(4),
                     ))
-                    .height(150)
+                    .height(tokens.size(150.0))
                     .id(iced::widget::Id::new("artist_description_scroll")),
                     SmoothScrollTarget::Native("artist_description_scroll"),
                     Message::SmoothScroll,
@@ -219,18 +270,35 @@ fn build_header(
     .align_x(Alignment::Start)
     .width(Fill);
 
-    row![avatar, Space::new().width(28), info]
-        .align_y(Alignment::Center)
-        .padding(Padding::new(48.0).top(84.0).bottom(28.0))
-        .into()
+    if context.profile.is_desktop() {
+        row![avatar, Space::new().width(tokens.space(28.0)), info]
+            .align_y(Alignment::Center)
+            .padding(
+                Padding::new(tokens.space(48.0))
+                    .top(tokens.space(84.0))
+                    .bottom(tokens.space(28.0)),
+            )
+            .into()
+    } else {
+        column![avatar, Space::new().height(tokens.space(20.0)), info]
+            .align_x(Alignment::Start)
+            .width(Fill)
+            .padding(
+                Padding::new(tokens.space(24.0))
+                    .top(tokens.space(48.0))
+                    .bottom(tokens.space(24.0)),
+            )
+            .into()
+    }
 }
 
-fn build_tabs(active_tab: ArtistPageTab) -> Element<'static, Message> {
+fn build_tabs(active_tab: ArtistPageTab, context: ResponsiveContext) -> Element<'static, Message> {
+    let tokens = context.tokens;
     let tab = |label: &'static str, tab: ArtistPageTab| {
         let active = active_tab == tab;
         button(
             text(label)
-                .size(theme::TEXT_SIZE_BODY_LARGE)
+                .size(tokens.text(TextRole::BodyLarge))
                 .style(move |theme| iced::widget::text::Style {
                     color: Some(if active {
                         theme::text_primary(theme)
@@ -239,7 +307,7 @@ fn build_tabs(active_tab: ArtistPageTab) -> Element<'static, Message> {
                     }),
                 }),
         )
-        .padding(Padding::new(10.0).left(0.0).right(0.0))
+        .padding(Padding::new(tokens.space(10.0)).left(0.0).right(0.0))
         .style(move |theme, _status| button::Style {
             background: Some(iced::Background::Color(Color::TRANSPARENT)),
             border: iced::Border {
@@ -257,15 +325,29 @@ fn build_tabs(active_tab: ArtistPageTab) -> Element<'static, Message> {
         .on_press(Message::SwitchArtistTab(tab))
     };
 
-    container(
-        row![
-            tab("热门单曲", ArtistPageTab::TopSongs),
-            Space::new().width(28),
-            tab("专辑", ArtistPageTab::Albums),
-        ]
-        .align_y(Alignment::Center),
+    scrollable(
+        container(
+            row![
+                tab("热门单曲", ArtistPageTab::TopSongs),
+                Space::new().width(tokens.space(28.0)),
+                tab("专辑", ArtistPageTab::Albums),
+            ]
+            .align_y(Alignment::Center),
+        )
+        .padding(
+            Padding::new(0.0)
+                .left(tokens.space(48.0))
+                .right(tokens.space(48.0))
+                .bottom(tokens.space(18.0)),
+        ),
     )
-    .padding(Padding::new(0.0).left(48.0).right(48.0).bottom(18.0))
+    .direction(iced::widget::scrollable::Direction::Horizontal(
+        iced::widget::scrollable::Scrollbar::new()
+            .width(0)
+            .scroller_width(0),
+    ))
+    .id(iced::widget::Id::new("artist_tabs_scroll"))
+    .width(Fill)
     .into()
 }
 
@@ -273,40 +355,47 @@ fn build_albums_view<'a>(
     artist: &PlaylistView,
     image_state: &'a ImageState,
     content_width: f32,
+    context: ResponsiveContext,
 ) -> Element<'a, Message> {
+    let tokens = context.tokens;
     if artist.artist_albums.is_empty() {
         return container(
             text("暂无专辑数据")
-                .size(theme::TEXT_SIZE_BODY_LARGE)
+                .size(tokens.text(TextRole::BodyLarge))
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_secondary(theme)),
                 }),
         )
         .width(Fill)
-        .padding(Padding::new(40.0))
+        .padding(Padding::new(tokens.space(40.0)))
         .into();
     }
 
     let card_width = detail_card::CARD_WIDTH;
     let card_spacing = detail_card::CARD_SPACING;
-    let columns_per_row =
-        widgets::calculate_grid_columns_clamped(content_width, card_width, card_spacing, 8);
-    let mut rows = column![]
-        .spacing(18)
-        .padding(Padding::new(0.0).left(48.0).right(48.0));
+    let columns_per_row = match context.profile {
+        LayoutProfile::Tablet | LayoutProfile::Narrow => 1,
+        _ => context.grid_columns(content_width, card_width, card_spacing, 8),
+    };
+    let mut rows = column![].spacing(tokens.space(18.0)).padding(
+        Padding::new(0.0)
+            .left(tokens.space(48.0))
+            .right(tokens.space(48.0)),
+    );
 
     for chunk in artist.artist_albums.chunks(columns_per_row) {
         let mut row_items: Vec<Element<'a, Message>> = Vec::new();
         for album in chunk {
             let cover_handle = image_state.get(ImageKind::AlbumCover, album.id);
-            row_items.push(detail_card::view(
+            row_items.push(detail_card::view_with_context(
                 album.name.clone(),
                 album.artist_names(),
                 cover_handle,
                 ImageKind::AlbumCover,
                 Message::OpenAlbum(album.id),
+                context,
             ));
-            row_items.push(Space::new().width(card_spacing).into());
+            row_items.push(Space::new().width(tokens.space(card_spacing)).into());
         }
         if !row_items.is_empty() {
             row_items.pop();
