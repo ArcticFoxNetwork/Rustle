@@ -9,6 +9,11 @@ use crate::app::message::Message;
 use crate::app::state::{App, NavigationEntry};
 
 impl App {
+    fn set_sidebar_drawer_open(&mut self, open: bool) {
+        let animate = !self.core.settings.display.power_saving_mode;
+        self.ui.set_sidebar_drawer_open(open, animate);
+    }
+
     /// Handle navigation-related messages
     pub fn handle_navigation(&mut self, message: &Message) -> Option<Task<Message>> {
         match message {
@@ -35,7 +40,7 @@ impl App {
                     return Some(Task::none());
                 };
 
-                self.ui.sidebar_drawer_open = false;
+                self.set_sidebar_drawer_open(false);
 
                 Some(self.navigate_to_route(route, true))
             }
@@ -49,18 +54,18 @@ impl App {
                 let Some(route) = self.route_for_message(message) else {
                     return Some(Task::none());
                 };
-                self.ui.sidebar_drawer_open = false;
+                self.set_sidebar_drawer_open(false);
                 Some(self.navigate_to_route(route, true))
             }
 
             Message::ToggleSidebarDrawer => {
-                self.ui.sidebar_drawer_open = !self.ui.sidebar_drawer_open;
+                self.set_sidebar_drawer_open(!self.ui.sidebar_drawer_open);
                 self.ui.sidebar_dragging = false;
                 Some(Task::none())
             }
 
             Message::CloseSidebarDrawer => {
-                self.ui.sidebar_drawer_open = false;
+                self.set_sidebar_drawer_open(false);
                 self.ui.sidebar_dragging = false;
                 Some(Task::none())
             }

@@ -431,9 +431,9 @@ fn build_header(
     // Playlist type label - larger font
     let type_label_text = match playlist.kind {
         DetailPageKind::Playlist => locale.get(Key::PlaylistTypeLabel).to_string(),
-        DetailPageKind::Album => "专辑".to_string(),
-        DetailPageKind::User => "用户".to_string(),
-        DetailPageKind::Artist => "歌手".to_string(),
+        DetailPageKind::Album => locale.get(Key::AlbumTypeLabel).to_string(),
+        DetailPageKind::User => locale.get(Key::UserTypeLabel).to_string(),
+        DetailPageKind::Artist => locale.get(Key::ArtistTypeLabel).to_string(),
     };
     let type_label = text(type_label_text)
         .size(tokens.text(TextRole::Body))
@@ -594,7 +594,7 @@ fn build_header(
         );
         stats_items.push(Space::new().width(tokens.space(6.0)).into());
         stats_items.push(
-            text(format!("{} likes", like_count))
+            text(locale.get(Key::PlaylistLikes).replace("{}", &like_count))
                 .size(tokens.text(TextRole::Body))
                 .style(|theme| text::Style {
                     color: Some(theme::text_secondary(theme)),
@@ -662,13 +662,24 @@ fn build_header(
     let horizontal_padding = tokens.space(36.0);
     let top_padding = tokens.space(60.0);
     let bottom_padding = tokens.space(12.0);
-    if context.profile.is_desktop() {
+    if matches!(
+        context.profile,
+        LayoutProfile::Expanded | LayoutProfile::Standard | LayoutProfile::Compact
+    ) {
         row![cover, Space::new().width(tokens.space(28.0)), info,]
             .align_y(Alignment::End)
             .padding(
-                Padding::new(horizontal_padding)
-                    .top(top_padding)
-                    .bottom(bottom_padding),
+                Padding::new(if context.profile == LayoutProfile::Compact {
+                    tokens.space(28.0)
+                } else {
+                    horizontal_padding
+                })
+                .top(if context.profile == LayoutProfile::Compact {
+                    tokens.space(48.0)
+                } else {
+                    top_padding
+                })
+                .bottom(bottom_padding),
             )
             .into()
     } else {

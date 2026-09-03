@@ -1,7 +1,7 @@
 //! Window control buttons and navigation bar
 //! Positioned at top of the application with navigation on left, search in center, and controls on right
 
-use iced::widget::{Space, button, column, container, mouse_area, row, stack, svg, text, tooltip};
+use iced::widget::{Space, button, container, mouse_area, row, stack, svg, text, tooltip};
 use iced::{Alignment, Color, ContentFit, Element, Fill, Length, Padding};
 
 use crate::app::{ImageState, Message, UserInfo};
@@ -28,6 +28,7 @@ pub fn view<'a>(
 ) -> Element<'a, Message> {
     let tokens = context.tokens;
     let button_size = tokens.target(TargetRole::WindowControl);
+    let control_radius = button_size / 2.0;
     let icon_size = tokens.icon(IconRole::WindowControl);
     let nav_icon_size = tokens.icon(IconRole::Medium);
     let top_height = top_bar_height(&context);
@@ -51,14 +52,14 @@ pub fn view<'a>(
     )
     .width(button_size)
     .height(button_size)
-    .style(move |theme, status| nav_button_style(theme, status, can_go_back))
+    .style(move |theme, status| nav_button_style(theme, status, can_go_back, control_radius))
     .on_press_maybe(if can_go_back {
         Some(Message::NavigateBack)
     } else {
         None
     });
     let back_btn = tooltip(
-        animated_nav_button(back_button.into(), can_go_back),
+        animated_nav_button(back_button.into(), can_go_back, control_radius),
         locale.get(Key::Back),
         tooltip::Position::Bottom,
     );
@@ -78,14 +79,14 @@ pub fn view<'a>(
     )
     .width(button_size)
     .height(button_size)
-    .style(move |theme, status| nav_button_style(theme, status, can_go_forward))
+    .style(move |theme, status| nav_button_style(theme, status, can_go_forward, control_radius))
     .on_press_maybe(if can_go_forward {
         Some(Message::NavigateForward)
     } else {
         None
     });
     let forward_btn = tooltip(
-        animated_nav_button(forward_button.into(), can_go_forward),
+        animated_nav_button(forward_button.into(), can_go_forward, control_radius),
         locale.get(Key::Forward),
         tooltip::Position::Bottom,
     );
@@ -96,7 +97,7 @@ pub fn view<'a>(
             .spacing(tokens.space(8.0))
             .align_y(Alignment::Center),
     )
-    .padding(Padding::new(tokens.space(12.0)).left(tokens.space(16.0)));
+    .padding(Padding::new(0.0).left(tokens.space(16.0)));
 
     // User info (avatar + username + API-backed membership badge)
     let avatar_size = tokens.size(28.0);
@@ -235,10 +236,10 @@ pub fn view<'a>(
     )
     .width(button_size)
     .height(button_size)
-    .style(window_button_style)
+    .style(move |theme, status| window_button_style(theme, status, control_radius))
     .on_press(Message::OpenSettings);
     let settings_btn = tooltip(
-        animated_window_button(settings_button.into()),
+        animated_window_button(settings_button.into(), control_radius),
         locale.get(Key::Settings),
         tooltip::Position::Bottom,
     );
@@ -253,10 +254,10 @@ pub fn view<'a>(
     )
     .width(button_size)
     .height(button_size)
-    .style(window_button_style)
+    .style(move |theme, status| window_button_style(theme, status, control_radius))
     .on_press(Message::WindowMinimize);
     let minimize_btn = tooltip(
-        animated_window_button(minimize_button.into()),
+        animated_window_button(minimize_button.into(), control_radius),
         locale.get(Key::Minimize),
         tooltip::Position::Bottom,
     );
@@ -273,10 +274,10 @@ pub fn view<'a>(
     )
     .width(button_size)
     .height(button_size)
-    .style(window_button_style)
+    .style(move |theme, status| window_button_style(theme, status, control_radius))
     .on_press(Message::WindowMaximize);
     let maximize_btn = tooltip(
-        animated_window_button(maximize_button.into()),
+        animated_window_button(maximize_button.into(), control_radius),
         locale.get(if is_maximized {
             Key::Restore
         } else {
@@ -295,10 +296,10 @@ pub fn view<'a>(
     )
     .width(button_size)
     .height(button_size)
-    .style(close_button_style)
+    .style(move |theme, status| close_button_style(theme, status, control_radius))
     .on_press(Message::RequestClose);
     let close_btn = tooltip(
-        animated_close_button(close_button.into()),
+        animated_close_button(close_button.into(), control_radius),
         locale.get(Key::Close),
         tooltip::Position::Bottom,
     );
@@ -317,33 +318,45 @@ pub fn view<'a>(
     )
     .on_press(Message::WindowDrag);
 
+    let menu_button: Element<'a, Message> = if context.profile == LayoutProfile::Narrow {
+        let button = button(
+            svg(svg::Handle::from_memory(crate::ui::icons::LIST.as_bytes()))
+                .width(icon_size)
+                .height(icon_size)
+                .style(|theme, _status| svg::Style {
+                    color: Some(theme::text_secondary(theme)),
+                }),
+        )
+        .width(button_size)
+        .height(button_size)
+        .padding(0)
+        .style(move |theme, status| window_button_style(theme, status, control_radius))
+        .on_press(Message::ToggleSidebarDrawer);
+        tooltip(
+            animated_window_button(button.into(), control_radius),
+            locale.get(Key::NavigationMenu),
+            tooltip::Position::Bottom,
+        )
+        .into()
+    } else {
+        Space::new().width(0).height(0).into()
+    };
+    // One stable row owns navigation, search, account, and window controls on
+    // desktop profiles. On tablet/narrow profiles, search stays beside
+    // back/forward in the first row while account/window actions move below;
+    // this preserves the requested navigation/search relationship without
+    // shrinking fixed circular hit targets.
     let controls: Element<'a, Message> = if context.profile.uses_wrapped_top_bar() {
-        let menu_button: Element<'a, Message> = if context.profile == LayoutProfile::Narrow {
-            let button = button(
-                svg(svg::Handle::from_memory(crate::ui::icons::LIST.as_bytes()))
-                    .width(icon_size)
-                    .height(icon_size)
-                    .style(|theme, _status| svg::Style {
-                        color: Some(theme::text_secondary(theme)),
-                    }),
-            )
-            .width(button_size)
-            .height(button_size)
-            .padding(0)
-            .style(window_button_style)
-            .on_press(Message::ToggleSidebarDrawer);
-            tooltip(
-                animated_window_button(button.into()),
-                locale.get(Key::NavigationMenu),
-                tooltip::Position::Bottom,
-            )
-            .into()
-        } else {
-            Space::new().width(0).height(0).into()
-        };
-        let action_buttons = row![
+        let navigation_search_row = row![
             menu_button,
             nav_buttons,
+            Space::new().width(tokens.space(8.0)),
+            desktop_search_bar,
+        ]
+        .align_y(Alignment::Center)
+        .width(Fill)
+        .height(Length::Fixed(tokens.size(52.0)));
+        let account_window_row = row![
             Space::new().width(Fill),
             user_info_widget,
             Space::new().width(tokens.space(6.0)),
@@ -355,26 +368,13 @@ pub fn view<'a>(
             Space::new().width(tokens.space(6.0)),
             close_btn,
         ]
-        .align_y(Alignment::Center);
-        let search_width = (context.width() - tokens.space(32.0)).max(tokens.size(220.0));
-        let search_bar = search_bar::view(
-            search_query,
-            locale,
-            SearchBarStyle::top_bar_scaled(&context, search_width),
-        );
-        container(column![
-            container(action_buttons)
-                .width(Fill)
-                .height(Length::Fixed(tokens.size(52.0)))
-                .padding(Padding::new(0.0).right(tokens.space(8.0))),
-            container(search_bar)
-                .width(Fill)
-                .height(Length::Fixed(tokens.size(44.0)))
-                .padding(
-                    Padding::new(0.0)
-                        .left(tokens.space(16.0))
-                        .right(tokens.space(16.0))
-                ),
+        .align_y(Alignment::Center)
+        .width(Fill)
+        .height(Length::Fixed(tokens.size(52.0)))
+        .padding(Padding::new(0.0).right(tokens.space(12.0)));
+        container(iced::widget::column![
+            navigation_search_row,
+            account_window_row
         ])
         .width(Fill)
         .height(Length::Fixed(top_height))
@@ -382,8 +382,9 @@ pub fn view<'a>(
     } else {
         container(
             row![
+                menu_button,
                 nav_buttons,
-                Space::new().width(tokens.space(16.0)),
+                Space::new().width(tokens.space(12.0)),
                 desktop_search_bar,
                 Space::new().width(tokens.space(12.0)),
                 user_info_widget,
@@ -443,7 +444,12 @@ pub fn view<'a>(
 }
 
 /// Navigation button style (back/forward)
-fn nav_button_style(theme: &iced::Theme, status: button::Status, enabled: bool) -> button::Style {
+fn nav_button_style(
+    theme: &iced::Theme,
+    status: button::Status,
+    enabled: bool,
+    radius: f32,
+) -> button::Style {
     let base = button::Style {
         background: Some(iced::Background::Color(Color::TRANSPARENT)),
         text_color: if enabled {
@@ -452,7 +458,7 @@ fn nav_button_style(theme: &iced::Theme, status: button::Status, enabled: bool) 
             theme::TEXT_DISABLED
         },
         border: iced::Border {
-            radius: 18.0.into(),
+            radius: radius.into(),
             ..Default::default()
         },
         shadow: iced::Shadow::default(),
@@ -473,12 +479,12 @@ fn nav_button_style(theme: &iced::Theme, status: button::Status, enabled: bool) 
 }
 
 /// Window button style (settings, minimize, maximize)
-fn window_button_style(theme: &iced::Theme, status: button::Status) -> button::Style {
+fn window_button_style(theme: &iced::Theme, status: button::Status, radius: f32) -> button::Style {
     let base = button::Style {
         background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
         text_color: theme::text_secondary(theme),
         border: iced::Border {
-            radius: 18.0.into(),
+            radius: radius.into(),
             ..Default::default()
         },
         shadow: iced::Shadow::default(),
@@ -495,12 +501,12 @@ fn window_button_style(theme: &iced::Theme, status: button::Status) -> button::S
 }
 
 /// Close button style (red on hover)
-fn close_button_style(theme: &iced::Theme, status: button::Status) -> button::Style {
+fn close_button_style(theme: &iced::Theme, status: button::Status, radius: f32) -> button::Style {
     let base = button::Style {
         background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
         text_color: theme::text_secondary(theme),
         border: iced::Border {
-            radius: 18.0.into(),
+            radius: radius.into(),
             ..Default::default()
         },
         shadow: iced::Shadow::default(),
@@ -516,7 +522,11 @@ fn close_button_style(theme: &iced::Theme, status: button::Status) -> button::St
     }
 }
 
-fn animated_nav_button<'a>(content: Element<'a, Message>, enabled: bool) -> Element<'a, Message> {
+fn animated_nav_button<'a>(
+    content: Element<'a, Message>,
+    enabled: bool,
+    radius: f32,
+) -> Element<'a, Message> {
     widgets::hover_surface(content)
         .enabled(enabled)
         .style(move |theme, progress| iced::widget::container::Style {
@@ -525,7 +535,7 @@ fn animated_nav_button<'a>(content: Element<'a, Message>, enabled: bool) -> Elem
                 0.08 + 0.06 * progress,
             ))),
             border: iced::Border {
-                radius: 18.0.into(),
+                radius: radius.into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -533,15 +543,15 @@ fn animated_nav_button<'a>(content: Element<'a, Message>, enabled: bool) -> Elem
         .into()
 }
 
-fn animated_window_button<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
+fn animated_window_button<'a>(content: Element<'a, Message>, radius: f32) -> Element<'a, Message> {
     widgets::hover_surface(content)
-        .style(|theme, progress| iced::widget::container::Style {
+        .style(move |theme, progress| iced::widget::container::Style {
             background: Some(iced::Background::Color(theme::hover_bg_alpha(
                 theme,
                 0.14 * progress,
             ))),
             border: iced::Border {
-                radius: 18.0.into(),
+                radius: radius.into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -549,16 +559,16 @@ fn animated_window_button<'a>(content: Element<'a, Message>) -> Element<'a, Mess
         .into()
 }
 
-fn animated_close_button<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
+fn animated_close_button<'a>(content: Element<'a, Message>, radius: f32) -> Element<'a, Message> {
     widgets::hover_surface(content)
-        .style(|theme, progress| iced::widget::container::Style {
+        .style(move |theme, progress| iced::widget::container::Style {
             background: Some(iced::Background::Color(theme::lerp_color(
                 Color::TRANSPARENT,
                 theme::close_button_hover(theme),
                 progress,
             ))),
             border: iced::Border {
-                radius: 18.0.into(),
+                radius: radius.into(),
                 ..Default::default()
             },
             ..Default::default()

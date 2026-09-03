@@ -79,6 +79,9 @@ pub enum Key {
     NotLoggedIn,
     ClickToLogin,
     FreeAccount,
+    ProfileStatsFallback,
+    ProfileNoBio,
+    ProfileNoPlaylists,
 
     // Search
     SearchPlaceholder,
@@ -238,6 +241,9 @@ pub enum Key {
 
     // Playlist Page
     PlaylistTypeLabel,
+    AlbumTypeLabel,
+    UserTypeLabel,
+    ArtistTypeLabel,
     PlaylistLikes,
     PlaylistSongCount,
     PlaylistCustomSort,
@@ -271,6 +277,12 @@ pub enum Key {
     // Lyrics Page
     LyricsNoLyrics,
     LyricsPureMusic,
+
+    // Artist/User detail pages
+    ArtistPopularWorks,
+    ArtistTopSongs,
+    ArtistAlbums,
+    ArtistNoAlbums,
 
     // Audio Engine
     AudioEngineEqualizerDisabled,

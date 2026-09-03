@@ -1708,6 +1708,8 @@ pub struct UiState {
     pub sidebar_dragging: bool,
     /// Whether the compact navigation drawer is currently open.
     pub sidebar_drawer_open: bool,
+    /// Frame-synchronized transition for the compact navigation drawer.
+    pub sidebar_drawer_animation: SingleHoverAnimation,
     /// Whether the owned cloud playlists section is expanded
     pub my_playlists_expanded: bool,
     /// Whether the collected cloud playlists section is expanded
@@ -1803,6 +1805,9 @@ impl UiState {
             sidebar_width: 280.0,
             sidebar_dragging: false,
             sidebar_drawer_open: false,
+            sidebar_drawer_animation: SingleHoverAnimation::with_duration(
+                std::time::Duration::from_millis(220),
+            ),
             my_playlists_expanded: true,
             collected_playlists_expanded: true,
             cache_stats: None,
@@ -1901,6 +1906,7 @@ impl UiState {
         // Hover animations are now O(1) - they only track active + fading
         // iced_anim doesn't need Instant - it uses internal timing
         self.sidebar_animations.is_animating()
+            || self.sidebar_drawer_animation.is_animating()
             || self.playlist_page.song_animations.is_animating()
             || self.playlist_page.icon_animations.is_animating()
             || self.playlist_page.search_animation.is_animating()
@@ -1920,6 +1926,8 @@ impl UiState {
     pub fn has_blocking_pointer_overlay(&self) -> bool {
         self.queue_visible
             || self.sidebar_drawer_open
+            || self.sidebar_drawer_animation.is_animating()
+            || self.sidebar_drawer_animation.progress() > 0.01
             || self.home.login_popup_open
             || !self.overlay_stack.is_empty()
             || self.context_menu.is_some()
@@ -1933,6 +1941,7 @@ impl UiState {
     pub fn cleanup_animations(&mut self, now: Instant) {
         // Tick all animations to advance time
         self.sidebar_animations.tick(now);
+        self.sidebar_drawer_animation.tick(now);
         self.playlist_page.song_animations.tick(now);
         self.playlist_page.icon_animations.tick(now);
         self.playlist_page.search_animation.tick(now);
@@ -1955,6 +1964,34 @@ impl UiState {
     pub fn clear_playlist_animations(&mut self) {
         self.playlist_page.song_animations.clear();
         self.playlist_page.icon_animations.clear();
+    }
+
+    /// Start or reverse the compact navigation drawer transition.
+    pub fn set_sidebar_drawer_open(&mut self, open: bool, animate: bool) {
+        self.sidebar_drawer_open = open;
+        if animate {
+            if open {
+                self.sidebar_drawer_animation.start();
+            } else {
+                self.sidebar_drawer_animation.stop();
+            }
+        } else {
+            self.sidebar_drawer_animation
+                .settle_at(if open { 1.0 } else { 0.0 });
+        }
+    }
+
+    /// Whether the drawer must remain in the view tree during its opening or
+    /// closing transition.
+    pub fn sidebar_drawer_visible(&self) -> bool {
+        self.sidebar_drawer_open
+            || self.sidebar_drawer_animation.is_animating()
+            || self.sidebar_drawer_animation.progress() > 0.01
+    }
+
+    /// Current drawer transition progress in the inclusive range `[0, 1]`.
+    pub fn sidebar_drawer_progress(&self) -> f32 {
+        self.sidebar_drawer_animation.progress().clamp(0.0, 1.0)
     }
 }
 

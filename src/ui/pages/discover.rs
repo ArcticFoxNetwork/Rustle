@@ -1,14 +1,16 @@
 //! Discovery-first home page.
 
 use iced::widget::{Space, column, container, row, text};
-use iced::{Color, Element, Fill, Length};
+use iced::{Color, Element, Fill, Length, Padding};
 
 use crate::api::PRIVATE_RADAR_PLAYLIST_ID;
 use crate::app::{ContentWidthTarget, DiscoverPageState, DiscoverViewMode, ImageState, Message};
 use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::components::{feature_card, playlist_grid};
-use crate::ui::responsive::{LayoutProfile, ResponsiveContext, TextRole, top_bar_height};
+use crate::ui::responsive::{
+    DISCOVER_TRAILING_SPACE_REDUCTION, LayoutProfile, ResponsiveContext, TextRole, top_bar_height,
+};
 use crate::ui::theme;
 use crate::ui::widgets::{self, section_header};
 
@@ -69,7 +71,9 @@ fn view_overview<'a>(
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
     let tokens = context.tokens;
-    let content_width = state.content_width;
+    let content_width = state.content_width + tokens.size(DISCOVER_TRAILING_SPACE_REDUCTION);
+    let page_padding = tokens.space(32.0);
+    let right_padding = (page_padding - tokens.size(DISCOVER_TRAILING_SPACE_REDUCTION)).max(0.0);
     let feature_row = personal_feature_row(
         state,
         image_state,
@@ -125,7 +129,7 @@ fn view_overview<'a>(
         ),
         Space::new().height(tokens.space(40.0)),
     ]
-    .padding(tokens.space(32.0));
+    .padding(Padding::new(page_padding).right(right_padding));
 
     container(widgets::measured_scrollable(
         content,

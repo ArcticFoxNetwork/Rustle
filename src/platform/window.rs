@@ -87,7 +87,9 @@ pub fn native_window_handle(id: iced::window::Id) -> Task<Option<usize>> {
 /// Get platform-specific window settings
 pub fn window_settings() -> iced::window::Settings {
     iced::window::Settings {
-        size: iced::Size::new(1480.0, 900.0),
+        // Give the default desktop composition enough room for one additional
+        // playlist card while keeping the same responsive reference policy.
+        size: iced::Size::new(1560.0, 900.0),
         exit_on_close_request: false,
         decorations: false,
         #[cfg(target_os = "linux")]

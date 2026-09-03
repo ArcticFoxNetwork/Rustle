@@ -46,6 +46,8 @@ pub const TABLET_MAX_ASPECT_RATIO: f32 = 1.15;
 pub const MIN_USABLE_CONTENT_WIDTH: f32 = 200.0;
 /// Minimum hit target for an interactive control.
 pub const MIN_INTERACTION_TARGET: f32 = 36.0;
+/// Reference-space reduction for the trailing inset of Discover playlist rows.
+pub const DISCOVER_TRAILING_SPACE_REDUCTION: f32 = 5.0;
 
 /// A named composition profile selected from logical viewport geometry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -93,7 +95,9 @@ impl LayoutProfile {
         matches!(self, Self::Compact | Self::Tablet | Self::Narrow)
     }
 
-    /// Whether the top bar needs a dedicated search row.
+    /// Whether the top bar needs a second action row. Even in this variant,
+    /// search remains on the same row as back/forward navigation; only the
+    /// account and window actions move to the second row.
     #[inline]
     pub const fn uses_wrapped_top_bar(self) -> bool {
         matches!(self, Self::Tablet | Self::Narrow)
@@ -744,6 +748,46 @@ pub fn calculate_grid_columns_clamped(
     calculate_grid_columns(content_width, card_width, spacing).clamp(1, max_columns.max(1))
 }
 
+/// Calculate complete columns for detail-page card grids from the measured
+/// content width and the shared viewport policy.
+///
+/// A measured scrollable can report the compatibility floor during its first
+/// layout pass or immediately after a route change. In that case, recover the
+/// width from the current viewport and chrome profile so wide pages do not
+/// flash as a one-column grid. Real measurements remain authoritative after
+/// the first layout pass, which keeps a user-resized sidebar respected.
+#[inline]
+pub fn detail_grid_columns(content_width: f32, context: ResponsiveContext) -> usize {
+    if matches!(
+        context.profile,
+        LayoutProfile::Tablet | LayoutProfile::Narrow
+    ) {
+        return 1;
+    }
+
+    let measured_width = if content_width.is_finite() {
+        content_width
+    } else {
+        0.0
+    };
+    let chrome_width = match context.profile {
+        LayoutProfile::Expanded | LayoutProfile::Standard => {
+            context.tokens.chrome(ChromeRole::Sidebar)
+        }
+        LayoutProfile::Compact => context.tokens.chrome(ChromeRole::SidebarRail),
+        LayoutProfile::Tablet | LayoutProfile::Narrow => 0.0,
+    };
+    let viewport_width =
+        (context.width() - chrome_width - context.tokens.space(96.0)).max(MIN_USABLE_CONTENT_WIDTH);
+    let effective_width = if measured_width <= MIN_USABLE_CONTENT_WIDTH {
+        viewport_width
+    } else {
+        measured_width
+    };
+
+    context.grid_columns(effective_width, 200.0, 20.0, 8)
+}
+
 /// Adaptive arrangement selected when a row's minimum width cannot fit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverflowVariant {
@@ -924,6 +968,19 @@ mod tests {
     }
 
     #[test]
+    fn detail_grid_recovers_from_measured_floor_on_wide_viewports() {
+        let reference = ResponsiveContext::from_viewport(Size::new(1920.0, 1080.0));
+        let two_k = ResponsiveContext::from_viewport(Size::new(2560.0, 1440.0));
+        let compact = ResponsiveContext::from_viewport(Size::new(960.0, 540.0));
+        let tablet = ResponsiveContext::from_viewport(Size::new(768.0, 1024.0));
+
+        assert!(detail_grid_columns(200.0, reference) > 1);
+        assert!(detail_grid_columns(200.0, two_k) > 1);
+        assert!(detail_grid_columns(200.0, compact) > 1);
+        assert_eq!(detail_grid_columns(200.0, tablet), 1);
+    }
+
+    #[test]
     fn overflow_policy_changes_composition_before_clipping() {
         assert_eq!(
             select_overflow_variant(LayoutProfile::Standard, 400.0, 360.0),
@@ -1015,6 +1072,26 @@ mod tests {
         assert_eq!(
             sidebar_presentation(LayoutProfile::Narrow, true),
             SidebarPresentation::Drawer
+        );
+    }
+
+    #[test]
+    fn top_bar_height_is_stable_for_each_density() {
+        assert_approx(
+            top_bar_height(&ResponsiveContext::from_viewport(Size::new(
+                1_920.0, 1_080.0,
+            ))),
+            60.0,
+        );
+        assert_approx(
+            top_bar_height(&ResponsiveContext::from_viewport(Size::new(
+                2_560.0, 1_440.0,
+            ))),
+            80.0,
+        );
+        assert_approx(
+            top_bar_height(&ResponsiveContext::from_viewport(Size::new(960.0, 540.0))),
+            54.0,
         );
     }
 }

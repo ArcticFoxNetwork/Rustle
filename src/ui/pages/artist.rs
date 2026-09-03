@@ -16,7 +16,7 @@ use crate::ui::components::{
     playlist_view::{self, PlaylistColumns},
 };
 use crate::ui::pages::playlist::{self, ArtistPageTab, DetailGradientSnapshot, PlaylistView};
-use crate::ui::responsive::{LayoutProfile, ResponsiveContext, TextRole};
+use crate::ui::responsive::{LayoutProfile, ResponsiveContext, TextRole, detail_grid_columns};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{theme, widgets};
 
@@ -91,7 +91,7 @@ fn view_for_context<'a>(
         context,
     );
 
-    let tabs = build_tabs(artist.artist_tab, context);
+    let tabs = build_tabs(artist.artist_tab, locale, context);
     let header_and_controls = column![header, controls, tabs].spacing(0).width(Fill);
 
     let gradient_target = artist.gradient_snapshot();
@@ -128,7 +128,9 @@ fn view_for_context<'a>(
                 .width(Fill)
                 .into()
         }
-        ArtistPageTab::Albums => build_albums_view(artist, image_state, content_width, context),
+        ArtistPageTab::Albums => {
+            build_albums_view(artist, image_state, locale, content_width, context)
+        }
     };
 
     column![gradient_section, body]
@@ -175,7 +177,7 @@ fn build_header(
         .trim()
         .to_string();
     let stats = text(if stats_text.is_empty() {
-        "热门作品".to_string()
+        locale.get(Key::ArtistPopularWorks).to_string()
     } else {
         stats_text
     })
@@ -189,7 +191,7 @@ fn build_header(
             .description
             .clone()
             .filter(|text| !text.trim().is_empty())
-            .unwrap_or_else(|| "暂无简介".to_string());
+            .unwrap_or_else(|| locale.get(Key::ProfileNoBio).to_string());
         let has_description = artist
             .description
             .as_ref()
@@ -215,7 +217,7 @@ fn build_header(
                     scrollable(
                         container(desc_widget)
                             .width(Fill)
-                            .padding(Padding::new(4.0).left(0.0)),
+                            .padding(Padding::new(tokens.space(4.0)).left(0.0)),
                     )
                     .direction(scrollable::Direction::Vertical(
                         iced::widget::scrollable::Scrollbar::new()
@@ -234,7 +236,7 @@ fn build_header(
                 );
 
                 column![scrollable_desc, collapse_btn]
-                    .spacing(2)
+                    .spacing(tokens.space(2.0))
                     .width(Fill)
                     .into()
             } else {
@@ -249,7 +251,7 @@ fn build_header(
                 );
 
                 column![clamped_desc, expand_btn]
-                    .spacing(2)
+                    .spacing(tokens.space(2.0))
                     .width(Fill)
                     .into()
             }
@@ -270,13 +272,24 @@ fn build_header(
     .align_x(Alignment::Start)
     .width(Fill);
 
-    if context.profile.is_desktop() {
+    if matches!(
+        context.profile,
+        LayoutProfile::Expanded | LayoutProfile::Standard | LayoutProfile::Compact
+    ) {
         row![avatar, Space::new().width(tokens.space(28.0)), info]
             .align_y(Alignment::Center)
             .padding(
-                Padding::new(tokens.space(48.0))
-                    .top(tokens.space(84.0))
-                    .bottom(tokens.space(28.0)),
+                Padding::new(if context.profile == LayoutProfile::Compact {
+                    tokens.space(28.0)
+                } else {
+                    tokens.space(48.0)
+                })
+                .top(if context.profile == LayoutProfile::Compact {
+                    tokens.space(48.0)
+                } else {
+                    tokens.space(84.0)
+                })
+                .bottom(tokens.space(28.0)),
             )
             .into()
     } else {
@@ -292,7 +305,11 @@ fn build_header(
     }
 }
 
-fn build_tabs(active_tab: ArtistPageTab, context: ResponsiveContext) -> Element<'static, Message> {
+fn build_tabs(
+    active_tab: ArtistPageTab,
+    locale: Locale,
+    context: ResponsiveContext,
+) -> Element<'static, Message> {
     let tokens = context.tokens;
     let tab = |label: &'static str, tab: ArtistPageTab| {
         let active = active_tab == tab;
@@ -328,9 +345,9 @@ fn build_tabs(active_tab: ArtistPageTab, context: ResponsiveContext) -> Element<
     scrollable(
         container(
             row![
-                tab("热门单曲", ArtistPageTab::TopSongs),
+                tab(locale.get(Key::ArtistTopSongs), ArtistPageTab::TopSongs),
                 Space::new().width(tokens.space(28.0)),
-                tab("专辑", ArtistPageTab::Albums),
+                tab(locale.get(Key::ArtistAlbums), ArtistPageTab::Albums),
             ]
             .align_y(Alignment::Center),
         )
@@ -354,13 +371,14 @@ fn build_tabs(active_tab: ArtistPageTab, context: ResponsiveContext) -> Element<
 fn build_albums_view<'a>(
     artist: &PlaylistView,
     image_state: &'a ImageState,
+    locale: Locale,
     content_width: f32,
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
     let tokens = context.tokens;
     if artist.artist_albums.is_empty() {
         return container(
-            text("暂无专辑数据")
+            text(locale.get(Key::ArtistNoAlbums).to_string())
                 .size(tokens.text(TextRole::BodyLarge))
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_secondary(theme)),
@@ -371,12 +389,8 @@ fn build_albums_view<'a>(
         .into();
     }
 
-    let card_width = detail_card::CARD_WIDTH;
-    let card_spacing = detail_card::CARD_SPACING;
-    let columns_per_row = match context.profile {
-        LayoutProfile::Tablet | LayoutProfile::Narrow => 1,
-        _ => context.grid_columns(content_width, card_width, card_spacing, 8),
-    };
+    let card_spacing = context.tokens.space(detail_card::CARD_SPACING);
+    let columns_per_row = detail_grid_columns(content_width, context);
     let mut rows = column![].spacing(tokens.space(18.0)).padding(
         Padding::new(0.0)
             .left(tokens.space(48.0))
@@ -395,7 +409,7 @@ fn build_albums_view<'a>(
                 Message::OpenAlbum(album.id),
                 context,
             ));
-            row_items.push(Space::new().width(tokens.space(card_spacing)).into());
+            row_items.push(Space::new().width(card_spacing).into());
         }
         if !row_items.is_empty() {
             row_items.pop();
@@ -404,7 +418,7 @@ fn build_albums_view<'a>(
     }
 
     widgets::measured_scrollable(
-        column![rows, Space::new().height(32)],
+        column![rows, Space::new().height(tokens.space(32.0))],
         "playlist_scroll",
         |size| Message::ContentWidthResized(ContentWidthTarget::PlaylistDetail, size),
         Message::SmoothScroll,
@@ -424,7 +438,7 @@ fn circular_avatar(
     let initial = fallback_name.chars().next().unwrap_or('?').to_string();
     container(
         text(initial)
-            .size(48)
+            .size((size * 0.22).max(24.0))
             .style(move |_theme| iced::widget::text::Style {
                 color: Some(fallback_text_color),
             })

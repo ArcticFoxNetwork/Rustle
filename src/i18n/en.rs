@@ -35,6 +35,9 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::NotLoggedIn, "Not logged in");
     m.insert(Key::ClickToLogin, "Click to login");
     m.insert(Key::FreeAccount, "Free Account");
+    m.insert(Key::ProfileStatsFallback, "Following 0 · Followers 0");
+    m.insert(Key::ProfileNoBio, "No biography available");
+    m.insert(Key::ProfileNoPlaylists, "No playlists available");
 
     // Search
     m.insert(Key::SearchPlaceholder, "Search songs, artists, albums...");
@@ -236,6 +239,9 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
 
     // Playlist Page
     m.insert(Key::PlaylistTypeLabel, "Playlist");
+    m.insert(Key::AlbumTypeLabel, "Album");
+    m.insert(Key::UserTypeLabel, "User");
+    m.insert(Key::ArtistTypeLabel, "Artist");
     m.insert(Key::PlaylistLikes, "{} likes");
     m.insert(Key::PlaylistSongCount, "{} songs");
     m.insert(Key::PlaylistCustomSort, "Custom Sort");
@@ -278,6 +284,12 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     // Lyrics Page
     m.insert(Key::LyricsNoLyrics, "No lyrics available");
     m.insert(Key::LyricsPureMusic, "Instrumental");
+
+    // Artist/User detail pages
+    m.insert(Key::ArtistPopularWorks, "Popular works");
+    m.insert(Key::ArtistTopSongs, "Top Songs");
+    m.insert(Key::ArtistAlbums, "Albums");
+    m.insert(Key::ArtistNoAlbums, "No albums available");
 
     // Audio Engine
     m.insert(Key::AudioEngineEqualizerDisabled, "Equalizer disabled");

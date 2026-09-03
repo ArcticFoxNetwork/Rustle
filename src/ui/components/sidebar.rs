@@ -4,7 +4,7 @@
 use iced::widget::{
     Space, button, column, container, mouse_area, row, scrollable, svg, text, tooltip,
 };
-use iced::{Alignment, Color, Element, Fill, Padding};
+use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
 use crate::app::{ImageState, Message, Route, SidebarId};
 use crate::i18n::{Key, Locale};
@@ -174,6 +174,7 @@ pub fn drawer_view(
     my_playlists_expanded: bool,
     collected_playlists_expanded: bool,
     context: ResponsiveContext,
+    transition_progress: f32,
 ) -> Element<'static, Message> {
     if !context.profile.uses_navigation_drawer() {
         return Space::new().width(0).height(0).into();
@@ -185,6 +186,7 @@ pub fn drawer_view(
         context.tokens.space(16.0),
     )
     .max(context.tokens.size(240.0).min(context.width()));
+    let transition_progress = transition_progress.clamp(0.0, 1.0);
     let drawer = full_view(
         current_route,
         locale,
@@ -197,14 +199,17 @@ pub fn drawer_view(
         my_playlists_expanded,
         collected_playlists_expanded,
         context,
-        drawer_width / context.density.value(),
+        // `full_view` receives rendered logical pixels (the same contract as
+        // the desktop call above), so do not convert the token-scaled drawer
+        // width back to reference units here.
+        drawer_width,
     );
     let backdrop = mouse_area(
         container(Space::new().width(Fill).height(Fill))
             .width(Fill)
             .height(Fill)
-            .style(|theme| iced::widget::container::Style {
-                background: Some(theme::overlay_backdrop(theme, 0.56).into()),
+            .style(move |theme| iced::widget::container::Style {
+                background: Some(theme::overlay_backdrop(theme, 0.56 * transition_progress).into()),
                 ..Default::default()
             }),
     )
@@ -214,8 +219,9 @@ pub fn drawer_view(
         iced::widget::stack![
             backdrop,
             container(drawer)
-                .width(drawer_width)
+                .width(Length::Fixed(drawer_width * transition_progress))
                 .height(Fill)
+                .clip(true)
                 .style(theme::sidebar),
         ]
         .width(Fill)
@@ -267,13 +273,7 @@ fn full_view(
     let logo = mouse_area(logo_content).on_press(Message::WindowDrag);
 
     // Main navigation menu with hover animations
-    let nav_items = [
-        NavItem::Home,
-        NavItem::Radio,
-        NavItem::Downloads,
-        NavItem::Settings,
-        NavItem::AudioEngine,
-    ];
+    let nav_items = [NavItem::Home, NavItem::Radio, NavItem::Downloads];
     let nav_menu = column(nav_items.into_iter().enumerate().map(|(idx, item)| {
         let is_active = matches!(current_route.nav_item(), Some(active) if active == item);
         let hover_progress = sidebar_animations.get_progress(&SidebarId::Nav(idx));
@@ -526,13 +526,7 @@ fn rail_view(
         Message::ToggleSidebarDrawer,
     );
 
-    let nav_items = [
-        NavItem::Home,
-        NavItem::Radio,
-        NavItem::Downloads,
-        NavItem::Settings,
-        NavItem::AudioEngine,
-    ];
+    let nav_items = [NavItem::Home, NavItem::Radio, NavItem::Downloads];
     let nav_buttons: Vec<Element<'static, Message>> = nav_items
         .into_iter()
         .enumerate()

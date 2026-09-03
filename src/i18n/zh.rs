@@ -32,6 +32,9 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::NotLoggedIn, "未登录");
     m.insert(Key::ClickToLogin, "点击登录");
     m.insert(Key::FreeAccount, "免费账户");
+    m.insert(Key::ProfileStatsFallback, "关注 0 · 粉丝 0");
+    m.insert(Key::ProfileNoBio, "暂无简介");
+    m.insert(Key::ProfileNoPlaylists, "暂无歌单");
 
     // Search
     m.insert(Key::SearchPlaceholder, "搜索歌曲、艺术家、专辑...");
@@ -206,6 +209,9 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
 
     // Playlist Page
     m.insert(Key::PlaylistTypeLabel, "歌单");
+    m.insert(Key::AlbumTypeLabel, "专辑");
+    m.insert(Key::UserTypeLabel, "用户");
+    m.insert(Key::ArtistTypeLabel, "歌手");
     m.insert(Key::PlaylistLikes, "{} 次点赞");
     m.insert(Key::PlaylistSongCount, "{} 首歌曲");
     m.insert(Key::PlaylistCustomSort, "自定义排序");
@@ -242,6 +248,12 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     // Lyrics Page
     m.insert(Key::LyricsNoLyrics, "暂无歌词");
     m.insert(Key::LyricsPureMusic, "纯音乐，请欣赏");
+
+    // Artist/User detail pages
+    m.insert(Key::ArtistPopularWorks, "热门作品");
+    m.insert(Key::ArtistTopSongs, "热门单曲");
+    m.insert(Key::ArtistAlbums, "专辑");
+    m.insert(Key::ArtistNoAlbums, "暂无专辑数据");
 
     // Audio Engine
     m.insert(Key::AudioEngineEqualizerDisabled, "均衡器已关闭");

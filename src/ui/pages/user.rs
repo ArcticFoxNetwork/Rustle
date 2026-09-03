@@ -12,7 +12,7 @@ use crate::image::ImageKind;
 use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::{cover_image, detail_card, detail_description};
 use crate::ui::pages::playlist::{self, DetailGradientSnapshot, PlaylistView};
-use crate::ui::responsive::{LayoutProfile, ResponsiveContext, TextRole};
+use crate::ui::responsive::{LayoutProfile, ResponsiveContext, TextRole, detail_grid_columns};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{theme, widgets};
 
@@ -58,7 +58,7 @@ fn view_for_context<'a>(
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
     let header = build_header(user, image_state, description_expanded, locale, context);
-    let body = build_playlist_grid(user, image_state, content_width, context);
+    let body = build_playlist_grid(user, image_state, locale, content_width, context);
 
     let gradient_target = user.gradient_snapshot();
     let gradient_section = container(header).width(Fill).style(move |theme| {
@@ -101,7 +101,7 @@ fn build_header(
     let stats = text(
         user.profile_stats
             .clone()
-            .unwrap_or_else(|| "关注 0 · 粉丝 0".to_string()),
+            .unwrap_or_else(|| locale.get(Key::ProfileStatsFallback).to_string()),
     )
     .size(tokens.text(TextRole::Title))
     .style(|theme| iced::widget::text::Style {
@@ -113,7 +113,7 @@ fn build_header(
             .description
             .clone()
             .filter(|text| !text.trim().is_empty())
-            .unwrap_or_else(|| "暂无简介".to_string());
+            .unwrap_or_else(|| locale.get(Key::ProfileNoBio).to_string());
         let has_description = user
             .description
             .as_ref()
@@ -139,7 +139,7 @@ fn build_header(
                     scrollable(
                         container(desc_widget)
                             .width(Fill)
-                            .padding(Padding::new(4.0).left(0.0)),
+                            .padding(Padding::new(tokens.space(4.0)).left(0.0)),
                     )
                     .direction(scrollable::Direction::Vertical(
                         iced::widget::scrollable::Scrollbar::new()
@@ -158,7 +158,7 @@ fn build_header(
                 );
 
                 column![scrollable_desc, collapse_btn]
-                    .spacing(2)
+                    .spacing(tokens.space(2.0))
                     .width(Fill)
                     .into()
             } else {
@@ -173,7 +173,7 @@ fn build_header(
                 );
 
                 column![clamped_desc, expand_btn]
-                    .spacing(2)
+                    .spacing(tokens.space(2.0))
                     .width(Fill)
                     .into()
             }
@@ -194,13 +194,24 @@ fn build_header(
     .align_x(Alignment::Start)
     .width(Fill);
 
-    if context.profile.is_desktop() {
+    if matches!(
+        context.profile,
+        LayoutProfile::Expanded | LayoutProfile::Standard | LayoutProfile::Compact
+    ) {
         row![avatar, Space::new().width(tokens.space(28.0)), info]
             .align_y(Alignment::Center)
             .padding(
-                Padding::new(tokens.space(48.0))
-                    .top(tokens.space(84.0))
-                    .bottom(tokens.space(28.0)),
+                Padding::new(if context.profile == LayoutProfile::Compact {
+                    tokens.space(28.0)
+                } else {
+                    tokens.space(48.0)
+                })
+                .top(if context.profile == LayoutProfile::Compact {
+                    tokens.space(48.0)
+                } else {
+                    tokens.space(84.0)
+                })
+                .bottom(tokens.space(28.0)),
             )
             .into()
     } else {
@@ -219,38 +230,35 @@ fn build_header(
 fn build_playlist_grid<'a>(
     user: &PlaylistView,
     image_state: &'a ImageState,
+    locale: Locale,
     content_width: f32,
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
     let tokens = context.tokens;
     if user.user_playlists.is_empty() {
         return container(
-            text("暂无歌单")
-                .size(theme::TEXT_SIZE_BODY_LARGE)
+            text(locale.get(Key::ProfileNoPlaylists).to_string())
+                .size(tokens.text(TextRole::BodyLarge))
                 .style(|theme| iced::widget::text::Style {
                     color: Some(theme::text_secondary(theme)),
                 }),
         )
-        .padding(48)
+        .padding(tokens.space(48.0))
         .width(Fill)
         .into();
     }
 
-    let card_width = detail_card::CARD_WIDTH;
-    let card_spacing = detail_card::CARD_SPACING;
-    let columns_per_row = match context.profile {
-        LayoutProfile::Tablet | LayoutProfile::Narrow => 1,
-        _ => context.grid_columns(content_width, card_width, card_spacing, 8),
-    };
+    let card_spacing = context.tokens.space(detail_card::CARD_SPACING);
+    let columns_per_row = detail_grid_columns(content_width, context);
 
-    let title = text("歌单")
+    let title = text(locale.get(Key::PlaylistTypeLabel).to_string())
         .size(tokens.text(TextRole::TitleLarge))
         .style(|theme| iced::widget::text::Style {
             color: Some(theme::text_primary(theme)),
         })
         .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
-    let mut rows = column![title, Space::new().height(20)]
+    let mut rows = column![title, Space::new().height(tokens.space(20.0))]
         .spacing(tokens.space(18.0))
         .padding(
             Padding::new(tokens.space(40.0))
@@ -270,7 +278,7 @@ fn build_playlist_grid<'a>(
                 Message::OpenNcmPlaylist(playlist.id),
                 context,
             ));
-            row_items.push(Space::new().width(tokens.space(card_spacing)).into());
+            row_items.push(Space::new().width(card_spacing).into());
         }
         if !row_items.is_empty() {
             row_items.pop();
@@ -279,7 +287,7 @@ fn build_playlist_grid<'a>(
     }
 
     widgets::measured_scrollable(
-        column![rows, Space::new().height(32)],
+        column![rows, Space::new().height(tokens.space(32.0))],
         "playlist_scroll",
         |size| Message::ContentWidthResized(ContentWidthTarget::PlaylistDetail, size),
         Message::SmoothScroll,
@@ -298,7 +306,7 @@ fn circular_avatar(
     let initial = fallback_name.chars().next().unwrap_or('?').to_string();
     container(
         text(initial)
-            .size(48)
+            .size((size * 0.22).max(24.0))
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_primary(theme)),
             })

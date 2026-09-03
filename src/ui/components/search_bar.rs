@@ -2,7 +2,7 @@
 //! Rounded search input with icon and placeholder text
 
 use iced::widget::{Space, container, row, svg, text_input};
-use iced::{Alignment, Element, Fill, Padding};
+use iced::{Alignment, Element, Fill, Length, Padding};
 
 use crate::app::Message;
 use crate::i18n::{Key, Locale};
@@ -21,6 +21,9 @@ pub struct SearchBarStyle {
     pub input_padding: f32,
     pub text_size: f32,
     pub radius: f32,
+    /// Maximum visual width for fluid top-bar usage. The outer lane remains
+    /// flexible so the field can shrink instead of compressing the chrome.
+    pub max_width: f32,
 }
 
 impl SearchBarStyle {
@@ -34,6 +37,7 @@ impl SearchBarStyle {
             input_padding: 8.0,
             text_size: theme::TEXT_SIZE_LABEL,
             radius: 18.0,
+            max_width: 320.0,
         }
     }
 
@@ -49,6 +53,7 @@ impl SearchBarStyle {
             input_padding: tokens.space(8.0),
             text_size: tokens.text(TextRole::Label),
             radius: tokens.size(18.0),
+            max_width: tokens.size(320.0),
         }
     }
 }
@@ -64,6 +69,7 @@ impl Default for SearchBarStyle {
             input_padding: 12.0,
             text_size: theme::TEXT_SIZE_BODY,
             radius: 24.0,
+            max_width: 400.0,
         }
     }
 }
@@ -117,12 +123,14 @@ pub fn view(search_query: &str, locale: Locale, style: SearchBarStyle) -> Elemen
             })
             .into()
     } else {
-        // Web-like: outer Fill fills flex space, inner container caps visual size.
+        // The outer lane fills the flexible row slot while the visual field is
+        // bounded only by a maximum. `Length::max` lets it shrink with the
+        // right panel instead of forcing the top bar to overflow.
         container(
             container(content)
                 .height(style.height)
                 .align_y(Alignment::Center)
-                .width(320.0)
+                .width(Length::Fill.max(style.max_width))
                 .style(move |theme| iced::widget::container::Style {
                     background: Some(iced::Background::Color(theme::hover_bg_alpha(theme, 0.08))),
                     border: iced::Border {

@@ -28,7 +28,7 @@ impl App {
                         return Some(Task::done(Message::DismissTopModal));
                     }
 
-                    if self.ui.sidebar_drawer_open {
+                    if self.ui.sidebar_drawer_visible() {
                         return Some(Task::done(Message::CloseSidebarDrawer));
                     }
                 }

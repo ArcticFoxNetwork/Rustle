@@ -460,7 +460,7 @@ impl App {
         // profile) in the content row and promote the complete navigation
         // tree to a blocking drawer when requested.
         let sidebar_drawer_overlay: Element<'_, Message> =
-            if context.profile.uses_navigation_drawer() && self.ui.sidebar_drawer_open {
+            if context.profile.uses_navigation_drawer() && self.ui.sidebar_drawer_visible() {
                 components::sidebar::drawer_view(
                     &self.ui.current_route,
                     self.core.locale,
@@ -474,6 +474,7 @@ impl App {
                     self.ui.my_playlists_expanded,
                     self.ui.collected_playlists_expanded,
                     context,
+                    self.ui.sidebar_drawer_progress(),
                 )
             } else {
                 Space::new().width(0).height(0).into()
