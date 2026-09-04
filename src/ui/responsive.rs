@@ -541,10 +541,10 @@ pub fn detail_header_metrics(context: ResponsiveContext) -> DetailHeaderMetrics 
     let (artwork, gap, horizontal_padding, top_padding, bottom_padding, title) = match context
         .profile
     {
-        LayoutProfile::Expanded | LayoutProfile::Standard => (224.0, 28.0, 40.0, 64.0, 20.0, 38.0),
-        LayoutProfile::Compact => (200.0, 24.0, 28.0, 52.0, 18.0, 36.0),
-        LayoutProfile::Tablet => (184.0, 20.0, 24.0, 48.0, 16.0, 34.0),
-        LayoutProfile::Narrow => (152.0, 16.0, 16.0, 44.0, 14.0, 30.0),
+        LayoutProfile::Expanded | LayoutProfile::Standard => (224.0, 28.0, 40.0, 76.0, 20.0, 38.0),
+        LayoutProfile::Compact => (200.0, 24.0, 28.0, 62.0, 18.0, 36.0),
+        LayoutProfile::Tablet => (184.0, 20.0, 24.0, 58.0, 16.0, 34.0),
+        LayoutProfile::Narrow => (152.0, 16.0, 16.0, 52.0, 14.0, 30.0),
     };
 
     DetailHeaderMetrics {
@@ -1134,12 +1134,16 @@ mod tests {
 
         assert_approx(reference.artwork_size, 224.0);
         assert_approx(reference.title_size, 38.0);
+        assert_approx(reference.top_padding, 76.0);
         assert_approx(two_k.artwork_size, 896.0 / 3.0);
         assert_approx(two_k.title_size, 152.0 / 3.0);
+        assert_approx(two_k.top_padding, 304.0 / 3.0);
         assert_approx(half_width.artwork_size, 165.6);
         assert_approx(half_width.title_size, 30.6);
+        assert_approx(half_width.top_padding, 52.2);
         assert_approx(narrow.artwork_size, 136.8);
         assert_approx(narrow.title_size, 27.0);
+        assert_approx(narrow.top_padding, 46.8);
 
         for viewport in [Size::new(1_280.0, 1_440.0), Size::new(720.0, 800.0)] {
             let metrics = detail_header_metrics(ResponsiveContext::from_viewport(viewport));

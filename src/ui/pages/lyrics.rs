@@ -112,7 +112,6 @@ pub fn view<'a>(
             .into()
         }
         LyricsPageLayout::Focus => {
-            let transition_color = bg_colors.primary;
             let target = match display_mode {
                 LyricsDisplayMode::Artwork => 0.0,
                 LyricsDisplayMode::Lyrics => 1.0,
@@ -196,21 +195,10 @@ pub fn view<'a>(
                         LyricsDisplayMode::Lyrics => Message::ShowLyricsArtwork,
                     };
                     let interactive_body = mouse_area(body).on_press(toggle_message);
-                    let veil_opacity = fade_through_opacity(progress);
-                    let veil =
-                        container(Space::new())
-                            .width(Fill)
-                            .height(Fill)
-                            .style(move |_theme| iced::widget::container::Style {
-                                background: Some(iced::Background::Color(
-                                    transition_color.scale_alpha(veil_opacity),
-                                )),
-                                ..Default::default()
-                            });
-
-                    iced::widget::stack![interactive_body, veil]
-                        .width(Fill)
-                        .height(Fill)
+                    widgets::foreground_reveal(
+                        interactive_body,
+                        foreground_reveal_at_progress(progress),
+                    )
                 },
             )
             .key("lyrics-focus-transition")
@@ -451,9 +439,9 @@ fn lyrics_mode_at_progress(progress: f32) -> LyricsDisplayMode {
 }
 
 #[inline]
-fn fade_through_opacity(progress: f32) -> f32 {
+fn foreground_reveal_at_progress(progress: f32) -> f32 {
     let progress = progress.clamp(0.0, 1.0);
-    (1.0 - (2.0 * progress - 1.0).abs()).clamp(0.0, 1.0)
+    (2.0 * progress - 1.0).abs()
 }
 
 /// Build the player panel with cover, song info, and controls.
@@ -979,11 +967,11 @@ pub fn find_current_line(lyrics: &[LyricLine], position_ms: u64) -> Option<usize
 
 #[cfg(test)]
 mod responsive_mode_transition_tests {
-    use super::{fade_through_opacity, lyrics_mode_at_progress};
+    use super::{foreground_reveal_at_progress, lyrics_mode_at_progress};
     use crate::app::LyricsDisplayMode;
 
     #[test]
-    fn component_swap_happens_only_at_the_fully_veiled_midpoint() {
+    fn component_swap_happens_only_at_the_fully_hidden_midpoint() {
         assert_eq!(lyrics_mode_at_progress(-1.0), LyricsDisplayMode::Artwork);
         assert_eq!(lyrics_mode_at_progress(0.0), LyricsDisplayMode::Artwork);
         assert_eq!(lyrics_mode_at_progress(0.49), LyricsDisplayMode::Artwork);
@@ -993,13 +981,13 @@ mod responsive_mode_transition_tests {
     }
 
     #[test]
-    fn fade_through_is_clear_at_rest_and_opaque_at_the_swap() {
-        assert_eq!(fade_through_opacity(-1.0), 0.0);
-        assert_eq!(fade_through_opacity(0.0), 0.0);
-        assert_eq!(fade_through_opacity(0.25), 0.5);
-        assert_eq!(fade_through_opacity(0.5), 1.0);
-        assert_eq!(fade_through_opacity(0.75), 0.5);
-        assert_eq!(fade_through_opacity(1.0), 0.0);
-        assert_eq!(fade_through_opacity(2.0), 0.0);
+    fn foreground_contracts_to_the_swap_then_expands_in_both_directions() {
+        assert_eq!(foreground_reveal_at_progress(-1.0), 1.0);
+        assert_eq!(foreground_reveal_at_progress(0.0), 1.0);
+        assert_eq!(foreground_reveal_at_progress(0.25), 0.5);
+        assert_eq!(foreground_reveal_at_progress(0.5), 0.0);
+        assert_eq!(foreground_reveal_at_progress(0.75), 0.5);
+        assert_eq!(foreground_reveal_at_progress(1.0), 1.0);
+        assert_eq!(foreground_reveal_at_progress(2.0), 1.0);
     }
 }

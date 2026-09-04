@@ -18,6 +18,7 @@
 
 mod crossfade_image;
 pub mod detail_header;
+mod foreground_reveal;
 mod hover_popup;
 mod hover_surface;
 pub mod multi_track_slider;
@@ -37,6 +38,7 @@ pub use crate::ui::primitives::{
 };
 
 pub use crossfade_image::{ContentPosition, crossfade_image};
+pub use foreground_reveal::foreground_reveal;
 pub use hover_popup::hover_popup;
 pub use hover_surface::hover_surface;
 pub use play_mode_button::ButtonSize as PlayModeButtonSize;
