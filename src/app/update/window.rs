@@ -16,6 +16,21 @@ impl App {
             .and_then(|id| iced::window::is_maximized(id).map(Message::WindowMaximized))
     }
 
+    pub(super) fn sync_window_maximized_after_resize_task() -> Task<Message> {
+        #[cfg(target_os = "macos")]
+        {
+            // Winit queries maximization for a borderless AppKit window by temporarily
+            // changing its style mask. The resulting surface resize event would call this
+            // query again, creating an endless resize/style-mask feedback loop.
+            Task::none()
+        }
+
+        #[cfg(not(target_os = "macos"))]
+        {
+            Self::sync_window_maximized_task()
+        }
+    }
+
     fn is_window_hidden(&self) -> bool {
         self.core.is_window_hidden()
     }
