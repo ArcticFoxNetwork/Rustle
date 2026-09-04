@@ -10,21 +10,16 @@ use iced::Size;
 
 use crate::ui::theme;
 
-/// Width of the reference design rectangle in logical pixels.
-pub const REFERENCE_WIDTH: f32 = 1_920.0;
 /// Height of the reference design rectangle in logical pixels.
 pub const REFERENCE_HEIGHT: f32 = 1_080.0;
+/// Root font size of the reference design in logical pixels.
+pub const ROOT_REM_REFERENCE_PX: f32 = 16.0;
 
-/// Lowest design density. The floor keeps compact layouts readable while
+/// Lowest root-unit scale. The floor keeps compact layouts readable while
 /// profile changes handle the loss of available composition space.
-pub const DENSITY_FLOOR: f32 = 0.9;
-/// Highest design density used by the reference/2K composition.
-pub const DENSITY_CEILING: f32 = 4.0 / 3.0;
-
-/// Compatibility name for the compact density floor used by the design docs.
-pub const COMPACT_MIN_SCALE: f32 = DENSITY_FLOOR;
-/// Compatibility name for the upper density bound used by the design docs.
-pub const MAX_SCALE: f32 = DENSITY_CEILING;
+pub const REM_SCALE_FLOOR: f32 = 0.9;
+/// Highest root-unit scale used by the 2K composition.
+pub const REM_SCALE_CEILING: f32 = 4.0 / 3.0;
 
 /// The narrow profile begins below this logical width.
 pub const NARROW_MAX_WIDTH: f32 = 640.0;
@@ -41,8 +36,7 @@ pub const EXPANDED_MIN_HEIGHT: f32 = 820.0;
 /// A portrait-like aspect ratio promotes a width-based profile to Tablet.
 pub const TABLET_MAX_ASPECT_RATIO: f32 = 1.15;
 
-/// Minimum width retained by the existing measured-content compatibility
-/// helper.
+/// Minimum width used by bounded composition policies.
 pub const MIN_USABLE_CONTENT_WIDTH: f32 = 200.0;
 /// Minimum hit target for an interactive control.
 pub const MIN_INTERACTION_TARGET: f32 = 36.0;
@@ -73,12 +67,6 @@ pub enum LayoutProfile {
 }
 
 impl LayoutProfile {
-    /// Classify a logical viewport using the shared breakpoint policy.
-    #[inline]
-    pub fn from_viewport(viewport: Size) -> Self {
-        classify_profile(viewport)
-    }
-
     /// Whether this profile is intended for desktop lane composition.
     #[inline]
     pub const fn is_desktop(self) -> bool {
@@ -89,12 +77,6 @@ impl LayoutProfile {
     #[inline]
     pub const fn is_compact(self) -> bool {
         matches!(self, Self::Compact | Self::Tablet | Self::Narrow)
-    }
-
-    /// Whether this profile is narrow enough to require single-column fallbacks.
-    #[inline]
-    pub const fn is_narrow(self) -> bool {
-        matches!(self, Self::Narrow)
     }
 
     /// Whether this profile uses a navigation drawer instead of the full tree.
@@ -183,17 +165,17 @@ pub fn viewport_aspect_ratio(viewport: Size) -> f32 {
     }
 }
 
-/// Compute the unclamped density against the 1920x1080 reference rectangle.
+/// Compute the unclamped root-unit scale against the 1080P reference height.
 ///
-/// Invalid or degenerate viewports return `0.0`; [`DensityScale`] applies the
-/// compact floor to that value.
+/// Width deliberately does not participate. It selects the composition
+/// profile, while the root unit keeps a full-height half-screen layout at the
+/// same visual scale as the corresponding full-screen layout.
 #[inline]
-pub fn raw_density(viewport: Size) -> f32 {
-    let width = positive_dimension(viewport.width);
+pub fn raw_rem_scale(viewport: Size) -> f32 {
     let height = positive_dimension(viewport.height);
 
-    if width > 0.0 && height > 0.0 {
-        (width / REFERENCE_WIDTH).min(height / REFERENCE_HEIGHT)
+    if height > 0.0 {
+        height / REFERENCE_HEIGHT
     } else {
         0.0
     }
@@ -228,66 +210,63 @@ pub fn classify_profile(viewport: Size) -> LayoutProfile {
     }
 }
 
-/// Bounded design density derived from a logical viewport.
+/// Responsive root `rem` used to resolve application-owned visual metrics.
+///
+/// Iced accepts logical pixels for fixed lengths and text sizes. `RootRem`
+/// provides the missing application-level root unit: one rem is 16 logical
+/// pixels at 1080P and scales with the logical viewport height.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
-pub struct DensityScale(f32);
+pub struct RootRem(f32);
 
-impl DensityScale {
-    /// Clamp an arbitrary scale to the supported design-density range.
+impl RootRem {
+    /// Clamp an arbitrary root scale to the supported responsive range.
     ///
     /// Non-finite values are treated as invalid and resolve to the compact
     /// floor rather than poisoning every derived token with `NaN`.
     #[inline]
-    pub fn new(scale: f32) -> Self {
+    pub fn from_scale(scale: f32) -> Self {
         let scale = if scale.is_finite() {
             scale
         } else {
-            DENSITY_FLOOR
+            REM_SCALE_FLOOR
         };
 
-        Self(scale.clamp(DENSITY_FLOOR, DENSITY_CEILING))
+        Self(scale.clamp(REM_SCALE_FLOOR, REM_SCALE_CEILING))
     }
 
-    /// Derive a scale from the logical viewport and the reference rectangle.
+    /// Derive the root unit from iced's logical viewport height.
     #[inline]
     pub fn from_viewport(viewport: Size) -> Self {
-        Self::new(raw_density(viewport))
+        Self::from_scale(raw_rem_scale(viewport))
     }
 
-    /// Return the scale as a primitive value.
+    /// Return the root-unit scale relative to the 1080P reference.
     #[inline]
-    pub fn value(self) -> f32 {
+    pub fn scale(self) -> f32 {
         self.0
     }
 
-    /// Alias useful at numeric API boundaries.
+    /// Return the logical pixel size of one rem.
     #[inline]
-    pub fn as_f32(self) -> f32 {
-        self.0
+    pub fn logical_pixels(self) -> f32 {
+        ROOT_REM_REFERENCE_PX * self.0
     }
 
-    /// Scale a finite value by this density.
+    /// Resolve a number of rem units to logical pixels.
     #[inline]
-    pub fn scale(self, value: f32) -> f32 {
-        if value.is_finite() {
-            value * self.0
+    pub fn resolve(self, rem: f32) -> f32 {
+        if rem.is_finite() {
+            rem * self.logical_pixels()
         } else {
             0.0
         }
     }
 }
 
-impl Default for DensityScale {
+impl Default for RootRem {
     #[inline]
     fn default() -> Self {
-        Self::new(1.0)
-    }
-}
-
-impl From<DensityScale> for f32 {
-    #[inline]
-    fn from(scale: DensityScale) -> Self {
-        scale.value()
+        Self::from_scale(1.0)
     }
 }
 
@@ -300,8 +279,8 @@ pub struct ResponsiveContext {
     pub aspect_ratio: f32,
     /// Named composition profile for this viewport.
     pub profile: LayoutProfile,
-    /// Bounded design density for Rustle-owned UI dimensions.
-    pub density: DensityScale,
+    /// Root rem used for Rustle-owned UI dimensions.
+    pub root_rem: RootRem,
     /// Scaled semantic UI values.
     pub tokens: UiTokens,
 }
@@ -310,14 +289,14 @@ impl ResponsiveContext {
     /// Build a context from iced's logical layout size.
     #[inline]
     pub fn new(viewport: Size) -> Self {
-        let density = DensityScale::from_viewport(viewport);
+        let root_rem = RootRem::from_viewport(viewport);
 
         Self {
             viewport,
             aspect_ratio: viewport_aspect_ratio(viewport),
             profile: classify_profile(viewport),
-            density,
-            tokens: UiTokens::new(density),
+            root_rem,
+            tokens: UiTokens::new(root_rem),
         }
     }
 
@@ -338,65 +317,12 @@ impl ResponsiveContext {
     pub fn height(&self) -> f32 {
         positive_dimension(self.viewport.height)
     }
-
-    /// Derive usable content width through the shared measured-content policy.
-    #[inline]
-    pub fn usable_content_width(&self, horizontal_padding: f32) -> f32 {
-        usable_content_width(self.viewport, horizontal_padding)
-    }
-
-    /// Calculate token-aware grid columns for a measured content width.
-    #[inline]
-    pub fn grid_columns(
-        &self,
-        content_width: f32,
-        base_card_width: f32,
-        base_spacing: f32,
-        max_columns: usize,
-    ) -> usize {
-        calculate_grid_columns_clamped(
-            content_width,
-            self.tokens.size(base_card_width),
-            self.tokens.space(base_spacing),
-            max_columns,
-        )
-    }
 }
 
 impl From<Size> for ResponsiveContext {
     #[inline]
     fn from(viewport: Size) -> Self {
         Self::new(viewport)
-    }
-}
-
-/// Semantic spacing roles used by [`UiTokens`].
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SpacingRole {
-    ExtraSmall,
-    Small,
-    Medium,
-    Large,
-    ExtraLarge,
-    Section,
-    Page,
-}
-
-/// Short alias for [`SpacingRole`] at call sites that use `space` terminology.
-pub type SpaceRole = SpacingRole;
-
-impl SpacingRole {
-    #[inline]
-    fn reference(self) -> f32 {
-        match self {
-            Self::ExtraSmall => 4.0,
-            Self::Small => 8.0,
-            Self::Medium => 12.0,
-            Self::Large => 16.0,
-            Self::ExtraLarge => 24.0,
-            Self::Section => 32.0,
-            Self::Page => 40.0,
-        }
     }
 }
 
@@ -413,7 +339,6 @@ pub enum TextRole {
     TitleLarge,
     Hero,
     Display,
-    DisplayLarge,
 }
 
 impl TextRole {
@@ -430,7 +355,6 @@ impl TextRole {
             Self::TitleLarge => (theme::TEXT_SIZE_TITLE_LARGE, 24.0),
             Self::Hero => (theme::TEXT_SIZE_HERO, 24.0),
             Self::Display => (theme::TEXT_SIZE_DISPLAY, 32.0),
-            Self::DisplayLarge => (theme::TEXT_SIZE_DISPLAY_LARGE, 48.0),
         }
     }
 }
@@ -441,6 +365,9 @@ pub enum IconRole {
     Small,
     Medium,
     Large,
+    TopBarNavigation,
+    TopBarAction,
+    TopBarSearch,
     WindowControl,
     Hero,
 }
@@ -452,6 +379,9 @@ impl IconRole {
             Self::Small => (16.0, 14.0),
             Self::Medium => (20.0, 18.0),
             Self::Large => (24.0, 20.0),
+            Self::TopBarNavigation => (7.0, 6.0),
+            Self::TopBarAction => (5.0, 4.5),
+            Self::TopBarSearch => (5.5, 5.0),
             Self::WindowControl => (15.0, 14.0),
             Self::Hero => (32.0, 24.0),
         }
@@ -463,7 +393,6 @@ impl IconRole {
 pub enum TargetRole {
     Icon,
     Control,
-    Row,
     WindowControl,
 }
 
@@ -473,7 +402,6 @@ impl TargetRole {
         match self {
             Self::Icon => (36.0, MIN_INTERACTION_TARGET),
             Self::Control => (40.0, MIN_INTERACTION_TARGET),
-            Self::Row => (44.0, MIN_INTERACTION_TARGET),
             Self::WindowControl => (36.0, MIN_INTERACTION_TARGET),
         }
     }
@@ -579,8 +507,9 @@ pub fn lyrics_page_layout(context: ResponsiveContext) -> LyricsPageLayout {
 /// Resolve the single square-media width shared by the lyrics artwork and its
 /// progress/time lane.
 ///
-/// The preferred size follows the design density while width and height caps
-/// reserve enough room for full-screen chrome, metadata, and playback controls.
+/// The preferred size follows the responsive root rem while width and height
+/// caps reserve enough room for full-screen chrome, metadata, and playback
+/// controls.
 #[inline]
 pub fn lyrics_media_width(context: ResponsiveContext) -> f32 {
     let tokens = context.tokens;
@@ -595,7 +524,6 @@ pub fn lyrics_media_width(context: ResponsiveContext) -> f32 {
         (positive_dimension(context.width()) - 2.0 * tokens.space(horizontal_gutter)).max(0.0);
     let height_cap =
         (positive_dimension(context.height()) - tokens.size(reserved_vertical)).max(0.0);
-
     tokens.size(preferred).min(width_cap).min(height_cap)
 }
 
@@ -622,6 +550,50 @@ impl CardRole {
                 radius: 14.0,
             },
         }
+    }
+}
+
+/// Resolve playlist-card geometry for the current composition.
+///
+/// A full-height half-width window has enough physical area for five useful
+/// cards, while a ceiling-scale expanded viewport uses a slightly denser card
+/// rhythm so it does not drop below the nine columns already available at
+/// 1080P. Smaller portrait tablets and ordinary desktop viewports retain their
+/// established card size.
+#[inline]
+pub fn playlist_card_metrics(context: ResponsiveContext) -> CardMetrics {
+    const WIDE_TABLET_MIN_WIDTH: f32 = 900.0;
+    const WIDE_TABLET_CARD_WIDTH: f32 = 148.0;
+    const TWO_K_EXPANDED_CARD_WIDTH: f32 = 155.0;
+    const PLAYLIST_FOOTER_HEIGHT: f32 = 56.0;
+    const WIDE_TABLET_CARD_GAP: f32 = 18.0;
+    const TWO_K_EXPANDED_CARD_GAP: f32 = 19.0;
+
+    let tokens = context.tokens;
+    let metrics = tokens.card(CardRole::Playlist);
+    let use_wide_tablet_metrics = context.profile == LayoutProfile::Tablet
+        && context.width() >= tokens.size(WIDE_TABLET_MIN_WIDTH);
+    let use_two_k_expanded_metrics =
+        context.profile == LayoutProfile::Expanded && context.root_rem.scale() >= REM_SCALE_CEILING;
+
+    if use_wide_tablet_metrics {
+        let width = tokens.size(WIDE_TABLET_CARD_WIDTH);
+        CardMetrics {
+            width,
+            height: width + tokens.size(PLAYLIST_FOOTER_HEIGHT),
+            gap: tokens.space(WIDE_TABLET_CARD_GAP),
+            radius: metrics.radius,
+        }
+    } else if use_two_k_expanded_metrics {
+        let width = tokens.size(TWO_K_EXPANDED_CARD_WIDTH);
+        CardMetrics {
+            width,
+            height: width + tokens.size(PLAYLIST_FOOTER_HEIGHT),
+            gap: tokens.space(TWO_K_EXPANDED_CARD_GAP),
+            radius: metrics.radius,
+        }
+    } else {
+        metrics
     }
 }
 
@@ -654,29 +626,54 @@ pub fn top_bar_height(context: &ResponsiveContext) -> f32 {
     context.tokens.chrome(ChromeRole::TopBar)
 }
 
-/// Immutable semantic UI dimensions derived from a [`DensityScale`].
+/// Immutable semantic UI dimensions derived from a responsive [`RootRem`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UiTokens {
-    density: DensityScale,
+    root_rem: RootRem,
 }
 
 impl UiTokens {
-    /// Create tokens for a bounded density.
+    /// Create tokens for a responsive root unit.
     #[inline]
-    pub fn new(density: DensityScale) -> Self {
-        Self { density }
+    pub fn new(root_rem: RootRem) -> Self {
+        Self { root_rem }
     }
 
-    /// Return the density that produced these tokens.
+    /// Return the root rem that produced these tokens.
     #[inline]
-    pub fn density(&self) -> DensityScale {
-        self.density
+    pub fn root_rem(&self) -> RootRem {
+        self.root_rem
     }
 
-    /// Scale an arbitrary spacing value, treating invalid values as zero.
+    /// Resolve an explicit rem value to iced logical pixels.
+    #[inline]
+    pub fn rem(&self, units: f32) -> f32 {
+        non_negative(self.root_rem.resolve(units))
+    }
+
+    /// Resolve a reference-design pixel value through the root rem.
+    #[inline]
+    pub fn px(&self, reference_pixels: f32) -> f32 {
+        self.rem(reference_pixels / ROOT_REM_REFERENCE_PX)
+    }
+
+    /// Convert rendered logical pixels back into 1080P reference pixels.
+    ///
+    /// This is used only for state, such as a user-resized sidebar width,
+    /// that is intentionally persisted in reference-design units.
+    #[inline]
+    pub fn reference_pixels(&self, logical_pixels: f32) -> f32 {
+        if logical_pixels.is_finite() {
+            logical_pixels / self.root_rem.scale()
+        } else {
+            0.0
+        }
+    }
+
+    /// Resolve a reference spacing value, treating invalid values as zero.
     #[inline]
     pub fn space(&self, base: f32) -> f32 {
-        non_negative(self.density.scale(base))
+        self.px(base)
     }
 
     /// Alias for callers that use generic size terminology.
@@ -685,38 +682,25 @@ impl UiTokens {
         self.space(base)
     }
 
-    /// Resolve a named spacing role.
-    #[inline]
-    pub fn spacing(&self, role: SpacingRole) -> f32 {
-        self.space(role.reference())
-    }
-
     /// Resolve a named typography role with its readability floor.
     #[inline]
     pub fn text(&self, role: TextRole) -> f32 {
         let (base, floor) = role.reference();
-        self.density.scale(base).max(floor)
+        self.px(base).max(floor)
     }
 
     /// Resolve a named icon role with its minimum raster size.
     #[inline]
     pub fn icon(&self, role: IconRole) -> f32 {
         let (base, floor) = role.reference();
-        self.density.scale(base).max(floor)
+        self.px(base).max(floor)
     }
 
     /// Resolve a named interaction target while preserving the global minimum.
     #[inline]
     pub fn target(&self, role: TargetRole) -> f32 {
         let (base, floor) = role.reference();
-        self.density.scale(base).max(floor)
-    }
-
-    /// Resolve a square interaction-target size.
-    #[inline]
-    pub fn target_size(&self, role: TargetRole) -> Size {
-        let target = self.target(role);
-        Size::new(target, target)
+        self.px(base).max(floor)
     }
 
     /// Resolve a named surface radius.
@@ -742,12 +726,26 @@ impl UiTokens {
     pub fn chrome(&self, role: ChromeRole) -> f32 {
         self.size(role.reference())
     }
+
+    /// Resolve dimensions used by shared theme style callbacks.
+    #[inline]
+    pub fn theme_metrics(&self) -> theme::ThemeMetrics {
+        theme::ThemeMetrics {
+            small_radius: self.radius(RadiusRole::Small),
+            medium_radius: self.radius(RadiusRole::Medium),
+            large_radius: self.radius(RadiusRole::Large),
+            pill_radius: self.radius(RadiusRole::Pill),
+            border_width: self.size(1.0),
+            popup_shadow_offset_y: self.size(8.0),
+            popup_shadow_blur: self.size(24.0),
+        }
+    }
 }
 
 impl Default for UiTokens {
     #[inline]
     fn default() -> Self {
-        Self::new(DensityScale::default())
+        Self::new(RootRem::default())
     }
 }
 
@@ -787,13 +785,6 @@ pub fn bounded_panel_size(
     )
 }
 
-/// Derive usable content width while retaining the existing 200px floor.
-#[inline]
-pub fn usable_content_width(size: Size, horizontal_padding: f32) -> f32 {
-    (positive_dimension(size.width) - non_negative(horizontal_padding))
-        .max(MIN_USABLE_CONTENT_WIDTH)
-}
-
 /// Calculate how many complete cards fit into a content width.
 #[inline]
 pub fn calculate_grid_columns(content_width: f32, card_width: f32, spacing: f32) -> usize {
@@ -825,53 +816,6 @@ pub fn calculate_grid_columns_clamped(
     calculate_grid_columns(content_width, card_width, spacing).clamp(1, max_columns.max(1))
 }
 
-/// Calculate complete columns for a token-scaled card family.
-///
-/// The measured content width is authoritative whenever it is available. A
-/// measured scrollable can briefly report the compatibility floor during its
-/// first layout pass, so only that value recovers from the viewport, current
-/// navigation chrome, and the caller's page padding. Profile identity never
-/// forces a column count.
-#[inline]
-pub fn complete_card_grid_columns(
-    content_width: f32,
-    context: ResponsiveContext,
-    card_role: CardRole,
-    fallback_horizontal_padding: f32,
-    max_columns: usize,
-) -> usize {
-    let measured_width = positive_dimension(content_width);
-    let chrome_width = match sidebar_presentation(context.profile, false) {
-        SidebarPresentation::Full => context.tokens.chrome(ChromeRole::Sidebar),
-        SidebarPresentation::Rail => context.tokens.chrome(ChromeRole::SidebarRail),
-        SidebarPresentation::Drawer | SidebarPresentation::Hidden => 0.0,
-    };
-    let fallback_width =
-        (context.width() - chrome_width - context.tokens.space(fallback_horizontal_padding))
-            .max(MIN_USABLE_CONTENT_WIDTH);
-    let effective_width = if measured_width <= MIN_USABLE_CONTENT_WIDTH {
-        fallback_width
-    } else {
-        measured_width
-    };
-    let metrics = context.tokens.card(card_role);
-
-    calculate_grid_columns_clamped(effective_width, metrics.width, metrics.gap, max_columns)
-}
-
-/// Calculate complete columns for detail-page card grids from the measured
-/// content width and the shared viewport policy.
-///
-/// A measured scrollable can report the compatibility floor during its first
-/// layout pass or immediately after a route change. In that case, recover the
-/// width from the current viewport and chrome profile so wide pages do not
-/// flash as a one-column grid. Real measurements remain authoritative after
-/// the first layout pass, which keeps a user-resized sidebar respected.
-#[inline]
-pub fn detail_grid_columns(content_width: f32, context: ResponsiveContext) -> usize {
-    complete_card_grid_columns(content_width, context, CardRole::Detail, 96.0, 8)
-}
-
 /// Responsive arrangement for the pair of shortcut tables.
 ///
 /// Each table keeps one horizontal three-equal-column row contract. Only the
@@ -893,7 +837,7 @@ pub fn shortcut_tables_layout(context: ResponsiveContext) -> ShortcutTablesLayou
     };
     let content_width =
         (context.width() - chrome_width - context.tokens.space(SETTINGS_CONTENT_HORIZONTAL_INSET))
-            .max(MIN_USABLE_CONTENT_WIDTH);
+            .max(context.tokens.size(MIN_USABLE_CONTENT_WIDTH));
     let required_width = context.tokens.size(SHORTCUT_TABLE_MIN_WIDTH) * 2.0
         + context.tokens.space(SHORTCUT_TABLE_GAP);
 
@@ -901,53 +845,6 @@ pub fn shortcut_tables_layout(context: ResponsiveContext) -> ShortcutTablesLayou
         ShortcutTablesLayout::SideBySide
     } else {
         ShortcutTablesLayout::Stacked
-    }
-}
-
-/// Adaptive arrangement selected when a row's minimum width cannot fit.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum OverflowVariant {
-    /// All children can remain on one line.
-    Inline,
-    /// Children can wrap while retaining their row-level semantics.
-    Wrap,
-    /// Children should be arranged vertically.
-    Stack,
-    /// Children remain in a horizontally scrollable surface.
-    Scroll,
-}
-
-/// Select a generic overflow arrangement from profile and geometry.
-///
-/// The helper only chooses composition. The caller remains responsible for
-/// building the corresponding iced row, column, or scrollable and for keeping
-/// the same actions and stable widget IDs in every variant.
-#[inline]
-pub fn select_overflow_variant(
-    profile: LayoutProfile,
-    available_width: f32,
-    required_width: f32,
-) -> OverflowVariant {
-    if non_negative(required_width) <= positive_dimension(available_width) {
-        OverflowVariant::Inline
-    } else {
-        match profile {
-            LayoutProfile::Expanded | LayoutProfile::Standard | LayoutProfile::Compact => {
-                OverflowVariant::Wrap
-            }
-            LayoutProfile::Tablet => OverflowVariant::Stack,
-            LayoutProfile::Narrow => OverflowVariant::Scroll,
-        }
-    }
-}
-
-/// Enforce the minimum size of an interactive hit target.
-#[inline]
-pub fn minimum_hit_target(candidate: f32) -> f32 {
-    if candidate.is_finite() {
-        candidate.max(MIN_INTERACTION_TARGET)
-    } else {
-        MIN_INTERACTION_TARGET
     }
 }
 
@@ -960,27 +857,39 @@ mod tests {
     }
 
     #[test]
-    fn density_matches_reference_and_2k_viewports() {
+    fn root_rem_matches_reference_and_2k_viewports_at_full_and_half_width() {
         assert_approx(
-            DensityScale::from_viewport(Size::new(1_920.0, 1_080.0)).value(),
+            RootRem::from_viewport(Size::new(1_920.0, 1_080.0)).scale(),
             1.0,
         );
         assert_approx(
-            DensityScale::from_viewport(Size::new(2_560.0, 1_440.0)).value(),
+            RootRem::from_viewport(Size::new(2_560.0, 1_440.0)).scale(),
             4.0 / 3.0,
+        );
+        assert_approx(
+            RootRem::from_viewport(Size::new(960.0, 1_080.0)).scale(),
+            1.0,
+        );
+        assert_approx(
+            RootRem::from_viewport(Size::new(1_280.0, 1_440.0)).scale(),
+            4.0 / 3.0,
+        );
+        assert_approx(
+            RootRem::from_viewport(Size::new(2_560.0, 1_440.0)).logical_pixels(),
+            64.0 / 3.0,
         );
     }
 
     #[test]
-    fn density_is_clamped_and_invalid_values_are_safe() {
-        assert_eq!(DensityScale::new(0.1).value(), DENSITY_FLOOR);
-        assert_eq!(DensityScale::new(10.0).value(), DENSITY_CEILING);
-        assert_eq!(DensityScale::new(f32::NAN).value(), DENSITY_FLOOR);
+    fn root_rem_is_clamped_and_invalid_values_are_safe() {
+        assert_eq!(RootRem::from_scale(0.1).scale(), REM_SCALE_FLOOR);
+        assert_eq!(RootRem::from_scale(10.0).scale(), REM_SCALE_CEILING);
+        assert_eq!(RootRem::from_scale(f32::NAN).scale(), REM_SCALE_FLOOR);
         assert_eq!(
-            DensityScale::from_viewport(Size::new(0.0, 0.0)).value(),
-            DENSITY_FLOOR
+            RootRem::from_viewport(Size::new(0.0, 0.0)).scale(),
+            REM_SCALE_FLOOR
         );
-        assert_eq!(raw_density(Size::new(f32::INFINITY, 1_080.0)), 0.0);
+        assert_eq!(raw_rem_scale(Size::new(f32::INFINITY, 0.0)), 0.0);
     }
 
     #[test]
@@ -1037,20 +946,117 @@ mod tests {
 
         assert_eq!(context.profile, LayoutProfile::Expanded);
         assert_approx(context.aspect_ratio, 16.0 / 9.0);
+        assert_approx(context.tokens.rem(1.0), 64.0 / 3.0);
         assert_approx(context.tokens.space(16.0), 64.0 / 3.0);
         assert_approx(context.tokens.text(TextRole::Body), 56.0 / 3.0);
+        assert_approx(context.tokens.reference_pixels(640.0), 480.0);
+    }
+
+    #[test]
+    fn semantic_tokens_keep_the_same_ratio_at_full_and_half_width() {
+        let half_1080 = ResponsiveContext::from_viewport(Size::new(960.0, 1_080.0));
+        let half_2k = ResponsiveContext::from_viewport(Size::new(1_280.0, 1_440.0));
+
+        assert_approx(
+            half_2k.tokens.space(24.0) / half_1080.tokens.space(24.0),
+            4.0 / 3.0,
+        );
+        assert_approx(
+            half_2k.tokens.text(TextRole::Body) / half_1080.tokens.text(TextRole::Body),
+            4.0 / 3.0,
+        );
+        assert_approx(
+            half_2k.tokens.icon(IconRole::Medium) / half_1080.tokens.icon(IconRole::Medium),
+            4.0 / 3.0,
+        );
+        assert_approx(
+            half_2k.tokens.target(TargetRole::Control)
+                / half_1080.tokens.target(TargetRole::Control),
+            4.0 / 3.0,
+        );
+    }
+
+    #[test]
+    fn top_bar_icons_are_visually_compact_without_shrinking_hit_targets() {
+        let reference = ResponsiveContext::from_viewport(Size::new(1_920.0, 1_080.0));
+        let two_k = ResponsiveContext::from_viewport(Size::new(2_560.0, 1_440.0));
+
+        assert_approx(reference.tokens.icon(IconRole::TopBarNavigation), 7.0);
+        assert_approx(reference.tokens.icon(IconRole::TopBarAction), 5.0);
+        assert_approx(reference.tokens.icon(IconRole::TopBarSearch), 5.5);
+        assert!(
+            reference.tokens.icon(IconRole::TopBarNavigation)
+                < reference.tokens.target(TargetRole::WindowControl)
+        );
+        assert!(
+            reference.tokens.icon(IconRole::TopBarAction)
+                < reference.tokens.icon(IconRole::WindowControl)
+        );
+        assert!(
+            reference.tokens.icon(IconRole::TopBarSearch) < reference.tokens.icon(IconRole::Small)
+        );
+        assert_approx(
+            two_k.tokens.icon(IconRole::TopBarNavigation)
+                / reference.tokens.icon(IconRole::TopBarNavigation),
+            4.0 / 3.0,
+        );
+    }
+
+    #[test]
+    fn playlist_card_density_preserves_fullscreen_and_half_width_columns() {
+        let full = ResponsiveContext::from_viewport(Size::new(1_920.0, 1_080.0));
+        let two_k = ResponsiveContext::from_viewport(Size::new(2_560.0, 1_440.0));
+        let half_1080 = ResponsiveContext::from_viewport(Size::new(960.0, 1_080.0));
+        let half_2k = ResponsiveContext::from_viewport(Size::new(1_280.0, 1_440.0));
+        let small_tablet = ResponsiveContext::from_viewport(Size::new(768.0, 1_024.0));
+
+        assert_approx(playlist_card_metrics(full).width, 161.0);
+        assert_approx(playlist_card_metrics(two_k).width, 620.0 / 3.0);
+        assert!(
+            playlist_card_metrics(two_k).width * 9.0 + playlist_card_metrics(two_k).gap * 8.0
+                <= 2_093.0
+        );
+        assert_approx(playlist_card_metrics(half_1080).width, 148.0);
+        assert_approx(playlist_card_metrics(half_1080).gap, 18.0);
+        assert!(
+            playlist_card_metrics(half_1080).width * 5.0
+                + playlist_card_metrics(half_1080).gap * 4.0
+                <= 828.0
+        );
+        assert_approx(
+            playlist_card_metrics(half_2k).width / playlist_card_metrics(half_1080).width,
+            4.0 / 3.0,
+        );
+        assert_approx(
+            playlist_card_metrics(small_tablet).width,
+            small_tablet.tokens.size(161.0),
+        );
+    }
+
+    #[test]
+    fn shared_theme_metrics_follow_the_same_root_rem() {
+        let reference = ResponsiveContext::from_viewport(Size::new(1_920.0, 1_080.0))
+            .tokens
+            .theme_metrics();
+        let two_k = ResponsiveContext::from_viewport(Size::new(2_560.0, 1_440.0))
+            .tokens
+            .theme_metrics();
+
+        assert_approx(two_k.small_radius / reference.small_radius, 4.0 / 3.0);
+        assert_approx(two_k.border_width / reference.border_width, 4.0 / 3.0);
+        assert_approx(
+            two_k.popup_shadow_blur / reference.popup_shadow_blur,
+            4.0 / 3.0,
+        );
     }
 
     #[test]
     fn token_floors_keep_compact_controls_and_text_readable() {
-        let tokens = UiTokens::new(DensityScale::new(0.1));
+        let tokens = UiTokens::new(RootRem::from_scale(0.1));
 
         assert!(tokens.target(TargetRole::Icon) >= MIN_INTERACTION_TARGET);
-        assert!(tokens.target(TargetRole::Row) >= MIN_INTERACTION_TARGET);
         assert!(tokens.text(TextRole::Caption) >= 11.0);
         assert!(tokens.icon(IconRole::Small) >= 14.0);
-        assert_eq!(minimum_hit_target(f32::NAN), MIN_INTERACTION_TARGET);
-        assert_eq!(minimum_hit_target(12.0), MIN_INTERACTION_TARGET);
     }
 
     #[test]
@@ -1084,42 +1090,6 @@ mod tests {
     }
 
     #[test]
-    fn complete_grid_uses_measured_width_instead_of_profile_identity() {
-        let compact = ResponsiveContext::from_viewport(Size::new(960.0, 540.0));
-        let tablet = ResponsiveContext::from_viewport(Size::new(768.0, 1024.0));
-        let narrow = ResponsiveContext::from_viewport(Size::new(560.0, 800.0));
-
-        for context in [compact, tablet, narrow] {
-            assert_eq!(
-                complete_card_grid_columns(600.0, context, CardRole::Detail, 96.0, 8),
-                3
-            );
-        }
-    }
-
-    #[test]
-    fn detail_grid_recovers_from_measured_floor_for_validation_viewports() {
-        let fixtures = [
-            (Size::new(1_920.0, 1_080.0), 7),
-            (Size::new(2_560.0, 1_440.0), 7),
-            (Size::new(960.0, 1_080.0), 4),
-            (Size::new(768.0, 1_024.0), 3),
-            (Size::new(720.0, 800.0), 2),
-            (Size::new(960.0, 540.0), 4),
-            (Size::new(560.0, 800.0), 2),
-        ];
-
-        for (viewport, expected_columns) in fixtures {
-            let context = ResponsiveContext::from_viewport(viewport);
-            assert_eq!(
-                detail_grid_columns(MIN_USABLE_CONTENT_WIDTH, context),
-                expected_columns,
-                "unexpected complete detail-card columns for {viewport:?}"
-            );
-        }
-    }
-
-    #[test]
     fn detail_header_metrics_scale_without_changing_the_horizontal_contract() {
         let reference = detail_header_metrics(ResponsiveContext::from_viewport(Size::new(
             1_920.0, 1_080.0,
@@ -1138,9 +1108,9 @@ mod tests {
         assert_approx(two_k.artwork_size, 896.0 / 3.0);
         assert_approx(two_k.title_size, 152.0 / 3.0);
         assert_approx(two_k.top_padding, 304.0 / 3.0);
-        assert_approx(half_width.artwork_size, 165.6);
-        assert_approx(half_width.title_size, 30.6);
-        assert_approx(half_width.top_padding, 52.2);
+        assert_approx(half_width.artwork_size, 184.0);
+        assert_approx(half_width.title_size, 34.0);
+        assert_approx(half_width.top_padding, 58.0);
         assert_approx(narrow.artwork_size, 136.8);
         assert_approx(narrow.title_size, 27.0);
         assert_approx(narrow.top_padding, 46.8);
@@ -1177,7 +1147,10 @@ mod tests {
     #[test]
     fn lyrics_media_width_is_shared_and_bounded_for_validation_viewports() {
         let fixtures = [
-            (Size::new(960.0, 1_080.0), 450.0),
+            (Size::new(1_920.0, 1_080.0), 480.0),
+            (Size::new(2_560.0, 1_440.0), 640.0),
+            (Size::new(960.0, 1_080.0), 500.0),
+            (Size::new(1_280.0, 1_440.0), 2_000.0 / 3.0),
             (Size::new(720.0, 800.0), 450.0),
             (Size::new(960.0, 540.0), 306.0),
             (Size::new(560.0, 800.0), 360.0),
@@ -1190,6 +1163,17 @@ mod tests {
             assert!(width <= viewport.width);
             assert!(width <= viewport.height);
         }
+    }
+
+    #[test]
+    fn lyrics_media_preserves_root_rem_growth_at_half_width() {
+        let half_1080 =
+            lyrics_media_width(ResponsiveContext::from_viewport(Size::new(960.0, 1_080.0)));
+        let half_2k = lyrics_media_width(ResponsiveContext::from_viewport(Size::new(
+            1_280.0, 1_440.0,
+        )));
+
+        assert_approx(half_2k / half_1080, 4.0 / 3.0);
     }
 
     #[test]
@@ -1214,26 +1198,6 @@ mod tests {
                 ShortcutTablesLayout::Stacked
             );
         }
-    }
-
-    #[test]
-    fn overflow_policy_changes_composition_before_clipping() {
-        assert_eq!(
-            select_overflow_variant(LayoutProfile::Standard, 400.0, 360.0),
-            OverflowVariant::Inline
-        );
-        assert_eq!(
-            select_overflow_variant(LayoutProfile::Compact, 300.0, 360.0),
-            OverflowVariant::Wrap
-        );
-        assert_eq!(
-            select_overflow_variant(LayoutProfile::Tablet, 300.0, 360.0),
-            OverflowVariant::Stack
-        );
-        assert_eq!(
-            select_overflow_variant(LayoutProfile::Narrow, 300.0, 360.0),
-            OverflowVariant::Scroll
-        );
     }
 
     #[test]
@@ -1319,12 +1283,13 @@ mod tests {
     }
 
     #[test]
-    fn top_bar_height_is_stable_for_each_density() {
+    fn top_bar_height_follows_the_root_rem() {
         let fixtures = [
             (Size::new(1_920.0, 1_080.0), 60.0),
             (Size::new(2_560.0, 1_440.0), 80.0),
-            (Size::new(960.0, 1_080.0), 54.0),
-            (Size::new(768.0, 1_024.0), 54.0),
+            (Size::new(960.0, 1_080.0), 60.0),
+            (Size::new(1_280.0, 1_440.0), 80.0),
+            (Size::new(768.0, 1_024.0), 512.0 / 9.0),
             (Size::new(720.0, 800.0), 54.0),
             (Size::new(960.0, 540.0), 54.0),
             (Size::new(560.0, 800.0), 54.0),

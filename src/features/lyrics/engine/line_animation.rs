@@ -714,7 +714,8 @@ impl LineAnimationManager {
     ///
     /// Additional parameters:
     /// - is_non_dynamic: True if all lines have only 1 word (affects opacity)
-    /// - viewport_width: Used for small screen blur adjustment (blur * 0.8 when <= 1024)
+    /// - viewport_width: Retained for renderer API compatibility; responsive
+    ///   visual scaling is supplied by the application at the draw boundary.
     #[allow(clippy::too_many_arguments)]
     pub fn calc_layout_full(
         &mut self,
@@ -730,7 +731,7 @@ impl LineAnimationManager {
         stagger_base_delay: f32,
         stagger_reduction_factor: f32,
         is_non_dynamic: bool,
-        viewport_width: f32,
+        _viewport_width: f32,
         manual_scroll_offset: f32,
         disable_blur: bool,
         interlude_insert_after: Option<usize>,
@@ -751,8 +752,7 @@ impl LineAnimationManager {
         // default: LINE_HEIGHT_FALLBACK = size[1] / 5
         let line_height_fallback = self.viewport_height / 5.0;
 
-        // default: Small screen blur adjustment
-        let blur_multiplier = if viewport_width <= 1024.0 { 0.8 } else { 1.0 };
+        let blur_multiplier = 1.0;
 
         // default: targetAlignIndex (may differ from scrollToIndex during interlude)
         // For now, we use scroll_to_index directly. Interlude handling can be added later.
@@ -1180,26 +1180,23 @@ mod tests {
         assert_eq!(blur, 5.0, "Line 9 should have blur = 5");
     }
 
-    // ========== Property 3: Blur level viewport adjustment ==========
+    // ========== Property 3: Blur level is independent of local width ==========
 
     #[test]
-    fn test_blur_reduced_on_small_viewport() {
+    fn test_blur_is_not_scaled_by_renderer_width() {
         let mut manager = create_test_manager(10);
         let mut buffered = HashSet::new();
         buffered.insert(5);
 
-        // Line 3 with large viewport: blur = 4.0
         let blur_large = get_blur_for_line(&mut manager, 10, 3, 5, &buffered, 1920.0);
-
-        // Line 3 with small viewport (<= 1024): blur = 4.0 * 0.8 = 3.2
         let blur_small = get_blur_for_line(&mut manager, 10, 3, 5, &buffered, 1024.0);
 
         assert_eq!(blur_large, 4.0, "Large viewport should have full blur");
-        assert_eq!(blur_small, 3.2, "Small viewport should have blur * 0.8");
+        assert_eq!(blur_small, blur_large);
     }
 
     #[test]
-    fn test_blur_not_reduced_above_1024() {
+    fn test_blur_is_stable_across_renderer_widths() {
         let mut manager = create_test_manager(10);
         let mut buffered = HashSet::new();
         buffered.insert(5);
@@ -1207,10 +1204,7 @@ mod tests {
         let blur_1025 = get_blur_for_line(&mut manager, 10, 3, 5, &buffered, 1025.0);
         let blur_1920 = get_blur_for_line(&mut manager, 10, 3, 5, &buffered, 1920.0);
 
-        assert_eq!(
-            blur_1025, blur_1920,
-            "Blur should be same for viewports > 1024"
-        );
+        assert_eq!(blur_1025, blur_1920);
     }
 
     #[test]

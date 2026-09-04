@@ -541,12 +541,12 @@ impl AudioHandle {
         self.state.current_path().is_none() && self.state.is_stopped()
     }
 
-    /// Get buffer progress for streaming playback
+    /// Get contiguous disk-cache progress for streaming playback.
     ///
     /// Returns None for local files, Some(0.0-1.0) for streaming.
-    /// This is the single source of truth for buffer progress in UI.
-    pub fn buffer_progress(&self) -> Option<f32> {
-        self.state.buffer_progress()
+    /// This is the single source of truth for the UI secondary track.
+    pub fn cache_progress(&self) -> Option<f32> {
+        self.state.cache_progress()
     }
 }
 

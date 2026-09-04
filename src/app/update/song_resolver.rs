@@ -277,7 +277,14 @@ pub async fn resolve_song(
             cache_key,
             quality,
         } => (
-            start_buffer_download(url, cache_path, cache_key, identity, Some(event_tx)),
+            start_buffer_download(
+                url,
+                cache_path,
+                cache_key,
+                quality.bitrate,
+                identity,
+                Some(event_tx),
+            ),
             quality,
         ),
     };

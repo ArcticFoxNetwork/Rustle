@@ -6,6 +6,7 @@
 //! - AudioPreloadSlot contains request_id to reference sink in audio thread
 //! - Sinks are created and stored in the audio thread via AudioHandle commands
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -56,14 +57,29 @@ impl App {
         self.release_preload_request_ids(stale_request_ids);
 
         let mut tasks = Vec::new();
+        let current_song_id = self.playback.current_song.as_ref().map(|song| song.id);
+        let mut planned_song_ids = HashSet::new();
 
         for (candidate_idx, direction) in [
             (next_idx, PreloadDirection::Next),
             (prev_idx, PreloadDirection::Previous),
         ] {
-            if let Some(idx) = candidate_idx
-                && let Some(task) = self.preload_track(idx, direction)
-            {
+            let Some(idx) = candidate_idx else {
+                continue;
+            };
+            let Some(song_id) = self.playback.queue.get(idx).map(|song| song.id) else {
+                continue;
+            };
+            if Some(song_id) == current_song_id || !planned_song_ids.insert(song_id) {
+                tracing::debug!(
+                    index = idx,
+                    song_id,
+                    %direction,
+                    "Preload skipped to keep one decoder per shared cache key"
+                );
+                continue;
+            }
+            if let Some(task) = self.preload_track(idx, direction) {
                 tasks.push(task);
             }
         }
@@ -334,7 +350,11 @@ impl App {
             self.release_preload_request(identity);
             return Some(Task::none());
         }
-        if let Some(slot) = self.playback.audio_preload_manager.slot_mut(direction) {
+        if let Some(slot) = self
+            .playback
+            .audio_preload_manager
+            .slot_mut_for_identity(&identity)
+        {
             slot.quality = quality;
         }
         if self
@@ -385,7 +405,6 @@ impl App {
         ) || !self.accepts_audio_preload_identity(&request_identity)
         {
             self.release_preload_request(request_identity);
-            buffer.cancel();
             return Some(Task::none());
         }
 
@@ -403,7 +422,6 @@ impl App {
             .unwrap_or(1.0);
         let Ok(identity) = self.reserve_preload_handoff(&request_identity) else {
             self.release_preload_request(request_identity);
-            buffer.cancel();
             return Some(Task::none());
         };
         if !self.playback.audio_preload_manager.replace_pending_request(
@@ -412,10 +430,13 @@ impl App {
             identity.clone(),
         ) {
             self.release_preload_request(identity);
-            buffer.cancel();
             return Some(Task::none());
         }
-        if let Some(slot) = self.playback.audio_preload_manager.slot_mut(direction) {
+        if let Some(slot) = self
+            .playback
+            .audio_preload_manager
+            .slot_mut_for_identity(&identity)
+        {
             slot.quality = quality;
         }
         if self
@@ -432,7 +453,11 @@ impl App {
             {
                 song.file_path = path.clone();
             }
-            if let Some(slot) = self.playback.audio_preload_manager.slot_mut(direction) {
+            if let Some(slot) = self
+                .playback
+                .audio_preload_manager
+                .slot_mut_for_identity(&identity)
+            {
                 slot.buffer = Some(buffer);
             }
             tracing::info!(
@@ -451,7 +476,6 @@ impl App {
             idx,
             finalized_cache_path
         );
-        buffer.cancel();
         self.release_preload_request(identity.clone());
         self.playback
             .audio_preload_manager
@@ -464,10 +488,31 @@ impl App {
         idx: usize,
         direction: PreloadDirection,
     ) -> Option<PlaybackSource> {
+        let target_song_id = self.playback.queue.get(idx).map(|song| song.id)?;
+        let (preloaded_idx, preloaded_direction) =
+            if self.playback.audio_preload_manager.is_ready(idx, direction) {
+                (idx, direction)
+            } else {
+                PreloadDirection::ALL
+                    .into_iter()
+                    .find_map(|candidate_direction| {
+                        let slot = self
+                            .playback
+                            .audio_preload_manager
+                            .slot(candidate_direction)?;
+                        let same_audio = slot.is_ready()
+                            && self
+                                .playback
+                                .queue
+                                .get(slot.idx)
+                                .is_some_and(|song| song.id == target_song_id);
+                        same_audio.then_some((slot.idx, candidate_direction))
+                    })?
+            };
         if let Some(mut slot) = self
             .playback
             .audio_preload_manager
-            .take_ready(idx, direction)
+            .take_ready(preloaded_idx, preloaded_direction)
             && let Some(identity) = slot.take_request_id()
         {
             let path = slot.path.clone();
@@ -475,7 +520,7 @@ impl App {
             self.playback.current_quality = slot.quality.take();
             tracing::info!(
                 "Using {} preloaded track: idx={}, identity={:?}, path={:?}, streaming_buffer={}",
-                direction,
+                preloaded_direction,
                 idx,
                 identity,
                 path,

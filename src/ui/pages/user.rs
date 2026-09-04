@@ -6,14 +6,14 @@ use std::rc::Rc;
 use iced::widget::{Space, column, container, row, scrollable, text};
 use iced::{Alignment, Element, Fill, Length, Padding};
 
-use crate::app::{ContentWidthTarget, ImageState, Message};
+use crate::app::{ImageState, Message};
 use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::{cover_image, detail_card, detail_description};
 use crate::ui::pages::playlist::{self, DetailGradientSnapshot, PlaylistView};
 use crate::ui::responsive::{
-    ResponsiveContext, TextRole, detail_grid_columns, detail_header_metrics,
+    CardRole, ResponsiveContext, TextRole, UiTokens, detail_header_metrics,
 };
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::widgets::detail_header;
@@ -32,7 +32,6 @@ pub fn view<'a>(
     _scroll_state: Rc<RefCell<widgets::VirtualListState>>,
     _current_user_id: Option<u64>,
     _current_playing_id: Option<i64>,
-    content_width: f32,
     description_expanded: bool,
     gradient_source: Option<DetailGradientSnapshot>,
     gradient_progress: f32,
@@ -42,7 +41,6 @@ pub fn view<'a>(
         user,
         image_state,
         locale,
-        content_width,
         description_expanded,
         gradient_source,
         gradient_progress,
@@ -54,14 +52,13 @@ fn view_for_context<'a>(
     user: &'a PlaylistView,
     image_state: &'a ImageState,
     locale: Locale,
-    content_width: f32,
     description_expanded: bool,
     gradient_source: Option<DetailGradientSnapshot>,
     gradient_progress: f32,
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
     let header = build_header(user, image_state, description_expanded, locale, context);
-    let body = build_playlist_grid(user, image_state, locale, content_width, context);
+    let body = build_playlist_grid(user, image_state, locale, context);
 
     let gradient_target = user.gradient_snapshot();
     let gradient_section = container(header).width(Fill).style(move |theme| {
@@ -88,6 +85,7 @@ fn build_header(
         image_state.get(ImageKind::UserAvatar, user.creator_id),
         &user.name,
         avatar_size,
+        tokens,
     );
 
     let title = text(user.name.clone())
@@ -142,18 +140,20 @@ fn build_header(
                     )
                     .direction(scrollable::Direction::Vertical(
                         iced::widget::scrollable::Scrollbar::new()
-                            .width(4)
-                            .scroller_width(4),
+                            .width(tokens.size(4.0))
+                            .scroller_width(tokens.size(4.0)),
                     ))
                     .height(tokens.size(150.0))
                     .id(iced::widget::Id::new("user_description_scroll")),
                     SmoothScrollTarget::Native("user_description_scroll"),
+                    tokens,
                     Message::SmoothScroll,
                 );
 
                 let collapse_btn = detail_description::toggle_button(
                     locale.get(Key::CollapseDescription),
                     Message::ToggleDescriptionExpand,
+                    tokens,
                 );
 
                 column![scrollable_desc, collapse_btn]
@@ -162,13 +162,14 @@ fn build_header(
                     .into()
             } else {
                 let clamped_desc = container(desc_widget)
-                    .height(detail_description::collapsed_height())
+                    .height(detail_description::collapsed_height(tokens))
                     .clip(true)
                     .width(Fill);
 
                 let expand_btn = detail_description::toggle_button(
                     locale.get(Key::ExpandDescription),
                     Message::ToggleDescriptionExpand,
+                    tokens,
                 );
 
                 column![clamped_desc, expand_btn]
@@ -202,10 +203,9 @@ fn build_header(
 }
 
 fn build_playlist_grid<'a>(
-    user: &PlaylistView,
+    user: &'a PlaylistView,
     image_state: &'a ImageState,
     locale: Locale,
-    content_width: f32,
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
     let tokens = context.tokens;
@@ -223,7 +223,7 @@ fn build_playlist_grid<'a>(
     }
 
     let card_spacing = context.tokens.space(detail_card::CARD_SPACING);
-    let columns_per_row = detail_grid_columns(content_width, context);
+    let card_metrics = tokens.card(CardRole::Detail);
 
     let title = text(locale.get(Key::PlaylistTypeLabel).to_string())
         .size(tokens.text(TextRole::TitleLarge))
@@ -232,7 +232,35 @@ fn build_playlist_grid<'a>(
         })
         .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
-    let mut rows = column![title, Space::new().height(tokens.space(20.0))]
+    let grid = widgets::responsive_card_columns(card_metrics, 8, move |columns_per_row| {
+        let rows = user
+            .user_playlists
+            .chunks(columns_per_row)
+            .map(|chunk| {
+                let mut row_items: Vec<Element<'a, Message>> = Vec::new();
+                for playlist in chunk {
+                    let cover_handle = image_state.get(ImageKind::PlaylistCover, playlist.id);
+                    row_items.push(detail_card::view(
+                        playlist.name.clone(),
+                        playlist.creator.nickname.clone(),
+                        cover_handle,
+                        ImageKind::PlaylistCover,
+                        Message::OpenNcmPlaylist(playlist.id),
+                        context,
+                    ));
+                    row_items.push(Space::new().width(card_spacing).into());
+                }
+                if !row_items.is_empty() {
+                    row_items.pop();
+                }
+                row(row_items).align_y(Alignment::Start).into()
+            })
+            .collect::<Vec<Element<'a, Message>>>();
+
+        column(rows).spacing(tokens.space(18.0)).into()
+    });
+
+    let rows = column![title, Space::new().height(tokens.space(20.0)), grid]
         .spacing(tokens.space(18.0))
         .padding(
             Padding::new(tokens.space(40.0))
@@ -240,30 +268,10 @@ fn build_playlist_grid<'a>(
                 .right(tokens.space(48.0)),
         );
 
-    for chunk in user.user_playlists.chunks(columns_per_row) {
-        let mut row_items: Vec<Element<'a, Message>> = Vec::new();
-        for playlist in chunk {
-            let cover_handle = image_state.get(ImageKind::PlaylistCover, playlist.id);
-            row_items.push(detail_card::view_with_context(
-                playlist.name.clone(),
-                playlist.creator.nickname.clone(),
-                cover_handle,
-                ImageKind::PlaylistCover,
-                Message::OpenNcmPlaylist(playlist.id),
-                context,
-            ));
-            row_items.push(Space::new().width(card_spacing).into());
-        }
-        if !row_items.is_empty() {
-            row_items.pop();
-        }
-        rows = rows.push(row(row_items).align_y(Alignment::Start));
-    }
-
-    widgets::measured_scrollable(
+    widgets::page_scrollable(
         column![rows, Space::new().height(tokens.space(32.0))],
         "playlist_scroll",
-        |size| Message::ContentWidthResized(ContentWidthTarget::PlaylistDetail, size),
+        tokens,
         Message::SmoothScroll,
     )
 }
@@ -272,15 +280,16 @@ fn circular_avatar(
     handle: Option<&iced::widget::image::Handle>,
     fallback_name: &str,
     size: f32,
+    tokens: UiTokens,
 ) -> Element<'static, Message> {
     if handle.is_some() {
-        return cover_image::circle(handle, ImageKind::UserAvatar, size);
+        return cover_image::circle(handle, ImageKind::UserAvatar, size, tokens);
     }
 
     let initial = fallback_name.chars().next().unwrap_or('?').to_string();
     container(
         text(initial)
-            .size((size * 0.22).max(24.0))
+            .size((size * 0.22).max(tokens.size(24.0)))
             .style(|theme| iced::widget::text::Style {
                 color: Some(theme::text_primary(theme)),
             })
@@ -294,7 +303,7 @@ fn circular_avatar(
         background: Some(iced::Background::Color(theme::surface_container(theme))),
         border: iced::Border {
             radius: (size / 2.0).into(),
-            width: 1.0,
+            width: tokens.size(1.0),
             color: theme::border_color(theme),
         },
         ..Default::default()

@@ -332,6 +332,7 @@ impl App {
             Message::QueueRestored(queue) => {
                 tracing::info!("Restored {} songs in queue", queue.len());
                 self.store_db_song_cover_paths(queue);
+                self.clear_shuffle_cache();
                 self.playback.queue_artists_by_song_id.clear();
                 self.playback.queue = queue.clone();
                 self.playback.startup_restore.queue_loaded = true;

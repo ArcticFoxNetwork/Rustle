@@ -12,6 +12,10 @@ use crate::app::message::Message;
 use crate::app::state::{App, LyricsDisplayMode};
 use crate::app::update::lyrics_preload_manager::DisplayFetchAction;
 
+/// Renderer safety floor used to avoid zero-sized shaping/GPU buffers during
+/// sensor churn. This is not an application visual dimension.
+const MIN_RENDERER_VIEWPORT_EXTENT: f32 = 100.0;
+
 impl App {
     /// Handle lyrics page related messages
     pub fn handle_lyrics(&mut self, message: &Message) -> Option<Task<Message>> {
@@ -121,28 +125,14 @@ impl App {
                 // `Responsive` view. Lyrics renderer dimensions come from its
                 // own `Sensor` so a guessed split ratio cannot overwrite the
                 // actual measured renderer viewport during a resize.
-                const GRID_PADDING: f32 = 64.0;
-                const DETAIL_GRID_PADDING: f32 = 96.0;
                 let responsive_context =
                     crate::ui::responsive::ResponsiveContext::from_viewport(*size);
-                let sidebar_width = if responsive_context.profile.is_desktop() {
-                    responsive_context
-                        .tokens
-                        .size(self.ui.sidebar_width.clamp(240.0, 440.0))
-                } else if responsive_context.profile == crate::ui::responsive::LayoutProfile::Tablet
-                    || responsive_context.profile == crate::ui::responsive::LayoutProfile::Compact
-                {
-                    responsive_context
-                        .tokens
-                        .chrome(crate::ui::responsive::ChromeRole::SidebarRail)
-                } else {
-                    0.0
-                };
-                let available_width = (size.width - sidebar_width).max(200.0);
-                self.ui.discover.content_width = (available_width - GRID_PADDING).max(200.0);
-                self.ui.playlist_page.content_width =
-                    (available_width - DETAIL_GRID_PADDING).max(200.0);
-                self.ui.search.content_width = (available_width - GRID_PADDING).max(200.0);
+
+                if let Some(engine_cell) = &self.ui.lyrics.engine {
+                    engine_cell
+                        .borrow_mut()
+                        .set_visual_scale(responsive_context.root_rem.scale());
+                }
 
                 Some(Task::batch([Self::sync_window_maximized_task()]))
             }
@@ -154,9 +144,14 @@ impl App {
 
                 // Create LyricsEngine with the shared font system
                 if self.ui.lyrics.engine.is_none() {
+                    let context = crate::ui::responsive::ResponsiveContext::from_viewport(
+                        iced::Size::new(self.core.window_width, self.core.window_height),
+                    );
+                    let config = crate::features::lyrics::engine::LyricsEngineConfig::default()
+                        .with_visual_scale(context.root_rem.scale());
                     self.ui.lyrics.engine = Some(std::cell::RefCell::new(
                         crate::features::lyrics::engine::LyricsEngine::new_with_font_system(
-                            crate::features::lyrics::engine::LyricsEngineConfig::default(),
+                            config,
                             font_system.clone(),
                         ),
                     ));
@@ -545,11 +540,18 @@ impl App {
             return None;
         }
 
-        let viewport_width = self.ui.lyrics.viewport_width.max(100.0);
-        let viewport_height = self.ui.lyrics.viewport_height.max(100.0);
+        let viewport_width = self
+            .ui
+            .lyrics
+            .viewport_width
+            .max(MIN_RENDERER_VIEWPORT_EXTENT);
         let content_width = viewport_width * 0.9;
+        let context = crate::ui::responsive::ResponsiveContext::from_viewport(iced::Size::new(
+            self.core.window_width,
+            self.core.window_height,
+        ));
         let font_size = crate::features::lyrics::engine::FontSizeConfig::default()
-            .calculate_font_size(viewport_width, viewport_height);
+            .calculate_font_size(context.root_rem.scale());
 
         Some((content_width, font_size))
     }
@@ -561,8 +563,8 @@ impl App {
             return Task::none();
         }
 
-        self.ui.lyrics.viewport_width = size.width.max(100.0);
-        self.ui.lyrics.viewport_height = size.height.max(100.0);
+        self.ui.lyrics.viewport_width = size.width.max(MIN_RENDERER_VIEWPORT_EXTENT);
+        self.ui.lyrics.viewport_height = size.height.max(MIN_RENDERER_VIEWPORT_EXTENT);
         self.ui.lyrics.viewport_initialized = true;
 
         if let Some(engine_cell) = &self.ui.lyrics.engine {
@@ -1546,11 +1548,12 @@ impl App {
             && self.ui.lyrics.pending_viewport_size.is_some();
 
         let content_width = self.ui.lyrics.viewport_width * 0.9;
+        let context = crate::ui::responsive::ResponsiveContext::from_viewport(iced::Size::new(
+            self.core.window_width,
+            self.core.window_height,
+        ));
         let font_size = crate::features::lyrics::engine::FontSizeConfig::default()
-            .calculate_font_size(
-                self.ui.lyrics.viewport_width,
-                self.ui.lyrics.viewport_height,
-            );
+            .calculate_font_size(context.root_rem.scale());
         let viewport_height = self.ui.lyrics.viewport_height;
 
         let runtime = self.playback_runtime();

@@ -11,8 +11,7 @@ use std::sync::Arc;
 
 use crate::i18n::{Language, Locale};
 pub use message::{
-    ContentWidthTarget, ContextMenuAction, IconId, Message, PlaylistViewPayload, SettingsSection,
-    SidebarId,
+    ContextMenuAction, IconId, Message, PlaylistViewPayload, SettingsSection, SidebarId,
 };
 pub use state::{
     App, ContextMenuState, CoreState, DiscoverPageState, DiscoverViewMode, DownloadTab, ImageState,

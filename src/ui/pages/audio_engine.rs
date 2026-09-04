@@ -19,7 +19,7 @@ use crate::audio::{
 use crate::features::{EqualizerPreset, Settings};
 use crate::i18n::{Key, Locale};
 use crate::ui::animation::SmoothScrollTarget;
-use crate::ui::responsive::{LayoutProfile, ResponsiveContext, TextRole, top_bar_height};
+use crate::ui::responsive::{LayoutProfile, ResponsiveContext, TextRole, UiTokens, top_bar_height};
 use crate::ui::theme;
 use crate::ui::widgets::vertical_slider;
 
@@ -127,8 +127,10 @@ pub fn view<'a>(
         )
         .width(Fill)
         .height(Fill)
+        .direction(crate::ui::widgets::vertical_scrollbar(tokens))
         .id(iced::widget::Id::new("audio_engine_scroll")),
         SmoothScrollTarget::Native("audio_engine_scroll"),
+        tokens,
         Message::SmoothScroll,
     );
 
@@ -202,7 +204,7 @@ fn equalizer_section(
         .width(Fill)
         .height(tokens.size(100.0))
         .center_x(Fill)
-        .center_y(100)
+        .center_y(tokens.size(100.0))
         .into()
     };
 
@@ -226,9 +228,11 @@ fn audio_visualization_section(
     let tokens = context.tokens;
 
     // Separator line
-    let separator = container(Space::new().width(Fill).height(1)).style(|theme| container::Style {
-        background: Some(Background::Color(theme::divider(theme))),
-        ..Default::default()
+    let separator = container(Space::new().width(Fill).height(tokens.size(1.0))).style(|theme| {
+        container::Style {
+            background: Some(Background::Color(theme::divider(theme))),
+            ..Default::default()
+        }
     });
 
     // Section title
@@ -247,6 +251,7 @@ fn audio_visualization_section(
         spectrum_db,
         sample_rate,
         bars_mode,
+        tokens,
     })
     .width(Fill)
     .height(Length::Fixed(spectrum_height))
@@ -274,7 +279,8 @@ fn audio_visualization_section(
         });
     let decay_slider = slider(0.0..=0.95, decay, Message::UpdateSpectrumDecay)
         .step(0.01_f32)
-        .width(Length::Fixed(tokens.size(120.0)));
+        .width(Length::Fixed(tokens.size(120.0)))
+        .style(move |theme, status| rem_slider_style(theme, status, tokens));
 
     column![
         separator,
@@ -335,7 +341,7 @@ fn volume_meter_view(
                 color: Some(theme::settings_desc(theme))
             }),
         Space::new().height(tokens.space(8.0)),
-        Canvas::new(VolumeMeter { level })
+        Canvas::new(VolumeMeter { level, tokens })
             .width(Length::Fixed(tokens.size(24.0)))
             .height(Length::Fixed(height)),
     ]
@@ -356,8 +362,10 @@ fn preset_picker(
         .on_select(Message::UpdateEqualizerPreset)
         .text_size(tokens.text(TextRole::Body))
         .padding([tokens.space(8.0), tokens.space(16.0)])
-        .style(theme::settings_pick_list)
-        .menu_style(theme::settings_pick_list_menu)
+        .style(move |theme, status| {
+            theme::settings_pick_list(theme, status, tokens.theme_metrics())
+        })
+        .menu_style(move |theme| theme::settings_pick_list_menu(theme, tokens.theme_metrics()))
         .into()
 }
 
@@ -391,17 +399,22 @@ fn spectrum_mode_picker(bars_mode: bool, context: ResponsiveContext) -> Element<
         .on_select(|mode| Message::UpdateSpectrumBarsMode(mode == SpectrumMode::Bars))
         .text_size(tokens.text(TextRole::Body))
         .padding([tokens.space(8.0), tokens.space(16.0)])
-        .style(theme::settings_pick_list)
-        .menu_style(theme::settings_pick_list_menu)
+        .style(move |theme, status| {
+            theme::settings_pick_list(theme, status, tokens.theme_metrics())
+        })
+        .menu_style(move |theme| theme::settings_pick_list_menu(theme, tokens.theme_metrics()))
         .into()
 }
 
 /// EQ curve visualization using Canvas
 fn eq_curve_canvas(eq_values: [f32; 10], context: ResponsiveContext) -> Element<'static, Message> {
-    Canvas::new(EqCurve { values: eq_values })
-        .width(Fill)
-        .height(Length::Fixed(context.tokens.size(120.0)))
-        .into()
+    Canvas::new(EqCurve {
+        values: eq_values,
+        tokens: context.tokens,
+    })
+    .width(Fill)
+    .height(Length::Fixed(context.tokens.size(120.0)))
+    .into()
 }
 
 // ============================================================================
@@ -411,6 +424,7 @@ fn eq_curve_canvas(eq_values: [f32; 10], context: ResponsiveContext) -> Element<
 /// Canvas program for drawing EQ curve
 struct EqCurve {
     values: [f32; 10],
+    tokens: UiTokens,
 }
 
 impl canvas::Program<Message> for EqCurve {
@@ -435,7 +449,9 @@ impl canvas::Program<Message> for EqCurve {
             let line = Path::line(Point::new(0.0, y), Point::new(width, y));
             frame.stroke(
                 &line,
-                Stroke::default().with_color(grid_color).with_width(1.0),
+                Stroke::default()
+                    .with_color(grid_color)
+                    .with_width(self.tokens.size(1.0)),
             );
         }
 
@@ -446,7 +462,7 @@ impl canvas::Program<Message> for EqCurve {
             &center_line,
             Stroke::default()
                 .with_color(Color::from_rgba(1.0, 1.0, 1.0, 0.15))
-                .with_width(1.0),
+                .with_width(self.tokens.size(1.0)),
         );
 
         // Calculate curve points with smooth interpolation
@@ -468,7 +484,7 @@ impl canvas::Program<Message> for EqCurve {
                 &curve,
                 Stroke::default()
                     .with_color(theme::ACCENT_PINK)
-                    .with_width(2.0),
+                    .with_width(self.tokens.size(2.0)),
             );
         }
 
@@ -485,9 +501,10 @@ impl EqCurve {
         let max_db = 12.0;
 
         // Preamp offset at the start (left side)
-        let preamp_width = 60.0;
-        let eq_start_x = preamp_width + 20.0;
+        let preamp_width = self.tokens.size(60.0);
+        let eq_start_x = preamp_width + self.tokens.size(20.0);
         let eq_width = width - eq_start_x;
+        let vertical_inset = self.tokens.size(5.0);
 
         for i in 0..=num_samples {
             let t = i as f32 / num_samples as f32;
@@ -508,9 +525,12 @@ impl EqCurve {
 
             let value = catmull_rom(v0, v1, v2, v3, band_frac);
             let normalized = value / max_db;
-            let y = center_y - normalized * (height / 2.0 - 10.0);
+            let y = center_y - normalized * (height / 2.0 - self.tokens.size(10.0));
 
-            points.push(Point::new(x, y.clamp(5.0, height - 5.0)));
+            points.push(Point::new(
+                x,
+                y.clamp(vertical_inset, height - vertical_inset),
+            ));
         }
 
         points
@@ -571,6 +591,7 @@ fn catmull_rom(p0: f32, p1: f32, p2: f32, p3: f32, t: f32) -> f32 {
 /// Volume meter canvas program
 struct VolumeMeter {
     level: f32, // 0.0 to 1.0
+    tokens: UiTokens,
 }
 
 impl canvas::Program<Message> for VolumeMeter {
@@ -602,6 +623,8 @@ impl canvas::Program<Message> for VolumeMeter {
         // Draw level with gradient colors (green -> yellow -> red)
         let num_segments = 20;
         let segment_height = height / num_segments as f32;
+        let horizontal_inset = self.tokens.size(2.0);
+        let vertical_inset = self.tokens.size(1.0);
 
         for i in 0..num_segments {
             let seg_bottom = height - (i as f32 * segment_height);
@@ -626,10 +649,16 @@ impl canvas::Program<Message> for VolumeMeter {
             };
 
             let seg_rect = Path::new(|builder| {
-                builder.move_to(Point::new(2.0, seg_top + 1.0));
-                builder.line_to(Point::new(width - 2.0, seg_top + 1.0));
-                builder.line_to(Point::new(width - 2.0, seg_bottom - 1.0));
-                builder.line_to(Point::new(2.0, seg_bottom - 1.0));
+                builder.move_to(Point::new(horizontal_inset, seg_top + vertical_inset));
+                builder.line_to(Point::new(
+                    width - horizontal_inset,
+                    seg_top + vertical_inset,
+                ));
+                builder.line_to(Point::new(
+                    width - horizontal_inset,
+                    seg_bottom - vertical_inset,
+                ));
+                builder.line_to(Point::new(horizontal_inset, seg_bottom - vertical_inset));
                 builder.close();
             });
             frame.fill(&seg_rect, color);
@@ -644,6 +673,7 @@ struct SpectrumAnalyzer {
     spectrum_db: [f32; SPECTRUM_BARS],
     sample_rate: u32,
     bars_mode: bool,
+    tokens: UiTokens,
 }
 
 impl canvas::Program<Message> for SpectrumAnalyzer {
@@ -662,10 +692,10 @@ impl canvas::Program<Message> for SpectrumAnalyzer {
         let height = bounds.height;
 
         // Layout constants - dB labels on left side
-        let left_margin = 50.0; // Space for dB labels on left
-        let right_margin = 10.0;
-        let top_margin = 10.0;
-        let bottom_margin = 40.0; // Space for frequency labels and info
+        let left_margin = self.tokens.size(50.0); // Space for dB labels on left
+        let right_margin = self.tokens.size(10.0);
+        let top_margin = self.tokens.size(10.0);
+        let bottom_margin = self.tokens.size(40.0); // Space for frequency labels and info
         let graph_width = width - left_margin - right_margin;
         let graph_height = height - top_margin - bottom_margin;
 
@@ -698,14 +728,19 @@ impl canvas::Program<Message> for SpectrumAnalyzer {
                 Point::new(left_margin + graph_width, y),
             );
             let color = if db == 0 { zero_db_color } else { grid_color };
-            frame.stroke(&line, Stroke::default().with_color(color).with_width(1.0));
+            frame.stroke(
+                &line,
+                Stroke::default()
+                    .with_color(color)
+                    .with_width(self.tokens.size(1.0)),
+            );
 
             // dB label on left side
             let text = Text {
                 content: label.to_string(),
-                position: Point::new(left_margin - 8.0, y),
+                position: Point::new(left_margin - self.tokens.size(8.0), y),
                 color: Color::from_rgba(1.0, 1.0, 1.0, 0.5),
-                size: iced::Pixels(10.0),
+                size: iced::Pixels(self.tokens.size(10.0)),
                 align_x: iced::alignment::Horizontal::Right.into(),
                 align_y: iced::alignment::Vertical::Center,
                 ..Text::default()
@@ -722,15 +757,17 @@ impl canvas::Program<Message> for SpectrumAnalyzer {
             );
             frame.stroke(
                 &line,
-                Stroke::default().with_color(grid_color).with_width(1.0),
+                Stroke::default()
+                    .with_color(grid_color)
+                    .with_width(self.tokens.size(1.0)),
             );
 
             // Frequency label
             let text = Text {
                 content: label.to_string(),
-                position: Point::new(x, top_margin + graph_height + 12.0),
+                position: Point::new(x, top_margin + graph_height + self.tokens.size(12.0)),
                 color: Color::from_rgba(1.0, 1.0, 1.0, 0.5),
-                size: iced::Pixels(10.0),
+                size: iced::Pixels(self.tokens.size(10.0)),
                 align_x: iced::alignment::Horizontal::Center.into(),
                 align_y: iced::alignment::Vertical::Top,
                 ..Text::default()
@@ -743,7 +780,8 @@ impl canvas::Program<Message> for SpectrumAnalyzer {
         if num_bars > 0 {
             if self.bars_mode {
                 // Bar mode
-                let bar_width = (graph_width / num_bars as f32).max(1.0) - 1.0;
+                let bar_gap = self.tokens.size(1.0);
+                let bar_width = (graph_width / num_bars as f32).max(bar_gap) - bar_gap;
 
                 for (i, &db) in self.spectrum_db.iter().enumerate() {
                     let t = i as f32 / num_bars as f32;
@@ -752,7 +790,7 @@ impl canvas::Program<Message> for SpectrumAnalyzer {
                     let bar_height = normalized * graph_height;
                     let y = top_margin + graph_height - bar_height;
 
-                    if bar_height < 1.0 {
+                    if bar_height < self.tokens.size(1.0) {
                         continue;
                     }
 
@@ -808,7 +846,7 @@ impl canvas::Program<Message> for SpectrumAnalyzer {
                         &curve,
                         Stroke::default()
                             .with_color(theme::ACCENT_PINK)
-                            .with_width(2.0),
+                            .with_width(self.tokens.size(2.0)),
                     );
                 }
             }
@@ -819,11 +857,11 @@ impl canvas::Program<Message> for SpectrumAnalyzer {
         let info = Text {
             content: info_text,
             position: Point::new(
-                left_margin + graph_width - 4.0,
-                top_margin + graph_height - 4.0,
+                left_margin + graph_width - self.tokens.size(4.0),
+                top_margin + graph_height - self.tokens.size(4.0),
             ),
             color: Color::from_rgba(1.0, 1.0, 1.0, 0.35),
-            size: iced::Pixels(10.0),
+            size: iced::Pixels(self.tokens.size(10.0)),
             align_x: iced::alignment::Horizontal::Right.into(),
             align_y: iced::alignment::Vertical::Bottom,
             ..Text::default()
@@ -913,7 +951,7 @@ fn sliders_with_preamp(
                 })
             }),
         Space::new().height(tokens.space(4.0)),
-        vertical_slider(-12.0..=12.0, preamp, Message::UpdateEqualizerPreamp)
+        vertical_slider(-12.0..=12.0, preamp, tokens, Message::UpdateEqualizerPreamp,)
             .step(0.5)
             .width(slider_width)
             .height(slider_height),
@@ -994,7 +1032,7 @@ fn vertical_slider_band(
             .width(Fill),
         Space::new().height(tokens.space(4.0)),
         // Vertical slider
-        vertical_slider(-12.0..=12.0, value, move |v| {
+        vertical_slider(-12.0..=12.0, value, tokens, move |v| {
             let mut new_values = eq_values;
             new_values[index] = v;
             Message::UpdateEqualizerValues(new_values)
@@ -1046,18 +1084,17 @@ fn horizontal_eq_surface(
         ));
     }
 
-    scrollable(
-        row(controls)
-            .spacing(tokens.space(12.0))
-            .padding(tokens.space(4.0)),
+    crate::ui::widgets::scaled_scroll(
+        scrollable(
+            row(controls)
+                .spacing(tokens.space(12.0))
+                .padding(tokens.space(4.0)),
+        )
+        .direction(crate::ui::widgets::hidden_horizontal_scrollbar())
+        .id(iced::widget::Id::new("audio_eq_horizontal_scroll"))
+        .width(Fill),
+        tokens,
     )
-    .direction(iced::widget::scrollable::Direction::Horizontal(
-        iced::widget::scrollable::Scrollbar::new()
-            .width(0)
-            .scroller_width(0),
-    ))
-    .id(iced::widget::Id::new("audio_eq_horizontal_scroll"))
-    .width(Fill)
     .into()
 }
 
@@ -1088,9 +1125,22 @@ where
             }),
         slider(-12.0..=12.0, value, on_change)
             .step(0.5)
-            .width(tokens.size(120.0)),
+            .width(tokens.size(120.0))
+            .style(move |theme, status| rem_slider_style(theme, status, tokens)),
     ]
     .spacing(tokens.space(4.0))
     .width(Length::Fixed(tokens.size(140.0)))
     .into()
+}
+
+/// Preserve iced's slider palette while resolving its default visual geometry
+/// through the application root rem.
+fn rem_slider_style(theme: &Theme, status: slider::Status, tokens: UiTokens) -> slider::Style {
+    let mut style = slider::default(theme, status);
+    style.rail.width = tokens.size(4.0);
+    style.rail.border.radius = tokens.size(2.0).into();
+    style.handle.shape = slider::HandleShape::Circle {
+        radius: tokens.size(7.0),
+    };
+    style
 }

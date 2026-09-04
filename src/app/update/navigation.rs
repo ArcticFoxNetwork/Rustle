@@ -96,24 +96,18 @@ impl App {
                 }
                 // Update sidebar width if dragging
                 if self.ui.sidebar_dragging {
+                    // Persisted sidebar widths use 1080P reference pixels.
                     const MIN_WIDTH: f32 = 240.0;
                     const MAX_WIDTH: f32 = 440.0;
-                    let density = crate::ui::responsive::ResponsiveContext::from_viewport(
+                    let tokens = crate::ui::responsive::ResponsiveContext::from_viewport(
                         Size::new(self.core.window_width, self.core.window_height),
                     )
-                    .density
-                    .value();
-                    let old_sidebar_width = self.ui.sidebar_width;
+                    .tokens;
                     // `sidebar_width` is stored in reference-design units so
                     // the same persisted intent scales with a 2K viewport.
-                    self.ui.sidebar_width = (position.x / density).clamp(MIN_WIDTH, MAX_WIDTH);
-                    let delta = (old_sidebar_width - self.ui.sidebar_width) * density;
-                    self.ui.discover.content_width =
-                        (self.ui.discover.content_width + delta).max(200.0);
-                    self.ui.playlist_page.content_width =
-                        (self.ui.playlist_page.content_width + delta).max(200.0);
-                    self.ui.search.content_width =
-                        (self.ui.search.content_width + delta).max(200.0);
+                    self.ui.sidebar_width = tokens
+                        .reference_pixels(position.x)
+                        .clamp(MIN_WIDTH, MAX_WIDTH);
                 }
                 Some(Task::none())
             }

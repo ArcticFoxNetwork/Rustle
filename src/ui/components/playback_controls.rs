@@ -9,6 +9,7 @@ use iced::Element;
 use crate::app::Message;
 use crate::features::PlayMode;
 use crate::ui::icons;
+use crate::ui::responsive::UiTokens;
 use crate::ui::widgets::{self, PlayModeButtonSize};
 
 /// Build Rustle's play-mode control by translating domain state into the
@@ -16,6 +17,7 @@ use crate::ui::widgets::{self, PlayModeButtonSize};
 pub fn play_mode_button(
     play_mode: PlayMode,
     size: PlayModeButtonSize,
+    tokens: UiTokens,
     is_fm_mode: bool,
 ) -> Element<'static, Message> {
     let (icon, label, action) = if is_fm_mode {
@@ -34,5 +36,5 @@ pub fn play_mode_button(
         (icon, label, Message::CyclePlayMode)
     };
 
-    widgets::play_mode_button::view(icon, label, size, action)
+    widgets::play_mode_button::view(icon, label, size, tokens, action)
 }

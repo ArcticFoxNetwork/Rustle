@@ -686,7 +686,7 @@ impl Drop for CoreState {
 pub struct PlaybackRuntimeState {
     pub info: PlaybackInfo,
     pub display_position: Duration,
-    pub buffer_progress: Option<f32>,
+    pub cache_progress: Option<f32>,
     pub has_loaded_audio: bool,
     pub analysis: AudioAnalysisData,
 }
@@ -712,7 +712,7 @@ impl Default for PlaybackRuntimeState {
         Self {
             info: PlaybackInfo::default(),
             display_position: Duration::ZERO,
-            buffer_progress: None,
+            cache_progress: None,
             has_loaded_audio: false,
             analysis: AudioAnalysisData::new(),
         }
@@ -856,7 +856,7 @@ impl App {
             self.playback.runtime = PlaybackRuntimeState {
                 info,
                 display_position: audio.display_position(),
-                buffer_progress: audio.buffer_progress(),
+                cache_progress: audio.cache_progress(),
                 has_loaded_audio: !audio.is_empty(),
                 analysis,
             };
@@ -901,8 +901,8 @@ impl App {
         self.playback.runtime.can_seek()
     }
 
-    pub(crate) fn playback_buffer_progress(&self) -> Option<f32> {
-        self.playback.runtime.buffer_progress
+    pub(crate) fn playback_cache_progress(&self) -> Option<f32> {
+        self.playback.runtime.cache_progress
     }
 
     pub(crate) fn playback_analysis_data(&self) -> AudioAnalysisData {
@@ -1019,9 +1019,7 @@ impl App {
         if self.playback.scheduled_transition_request_id.is_some() {
             self.cancel_scheduled_audio_transition();
         }
-        if let Some(buffer) = self.playback.scheduled_transition_buffer.take() {
-            buffer.cancel();
-        }
+        self.playback.scheduled_transition_buffer.take();
         if let Some(request_id) = self.playback.scheduled_transition_request_id.take()
             && self
                 .playback
@@ -1702,7 +1700,7 @@ pub struct UiState {
     // Sidebar
     pub importing_playlist: Option<ImportingPlaylist>,
     pub sidebar_animations: HoverAnimations<crate::app::message::SidebarId>,
-    /// Sidebar width in pixels (draggable)
+    /// Draggable sidebar width in 1080P reference pixels.
     pub sidebar_width: f32,
     /// Whether the sidebar resize handle is being dragged
     pub sidebar_dragging: bool,
@@ -1834,7 +1832,6 @@ impl UiState {
                     crate::ui::widgets::VirtualListState::default(),
                 )),
                 load_state: Default::default(),
-                content_width: 904.0,
                 description_expanded: false,
                 ncm_cache_baseline: None,
                 ncm_replace_songs_on_chunk: false,
@@ -2040,8 +2037,6 @@ pub struct PlaylistPageState {
     pub scroll_state: std::rc::Rc<std::cell::RefCell<crate::ui::widgets::VirtualListState>>,
     /// Loading state for async playlist loading
     pub load_state: crate::app::update::page_loader::PlaylistLoadState,
-    /// Main content width for responsive grid layouts
-    pub content_width: f32,
     /// Whether the playlist description is expanded (vs clamped to 2 lines)
     pub description_expanded: bool,
     /// Cached NCM snapshot used to decide whether a background refresh changed
@@ -2075,7 +2070,6 @@ impl Default for PlaylistPageState {
                 crate::ui::widgets::VirtualListState::default(),
             )),
             load_state: Default::default(),
-            content_width: 904.0,
             description_expanded: false,
             ncm_cache_baseline: None,
             ncm_replace_songs_on_chunk: false,
@@ -2376,8 +2370,6 @@ pub struct SearchPageState {
     pub song_animations: HoverAnimations<u64>,
     /// Hover animations for grid cards
     pub card_animations: HoverAnimations<u64>,
-    /// Content area width for responsive grid layouts
-    pub content_width: f32,
 }
 
 impl Default for SearchPageState {
@@ -2399,7 +2391,6 @@ impl Default for SearchPageState {
             )),
             song_animations: Default::default(),
             card_animations: Default::default(),
-            content_width: 936.0,
         }
     }
 }
@@ -2438,8 +2429,6 @@ pub struct DiscoverPageState {
     pub official_loading: bool,
     /// Whether data has been loaded (to avoid re-fetching)
     pub data_loaded: bool,
-    /// Content area width for dynamic grid column calculation
-    pub content_width: f32,
 }
 
 impl Default for DiscoverPageState {
@@ -2460,9 +2449,6 @@ impl Default for DiscoverPageState {
             hot_loading: false,
             official_loading: false,
             data_loaded: false,
-            // Default width, will be updated from the measured content Sensor
-            // Assumes window width ~1480, sidebar 280, padding 64
-            content_width: 1136.0,
         }
     }
 }

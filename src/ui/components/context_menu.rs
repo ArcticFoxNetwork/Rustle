@@ -2,7 +2,7 @@
 //! Theme-aware: adapts to dark/light via theme functions in style closures
 
 use iced::widget::{button, column, container, row, svg, text};
-use iced::{Alignment, Background, Border, Color, Element, Length, Padding, Size};
+use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 
 use crate::app::{ContextMenuAction, ContextMenuState, Message};
 use crate::i18n::{Key, Locale};
@@ -12,22 +12,15 @@ use crate::ui::responsive::{
 use crate::ui::{icons, overlay, theme, widgets};
 use crate::utils::Source;
 
+// Visual dimensions are 1080P reference pixels resolved through `UiTokens`.
 const MENU_WIDTH: f32 = 240.0;
 const PANEL_PADDING: f32 = 8.0;
 const DIVIDER_VERTICAL_PADDING: f32 = 4.0;
 const DIVIDER_HORIZONTAL_PADDING: f32 = 12.0;
 const DIVIDER_COUNT: f32 = 4.0;
 
-pub fn view(menu: &ContextMenuState, locale: Locale, sw: f32, sh: f32) -> Element<'_, Message> {
-    view_responsive(
-        menu,
-        locale,
-        ResponsiveContext::from_viewport(Size::new(sw, sh)),
-    )
-}
-
-/// Render the menu using the same logical viewport and density as the root shell.
-pub fn view_responsive(
+/// Render the menu using the same logical viewport and root rem as the shell.
+pub fn view(
     menu: &ContextMenuState,
     locale: Locale,
     context: ResponsiveContext,
@@ -199,7 +192,7 @@ pub fn view_responsive(
         background: Some(Background::Color(glass(t))),
         border: Border {
             radius: tokens.radius(RadiusRole::Medium).into(),
-            width: 1.0,
+            width: tokens.size(1.0),
             color: glass_border(t),
         },
         ..Default::default()
@@ -279,6 +272,7 @@ fn item<'a>(
     )
     .width(Length::Fill)
     .height(Length::Fixed(tokens.target(TargetRole::Icon)))
+    .padding(0)
     .style(|_theme, _status| button::Style {
         background: Some(Background::Color(Color::TRANSPARENT)),
         ..Default::default()

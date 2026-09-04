@@ -5,8 +5,6 @@
 //! analysis and scheduling identities are immutable snapshots that can be
 //! discarded when their generation/group is stale.
 
-#![allow(dead_code)]
-
 use std::collections::VecDeque;
 use std::fs;
 use std::hash::Hasher;
@@ -79,35 +77,6 @@ pub struct TrackAnalysis {
 }
 
 impl TrackAnalysis {
-    pub fn fallback(content_id: impl Into<String>, duration: Duration) -> Self {
-        let exit = duration.saturating_sub(Duration::from_secs(5));
-        Self {
-            schema_version: ANALYSIS_SCHEMA_VERSION,
-            analyzer_version: ANALYZER_VERSION.to_string(),
-            content_id: content_id.into(),
-            duration,
-            bpm: None,
-            bpm_confidence: 0.0,
-            first_beat: None,
-            beat_period: None,
-            bar_beats: 4,
-            lufs: None,
-            energy: 0.0,
-            energy_profile: Vec::new(),
-            vocals_confidence: 0.0,
-            vocal_regions: Vec::new(),
-            vocal_out: None,
-            outro_energy_db: None,
-            key: None,
-            cut_start: Duration::ZERO,
-            cut_out: duration,
-            fade_out_start: exit,
-            recommended_exit: exit,
-            recommended_entry: Duration::ZERO,
-            transition_confidence: 0.0,
-        }
-    }
-
     pub fn is_compatible(&self, config: AnalysisConfig) -> bool {
         self.schema_version == config.schema_version
             && self.analyzer_version == ANALYZER_VERSION
@@ -716,14 +685,6 @@ fn estimate_key(samples: &[f32], sample_rate: u32, energy: f32) -> Option<String
     (best.1 > 0.0).then(|| NAMES[best.0].to_string())
 }
 
-pub fn analyze_file(
-    path: &Path,
-    content_id: impl Into<String>,
-    config: AnalysisConfig,
-) -> Result<TrackAnalysis, String> {
-    analyze_file_cancellable(path, content_id, config, &|| false)
-}
-
 fn collect_samples<I, F>(source: &mut I, limit: usize, is_cancelled: &F) -> Result<Vec<f32>, String>
 where
     I: Iterator<Item = f32>,
@@ -867,10 +828,8 @@ where
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TransitionFallback {
-    AnalysisUnavailable,
     LowConfidence,
     InvalidBounds,
-    SchedulerUnderrun,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -938,21 +897,6 @@ pub struct TransitionPlan {
     pub bar_aligned: bool,
     pub aggressive_outro: bool,
     pub fallback: Option<TransitionFallback>,
-}
-
-impl TransitionPlan {
-    pub fn baseline(current: &TrackAnalysis, next: &TrackAnalysis, duration: Duration) -> Self {
-        let max_duration = current.duration.min(next.duration).min(duration);
-        Self {
-            exit: current.duration.saturating_sub(max_duration),
-            entry: Duration::ZERO,
-            duration: max_duration,
-            beat_aligned: false,
-            bar_aligned: false,
-            aggressive_outro: false,
-            fallback: None,
-        }
-    }
 }
 
 pub fn plan_transition(
@@ -1189,19 +1133,6 @@ pub const SCHEDULER_HORIZON_MS: u64 = 1_500;
 pub const SCHEDULER_POLL_MS: u64 = 75;
 pub const AUTOMIX_PLANNING_WINDOW_SECS: u64 = 45;
 
-pub fn equal_power_gains(progress: f32) -> (f32, f32) {
-    let p = progress.clamp(0.0, 1.0) * std::f32::consts::FRAC_PI_2;
-    (p.cos(), p.sin())
-}
-
-pub fn clamp_rate_ratio(ratio: f32) -> f32 {
-    if ratio.is_finite() {
-        ratio.clamp(0.97, 1.03)
-    } else {
-        1.0
-    }
-}
-
 pub fn loudness_gain_db(delta_db: f32) -> f32 {
     if delta_db.is_finite() {
         delta_db.clamp(-9.0, 9.0)
@@ -1290,6 +1221,35 @@ pub fn automation_for_transition(
 mod tests {
     use super::*;
 
+    fn fallback_analysis(content_id: impl Into<String>, duration: Duration) -> TrackAnalysis {
+        let exit = duration.saturating_sub(Duration::from_secs(5));
+        TrackAnalysis {
+            schema_version: ANALYSIS_SCHEMA_VERSION,
+            analyzer_version: ANALYZER_VERSION.to_string(),
+            content_id: content_id.into(),
+            duration,
+            bpm: None,
+            bpm_confidence: 0.0,
+            first_beat: None,
+            beat_period: None,
+            bar_beats: 4,
+            lufs: None,
+            energy: 0.0,
+            energy_profile: Vec::new(),
+            vocals_confidence: 0.0,
+            vocal_regions: Vec::new(),
+            vocal_out: None,
+            outro_energy_db: None,
+            key: None,
+            cut_start: Duration::ZERO,
+            cut_out: duration,
+            fade_out_start: exit,
+            recommended_exit: exit,
+            recommended_entry: Duration::ZERO,
+            transition_confidence: 0.0,
+        }
+    }
+
     #[test]
     fn cache_key_is_stable_and_versioned() {
         let config = AnalysisConfig::default();
@@ -1309,7 +1269,7 @@ mod tests {
         ));
         let cache = AnalysisCache::new(&root, 2);
         let config = AnalysisConfig::default();
-        let analysis = TrackAnalysis::fallback("song", Duration::from_secs(30));
+        let analysis = fallback_analysis("song", Duration::from_secs(30));
         cache.store(&analysis, config).unwrap();
         assert_eq!(cache.load("song", config).unwrap(), Some(analysis.clone()));
 
@@ -1342,7 +1302,7 @@ mod tests {
         ));
         let cache = AnalysisCache::new(&root, 2);
         let config = AnalysisConfig::default();
-        let analysis = TrackAnalysis::fallback("song", Duration::from_secs(30));
+        let analysis = fallback_analysis("song", Duration::from_secs(30));
         fs::create_dir_all(&root).unwrap();
         let path = cache.path_for("song", config);
         let mut old = analysis.clone();
@@ -1452,8 +1412,8 @@ mod tests {
 
     #[test]
     fn planner_requires_confidence_and_bounds_duration() {
-        let mut current = TrackAnalysis::fallback("a", Duration::from_secs(2));
-        let next = TrackAnalysis::fallback("b", Duration::from_secs(3));
+        let mut current = fallback_analysis("a", Duration::from_secs(2));
+        let next = fallback_analysis("b", Duration::from_secs(3));
         assert_eq!(
             plan_transition(&current, &next, Duration::from_secs(5)),
             Err(TransitionFallback::LowConfidence)
@@ -1476,14 +1436,10 @@ mod tests {
     }
 
     #[test]
-    fn equal_power_rate_and_final_loudness_gain_are_clamped() {
-        let (outgoing, incoming) = equal_power_gains(0.5);
-        assert!((outgoing * outgoing + incoming * incoming - 1.0).abs() < 1e-5);
-        assert_eq!(clamp_rate_ratio(f32::NAN), 1.0);
-        assert_eq!(clamp_rate_ratio(2.0), 1.03);
+    fn automation_rate_policy_and_final_loudness_gain_are_bounded() {
         assert_eq!(loudness_gain_db(-20.0), -9.0);
-        let mut current = TrackAnalysis::fallback("a", Duration::from_secs(30));
-        let mut next = TrackAnalysis::fallback("b", Duration::from_secs(30));
+        let mut current = fallback_analysis("a", Duration::from_secs(30));
+        let mut next = fallback_analysis("b", Duration::from_secs(30));
         current.bpm = Some(100.0);
         next.bpm = Some(140.0);
         current.bpm_confidence = 0.9;
@@ -1551,8 +1507,8 @@ mod tests {
 
     #[test]
     fn aggressive_outro_uses_trusted_vocal_out_and_outro_energy() {
-        let mut current = TrackAnalysis::fallback("a", Duration::from_secs(40));
-        let mut next = TrackAnalysis::fallback("b", Duration::from_secs(40));
+        let mut current = fallback_analysis("a", Duration::from_secs(40));
+        let mut next = fallback_analysis("b", Duration::from_secs(40));
         for analysis in [&mut current, &mut next] {
             analysis.bpm = Some(120.0);
             analysis.bpm_confidence = 0.9;
@@ -1578,8 +1534,8 @@ mod tests {
 
     #[test]
     fn planner_snaps_exit_to_bar_and_entry_to_beat() {
-        let mut current = TrackAnalysis::fallback("a", Duration::from_secs(40));
-        let mut next = TrackAnalysis::fallback("b", Duration::from_secs(40));
+        let mut current = fallback_analysis("a", Duration::from_secs(40));
+        let mut next = fallback_analysis("b", Duration::from_secs(40));
         for analysis in [&mut current, &mut next] {
             analysis.bpm = Some(120.0);
             analysis.bpm_confidence = 0.9;
@@ -1599,8 +1555,8 @@ mod tests {
 
     #[test]
     fn planner_keeps_grid_alignment_when_the_nearest_point_exceeds_bounds() {
-        let mut current = TrackAnalysis::fallback("a", Duration::from_millis(10_100));
-        let mut next = TrackAnalysis::fallback("b", Duration::from_millis(10_100));
+        let mut current = fallback_analysis("a", Duration::from_millis(10_100));
+        let mut next = fallback_analysis("b", Duration::from_millis(10_100));
         for analysis in [&mut current, &mut next] {
             analysis.bpm = Some(120.0);
             analysis.bpm_confidence = 0.9;

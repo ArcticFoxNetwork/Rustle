@@ -303,10 +303,10 @@ pub enum AudioEvent {
         old_status: PlaybackStatus,
         new_status: PlaybackStatus,
     },
-    /// Buffer progress update
-    BufferProgress {
+    /// Contiguous disk-cache progress update.
+    CacheProgress {
         context: PlaybackContext,
-        downloaded: u64,
+        cached: u64,
         total: u64,
         progress: f32,
     },
@@ -364,13 +364,12 @@ struct PlaybackStateInner {
     pub volume: f32,
     /// Current playing file path
     pub current_path: Option<PathBuf>,
-    /// Buffer progress (0.0 - 1.0), None for local files
-    /// Updated by set_buffer_bytes() in audio thread
-    pub buffer_progress: Option<f32>,
-    /// Buffered bytes count
-    pub buffered_bytes: u64,
-    /// Total bytes count
-    pub total_bytes: u64,
+    /// Contiguous disk-cache progress (0.0 - 1.0), None for local files.
+    pub cache_progress: Option<f32>,
+    pub cached_bytes: u64,
+    pub total_cache_bytes: u64,
+    /// Bytes immediately readable ahead of the active decoder.
+    pub buffered_ahead_bytes: u64,
 }
 
 impl Default for PlaybackStateInner {
@@ -381,9 +380,10 @@ impl Default for PlaybackStateInner {
             duration: Duration::ZERO,
             volume: 1.0,
             current_path: None,
-            buffer_progress: None,
-            buffered_bytes: 0,
-            total_bytes: 0,
+            cache_progress: None,
+            cached_bytes: 0,
+            total_cache_bytes: 0,
+            buffered_ahead_bytes: 0,
         }
     }
 }
@@ -446,12 +446,9 @@ impl SharedPlaybackState {
         inner.position
     }
 
-    /// Get buffer progress
-    ///
-    /// This is the single source of truth for buffer progress.
-    /// Updated by audio thread via set_buffer_bytes().
-    pub fn buffer_progress(&self) -> Option<f32> {
-        self.inner.read().buffer_progress
+    /// Get contiguous disk-cache progress for the UI secondary track.
+    pub fn cache_progress(&self) -> Option<f32> {
+        self.inner.read().cache_progress
     }
 
     /// Get current path
@@ -480,16 +477,19 @@ impl SharedPlaybackState {
         self.inner.write().current_path = path;
     }
 
-    /// Update buffer bytes info
-    pub fn set_buffer_bytes(&self, buffered: u64, total: u64) {
+    pub fn set_cache_bytes(&self, cached: u64, total: u64) {
         let mut inner = self.inner.write();
-        inner.buffered_bytes = buffered;
-        inner.total_bytes = total;
+        inner.cached_bytes = cached;
+        inner.total_cache_bytes = total;
         if total > 0 {
-            inner.buffer_progress = Some(buffered as f32 / total as f32);
+            inner.cache_progress = Some(cached as f32 / total as f32);
         } else {
-            inner.buffer_progress = None;
+            inner.cache_progress = None;
         }
+    }
+
+    pub fn set_buffered_ahead_bytes(&self, buffered_ahead_bytes: u64) {
+        self.inner.write().buffered_ahead_bytes = buffered_ahead_bytes;
     }
 
     /// Update from PlaybackInfo
@@ -506,7 +506,7 @@ impl SharedPlaybackState {
 #[derive(Debug, Clone)]
 pub struct BufferDataUpdate {
     pub context: PlaybackContext,
-    pub downloaded: u64,
+    pub cached: u64,
     pub total: u64,
 }
 
@@ -606,7 +606,7 @@ impl BufferDataMailbox {
             let replace = latest.as_ref().is_none_or(|current| {
                 update.context.generation.0 > current.context.generation.0
                     || (update.context.generation == current.context.generation
-                        && update.downloaded >= current.downloaded)
+                        && update.cached >= current.cached)
             });
             if replace {
                 *latest = Some(update);
@@ -696,13 +696,26 @@ mod tests {
 
         mailbox.publish(BufferDataUpdate {
             context: context.clone(),
-            downloaded: 3,
+            cached: 3,
             total: 10,
         });
 
         let update = mailbox.take_latest().expect("latest update must survive");
         assert_eq!(update.context, context);
-        assert_eq!(update.downloaded, 3);
+        assert_eq!(update.cached, 3);
         assert_eq!(update.total, 10);
+    }
+
+    #[test]
+    fn cache_progress_and_decoder_reserve_are_independent() {
+        let state = SharedPlaybackState::new();
+        state.set_cache_bytes(5, 10);
+        state.set_buffered_ahead_bytes(1234);
+        assert_eq!(state.cache_progress(), Some(0.5));
+
+        state.set_buffered_ahead_bytes(0);
+        assert_eq!(state.cache_progress(), Some(0.5));
+        state.set_cache_bytes(0, 0);
+        assert_eq!(state.cache_progress(), None);
     }
 }

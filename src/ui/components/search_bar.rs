@@ -27,49 +27,19 @@ pub struct SearchBarStyle {
 }
 
 impl SearchBarStyle {
-    pub const fn top_bar() -> Self {
-        Self {
-            width: 0.0, // signal: fluid search content with a visual width cap
-            height: 36.0,
-            icon_size: 16.0,
-            horizontal_padding: 12.0,
-            icon_spacing: 8.0,
-            input_padding: 8.0,
-            text_size: theme::TEXT_SIZE_LABEL,
-            radius: 18.0,
-            max_width: 320.0,
-        }
-    }
-
-    /// Build a top-bar style from the shared density tokens.
-    pub fn top_bar_scaled(context: &ResponsiveContext, width: f32) -> Self {
+    /// Build a top-bar style from the shared responsive-rem tokens.
+    pub fn top_bar(context: &ResponsiveContext, width: f32) -> Self {
         let tokens = &context.tokens;
         Self {
             width,
             height: tokens.size(36.0),
-            icon_size: tokens.icon(IconRole::Small),
+            icon_size: tokens.icon(IconRole::TopBarSearch),
             horizontal_padding: tokens.space(12.0),
             icon_spacing: tokens.space(8.0),
             input_padding: tokens.space(8.0),
             text_size: tokens.text(TextRole::Label),
             radius: tokens.size(18.0),
             max_width: tokens.size(320.0),
-        }
-    }
-}
-
-impl Default for SearchBarStyle {
-    fn default() -> Self {
-        Self {
-            width: 400.0,
-            height: 48.0,
-            icon_size: 18.0,
-            horizontal_padding: 16.0,
-            icon_spacing: 12.0,
-            input_padding: 12.0,
-            text_size: theme::TEXT_SIZE_BODY,
-            radius: 24.0,
-            max_width: 400.0,
         }
     }
 }

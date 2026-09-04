@@ -18,9 +18,7 @@ use crate::utils;
 
 use super::playback_controls::play_mode_button;
 
-/// Player bar height
-pub const PLAYER_BAR_HEIGHT: f32 = 80.0;
-
+// Visual dimensions are 1080P reference pixels resolved through `UiTokens`.
 const CONTENT_HORIZONTAL_PADDING: f32 = 32.0;
 const SECTION_SPACING: f32 = 16.0;
 const CENTER_CONTROLS_WIDTH: f32 = 216.0;
@@ -56,27 +54,18 @@ struct PlayerBarLayout {
 }
 
 impl PlayerBarLayout {
-    fn for_width(total_width: f32) -> Self {
-        Self::for_width_scaled(total_width, 1.0)
-    }
-
-    fn for_width_scaled(total_width: f32, density: f32) -> Self {
-        let density = if density.is_finite() && density > 0.0 {
-            density
-        } else {
-            1.0
-        };
-        let fixed_chrome = (CONTENT_HORIZONTAL_PADDING + SECTION_SPACING * 2.0) * density;
-        let center_controls_width = CENTER_CONTROLS_WIDTH * density;
-        let left_max_width = LEFT_MAX_WIDTH * density;
-        let left_min_width = LEFT_MIN_WIDTH * density;
-        let right_preferred_width = RIGHT_PREFERRED_WIDTH * density;
-        let right_vertical_min_width = RIGHT_VERTICAL_MIN_WIDTH * density;
-        let right_horizontal_min_width = RIGHT_HORIZONTAL_MIN_WIDTH * density;
-        let right_vertical_with_time_width = RIGHT_VERTICAL_WITH_TIME_WIDTH * density;
-        let horizontal_volume_min_width = HORIZONTAL_VOLUME_MIN_WIDTH * density;
-        let horizontal_volume_max_width = HORIZONTAL_VOLUME_MAX_WIDTH * density;
-        let right_horizontal_fixed_width = RIGHT_HORIZONTAL_FIXED_WIDTH * density;
+    fn for_width(total_width: f32, tokens: UiTokens) -> Self {
+        let fixed_chrome = tokens.space(CONTENT_HORIZONTAL_PADDING + SECTION_SPACING * 2.0);
+        let center_controls_width = tokens.size(CENTER_CONTROLS_WIDTH);
+        let left_max_width = tokens.size(LEFT_MAX_WIDTH);
+        let left_min_width = tokens.size(LEFT_MIN_WIDTH);
+        let right_preferred_width = tokens.size(RIGHT_PREFERRED_WIDTH);
+        let right_vertical_min_width = tokens.size(RIGHT_VERTICAL_MIN_WIDTH);
+        let right_horizontal_min_width = tokens.size(RIGHT_HORIZONTAL_MIN_WIDTH);
+        let right_vertical_with_time_width = tokens.size(RIGHT_VERTICAL_WITH_TIME_WIDTH);
+        let horizontal_volume_min_width = tokens.size(HORIZONTAL_VOLUME_MIN_WIDTH);
+        let horizontal_volume_max_width = tokens.size(HORIZONTAL_VOLUME_MAX_WIDTH);
+        let right_horizontal_fixed_width = tokens.size(RIGHT_HORIZONTAL_FIXED_WIDTH);
         let side_width = (total_width - fixed_chrome - center_controls_width).max(0.0);
 
         let (left_width, right_width) = if side_width >= left_min_width + right_preferred_width {
@@ -109,7 +98,7 @@ impl PlayerBarLayout {
         Self {
             left_width,
             right_width,
-            show_quality: left_width >= LEFT_MAX_WIDTH,
+            show_quality: left_width >= left_max_width,
             show_time,
             volume,
         }
@@ -222,19 +211,19 @@ pub fn view(
             &current_time,
             &total_time,
             tokens,
-            PlayerBarLayout::for_width_scaled(size.width, tokens.density().value()),
+            PlayerBarLayout::for_width(size.width, tokens),
         )
     })
     .width(Fill)
     .height(Fill);
 
     let progress_bar_height = tokens.size(8.0);
-    let top_progress = container(widgets::progress_slider::view_with_gradient_scaled(
+    let top_progress = container(widgets::progress_slider::view(
         position,
         download_progress,
         SliderSize::Edge,
         progress_colors,
-        tokens.density().value(),
+        tokens,
         Message::SeekPreview,
         Message::SeekRelease,
     ))
@@ -300,18 +289,15 @@ fn build_body(
 
     // The responsive allocator protects this lane before either side is
     // allowed to consume it.
-    let mode_button = play_mode_button(
-        play_mode,
-        PlayModeButtonSize::ScaledSmall(tokens.density().value()),
-        is_fm_mode,
-    );
+    let mode_button = play_mode_button(play_mode, PlayModeButtonSize::Small, tokens, is_fm_mode);
     let prev_action = (!is_first_song || !is_fm_mode).then_some(Message::PrevSong);
     let favorite_state = current_favorite.map(|(_, liked)| liked);
     let favorite_action = current_favorite.map(|(song_id, _)| Message::ToggleFavorite(song_id));
     let controls = widgets::playback_controls::view_player_bar(
         is_playing,
         is_buffering,
-        ControlSize::ScaledSmall(tokens.density().value()),
+        ControlSize::Small,
+        tokens,
         is_fm_mode && is_first_song,
         mode_button,
         prev_action,
@@ -419,6 +405,7 @@ fn build_song_info(
         crate::image::ImageKind::SongCover,
         cover_px,
         cover_radius,
+        tokens,
     );
 
     let expand_overlay = widgets::hover_surface(Space::new().width(cover_px).height(cover_px))
@@ -533,10 +520,10 @@ fn build_right_section(
                 row![
                     volume_icon,
                     Space::new().width(tokens.space(8.0)),
-                    widgets::progress_slider::volume_slider_scaled(
+                    widgets::progress_slider::volume_slider(
                         volume,
                         width,
-                        tokens.density().value(),
+                        tokens,
                         Message::SetVolume,
                     )
                 ]
@@ -572,10 +559,10 @@ fn build_right_section(
             .interaction(mouse::Interaction::Pointer);
 
             let popup = iced::widget::mouse_area(
-                container(widgets::progress_slider::vertical_volume_slider_scaled(
+                container(widgets::progress_slider::vertical_volume_slider(
                     volume,
                     tokens.size(VERTICAL_VOLUME_SLIDER_HEIGHT),
-                    tokens.density().value(),
+                    tokens,
                     Message::SetVolume,
                 ))
                 .padding(
@@ -587,22 +574,20 @@ fn build_right_section(
                     background: Some(iced::Background::Color(theme::surface_elevated(theme))),
                     border: iced::Border {
                         radius: tokens.size(12.0).into(),
-                        width: 1.0,
+                        width: tokens.size(1.0),
                         color: theme::border_color(theme),
                     },
                     shadow: Shadow {
                         color: theme::shadow_color(theme),
-                        offset: Vector::new(0.0, 4.0),
-                        blur_radius: 12.0,
+                        offset: Vector::new(0.0, tokens.size(4.0)),
+                        blur_radius: tokens.size(12.0),
                     },
                     ..Default::default()
                 }),
             )
             .on_scroll(move |delta| Message::SetVolume(volume_after_scroll(volume, delta)));
 
-            widgets::hover_popup(anchor, popup)
-                .gap(tokens.space(8.0))
-                .into()
+            widgets::hover_popup(anchor, popup, tokens.space(8.0)).into()
         }
     };
 
@@ -701,11 +686,13 @@ mod tests {
         PlayerBarLayout, RIGHT_PREFERRED_WIDTH, VolumeLayout, artist_links,
     };
     use crate::api::ArtistSummary;
+    use crate::ui::responsive::UiTokens;
 
     #[test]
     fn player_bar_shrinks_left_before_right() {
-        let wide = PlayerBarLayout::for_width(1_100.0);
-        let narrower = PlayerBarLayout::for_width(820.0);
+        let tokens = UiTokens::default();
+        let wide = PlayerBarLayout::for_width(1_100.0, tokens);
+        let narrower = PlayerBarLayout::for_width(820.0, tokens);
 
         assert_eq!(wide.right_width, RIGHT_PREFERRED_WIDTH);
         assert_eq!(narrower.right_width, RIGHT_PREFERRED_WIDTH);
@@ -719,9 +706,10 @@ mod tests {
 
     #[test]
     fn player_bar_shrinks_horizontal_volume_then_switches_vertical() {
-        let shrinking = PlayerBarLayout::for_width(660.0);
-        let threshold = PlayerBarLayout::for_width(638.0);
-        let vertical = PlayerBarLayout::for_width(620.0);
+        let tokens = UiTokens::default();
+        let shrinking = PlayerBarLayout::for_width(660.0, tokens);
+        let threshold = PlayerBarLayout::for_width(638.0, tokens);
+        let vertical = PlayerBarLayout::for_width(620.0, tokens);
 
         assert!(matches!(
             shrinking.volume,
@@ -739,7 +727,7 @@ mod tests {
 
     #[test]
     fn player_bar_hides_quality_before_compressing_right_controls() {
-        let layout = PlayerBarLayout::for_width(820.0);
+        let layout = PlayerBarLayout::for_width(820.0, UiTokens::default());
 
         assert!(!layout.show_quality);
         assert_eq!(layout.right_width, RIGHT_PREFERRED_WIDTH);

@@ -6,42 +6,48 @@
 use iced::widget::{button, container, svg, text, tooltip};
 use iced::{Color, Element};
 
+use crate::ui::responsive::{TextRole, UiTokens};
 use crate::ui::theme;
 
 /// Size variant for play mode button
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ButtonSize {
-    /// Small size for player bar (18px icon)
+    /// Small control used by the player bar.
     Small,
-    /// Large size for lyrics page (22px icon)
+    /// Large control used by full-screen surfaces.
     Large,
-    /// Density-scaled small control used by the player bar.
-    ScaledSmall(f32),
-    /// Density-scaled large control used by full-screen control surfaces.
-    ScaledLarge(f32),
+    /// Slightly emphasized large control for compact lyrics focus mode.
+    LargeEmphasized,
 }
 
 impl ButtonSize {
-    fn icon_size(&self) -> f32 {
+    fn emphasis(self) -> f32 {
         match self {
-            Self::Small => 20.0,
-            Self::Large => 22.0,
-            Self::ScaledSmall(scale) => 20.0 * scale.max(0.1),
-            Self::ScaledLarge(scale) => 22.0 * scale.max(0.1),
+            Self::Small | Self::Large => 1.0,
+            Self::LargeEmphasized => 1.08,
         }
     }
 
-    fn padding(&self) -> f32 {
-        match self {
-            Self::Small => 8.0,
-            Self::Large => 10.0,
-            Self::ScaledSmall(scale) => 8.0 * scale.max(0.1),
-            Self::ScaledLarge(scale) => 10.0 * scale.max(0.1),
-        }
+    fn icon_size(self, tokens: UiTokens) -> f32 {
+        let reference = if matches!(self, Self::Small) {
+            20.0
+        } else {
+            22.0
+        };
+        tokens.size(reference * self.emphasis())
     }
 
-    fn radius(&self) -> f32 {
-        (self.icon_size() + self.padding() * 2.0) / 2.0
+    fn padding(self, tokens: UiTokens) -> f32 {
+        let reference = if matches!(self, Self::Small) {
+            8.0
+        } else {
+            10.0
+        };
+        tokens.space(reference * self.emphasis())
+    }
+
+    fn radius(self, tokens: UiTokens) -> f32 {
+        (self.icon_size(tokens) + self.padding(tokens) * 2.0) / 2.0
     }
 }
 
@@ -50,11 +56,12 @@ pub fn view<M: Clone + 'static>(
     play_mode_icon: &'static str,
     play_mode_tooltip: &'static str,
     size: ButtonSize,
+    tokens: UiTokens,
     on_press: M,
 ) -> Element<'static, M> {
-    let icon_size = size.icon_size();
-    let padding = size.padding();
-    let radius = size.radius();
+    let icon_size = size.icon_size(tokens);
+    let padding = size.padding(tokens);
+    let radius = size.radius(tokens);
 
     let button = button(
         svg(svg::Handle::from_memory(play_mode_icon.as_bytes()))
@@ -84,18 +91,19 @@ pub fn view<M: Clone + 'static>(
 
     tooltip(
         button,
-        text(play_mode_tooltip).size(theme::TEXT_SIZE_CAPTION),
+        text(play_mode_tooltip).size(tokens.text(TextRole::Caption)),
         tooltip::Position::Top,
     )
-    .gap(4)
-    .style(|theme| iced::widget::container::Style {
+    .gap(tokens.space(4.0))
+    .padding(tokens.space(5.0))
+    .style(move |theme| iced::widget::container::Style {
         background: Some(iced::Background::Color(
             crate::ui::theme::surface_container(theme),
         )),
         border: iced::Border {
-            radius: 4.0.into(),
+            radius: tokens.size(4.0).into(),
             color: crate::ui::theme::divider(theme),
-            width: 1.0,
+            width: tokens.size(1.0),
         },
         ..Default::default()
     })
@@ -105,10 +113,12 @@ pub fn view<M: Clone + 'static>(
 #[cfg(test)]
 mod tests {
     use super::ButtonSize;
+    use crate::ui::responsive::UiTokens;
 
     #[test]
     fn hover_backgrounds_are_circular_at_every_size() {
-        assert_eq!(ButtonSize::Small.radius(), 18.0);
-        assert_eq!(ButtonSize::Large.radius(), 21.0);
+        let tokens = UiTokens::default();
+        assert_eq!(ButtonSize::Small.radius(tokens), 18.0);
+        assert_eq!(ButtonSize::Large.radius(tokens), 21.0);
     }
 }

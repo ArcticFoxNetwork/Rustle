@@ -18,12 +18,11 @@ impl App {
                     let context = crate::ui::responsive::ResponsiveContext::from_viewport(
                         iced::Size::new(self.core.window_width, self.core.window_height),
                     );
-                    let offset =
-                        crate::ui::components::queue_panel::calculate_scroll_offset_for_context(
-                            self.playback.queue.len(),
-                            self.playback.current_index,
-                            context,
-                        );
+                    let offset = crate::ui::components::queue_panel::calculate_scroll_offset(
+                        self.playback.queue.len(),
+                        self.playback.current_index,
+                        context,
+                    );
                     return Some(iced::widget::operation::snap_to(
                         iced::widget::Id::new(
                             crate::ui::components::queue_panel::QUEUE_SCROLLABLE_ID,
@@ -42,6 +41,7 @@ impl App {
                 if id == -1 {
                     if !self.library.recently_played.is_empty() {
                         let db_songs = self.library.recently_played.clone();
+                        self.clear_shuffle_cache();
                         self.playback.queue_artists_by_song_id.clear();
                         self.playback.queue = db_songs.clone();
                         self.persist_queue_snapshot();
@@ -84,6 +84,7 @@ impl App {
                 self.exit_fm_mode();
                 self.store_db_song_cover_paths(songs);
                 if !songs.is_empty() {
+                    self.clear_shuffle_cache();
                     self.playback.queue_artists_by_song_id.clear();
                     self.playback.queue = songs.clone();
                     self.persist_queue_snapshot();
@@ -157,6 +158,8 @@ impl App {
                     }
 
                     // Refresh coordinator window and re-preload adjacent tracks
+                    self.clear_shuffle_cache();
+                    self.cache_shuffle_indices();
                     self.refresh_preload_window();
                     return Some(self.preload_adjacent_tracks_with_ncm());
                 }
@@ -167,6 +170,7 @@ impl App {
                 self.playback.queue.clear();
                 self.playback.queue_artists_by_song_id.clear();
                 self.playback.current_index = None;
+                self.playback.shuffle_cache.clear();
                 self.playback.preload_coordinator.clear_window();
                 // Release audio preload sinks
                 let released = self.playback.audio_preload_manager.reset();

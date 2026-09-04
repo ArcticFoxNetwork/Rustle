@@ -10,6 +10,8 @@ use iced::event::Event;
 use iced::mouse;
 use iced::{Background, Border, Color, Element, Length, Rectangle, Size, Theme};
 
+use crate::ui::responsive::UiTokens;
+
 /// A vertical slider widget
 pub struct VerticalSlider<'a, Message> {
     value: f32,
@@ -28,7 +30,12 @@ pub struct VerticalSlider<'a, Message> {
 
 impl<'a, Message> VerticalSlider<'a, Message> {
     /// Creates a new vertical slider
-    pub fn new<F>(range: std::ops::RangeInclusive<f32>, value: f32, on_change: F) -> Self
+    pub fn new<F>(
+        range: std::ops::RangeInclusive<f32>,
+        value: f32,
+        tokens: UiTokens,
+        on_change: F,
+    ) -> Self
     where
         F: Fn(f32) -> Message + 'a,
     {
@@ -37,10 +44,10 @@ impl<'a, Message> VerticalSlider<'a, Message> {
             range,
             step: 0.1,
             on_change: Box::new(on_change),
-            width: Length::Fixed(40.0),
-            height: Length::Fixed(180.0),
-            rail_width: 4.0,
-            handle_radius: 8.0,
+            width: Length::Fixed(tokens.size(40.0)),
+            height: Length::Fixed(tokens.size(180.0)),
+            rail_width: tokens.size(4.0),
+            handle_radius: tokens.size(8.0),
             rail_color: crate::ui::theme::divider(&iced::Theme::Dark),
             handle_color: crate::ui::theme::TEXT_SECONDARY,
             handle_color_hovered: Color::WHITE,
@@ -258,7 +265,8 @@ where
 pub fn vertical_slider<'a, Message>(
     range: std::ops::RangeInclusive<f32>,
     value: f32,
+    tokens: UiTokens,
     on_change: impl Fn(f32) -> Message + 'a,
 ) -> VerticalSlider<'a, Message> {
-    VerticalSlider::new(range, value, on_change)
+    VerticalSlider::new(range, value, tokens, on_change)
 }

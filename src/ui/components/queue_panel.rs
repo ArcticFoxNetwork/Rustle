@@ -15,6 +15,7 @@ use crate::ui::responsive::{
 use crate::ui::{icons, theme, widgets};
 
 /// Queue popup width
+// Visual dimensions are 1080P reference pixels resolved through `UiTokens`.
 pub const QUEUE_PANEL_WIDTH: f32 = 360.0;
 /// Queue popup max height
 pub const QUEUE_PANEL_HEIGHT: f32 = 400.0;
@@ -23,20 +24,10 @@ const QUEUE_ITEM_HEIGHT: f32 = 54.0;
 /// Scrollable ID for queue panel
 pub const QUEUE_SCROLLABLE_ID: &str = "queue_panel_scroll";
 
-/// Calculate the scroll offset to center the current song in the queue panel
-/// Returns a relative offset (0.0 to 1.0) for use with scrollable::snap_to
-pub fn calculate_scroll_offset(queue_len: usize, queue_index: Option<usize>) -> f32 {
-    calculate_scroll_offset_for_context(
-        queue_len,
-        queue_index,
-        ResponsiveContext::from_viewport(iced::Size::new(1_920.0, 1_080.0)),
-    )
-}
-
 /// Calculate the queue offset using the same tokenized panel geometry as the
 /// rendered queue. Keeping this policy pure lets the update layer request an
 /// initial position without importing widget state or message semantics.
-pub fn calculate_scroll_offset_for_context(
+pub fn calculate_scroll_offset(
     queue_len: usize,
     queue_index: Option<usize>,
     context: ResponsiveContext,
@@ -178,11 +169,13 @@ pub fn view(
                         .bottom(tokens.space(8.0)),
                 ),
             )
+            .direction(crate::ui::widgets::vertical_scrollbar(tokens))
             .id(iced::widget::Id::new(QUEUE_SCROLLABLE_ID))
             .height(Length::Fixed(
                 (panel_height - header_height).max(tokens.size(80.0)),
             )),
             SmoothScrollTarget::Native(QUEUE_SCROLLABLE_ID),
+            tokens,
             Message::SmoothScroll,
         )
         .into()
@@ -197,13 +190,13 @@ pub fn view(
             background: Some(iced::Background::Color(theme::surface_elevated(theme))),
             border: iced::Border {
                 color: theme::divider(theme),
-                width: 1.0,
+                width: tokens.size(1.0),
                 radius: tokens.size(12.0).into(),
             },
             shadow: iced::Shadow {
                 color: theme::overlay_backdrop(theme, 0.5),
-                offset: iced::Vector::new(0.0, -4.0),
-                blur_radius: 20.0,
+                offset: iced::Vector::new(0.0, -tokens.size(4.0)),
+                blur_radius: tokens.size(20.0),
             },
             ..Default::default()
         })

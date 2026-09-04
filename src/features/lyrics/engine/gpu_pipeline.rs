@@ -127,13 +127,11 @@ impl DotsUniform {
         scale_factor: f32,
         logical_font_size: f32,
     ) -> Self {
-        let safe_scale = scale_factor.max(0.001);
-        let logical_viewport_width = viewport_size[0] / safe_scale;
         let logical_viewport_height = viewport_size[1] / scale_factor.max(0.001);
         let dot_size = dot_size(logical_font_size, logical_viewport_height) * scale_factor;
         let dot_spacing = dot_spacing(logical_font_size) * scale_factor;
         let padding_x = dot_padding_x(logical_font_size);
-        let padding_y = dot_padding_y(logical_viewport_width);
+        let padding_y = dot_padding_y(logical_font_size);
 
         Self {
             position: [

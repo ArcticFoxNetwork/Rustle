@@ -20,6 +20,8 @@ use iced::{Background, Color, Element, Event, Length, Pixels, Point, Rectangle, 
 
 use std::ops::RangeInclusive;
 
+use crate::ui::responsive::UiTokens;
+
 /// Multi-track slider widget
 pub struct MultiTrackSlider<'a, Message> {
     range: RangeInclusive<f32>,
@@ -39,9 +41,13 @@ impl<'a, Message> MultiTrackSlider<'a, Message>
 where
     Message: Clone,
 {
-    pub const DEFAULT_HEIGHT: f32 = 16.0;
-
-    pub fn new<F>(range: RangeInclusive<f32>, value: f32, on_change: F) -> Self
+    pub fn new<F>(
+        range: RangeInclusive<f32>,
+        value: f32,
+        height: f32,
+        tokens: UiTokens,
+        on_change: F,
+    ) -> Self
     where
         F: 'a + Fn(f32) -> Message,
     {
@@ -55,8 +61,8 @@ where
             on_change: Box::new(on_change),
             on_release: None,
             width: Length::Fill,
-            height: Self::DEFAULT_HEIGHT,
-            style: Box::new(default_style),
+            height,
+            style: Box::new(move |theme, status| default_style(theme, status, tokens)),
             status: None,
         }
     }
@@ -488,7 +494,7 @@ pub enum HandleShape {
     },
 }
 
-fn default_style(_theme: &Theme, _status: Status) -> Style {
+fn default_style(_theme: &Theme, _status: Status, tokens: UiTokens) -> Style {
     Style {
         rail: Rail {
             backgrounds: (
@@ -496,15 +502,17 @@ fn default_style(_theme: &Theme, _status: Status) -> Style {
                 Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.1)),
             ),
             secondary_background: Some(Background::Color(Color::from_rgba(0.5, 0.5, 0.5, 0.4))),
-            width: 4.0,
+            width: tokens.size(4.0),
             border: Border {
-                radius: 2.0.into(),
+                radius: tokens.size(2.0).into(),
                 width: 0.0,
                 color: Color::TRANSPARENT,
             },
         },
         handle: Handle {
-            shape: HandleShape::Circle { radius: 6.0 },
+            shape: HandleShape::Circle {
+                radius: tokens.size(6.0),
+            },
             background: Background::Color(Color::from_rgb(0.8, 0.2, 0.5)),
             border_width: 0.0,
             border_color: Color::TRANSPARENT,

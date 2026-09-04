@@ -600,12 +600,11 @@ impl AudioPlayer {
         if can_overlap {
             self.last_transition_group = Some(transition.group);
             if let Some(previous) = self.outgoing_transition.take() {
-                if let Some(buffer) = previous.shared_buffer {
-                    buffer.cancel();
-                    buffer.clear_buffer_callback();
-                }
                 if let Some(cancellation) = previous.reader_cancellation {
                     cancellation.cancel();
+                }
+                if let Some(buffer) = previous.shared_buffer {
+                    buffer.clear_buffer_callback();
                 }
                 previous.sink.stop();
             }
@@ -666,7 +665,6 @@ impl AudioPlayer {
             });
         } else {
             if let Some(buffer) = outgoing_shared_buffer {
-                buffer.cancel();
                 buffer.clear_buffer_callback();
             }
             self.stop();
@@ -812,12 +810,11 @@ impl AudioPlayer {
                 || transition.sink.empty()
         });
         if complete && let Some(transition) = self.outgoing_transition.take() {
-            if let Some(buffer) = transition.shared_buffer {
-                buffer.cancel();
-                buffer.clear_buffer_callback();
-            }
             if let Some(cancellation) = transition.reader_cancellation {
                 cancellation.cancel();
+            }
+            if let Some(buffer) = transition.shared_buffer {
+                buffer.clear_buffer_callback();
             }
             transition.sink.stop();
             if transition.advanced {
@@ -894,12 +891,11 @@ impl AudioPlayer {
         self.pending_pause_fade = false;
         self.last_transition_group = None;
         if let Some(transition) = self.outgoing_transition.take() {
-            if let Some(buffer) = transition.shared_buffer {
-                buffer.cancel();
-                buffer.clear_buffer_callback();
-            }
             if let Some(cancellation) = transition.reader_cancellation {
                 cancellation.cancel();
+            }
+            if let Some(buffer) = transition.shared_buffer {
+                buffer.clear_buffer_callback();
             }
             transition.sink.stop();
         }
@@ -939,12 +935,11 @@ impl AudioPlayer {
         self.pending_pause_fade = false;
         self.last_transition_group = None;
         if let Some(transition) = self.outgoing_transition.take() {
-            if let Some(buffer) = transition.shared_buffer {
-                buffer.cancel();
-                buffer.clear_buffer_callback();
-            }
             if let Some(cancellation) = transition.reader_cancellation {
                 cancellation.cancel();
+            }
+            if let Some(buffer) = transition.shared_buffer {
+                buffer.clear_buffer_callback();
             }
             transition.sink.stop();
         }
@@ -1062,12 +1057,11 @@ impl AudioPlayer {
         self.pending_pause_fade = false;
         self.last_transition_group = None;
         if let Some(transition) = self.outgoing_transition.take() {
-            if let Some(buffer) = transition.shared_buffer {
-                buffer.cancel();
-                buffer.clear_buffer_callback();
-            }
             if let Some(cancellation) = transition.reader_cancellation {
                 cancellation.cancel();
+            }
+            if let Some(buffer) = transition.shared_buffer {
+                buffer.clear_buffer_callback();
             }
             transition.sink.stop();
         }

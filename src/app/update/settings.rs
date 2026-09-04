@@ -6,12 +6,12 @@ use crate::app::state::{App, Route};
 use crate::cache;
 use crate::features::keybindings::{KeyBinding, KeyCode, ModifierSet, ShortcutScope};
 use crate::i18n::{Key as I18nKey, Language, Locale};
-use iced::Rectangle;
 use iced::Task;
 use iced::advanced::widget::operation::{self as widget_op, Operation, Outcome, Scrollable};
 use iced::keyboard::Key;
 use iced::time::Instant;
 use iced::widget::Id;
+use iced::{Rectangle, Size};
 
 use crate::ui::animation::SmoothScrollTarget;
 
@@ -199,9 +199,14 @@ impl App {
 
     /// Get which section corresponds to a scroll Y offset (for tab highlight)
     fn section_at_position(&self, y_offset: f32) -> SettingsSection {
+        let activation_tolerance = crate::ui::responsive::ResponsiveContext::from_viewport(
+            Size::new(self.core.window_width, self.core.window_height),
+        )
+        .tokens
+        .size(20.0);
         let mut current = SettingsSection::Account;
         for (section, pos) in &self.ui.section_positions {
-            if y_offset >= *pos - 20.0 {
+            if y_offset >= *pos - activation_tolerance {
                 current = *section;
             } else {
                 break;

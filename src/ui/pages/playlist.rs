@@ -424,6 +424,7 @@ fn build_header(
         crate::image::ImageKind::PlaylistCover,
         cover_size,
         tokens.radius(RadiusRole::Medium),
+        tokens,
     );
 
     // Playlist type label - larger font
@@ -473,42 +474,45 @@ fn build_header(
                     scrollable(
                         container(desc_widget)
                             .width(Fill)
-                            .padding(Padding::new(4.0).left(0.0)),
+                            .padding(Padding::new(tokens.space(4.0)).left(0.0)),
                     )
                     .direction(scrollable::Direction::Vertical(
                         iced::widget::scrollable::Scrollbar::new()
-                            .width(4)
-                            .scroller_width(4),
+                            .width(tokens.size(4.0))
+                            .scroller_width(tokens.size(4.0)),
                     ))
                     .height(tokens.size(150.0))
                     .id(iced::widget::Id::new("playlist_description_scroll")),
                     SmoothScrollTarget::Native("playlist_description_scroll"),
+                    tokens,
                     Message::SmoothScroll,
                 );
 
                 let collapse_btn = detail_description::toggle_button(
                     locale.get(Key::CollapseDescription),
                     Message::ToggleDescriptionExpand,
+                    tokens,
                 );
 
                 column![scrollable_desc, collapse_btn]
-                    .spacing(2)
+                    .spacing(tokens.space(2.0))
                     .width(Fill)
                     .into()
             } else {
                 // Collapsed: clamped to 2 lines with "展开" button
                 let clamped_desc = container(desc_widget)
-                    .height(detail_description::collapsed_height())
+                    .height(detail_description::collapsed_height(tokens))
                     .clip(true)
                     .width(Fill);
 
                 let expand_btn = detail_description::toggle_button(
                     locale.get(Key::ExpandDescription),
                     Message::ToggleDescriptionExpand,
+                    tokens,
                 );
 
                 column![clamped_desc, expand_btn]
-                    .spacing(2)
+                    .spacing(tokens.space(2.0))
                     .width(Fill)
                     .into()
             }
@@ -527,6 +531,7 @@ fn build_header(
                 Some(handle),
                 crate::image::ImageKind::UserAvatar,
                 tokens.size(24.0),
+                tokens,
             )
         } else {
             build_owner_avatar_placeholder(&owner_name, tokens)
@@ -557,13 +562,22 @@ fn build_header(
     let owner_info: Element<'static, Message> = if let Some(action) = owner_action {
         container(
             button(
-                row![owner_avatar, Space::new().width(8), owner_label].align_y(Alignment::Center),
+                row![
+                    owner_avatar,
+                    Space::new().width(tokens.space(8.0)),
+                    owner_label
+                ]
+                .align_y(Alignment::Center),
             )
-            .padding(Padding::new(4.0).left(0.0).right(8.0))
-            .style(|_theme, _status| button::Style {
+            .padding(
+                Padding::new(tokens.space(4.0))
+                    .left(0.0)
+                    .right(tokens.space(8.0)),
+            )
+            .style(move |_theme, _status| button::Style {
                 background: Some(iced::Background::Color(Color::TRANSPARENT)),
                 border: iced::Border {
-                    radius: 999.0.into(),
+                    radius: tokens.radius(RadiusRole::Pill).into(),
                     ..Default::default()
                 },
                 ..Default::default()
@@ -572,9 +586,13 @@ fn build_header(
         )
         .into()
     } else {
-        row![owner_avatar, Space::new().width(8), owner_label]
-            .align_y(Alignment::Center)
-            .into()
+        row![
+            owner_avatar,
+            Space::new().width(tokens.space(8.0)),
+            owner_label
+        ]
+        .align_y(Alignment::Center)
+        .into()
     };
 
     let mut stats_items: Vec<Element<'static, Message>> = vec![owner_info];
@@ -774,7 +792,7 @@ pub(crate) fn build_controls<'a>(
     // 3. Fixed outer container to prevent layout shift
     // 4. mouse_area for hover + click
     let inner_padding = (btn_size - icon_size) / 2.0;
-    let offset = 2.0 * scale; // Triangle visual offset, scales with button
+    let offset = tokens.size(2.0) * scale; // Triangle visual offset, scales with button
 
     let play_btn = mouse_area(
         container(
@@ -834,6 +852,7 @@ pub(crate) fn build_controls<'a>(
             .align_y(Alignment::Center),
         )
         .height(tokens.target(TargetRole::Control))
+        .padding([tokens.space(5.0), tokens.space(10.0)])
         .style(theme::transparent_btn)
         .on_press(Message::PlayHero),
     )
@@ -958,9 +977,11 @@ pub(crate) fn build_controls<'a>(
     // Animated search component - expands from right to left
     let search_progress = search_animation.progress();
     let search_color = get_icon_color(IconId::Search);
+    let search_target_size = tokens.target(crate::ui::responsive::TargetRole::Icon);
+    let search_icon_size = tokens.icon(crate::ui::responsive::IconRole::Small);
 
     // Animation: width goes from 36 (just icon) to 250 (full input)
-    let min_width = tokens.target(crate::ui::responsive::TargetRole::Control);
+    let min_width = search_target_size;
     let max_width = tokens.size(250.0_f32);
     let current_width = min_width + (max_width - min_width) * search_progress;
 
@@ -973,15 +994,15 @@ pub(crate) fn build_controls<'a>(
         // Expanded or animating - show input with search icon
         let search_icon = button(
             svg(svg::Handle::from_memory(icons::SEARCH.as_bytes()))
-                .width(tokens.icon(crate::ui::responsive::IconRole::Medium))
-                .height(tokens.icon(crate::ui::responsive::IconRole::Medium))
+                .width(search_icon_size)
+                .height(search_icon_size)
                 .style(move |_theme, _status| svg::Style {
                     color: Some(search_color),
                 }),
         )
         .style(theme::transparent_btn)
-        .width(tokens.target(TargetRole::Control))
-        .height(tokens.target(TargetRole::Control))
+        .width(search_target_size)
+        .height(search_target_size)
         .padding(0)
         .on_press(Message::TogglePlaylistSearch);
 
@@ -1021,13 +1042,13 @@ pub(crate) fn build_controls<'a>(
         let bg_alpha = 0.15 * search_progress;
         let search_container = container(search_row)
             .width(current_width)
-            .height(tokens.target(crate::ui::responsive::TargetRole::Control))
+            .height(search_target_size)
             .padding(
                 Padding::new(0.0)
                     .left(tokens.space(8.0))
                     .right(tokens.space(4.0)),
             )
-            .center_y(tokens.target(crate::ui::responsive::TargetRole::Control))
+            .center_y(search_target_size)
             .style(move |_theme| iced::widget::container::Style {
                 background: Some(iced::Background::Color(Color::from_rgba(
                     1.0, 1.0, 1.0, bg_alpha,
@@ -1048,15 +1069,15 @@ pub(crate) fn build_controls<'a>(
         mouse_area(
             button(
                 svg(svg::Handle::from_memory(icons::SEARCH.as_bytes()))
-                    .width(tokens.icon(crate::ui::responsive::IconRole::Medium))
-                    .height(tokens.icon(crate::ui::responsive::IconRole::Medium))
+                    .width(search_icon_size)
+                    .height(search_icon_size)
                     .style(move |_theme, _status| svg::Style {
                         color: Some(search_color),
                     }),
             )
             .style(theme::transparent_btn)
-            .width(tokens.target(TargetRole::Control))
-            .height(tokens.target(TargetRole::Control))
+            .width(search_target_size)
+            .height(search_target_size)
             .padding(0)
             .on_press(Message::TogglePlaylistSearch),
         )

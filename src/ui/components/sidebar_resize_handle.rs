@@ -8,19 +8,13 @@ use crate::app::Message;
 use crate::ui::responsive::{ChromeRole, ResponsiveContext};
 use crate::ui::theme;
 
-/// Width of the resize handle hit area in pixels
-const HANDLE_WIDTH: f32 = 6.0;
-
 /// Build the sidebar resize handle - uses sidebar background color
 pub fn view(context: ResponsiveContext, is_dragging: bool) -> Element<'static, Message> {
     if !context.profile.is_desktop() {
         return iced::widget::Space::new().width(0).height(0).into();
     }
 
-    let handle_width = context
-        .tokens
-        .chrome(ChromeRole::ResizeHandle)
-        .max(HANDLE_WIDTH);
+    let handle_width = context.tokens.chrome(ChromeRole::ResizeHandle);
     let handle = container(iced::widget::Space::new().width(handle_width).height(Fill))
         .width(Length::Fixed(handle_width))
         .height(Fill)

@@ -17,9 +17,7 @@ use crate::ui::responsive::{
 };
 use crate::ui::theme::{self, BOLD_WEIGHT};
 
-const SIDEBAR_TEXT_SIZE: f32 = 16.0;
-const SIDEBAR_HEADER_TEXT_SIZE: f32 = 14.0;
-const SIDEBAR_ICON_SIZE: f32 = 24.0;
+// Visual dimensions are 1080P reference pixels resolved through `UiTokens`.
 const SIDEBAR_ITEM_SPACING: f32 = 4.0;
 const RAIL_PLAYLIST_SCROLL_ID: &str = "sidebar_rail_playlist_scroll";
 
@@ -43,6 +41,8 @@ struct SidebarMetrics {
     cover_size: f32,
     cover_radius: f32,
     target_size: f32,
+    button_radius: f32,
+    tokens: crate::ui::responsive::UiTokens,
 }
 
 impl SidebarMetrics {
@@ -67,6 +67,8 @@ impl SidebarMetrics {
             cover_size: tokens.size(42.0),
             cover_radius: tokens.size(5.0),
             target_size: tokens.target(TargetRole::Icon),
+            button_radius: tokens.radius(crate::ui::responsive::RadiusRole::Medium),
+            tokens: *tokens,
         }
     }
 }
@@ -336,7 +338,7 @@ fn full_view(
 
     // Show importing playlist if any
     if let Some(playlist) = importing_playlist {
-        library_items.push(importing_card::view(playlist));
+        library_items.push(importing_card::view(playlist, context.tokens));
     }
 
     // Show local playlists with hover animations
@@ -353,6 +355,7 @@ fn full_view(
             ImageKind::LocalPlaylistCover,
             metrics.cover_size,
             metrics.cover_radius,
+            context.tokens,
         ));
         library_items.push(sidebar_button_animated_opt_cover(
             crate::ui::icons::MUSIC,
@@ -403,6 +406,7 @@ fn full_view(
                     ImageKind::PlaylistCover,
                     metrics.cover_size,
                     metrics.cover_radius,
+                    context.tokens,
                 );
                 sidebar_button_animated_opt_cover(
                     crate::ui::icons::MUSIC,
@@ -458,9 +462,11 @@ fn full_view(
             column(scrollable_items).padding(Padding::new(0.0).bottom(metrics.content_bottom)),
         )
         .height(Fill)
+        .direction(crate::ui::widgets::hidden_vertical_scrollbar())
         .id(iced::widget::Id::new("sidebar_scroll"))
         .style(hidden_scrollable_style),
         SmoothScrollTarget::Native("sidebar_scroll"),
+        context.tokens,
         Message::SmoothScroll,
     );
 
@@ -586,9 +592,11 @@ fn rail_view(
         )
         .width(rail_width)
         .height(Fill)
+        .direction(crate::ui::widgets::hidden_vertical_scrollbar())
         .id(iced::widget::Id::new(RAIL_PLAYLIST_SCROLL_ID))
         .style(hidden_scrollable_style),
         SmoothScrollTarget::Native(RAIL_PLAYLIST_SCROLL_ID),
+        context.tokens,
         Message::SmoothScroll,
     )
     .into();
@@ -633,6 +641,7 @@ fn rail_cover_button(
         image_kind,
         metrics.cover_size,
         metrics.cover_radius,
+        metrics.tokens,
     );
     let button = button(
         container(cover)
@@ -655,7 +664,11 @@ fn rail_cover_button(
         ))),
         border: iced::Border {
             radius: (metrics.cover_radius + metrics.item_spacing / 2.0).into(),
-            width: if is_active { 1.0 } else { 0.0 },
+            width: if is_active {
+                metrics.tokens.size(1.0)
+            } else {
+                0.0
+            },
             color: theme::ACCENT_PINK,
         },
         ..Default::default()
@@ -676,6 +689,7 @@ fn rail_cover_button(
         text(label).size(metrics.header_text_size),
         tooltip::Position::Right,
     )
+    .padding(metrics.tokens.space(5.0))
     .into()
 }
 
@@ -766,6 +780,7 @@ fn rail_button(
         text(label).size(metrics.header_text_size),
         tooltip::Position::Right,
     )
+    .padding(metrics.tokens.space(5.0))
     .into()
 }
 
@@ -806,7 +821,7 @@ fn collapsible_section_header(
                 .left(metrics.content_padding)
                 .right(metrics.content_padding * 0.75),
         )
-        .style(|theme, status| iced::widget::button::Style {
+        .style(move |theme, status| iced::widget::button::Style {
             background: match status {
                 iced::widget::button::Status::Hovered => {
                     Some(iced::Background::Color(theme::hover_bg_alpha(theme, 0.06)))
@@ -814,7 +829,7 @@ fn collapsible_section_header(
                 _ => None,
             },
             border: iced::Border {
-                radius: 8.0.into(),
+                radius: metrics.button_radius.into(),
                 ..Default::default()
             },
             text_color: theme::text_muted(theme),
@@ -916,7 +931,7 @@ fn sidebar_button_animated_opt_cover(
                     theme, bg_alpha,
                 ))),
                 border: iced::Border {
-                    radius: 8.0.into(),
+                    radius: metrics.button_radius.into(),
                     ..Default::default()
                 },
                 text_color: theme::text_primary(theme),

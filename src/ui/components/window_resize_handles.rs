@@ -14,8 +14,8 @@ pub fn view<'a>(context: ResponsiveContext) -> Element<'a, Message> {
 
     use iced::window::Direction;
 
-    let edge_size = context.tokens.size(3.0).max(3.0);
-    let corner_size = context.tokens.size(10.0).max(10.0);
+    let edge_size = context.tokens.size(3.0);
+    let corner_size = context.tokens.size(10.0);
 
     fn handle<'a>(
         direction: Direction,

@@ -14,6 +14,7 @@ use crate::ui::responsive::{IconRole, ResponsiveContext, TextRole, bounded_panel
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{overlay, theme, widgets};
 
+// Visual dimensions are 1080P reference pixels resolved through `UiTokens`.
 const POPUP_WIDTH: f32 = 320.0;
 const POPUP_HEIGHT: f32 = 400.0;
 const QR_SIZE: f32 = 200.0;
@@ -58,7 +59,7 @@ pub fn view<'a>(
             .width(popup_size.width)
             .height(popup_size.height)
             .padding(tokens.space(24.0))
-            .style(theme::login_popup),
+            .style(move |theme| theme::login_popup(theme, tokens.theme_metrics())),
     )
     .interaction(Interaction::Idle);
 
@@ -174,7 +175,7 @@ fn view_qr_login<'a>(
             .left(tokens.space(16.0))
             .right(tokens.space(16.0)),
     )
-    .style(theme::secondary_button)
+    .style(move |theme, status| theme::secondary_button(theme, status, tokens.theme_metrics()))
     .on_press(Message::RequestQrCode);
 
     column![
@@ -239,7 +240,7 @@ fn view_logged_in(
             .left(tokens.space(20.0))
             .right(tokens.space(20.0)),
     )
-    .style(theme::danger_button)
+    .style(move |theme, status| theme::danger_button(theme, status, tokens.theme_metrics()))
     .on_press(Message::Logout);
 
     column![

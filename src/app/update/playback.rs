@@ -22,6 +22,7 @@ impl App {
 
                 // Try to find in DB songs
                 if let Some(song) = self.library.db_songs.iter().find(|s| s.id == *id).cloned() {
+                    self.clear_shuffle_cache();
                     self.playback.queue.push(song);
                     self.persist_queue_snapshot();
                     let idx = self.playback.queue.len() - 1;
@@ -42,6 +43,7 @@ impl App {
                         self.set_ncm_scrobble_source(self.current_route_ncm_scrobble_source());
                         self.extend_queue_artist_metadata(std::slice::from_ref(&song_info));
                         let db_song = Self::ncm_track_to_db_song(&song_info);
+                        self.clear_shuffle_cache();
                         self.playback.queue.push(db_song);
                         self.persist_queue_snapshot();
                         let idx = self.playback.queue.len() - 1;
@@ -295,7 +297,10 @@ impl App {
                         .playback
                         .active_streaming_buffer
                         .as_ref()
-                        .map(|b| (b.progress() * 100.0) as u32)
+                        .map(|buffer| {
+                            let target = buffer.policy().high_water_mark_bytes().max(1);
+                            (buffer.buffered_ahead().min(target) * 100 / target) as u32
+                        })
                         .unwrap_or(0);
                     return Self::toast_info(format!(
                         "正在缓冲中 ({}%)，请稍候再拖动进度",
@@ -319,15 +324,15 @@ impl App {
                     new_status
                 );
             }
-            AudioEvent::BufferProgress {
-                downloaded,
+            AudioEvent::CacheProgress {
+                cached,
                 total,
                 progress,
                 ..
             } => {
                 tracing::trace!(
-                    "AudioEvent::BufferProgress: {}/{} ({:.1}%)",
-                    downloaded,
+                    "AudioEvent::CacheProgress: {}/{} ({:.1}%)",
+                    cached,
                     total,
                     progress * 100.0
                 );
@@ -402,7 +407,7 @@ impl App {
             | AudioEvent::Resumed { context }
             | AudioEvent::Stopped { context }
             | AudioEvent::StateChanged { context, .. }
-            | AudioEvent::BufferProgress { context, .. }
+            | AudioEvent::CacheProgress { context, .. }
             | AudioEvent::BufferingStarted { context, .. }
             | AudioEvent::BufferingEnded { context }
             | AudioEvent::Finished { context }
@@ -425,8 +430,8 @@ impl App {
 
         match event.kind {
             StreamingEventKind::Playable => tracing::info!("Streaming track is now playable"),
-            StreamingEventKind::Progress(downloaded, total) => {
-                tracing::trace!("Streaming progress: {}/{} bytes", downloaded, total)
+            StreamingEventKind::CacheProgress(cached, total) => {
+                tracing::trace!("Streaming cache progress: {}/{} bytes", cached, total)
             }
             StreamingEventKind::DownloadComplete => {
                 tracing::info!("Streaming download complete; final cache publication pending")

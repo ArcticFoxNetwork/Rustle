@@ -1,37 +1,15 @@
 //! Edit playlist dialog component
 
 use iced::widget::{Space, button, column, container, row, svg, text, text_input, toggler};
-use iced::{Alignment, Color, Element, Fill, Size};
+use iced::{Alignment, Color, Element, Fill};
 
 use crate::app::Message;
 use crate::i18n::{Key, Locale};
 use crate::ui::responsive::{LayoutProfile, RadiusRole, ResponsiveContext, TextRole};
 use crate::ui::{icons, theme, widgets};
 
-/// Content-only body for unified modal layout (cover + form fields, no backdrop/title/buttons).
-pub fn view_body<'a>(
-    name: &str,
-    description: &str,
-    cover_path: Option<&str>,
-    watch_available: bool,
-    watch_enabled: bool,
-    watch_path: Option<&'a str>,
-    locale: Locale,
-) -> Element<'a, Message> {
-    view_body_responsive(
-        name,
-        description,
-        cover_path,
-        watch_available,
-        watch_enabled,
-        watch_path,
-        locale,
-        ResponsiveContext::new(Size::new(1_920.0, 1_080.0)),
-    )
-}
-
 /// Render the playlist editor with token-scaled controls and a stacked tablet fallback.
-pub fn view_body_responsive<'a>(
+pub fn view_body<'a>(
     name: &str,
     description: &str,
     cover_path: Option<&str>,
@@ -111,7 +89,7 @@ pub fn view_body_responsive<'a>(
             .style(move |_theme| iced::widget::container::Style {
                 border: iced::Border {
                     radius: tokens.radius(RadiusRole::Medium).into(),
-                    width: 1.0,
+                    width: tokens.size(1.0),
                     color: Color::from_rgba(1.0, 1.0, 1.0, 0.06)
                 },
                 ..Default::default()
@@ -139,7 +117,7 @@ pub fn view_body_responsive<'a>(
         background: iced::Background::Color(theme::surface_container(theme)),
         border: iced::Border {
             color: theme::divider(theme),
-            width: 1.0,
+            width: tokens.size(1.0),
             radius: tokens.radius(RadiusRole::Small).into(),
         },
         placeholder: theme::text_muted(theme),
@@ -163,7 +141,7 @@ pub fn view_body_responsive<'a>(
         background: iced::Background::Color(theme::surface_container(theme)),
         border: iced::Border {
             color: theme::divider(theme),
-            width: 1.0,
+            width: tokens.size(1.0),
             radius: tokens.radius(RadiusRole::Small).into(),
         },
         placeholder: theme::text_muted(theme),
@@ -209,7 +187,7 @@ pub fn view_body_responsive<'a>(
             background: Some(iced::Background::Color(theme::surface_container(theme))),
             border: iced::Border {
                 color: theme::divider(theme),
-                width: 1.0,
+                width: tokens.size(1.0),
                 radius: tokens.radius(RadiusRole::Small).into(),
             },
             ..Default::default()

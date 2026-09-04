@@ -6,6 +6,7 @@
 use iced::widget::{Space, container, row, svg, text};
 use iced::{Alignment, Element, Padding};
 
+use crate::ui::responsive::{RadiusRole, TextRole, UiTokens};
 use crate::ui::{icons, theme};
 
 /// Toast notification style
@@ -78,34 +79,37 @@ impl Toast {
 /// - Subtle border for depth
 /// - Accent color only on icon (not background)
 /// - Soft shadow for floating effect
-pub fn view_toast<'a, Message: 'a>(toast: &Toast) -> Element<'a, Message> {
+pub fn view_toast<'a, Message: 'a>(toast: &Toast, tokens: UiTokens) -> Element<'a, Message> {
     let accent_color = toast.style.accent_color();
     let icon = toast.style.icon_svg();
     let message = toast.message.clone();
 
     // Left accent bar (thin vertical line)
-    let accent_bar = container(Space::new().width(3).height(20)).style(move |_theme| {
-        iced::widget::container::Style {
-            background: Some(iced::Background::Color(accent_color)),
-            border: iced::Border {
-                radius: 2.0.into(),
-                ..Default::default()
-            },
+    let accent_bar = container(
+        Space::new()
+            .width(tokens.size(3.0))
+            .height(tokens.size(20.0)),
+    )
+    .style(move |_theme| iced::widget::container::Style {
+        background: Some(iced::Background::Color(accent_color)),
+        border: iced::Border {
+            radius: tokens.size(2.0).into(),
             ..Default::default()
-        }
+        },
+        ..Default::default()
     });
 
     // Icon with accent color
     let icon_widget = svg(svg::Handle::from_memory(icon.as_bytes()))
-        .width(14)
-        .height(14)
+        .width(tokens.size(14.0))
+        .height(tokens.size(14.0))
         .style(move |_theme, _status| svg::Style {
             color: Some(accent_color),
         });
 
     // Message text
     let message_widget = text(message)
-        .size(theme::TEXT_SIZE_LABEL)
+        .size(tokens.text(TextRole::Label))
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         });
@@ -113,30 +117,34 @@ pub fn view_toast<'a, Message: 'a>(toast: &Toast) -> Element<'a, Message> {
     // Toast content
     let content = row![
         accent_bar,
-        Space::new().width(12),
+        Space::new().width(tokens.space(12.0)),
         icon_widget,
-        Space::new().width(10),
+        Space::new().width(tokens.space(10.0)),
         message_widget,
     ]
     .align_y(Alignment::Center)
-    .padding(Padding::new(14.0).left(12.0).right(20.0));
+    .padding(
+        Padding::new(tokens.space(14.0))
+            .left(tokens.space(12.0))
+            .right(tokens.space(20.0)),
+    );
 
     // Toast container with dark surface style
     container(content)
-        .style(|theme| iced::widget::container::Style {
+        .style(move |theme| iced::widget::container::Style {
             // Surface elevated background
             background: Some(iced::Background::Color(theme::surface_elevated(theme))),
             // Subtle border for depth
             border: iced::Border {
-                radius: 8.0.into(),
-                width: 1.0,
+                radius: tokens.radius(RadiusRole::Medium).into(),
+                width: tokens.size(1.0),
                 color: theme::border_color(theme),
             },
             // Soft shadow for floating effect
             shadow: iced::Shadow {
                 color: theme::shadow_color(theme),
-                offset: iced::Vector::new(0.0, 4.0),
-                blur_radius: 12.0,
+                offset: iced::Vector::new(0.0, tokens.size(4.0)),
+                blur_radius: tokens.size(12.0),
             },
             ..Default::default()
         })

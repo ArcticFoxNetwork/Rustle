@@ -25,8 +25,7 @@ use super::player::{
     AudioPlayer, DetachedStreamingPlayback, PreparedStreamingSource, prepare_streaming_source,
 };
 use super::streaming::{
-    HIGH_WATER_MARK_BYTES, LOW_WATER_MARK_BYTES, SharedBuffer, SharedBufferHealth, StreamingBuffer,
-    StreamingReaderCancellation,
+    SharedBuffer, SharedBufferHealth, StreamingBuffer, StreamingReaderCancellation,
 };
 
 const STREAMING_PREPARATION_QUEUE_CAPACITY: usize = 4;
@@ -215,11 +214,9 @@ struct StreamingSeekWorker {
 
 fn cancel_streaming_seek_runtime(
     reader_cancellation: &StreamingReaderCancellation,
-    shared_buffer: &SharedBuffer,
+    _shared_buffer: &SharedBuffer,
 ) {
     reader_cancellation.cancel();
-    shared_buffer.cancel();
-    shared_buffer.clear_buffer_callback();
 }
 
 impl StreamingSeekWorker {
@@ -982,11 +979,14 @@ async fn audio_thread_main(
                     let remaining_bytes = buf.buffered_ahead();
                     let source_has_all_required_bytes =
                         buf.is_complete() || buf.remote_eof_reached();
-                    if should_enter_buffering(remaining_bytes, source_has_all_required_bytes) {
+                    if buf
+                        .policy()
+                        .should_enter_buffering(remaining_bytes, source_has_all_required_bytes)
+                    {
                         tracing::info!(
                             "Resume: remaining {} bytes < {} (low water mark), entering Buffering",
                             remaining_bytes,
-                            LOW_WATER_MARK_BYTES
+                            buf.policy().low_water_mark_bytes()
                         );
                         let position = player.get_info().position;
                         enter_buffering(&mut player, &state, &event_tx, position, context.clone());
@@ -1684,7 +1684,6 @@ fn clear_preloaded_buffer_callback(preloaded: &PreloadedSink) {
         reader_cancellation.cancel();
     }
     if let Some(shared_buffer) = &preloaded.shared_buffer {
-        shared_buffer.cancel();
         shared_buffer.clear_buffer_callback();
     }
 }
@@ -1697,7 +1696,6 @@ fn cancel_preloaded_streaming_buffer(preloaded: &PreloadedSink) {
 /// is notified before the owning Sink is stopped or replaced.
 fn cancel_current_streaming_buffer(current_buffer: &mut Option<SharedBuffer>) {
     if let Some(buffer) = current_buffer.take() {
-        buffer.cancel();
         buffer.clear_buffer_callback();
     }
 }
@@ -1828,7 +1826,8 @@ fn handle_play(
     fade_in: bool,
     track_gain: f32,
 ) {
-    state.set_buffer_bytes(1, 1);
+    state.set_cache_bytes(0, 0);
+    state.set_buffered_ahead_bytes(0);
 
     match player.play_with_fade(path.clone(), fade_in, track_gain) {
         Ok(_) => {
@@ -1863,7 +1862,8 @@ fn handle_load_paused(
     position: Duration,
     track_gain: f32,
 ) {
-    state.set_buffer_bytes(1, 1);
+    state.set_cache_bytes(0, 0);
+    state.set_buffered_ahead_bytes(0);
 
     match player.load_paused(path.clone(), position, track_gain) {
         Ok(_) => {
@@ -1899,7 +1899,8 @@ fn handle_play_at(
     fade_in: bool,
     track_gain: f32,
 ) {
-    state.set_buffer_bytes(1, 1);
+    state.set_cache_bytes(0, 0);
+    state.set_buffered_ahead_bytes(0);
 
     match player.play_from_position_with_fade(path.clone(), position, fade_in, track_gain) {
         Ok(seek_error) => {
@@ -2157,22 +2158,23 @@ fn handle_play_streaming(
 
     // Reset buffer state from previous track before setting up new callback
     // This ensures UI shows fresh progress for the new track
-    state.set_buffer_bytes(0, 0);
+    state.set_cache_bytes(0, 0);
 
     // Set up buffer callback to send BufferDataAvailable command
     setup_buffer_callback(&shared_buffer, buffer_mailbox, &context);
 
     // Initialize buffer progress (may be 0 if HTTP response not yet received)
-    let downloaded = shared_buffer.cached_bytes();
+    let cached = shared_buffer.cached_bytes();
     let total = shared_buffer.total_size();
-    state.set_buffer_bytes(downloaded, total);
+    state.set_cache_bytes(cached, total);
+    state.set_buffered_ahead_bytes(shared_buffer.buffered_ahead());
 
     // Send initial progress event if we have data
     if total > 0 {
-        let progress = downloaded as f32 / total as f32;
-        let _ = event_tx.send(AudioEvent::BufferProgress {
+        let progress = cached as f32 / total as f32;
+        let _ = event_tx.send(AudioEvent::CacheProgress {
             context: context.clone(),
-            downloaded,
+            cached,
             total,
             progress,
         });
@@ -2197,7 +2199,6 @@ fn handle_play_streaming(
             true
         }
         Err(e) => {
-            shared_buffer.cancel();
             shared_buffer.clear_buffer_callback();
             let kind = super::player::classify_playback_error(&e);
             let _ = event_tx.send(AudioEvent::Error {
@@ -2227,19 +2228,20 @@ fn handle_load_paused_streaming(
     position: Duration,
     track_gain: f32,
 ) -> bool {
-    state.set_buffer_bytes(0, 0);
+    state.set_cache_bytes(0, 0);
 
     setup_buffer_callback(&shared_buffer, buffer_mailbox, &context);
 
-    let downloaded = shared_buffer.cached_bytes();
+    let cached = shared_buffer.cached_bytes();
     let total = shared_buffer.total_size();
-    state.set_buffer_bytes(downloaded, total);
+    state.set_cache_bytes(cached, total);
+    state.set_buffered_ahead_bytes(shared_buffer.buffered_ahead());
 
     if total > 0 {
-        let progress = downloaded as f32 / total as f32;
-        let _ = event_tx.send(AudioEvent::BufferProgress {
+        let progress = cached as f32 / total as f32;
+        let _ = event_tx.send(AudioEvent::CacheProgress {
             context: context.clone(),
-            downloaded,
+            cached,
             total,
             progress,
         });
@@ -2273,7 +2275,6 @@ fn handle_load_paused_streaming(
             true
         }
         Err(e) => {
-            shared_buffer.cancel();
             shared_buffer.clear_buffer_callback();
             let kind = super::player::classify_playback_error(&e);
             let _ = event_tx.send(AudioEvent::Error {
@@ -2623,21 +2624,23 @@ fn handle_play_preloaded(
     // Set up buffer callback for streaming preloads
     if let Some(shared_buffer) = &shared_buffer {
         // Reset buffer progress for new track
-        let downloaded = shared_buffer.downloaded();
+        let cached = shared_buffer.cached_bytes();
         let total = shared_buffer.total_size();
-        state.set_buffer_bytes(downloaded, total);
+        state.set_cache_bytes(cached, total);
+        state.set_buffered_ahead_bytes(shared_buffer.buffered_ahead());
 
         // Set up callback to send BufferDataAvailable command (DRY: single callback setup point)
         setup_buffer_callback(shared_buffer, buffer_mailbox, &context);
 
         tracing::info!(
             request_id,
-            downloaded,
+            cached,
             total,
             "Set up promoted streaming preload callback"
         );
     } else {
-        state.set_buffer_bytes(1, 1);
+        state.set_cache_bytes(0, 0);
+        state.set_buffered_ahead_bytes(0);
     }
 
     match player.play_preloaded_sink(
@@ -2705,10 +2708,10 @@ fn setup_buffer_callback(
     let context = context.clone();
     shared_buffer.set_buffer_callback(move |event| {
         use super::streaming::BufferEvent;
-        if let BufferEvent::DataAppended { downloaded, total } = event {
+        if let BufferEvent::CacheAdvanced { cached, total } = event {
             mailbox.publish(BufferDataUpdate {
                 context: context.clone(),
-                downloaded,
+                cached,
                 total,
             });
         }
@@ -2728,18 +2731,18 @@ fn handle_buffer_data_update(
         return;
     }
 
-    let downloaded = update.downloaded;
+    let cached = update.cached;
     let total = update.total;
-    state.set_buffer_bytes(downloaded, total);
+    state.set_cache_bytes(cached, total);
 
     let progress = if total > 0 {
-        downloaded as f32 / total as f32
+        cached as f32 / total as f32
     } else {
         0.0
     };
-    let _ = event_tx.send(AudioEvent::BufferProgress {
+    let _ = event_tx.send(AudioEvent::CacheProgress {
         context: context.clone(),
-        downloaded,
+        cached,
         total,
         progress,
     });
@@ -2748,8 +2751,11 @@ fn handle_buffer_data_update(
         && let PlaybackStatus::Buffering { .. } = state.get_info().status
     {
         let remaining_bytes = buf.buffered_ahead();
-        if buf.is_complete() || buf.remote_eof_reached() || remaining_bytes >= HIGH_WATER_MARK_BYTES
-        {
+        state.set_buffered_ahead_bytes(remaining_bytes);
+        if buf.policy().can_start_or_resume(
+            remaining_bytes,
+            buf.is_complete() || buf.remote_eof_reached(),
+        ) {
             exit_buffering(player, state, event_tx, context);
         }
     }
@@ -2760,8 +2766,8 @@ fn handle_buffer_data_update(
 /// Called periodically from Tick handler for streaming playback.
 ///
 /// Uses hysteresis (watermark) mechanism to prevent rapid state oscillation:
-/// - Enter Buffering when decoder-visible data < LOW_WATER_MARK_BYTES
-/// - Exit Buffering when decoder-visible data >= HIGH_WATER_MARK_BYTES
+/// - Enter Buffering below the policy low watermark
+/// - Exit Buffering at the policy high watermark
 ///
 /// IMPORTANT: Uses state.get_info().status (SharedPlaybackState) instead of
 /// player.get_info().status because enter_buffering/exit_buffering only update
@@ -2779,16 +2785,18 @@ fn check_buffer_status(
     // Use player for the user-visible position only.
     let player_info = player.get_info();
     let remaining_bytes = buffer.buffered_ahead();
+    state.set_buffered_ahead_bytes(remaining_bytes);
     let source_has_all_required_bytes = buffer.is_complete() || buffer.remote_eof_reached();
+    let policy = buffer.policy();
 
     match &current_status {
         PlaybackStatus::Playing
-            if should_enter_buffering(remaining_bytes, source_has_all_required_bytes) =>
+            if policy.should_enter_buffering(remaining_bytes, source_has_all_required_bytes) =>
         {
             tracing::info!(
                 "Buffer low: remaining {} bytes < {} (low water mark), entering Buffering",
                 remaining_bytes,
-                LOW_WATER_MARK_BYTES
+                policy.low_water_mark_bytes()
             );
             enter_buffering(
                 player,
@@ -2801,16 +2809,16 @@ fn check_buffer_status(
         PlaybackStatus::Buffering { .. } => {
             // Check if we can exit Buffering (HIGH water mark)
             // Exit Buffering if:
-            // 1. Remaining data exceeds HIGH_WATER_MARK_BYTES, OR
+            // 1. Remaining data reaches the policy high watermark, OR
             // 2. Download is complete (no more data coming)
             if source_has_all_required_bytes {
                 tracing::info!("Streaming window reached EOF, exiting Buffering");
                 exit_buffering(player, state, event_tx, context.clone());
-            } else if remaining_bytes >= HIGH_WATER_MARK_BYTES {
+            } else if policy.can_start_or_resume(remaining_bytes, false) {
                 tracing::info!(
                     "Buffer sufficient: remaining {} bytes > {} (high water mark), exiting Buffering",
                     remaining_bytes,
-                    HIGH_WATER_MARK_BYTES
+                    policy.high_water_mark_bytes()
                 );
                 exit_buffering(player, state, event_tx, context.clone());
             }
@@ -2818,10 +2826,6 @@ fn check_buffer_status(
         }
         _ => {}
     }
-}
-
-fn should_enter_buffering(remaining_bytes: u64, source_has_all_required_bytes: bool) -> bool {
-    remaining_bytes < LOW_WATER_MARK_BYTES && !source_has_all_required_bytes
 }
 
 /// Enter Buffering state
@@ -2952,7 +2956,7 @@ mod tests {
     }
 
     #[test]
-    fn blocked_streaming_seek_does_not_block_stop_and_cancel_wakes_the_worker() {
+    fn blocked_streaming_seek_does_not_block_stop_and_reader_cancel_wakes_the_worker() {
         let buffer = SharedBuffer::new(100);
         buffer.set_coordinator_active_for_test(true);
         let (mixer, _mixer_source) = rodio::mixer::mixer(
@@ -3014,6 +3018,7 @@ mod tests {
         ));
 
         let started = Instant::now();
+        worker.cancel_active();
         let mut current_buffer = Some(buffer.clone());
         cancel_current_streaming_buffer(&mut current_buffer);
         let result = seek_result_rx
@@ -3022,7 +3027,7 @@ mod tests {
         assert!(started.elapsed() < Duration::from_millis(500));
         assert!(!generation.accepts_seek(&result.context, result.nonce));
         assert!(current_buffer.is_none());
-        assert_eq!(buffer.health(), SharedBufferHealth::Cancelled);
+        assert_eq!(buffer.health(), SharedBufferHealth::Refillable);
         result.sink.stop();
     }
 
@@ -3056,7 +3061,7 @@ mod tests {
     }
 
     #[test]
-    fn discarded_streaming_seek_cancels_its_reader_and_shared_buffer() {
+    fn discarded_streaming_seek_cancels_only_its_reader() {
         let shared = SharedBuffer::new(16);
         shared.set_coordinator_active_for_test(true);
         let reader = StreamingBuffer::new(shared.clone());
@@ -3065,7 +3070,7 @@ mod tests {
         cancel_streaming_seek_runtime(&cancellation, &shared);
 
         assert!(cancellation.is_cancelled());
-        assert_eq!(shared.health(), SharedBufferHealth::Cancelled);
+        assert_eq!(shared.health(), SharedBufferHealth::Refillable);
     }
 
     #[test]
@@ -3211,9 +3216,10 @@ mod tests {
 
     #[test]
     fn resume_buffering_uses_low_water_mark_without_hysteresis_deadlock() {
-        assert!(should_enter_buffering(LOW_WATER_MARK_BYTES - 1, false));
-        assert!(!should_enter_buffering(LOW_WATER_MARK_BYTES, false));
-        assert!(!should_enter_buffering(HIGH_WATER_MARK_BYTES - 1, false));
-        assert!(!should_enter_buffering(0, true));
+        let policy = super::super::streaming::StreamingBufferPolicy::from_bitrate(Some(320_000));
+        assert!(policy.should_enter_buffering(policy.low_water_mark_bytes() - 1, false));
+        assert!(!policy.should_enter_buffering(policy.low_water_mark_bytes(), false));
+        assert!(!policy.should_enter_buffering(policy.high_water_mark_bytes() - 1, false));
+        assert!(!policy.should_enter_buffering(0, true));
     }
 }

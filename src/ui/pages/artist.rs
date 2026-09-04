@@ -7,7 +7,7 @@ use std::rc::Rc;
 use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
-use crate::app::{ContentWidthTarget, ImageState, Message};
+use crate::app::{ImageState, Message};
 use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::animation::SmoothScrollTarget;
@@ -17,7 +17,7 @@ use crate::ui::components::{
 };
 use crate::ui::pages::playlist::{self, ArtistPageTab, DetailGradientSnapshot, PlaylistView};
 use crate::ui::responsive::{
-    ResponsiveContext, TextRole, detail_grid_columns, detail_header_metrics,
+    CardRole, ResponsiveContext, TextRole, UiTokens, detail_header_metrics,
 };
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::widgets::detail_header;
@@ -36,7 +36,6 @@ pub fn view<'a>(
     scroll_state: Rc<RefCell<widgets::VirtualListState>>,
     current_user_id: Option<u64>,
     current_playing_id: Option<i64>,
-    content_width: f32,
     description_expanded: bool,
     gradient_source: Option<DetailGradientSnapshot>,
     gradient_progress: f32,
@@ -55,7 +54,6 @@ pub fn view<'a>(
         scroll_state,
         current_user_id,
         current_playing_id,
-        content_width,
         description_expanded,
         gradient_source,
         gradient_progress,
@@ -76,7 +74,6 @@ fn view_for_context<'a>(
     scroll_state: Rc<RefCell<widgets::VirtualListState>>,
     current_user_id: Option<u64>,
     current_playing_id: Option<i64>,
-    content_width: f32,
     description_expanded: bool,
     gradient_source: Option<DetailGradientSnapshot>,
     gradient_progress: f32,
@@ -131,9 +128,7 @@ fn view_for_context<'a>(
                 .width(Fill)
                 .into()
         }
-        ArtistPageTab::Albums => {
-            build_albums_view(artist, image_state, locale, content_width, context)
-        }
+        ArtistPageTab::Albums => build_albums_view(artist, image_state, locale, context),
     };
 
     column![gradient_section, body]
@@ -160,6 +155,7 @@ fn build_header(
         &artist.name,
         avatar_size,
         theme::TEXT_PRIMARY,
+        tokens,
     );
 
     let title = text(artist.name.clone())
@@ -220,18 +216,20 @@ fn build_header(
                     )
                     .direction(scrollable::Direction::Vertical(
                         iced::widget::scrollable::Scrollbar::new()
-                            .width(4)
-                            .scroller_width(4),
+                            .width(tokens.size(4.0))
+                            .scroller_width(tokens.size(4.0)),
                     ))
                     .height(tokens.size(150.0))
                     .id(iced::widget::Id::new("artist_description_scroll")),
                     SmoothScrollTarget::Native("artist_description_scroll"),
+                    tokens,
                     Message::SmoothScroll,
                 );
 
                 let collapse_btn = detail_description::toggle_button(
                     locale.get(Key::CollapseDescription),
                     Message::ToggleDescriptionExpand,
+                    tokens,
                 );
 
                 column![scrollable_desc, collapse_btn]
@@ -240,13 +238,14 @@ fn build_header(
                     .into()
             } else {
                 let clamped_desc = container(desc_widget)
-                    .height(detail_description::collapsed_height())
+                    .height(detail_description::collapsed_height(tokens))
                     .clip(true)
                     .width(Fill);
 
                 let expand_btn = detail_description::toggle_button(
                     locale.get(Key::ExpandDescription),
                     Message::ToggleDescriptionExpand,
+                    tokens,
                 );
 
                 column![clamped_desc, expand_btn]
@@ -316,37 +315,35 @@ fn build_tabs(
         .on_press(Message::SwitchArtistTab(tab))
     };
 
-    scrollable(
-        container(
-            row![
-                tab(locale.get(Key::ArtistTopSongs), ArtistPageTab::TopSongs),
-                Space::new().width(tokens.space(28.0)),
-                tab(locale.get(Key::ArtistAlbums), ArtistPageTab::Albums),
-            ]
-            .align_y(Alignment::Center),
+    crate::ui::widgets::scaled_scroll(
+        scrollable(
+            container(
+                row![
+                    tab(locale.get(Key::ArtistTopSongs), ArtistPageTab::TopSongs),
+                    Space::new().width(tokens.space(28.0)),
+                    tab(locale.get(Key::ArtistAlbums), ArtistPageTab::Albums),
+                ]
+                .align_y(Alignment::Center),
+            )
+            .padding(
+                Padding::new(0.0)
+                    .left(tokens.space(48.0))
+                    .right(tokens.space(48.0))
+                    .bottom(tokens.space(18.0)),
+            ),
         )
-        .padding(
-            Padding::new(0.0)
-                .left(tokens.space(48.0))
-                .right(tokens.space(48.0))
-                .bottom(tokens.space(18.0)),
-        ),
+        .direction(crate::ui::widgets::hidden_horizontal_scrollbar())
+        .id(iced::widget::Id::new("artist_tabs_scroll"))
+        .width(Fill),
+        tokens,
     )
-    .direction(iced::widget::scrollable::Direction::Horizontal(
-        iced::widget::scrollable::Scrollbar::new()
-            .width(0)
-            .scroller_width(0),
-    ))
-    .id(iced::widget::Id::new("artist_tabs_scroll"))
-    .width(Fill)
     .into()
 }
 
 fn build_albums_view<'a>(
-    artist: &PlaylistView,
+    artist: &'a PlaylistView,
     image_state: &'a ImageState,
     locale: Locale,
-    content_width: f32,
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
     let tokens = context.tokens;
@@ -364,37 +361,44 @@ fn build_albums_view<'a>(
     }
 
     let card_spacing = context.tokens.space(detail_card::CARD_SPACING);
-    let columns_per_row = detail_grid_columns(content_width, context);
-    let mut rows = column![].spacing(tokens.space(18.0)).padding(
+    let card_metrics = tokens.card(CardRole::Detail);
+    let grid = widgets::responsive_card_columns(card_metrics, 8, move |columns_per_row| {
+        let rows = artist
+            .artist_albums
+            .chunks(columns_per_row)
+            .map(|chunk| {
+                let mut row_items: Vec<Element<'a, Message>> = Vec::new();
+                for album in chunk {
+                    let cover_handle = image_state.get(ImageKind::AlbumCover, album.id);
+                    row_items.push(detail_card::view(
+                        album.name.clone(),
+                        album.artist_names(),
+                        cover_handle,
+                        ImageKind::AlbumCover,
+                        Message::OpenAlbum(album.id),
+                        context,
+                    ));
+                    row_items.push(Space::new().width(card_spacing).into());
+                }
+                if !row_items.is_empty() {
+                    row_items.pop();
+                }
+                row(row_items).align_y(Alignment::Start).into()
+            })
+            .collect::<Vec<Element<'a, Message>>>();
+
+        column(rows).spacing(tokens.space(18.0)).into()
+    });
+    let grid = container(grid).width(Fill).padding(
         Padding::new(0.0)
             .left(tokens.space(48.0))
             .right(tokens.space(48.0)),
     );
 
-    for chunk in artist.artist_albums.chunks(columns_per_row) {
-        let mut row_items: Vec<Element<'a, Message>> = Vec::new();
-        for album in chunk {
-            let cover_handle = image_state.get(ImageKind::AlbumCover, album.id);
-            row_items.push(detail_card::view_with_context(
-                album.name.clone(),
-                album.artist_names(),
-                cover_handle,
-                ImageKind::AlbumCover,
-                Message::OpenAlbum(album.id),
-                context,
-            ));
-            row_items.push(Space::new().width(card_spacing).into());
-        }
-        if !row_items.is_empty() {
-            row_items.pop();
-        }
-        rows = rows.push(row(row_items).align_y(Alignment::Start));
-    }
-
-    widgets::measured_scrollable(
-        column![rows, Space::new().height(tokens.space(32.0))],
+    widgets::page_scrollable(
+        column![grid, Space::new().height(tokens.space(32.0))],
         "playlist_scroll",
-        |size| Message::ContentWidthResized(ContentWidthTarget::PlaylistDetail, size),
+        tokens,
         Message::SmoothScroll,
     )
 }
@@ -404,15 +408,16 @@ fn circular_avatar(
     fallback_name: &str,
     size: f32,
     fallback_text_color: Color,
+    tokens: UiTokens,
 ) -> Element<'static, Message> {
     if handle.is_some() {
-        return cover_image::circle(handle, ImageKind::ArtistCover, size);
+        return cover_image::circle(handle, ImageKind::ArtistCover, size, tokens);
     }
 
     let initial = fallback_name.chars().next().unwrap_or('?').to_string();
     container(
         text(initial)
-            .size((size * 0.22).max(24.0))
+            .size((size * 0.22).max(tokens.size(24.0)))
             .style(move |_theme| iced::widget::text::Style {
                 color: Some(fallback_text_color),
             })
@@ -426,7 +431,7 @@ fn circular_avatar(
         background: Some(iced::Background::Color(theme::surface_container(theme))),
         border: iced::Border {
             radius: (size / 2.0).into(),
-            width: 1.0,
+            width: tokens.size(1.0),
             color: theme::border_color(theme),
         },
         ..Default::default()

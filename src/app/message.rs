@@ -49,14 +49,6 @@ impl SettingsSection {
     }
 }
 
-/// Target state bucket for measured responsive content widths.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ContentWidthTarget {
-    Search,
-    Discover,
-    PlaylistDetail,
-}
-
 /// Request identity attached to every asynchronous search response.
 ///
 /// Search requests can finish out of order when the user changes tabs or
@@ -677,8 +669,6 @@ pub enum Message {
     HoverSearchSong(Option<u64>),
     /// Hover over search result card (album/playlist)
     HoverSearchCard(Option<u64>),
-    /// Measured content area resized
-    ContentWidthResized(ContentWidthTarget, iced::Size),
     /// Play search result song
     PlaySearchSong(u64),
     /// Open search result album/playlist
@@ -1321,15 +1311,6 @@ impl std::fmt::Debug for Message {
             Self::SearchPageChanged(page) => simple!("SearchPageChanged", "{}", page),
             Self::HoverSearchSong(id) => simple!("HoverSearchSong", "{:?}", id),
             Self::HoverSearchCard(id) => simple!("HoverSearchCard", "{:?}", id),
-            Self::ContentWidthResized(target, size) => {
-                simple!(
-                    "ContentWidthResized",
-                    "target={:?}, {}x{}",
-                    target,
-                    size.width,
-                    size.height
-                )
-            }
             Self::PlaySearchSong(id) => simple!("PlaySearchSong", "id={}", id),
             Self::OpenSearchResult(id, tab) => {
                 simple!("OpenSearchResult", "id={}, tab={:?}", id, tab)

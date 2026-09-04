@@ -115,12 +115,14 @@ fn view_for_context<'a>(
         )
         .width(Fill)
         .height(Fill)
+        .direction(crate::ui::widgets::vertical_scrollbar(tokens))
         .id(iced::widget::Id::new("settings_scroll"))
         .on_scroll(|viewport| {
             let offset = viewport.absolute_offset();
             Message::SettingsScrolled(offset.y)
         }),
         SmoothScrollTarget::Native("settings_scroll"),
+        tokens,
         Message::SmoothScroll,
     );
 
@@ -211,7 +213,7 @@ fn tab_bar(
             .padding([tokens.space(12.0), 0.0])
             .width(Fill);
 
-            let underline = container(Space::new().height(2))
+            let underline = container(Space::new().height(tokens.size(2.0)))
                 .width(Fill)
                 .style(move |theme| container::Style {
                     background: Some(Background::Color(if is_active {
@@ -229,15 +231,14 @@ fn tab_bar(
         .collect();
 
     // All tabs in a row with horizontal scroll for narrow screens
-    scrollable(row(tab_items).spacing(0))
-        .direction(iced::widget::scrollable::Direction::Horizontal(
-            iced::widget::scrollable::Scrollbar::new()
-                .width(0)
-                .scroller_width(0),
-        ))
-        .id(iced::widget::Id::new("settings_tabs_scroll"))
-        .width(Fill)
-        .into()
+    crate::ui::widgets::scaled_scroll(
+        scrollable(row(tab_items).spacing(0))
+            .direction(crate::ui::widgets::hidden_horizontal_scrollbar())
+            .id(iced::widget::Id::new("settings_tabs_scroll"))
+            .width(Fill),
+        tokens,
+    )
+    .into()
 }
 
 /// All settings sections on one page
@@ -421,7 +422,9 @@ fn account_section(
                         text(locale.get(Key::SettingsAccountLogout).to_string())
                             .size(tokens.text(TextRole::Body))
                     )
-                    .style(theme::button_danger)
+                    .style(move |theme, status| {
+                        theme::button_danger(theme, status, tokens.theme_metrics())
+                    })
                     .padding([tokens.space(8.0), tokens.space(16.0)])
                     .on_press(Message::Logout)
                     .into()
@@ -452,7 +455,9 @@ fn account_section(
                         text(locale.get(Key::SettingsAccountLogout).to_string())
                             .size(tokens.text(TextRole::Body))
                     )
-                    .style(theme::button_danger)
+                    .style(move |theme, status| {
+                        theme::button_danger(theme, status, tokens.theme_metrics())
+                    })
                     .padding([tokens.space(8.0), tokens.space(16.0)])
                     .on_press(Message::Logout)
                     .into()
@@ -469,7 +474,9 @@ fn account_section(
             button(
                 text(locale.get(Key::ClickToLogin).to_string()).size(tokens.text(TextRole::Body))
             )
-            .style(theme::primary_button)
+            .style(move |theme, status| {
+                theme::primary_button(theme, status, tokens.theme_metrics())
+            })
             .padding([tokens.space(8.0), tokens.space(16.0)])
             .on_press(Message::ToggleLoginPopup)
             .into()
@@ -571,7 +578,7 @@ fn playback_section(
             context,
             locale.get(Key::SettingsMusicQuality),
             Some(locale.get(Key::SettingsMusicQualityDesc)),
-            styled_pick_list(quality_options, Some(current_quality), |value| {
+            styled_pick_list(context, quality_options, Some(current_quality), |value| {
                 let quality = MusicQuality::from_display_name(&value).unwrap_or(MusicQuality::High);
                 Message::UpdateMusicQuality(quality)
             },)
@@ -704,6 +711,7 @@ fn display_section(
             locale.get(Key::SettingsLanguage),
             None,
             styled_pick_list(
+                context,
                 language_options,
                 Some(current_language.display_name().to_string()),
                 |value| {
@@ -732,6 +740,7 @@ fn display_section(
             locale.get(Key::SettingsLyricsFontFamily),
             None,
             styled_pick_list(
+                context,
                 {
                     let auto_label = locale.get(Key::SettingsLyricsFontFamilyAuto).to_string();
                     let mut opts = vec![auto_label];
@@ -765,6 +774,7 @@ fn display_section(
             locale.get(Key::SettingsCloseBehavior),
             None,
             styled_pick_list(
+                context,
                 close_behavior_options,
                 Some(current_close_behavior),
                 move |value| {
@@ -820,18 +830,23 @@ fn system_section(
             context,
             locale.get(Key::SettingsAudioDevice),
             None,
-            styled_pick_list(display_names, Some(current_display), move |display_value| {
-                // Convert display name back to internal name
-                let device = if display_value == default_label {
-                    None
-                } else {
-                    devices_for_closure
-                        .iter()
-                        .find(|(_, description)| *description == display_value)
-                        .map(|(name, _)| name.clone())
-                };
-                Message::UpdateAudioOutputDevice(device)
-            },)
+            styled_pick_list(
+                context,
+                display_names,
+                Some(current_display),
+                move |display_value| {
+                    // Convert display name back to internal name
+                    let device = if display_value == default_label {
+                        None
+                    } else {
+                        devices_for_closure
+                            .iter()
+                            .find(|(_, description)| *description == display_value)
+                            .map(|(name, _)| name.clone())
+                    };
+                    Message::UpdateAudioOutputDevice(device)
+                },
+            )
         ),
         setting_row(
             context,
@@ -887,20 +902,25 @@ fn network_section(
         context,
         locale.get(Key::SettingsProxyType),
         None,
-        styled_pick_list(proxy_types, Some(current_proxy_type), move |value| {
-            let proxy_type = if value == proxy_none_label {
-                ProxyType::None
-            } else if value == "HTTP" {
-                ProxyType::Http
-            } else if value == "HTTPS" {
-                ProxyType::Https
-            } else if value == "SOCKS5" {
-                ProxyType::Socks5
-            } else {
-                ProxyType::System
-            };
-            Message::UpdateProxyType(proxy_type)
-        }),
+        styled_pick_list(
+            context,
+            proxy_types,
+            Some(current_proxy_type),
+            move |value| {
+                let proxy_type = if value == proxy_none_label {
+                    ProxyType::None
+                } else if value == "HTTP" {
+                    ProxyType::Http
+                } else if value == "HTTPS" {
+                    ProxyType::Https
+                } else if value == "SOCKS5" {
+                    ProxyType::Socks5
+                } else {
+                    ProxyType::System
+                };
+                Message::UpdateProxyType(proxy_type)
+            },
+        ),
     )];
 
     if show_proxy_details {
@@ -960,6 +980,7 @@ where
 
     let input = text_input(placeholder_text, value_text)
         .on_input(on_input)
+        .size(tokens.text(TextRole::Body))
         .padding([tokens.space(8.0), tokens.space(12.0)])
         .width(Length::Fixed(tokens.size(200.0)))
         .style(move |theme, status| {
@@ -972,7 +993,7 @@ where
                 background: iced::Background::Color(theme::settings_input_bg(theme)),
                 border: Border {
                     color: border_color,
-                    width: 1.0,
+                    width: tokens.size(1.0),
                     radius: tokens.radius(RadiusRole::Small).into(),
                 },
                 placeholder: theme::settings_desc(theme),
@@ -1032,6 +1053,7 @@ fn storage_section(
             locale.get(Key::SettingsMaxCache),
             None,
             styled_pick_list(
+                context,
                 vec![
                     "512 MB".to_string(),
                     "1 GB".to_string(),
@@ -1067,7 +1089,9 @@ fn storage_section(
                         text(locale.get(Key::SettingsDownloadChange).to_string())
                             .size(tokens.text(TextRole::Body))
                     )
-                    .style(theme::secondary_button)
+                    .style(move |theme, status| {
+                        theme::secondary_button(theme, status, tokens.theme_metrics())
+                    })
                     .height(tokens.target(crate::ui::responsive::TargetRole::Control))
                     .padding([tokens.space(4.0), tokens.space(12.0)])
                     .on_press(Message::UpdateDownloadDirDialog),
@@ -1090,7 +1114,7 @@ fn storage_section(
                 context,
                 locale.get(Key::SettingsDownloadQuality),
                 None,
-                styled_pick_list(qualities, Some(current_quality), |value| {
+                styled_pick_list(context, qualities, Some(current_quality), |value| {
                     let q = crate::features::MusicQuality::from_display_name(&value)
                         .unwrap_or(crate::features::MusicQuality::High);
                     Message::UpdateDownloadQuality(q)
@@ -1106,7 +1130,9 @@ fn storage_section(
                 text(locale.get(Key::SettingsClearButton).to_string())
                     .size(tokens.text(TextRole::Body))
             )
-            .style(theme::button_danger)
+            .style(move |theme, status| {
+                theme::button_danger(theme, status, tokens.theme_metrics())
+            })
             .padding([tokens.space(8.0), tokens.space(16.0)])
             .on_press(Message::ClearCache)
             .into()
@@ -1333,6 +1359,7 @@ fn shortcut_row(
             .wrapping(iced::widget::text::Wrapping::None),
         tooltip::Position::Top,
     )
+    .padding(tokens.space(5.0))
     .into();
     let local_cell = shortcut_cell(
         action,
@@ -1409,7 +1436,7 @@ fn shortcut_cell(
             background: Some(Background::Color(theme::shortcut_key_bg(theme))),
             border: Border {
                 radius: tokens.radius(RadiusRole::Small).into(),
-                width: 1.0,
+                width: tokens.size(1.0),
                 color: theme::ACCENT_PINK,
             },
             ..Default::default()
@@ -1459,13 +1486,14 @@ fn shortcut_cell(
             .size(tokens.text(TextRole::Caption))
             .wrapping(iced::widget::text::Wrapping::None),
         tooltip::Position::Top,
-    );
+    )
+    .padding(tokens.space(5.0));
 
     container(edit_button).width(Fill).into()
 }
 
 fn divider(context: ResponsiveContext) -> Element<'static, Message> {
-    container(Space::new().width(Fill).height(context.tokens.space(1.0)))
+    container(Space::new().width(Fill).height(context.tokens.size(1.0)))
         .style(|theme| container::Style {
             background: Some(Background::Color(theme::shortcut_bg(theme))),
             ..Default::default()
@@ -1476,6 +1504,7 @@ fn divider(context: ResponsiveContext) -> Element<'static, Message> {
 
 /// Styled pick list (dropdown) with custom appearance
 fn styled_pick_list<'a, T, F>(
+    context: ResponsiveContext,
     options: Vec<T>,
     selected: Option<T>,
     on_selected: F,
@@ -1484,11 +1513,15 @@ where
     T: ToString + PartialEq + Clone + 'a,
     F: Fn(T) -> Message + 'a,
 {
+    let tokens = context.tokens;
     pick_list(selected, options, |value| value.to_string())
         .on_select(on_selected)
-        .style(theme::settings_pick_list)
-        .menu_style(theme::settings_pick_list_menu)
-        .padding([8, 12])
+        .text_size(tokens.text(TextRole::Body))
+        .style(move |theme, status| {
+            theme::settings_pick_list(theme, status, tokens.theme_metrics())
+        })
+        .menu_style(move |theme| theme::settings_pick_list_menu(theme, tokens.theme_metrics()))
+        .padding([tokens.space(8.0), tokens.space(12.0)])
         .into()
 }
 

@@ -1,77 +1,80 @@
 //! Responsive layout helpers shared by grid-like pages.
 
-use iced::widget::{Sensor, container, scrollable};
-use iced::{Element, Fill};
+use iced::widget::{container, responsive, scrollable};
+use iced::{Element, Fill, Length};
 
 use crate::ui::animation::{SmoothScrollEvent, SmoothScrollTarget};
-use crate::ui::responsive::ResponsiveContext;
+use crate::ui::responsive::{CardMetrics, UiTokens, calculate_grid_columns_clamped};
 use crate::ui::widgets::smooth_scroll;
 
-// Compatibility wrappers keep the existing `ui::widgets` and page callers
-// stable while the pure policy now lives in `ui::responsive`.
-pub use crate::ui::responsive::calculate_grid_columns;
+const SCROLLBAR_REFERENCE_WIDTH: f32 = 10.0;
 
-/// Derive usable content width from a measured container size.
-pub fn usable_content_width(size: iced::Size, horizontal_padding: f32) -> f32 {
-    ResponsiveContext::from_viewport(size).usable_content_width(horizontal_padding)
+fn scrollbar(tokens: UiTokens) -> scrollable::Scrollbar {
+    scrollable::Scrollbar::new()
+        .width(tokens.size(SCROLLBAR_REFERENCE_WIDTH))
+        .scroller_width(tokens.size(SCROLLBAR_REFERENCE_WIDTH))
 }
 
-/// Scrollable content that reports its rendered width through [`Sensor`].
-pub fn measured_scrollable<'a, Message, F>(
+/// Root-rem-scaled vertical scrollbar geometry.
+pub fn vertical_scrollbar(tokens: UiTokens) -> scrollable::Direction {
+    scrollable::Direction::Vertical(scrollbar(tokens))
+}
+
+/// Fully hidden vertical scrollbar without iced's default hit-width fallback.
+pub fn hidden_vertical_scrollbar() -> scrollable::Direction {
+    scrollable::Direction::Vertical(scrollable::Scrollbar::hidden())
+}
+
+/// Fully hidden horizontal scrollbar without iced's default hit-width fallback.
+pub fn hidden_horizontal_scrollbar() -> scrollable::Direction {
+    scrollable::Direction::Horizontal(scrollable::Scrollbar::hidden())
+}
+
+/// Build a stable vertical page scroll surface without persisting layout-only
+/// measurements in application state.
+pub fn page_scrollable<'a, Message>(
     content: impl Into<Element<'a, Message>>,
     scroll_id: &'static str,
-    on_resize: F,
+    tokens: UiTokens,
     on_scroll_event: impl Fn(SmoothScrollEvent) -> Message + 'a,
 ) -> Element<'a, Message>
 where
     Message: Clone + 'a,
-    F: Fn(iced::Size) -> Message + Clone + 'static,
 {
-    let measured_content = Sensor::new(container(content).width(Fill))
-        .on_show(on_resize.clone())
-        .on_resize(on_resize);
-
     smooth_scroll(
-        scrollable(measured_content)
+        scrollable(container(content).width(Fill))
             .width(Fill)
             .height(Fill)
             .id(iced::widget::Id::new(scroll_id))
-            .style(crate::ui::theme::dark_scrollable),
+            .direction(vertical_scrollbar(tokens))
+            .style(move |theme, status| {
+                crate::ui::theme::dark_scrollable(theme, status, tokens.theme_metrics())
+            }),
         SmoothScrollTarget::Native(scroll_id),
+        tokens,
         on_scroll_event,
     )
     .into()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{calculate_grid_columns, usable_content_width};
-    use crate::ui::responsive::calculate_grid_columns_clamped;
+/// Build card rows from the exact width supplied by the current Iced layout
+/// pass. The callback is rebuilt when its parent width changes, so view-mode
+/// switches and window restoration cannot reuse a stale asynchronous value.
+pub fn responsive_card_columns<'a, Message>(
+    metrics: CardMetrics,
+    max_columns: usize,
+    view: impl Fn(usize) -> Element<'a, Message> + 'a,
+) -> Element<'a, Message>
+where
+    Message: 'a,
+{
+    responsive(move |size| {
+        let columns =
+            calculate_grid_columns_clamped(size.width, metrics.width, metrics.gap, max_columns);
 
-    #[test]
-    fn usable_width_respects_padding() {
-        assert_eq!(
-            usable_content_width(iced::Size::new(1024.0, 768.0), 64.0),
-            960.0
-        );
-    }
-
-    #[test]
-    fn usable_width_has_floor() {
-        assert_eq!(
-            usable_content_width(iced::Size::new(120.0, 768.0), 64.0),
-            200.0
-        );
-    }
-
-    #[test]
-    fn grid_columns_expand_with_width() {
-        assert_eq!(calculate_grid_columns(160.0, 160.0, 24.0), 1);
-        assert_eq!(calculate_grid_columns(528.0, 160.0, 24.0), 3);
-    }
-
-    #[test]
-    fn clamped_columns_respect_maximum() {
-        assert_eq!(calculate_grid_columns_clamped(4000.0, 160.0, 24.0, 5), 5);
-    }
+        view(columns)
+    })
+    .width(Fill)
+    .height(Length::Shrink)
+    .into()
 }

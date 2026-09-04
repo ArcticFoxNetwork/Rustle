@@ -32,8 +32,8 @@ pub fn view<'a>(
     let tokens = context.tokens;
     let button_size = tokens.target(TargetRole::WindowControl);
     let control_radius = button_size / 2.0;
-    let icon_size = tokens.icon(IconRole::WindowControl);
-    let nav_icon_size = tokens.icon(IconRole::Medium);
+    let icon_size = tokens.icon(IconRole::TopBarAction);
+    let nav_icon_size = tokens.icon(IconRole::TopBarNavigation);
     let top_height = top_bar_height(&context);
     let compact_actions = context.profile.is_compact();
     let back_icon_opacity: f32 = if can_go_back { 1.0 } else { 0.5 };
@@ -55,6 +55,7 @@ pub fn view<'a>(
     )
     .width(button_size)
     .height(button_size)
+    .padding(0)
     .style(move |theme, status| nav_button_style(theme, status, can_go_back, control_radius))
     .on_press_maybe(if can_go_back {
         Some(Message::NavigateBack)
@@ -63,9 +64,10 @@ pub fn view<'a>(
     });
     let back_btn = tooltip(
         animated_nav_button(back_button.into(), can_go_back, control_radius),
-        locale.get(Key::Back),
+        text(locale.get(Key::Back)).size(tokens.text(TextRole::Caption)),
         tooltip::Position::Bottom,
-    );
+    )
+    .padding(tokens.space(5.0));
 
     let forward_button = button(
         svg(svg::Handle::from_memory(FORWARD_ICON.as_bytes()))
@@ -82,6 +84,7 @@ pub fn view<'a>(
     )
     .width(button_size)
     .height(button_size)
+    .padding(0)
     .style(move |theme, status| nav_button_style(theme, status, can_go_forward, control_radius))
     .on_press_maybe(if can_go_forward {
         Some(Message::NavigateForward)
@@ -90,9 +93,10 @@ pub fn view<'a>(
     });
     let forward_btn = tooltip(
         animated_nav_button(forward_button.into(), can_go_forward, control_radius),
-        locale.get(Key::Forward),
+        text(locale.get(Key::Forward)).size(tokens.text(TextRole::Caption)),
         tooltip::Position::Bottom,
-    );
+    )
+    .padding(tokens.space(5.0));
 
     // Keep back and forward as separate circular controls.
     let nav_buttons = container(
@@ -103,11 +107,12 @@ pub fn view<'a>(
     .padding(Padding::new(0.0).left(tokens.space(16.0)));
 
     // User info (avatar + username + API-backed membership badge)
-    let avatar_size = tokens.size(28.0);
+    let avatar_size = tokens.size(24.0);
     let avatar_handle = is_logged_in
         .then(|| user_info.and_then(|info| image_state.get(ImageKind::UserAvatar, info.user_id)))
         .flatten();
-    let avatar_elem = cover_image::circle(avatar_handle, ImageKind::UserAvatar, avatar_size);
+    let avatar_elem =
+        cover_image::circle(avatar_handle, ImageKind::UserAvatar, avatar_size, tokens);
 
     let user_text: Element<'_, Message> = if is_logged_in {
         if let Some(info) = user_info {
@@ -202,6 +207,7 @@ pub fn view<'a>(
             .size(tokens.text(TextRole::Caption)),
             tooltip::Position::Bottom,
         )
+        .padding(tokens.space(5.0))
         .into()
     } else {
         user_info_surface.into()
@@ -220,13 +226,15 @@ pub fn view<'a>(
     )
     .width(button_size)
     .height(button_size)
+    .padding(0)
     .style(move |theme, status| window_button_style(theme, status, control_radius))
     .on_press(Message::OpenSettings);
     let settings_btn = tooltip(
         animated_window_button(settings_button.into(), control_radius),
-        locale.get(Key::Settings),
+        text(locale.get(Key::Settings)).size(tokens.text(TextRole::Caption)),
         tooltip::Position::Bottom,
-    );
+    )
+    .padding(tokens.space(5.0));
 
     let minimize_button = button(
         svg(svg::Handle::from_memory(MINIMIZE_ICON.as_bytes()))
@@ -238,13 +246,15 @@ pub fn view<'a>(
     )
     .width(button_size)
     .height(button_size)
+    .padding(0)
     .style(move |theme, status| window_button_style(theme, status, control_radius))
     .on_press(Message::WindowMinimize);
     let minimize_btn = tooltip(
         animated_window_button(minimize_button.into(), control_radius),
-        locale.get(Key::Minimize),
+        text(locale.get(Key::Minimize)).size(tokens.text(TextRole::Caption)),
         tooltip::Position::Bottom,
-    );
+    )
+    .padding(tokens.space(5.0));
 
     let maximize_button = button(
         svg(svg::Handle::from_memory(
@@ -258,17 +268,20 @@ pub fn view<'a>(
     )
     .width(button_size)
     .height(button_size)
+    .padding(0)
     .style(move |theme, status| window_button_style(theme, status, control_radius))
     .on_press(Message::WindowMaximize);
     let maximize_btn = tooltip(
         animated_window_button(maximize_button.into(), control_radius),
-        locale.get(if is_maximized {
+        text(locale.get(if is_maximized {
             Key::Restore
         } else {
             Key::Maximize
-        }),
+        }))
+        .size(tokens.text(TextRole::Caption)),
         tooltip::Position::Bottom,
-    );
+    )
+    .padding(tokens.space(5.0));
 
     let close_button = button(
         svg(svg::Handle::from_memory(CLOSE_ICON.as_bytes()))
@@ -280,20 +293,19 @@ pub fn view<'a>(
     )
     .width(button_size)
     .height(button_size)
+    .padding(0)
     .style(move |theme, status| close_button_style(theme, status, control_radius))
     .on_press(Message::RequestClose);
     let close_btn = tooltip(
         animated_close_button(close_button.into(), control_radius),
-        locale.get(Key::Close),
+        text(locale.get(Key::Close)).size(tokens.text(TextRole::Caption)),
         tooltip::Position::Bottom,
-    );
+    )
+    .padding(tokens.space(5.0));
 
     // Search bar (left, after nav buttons)
-    let desktop_search_bar = search_bar::view(
-        search_query,
-        locale,
-        SearchBarStyle::top_bar_scaled(&context, 0.0),
-    );
+    let desktop_search_bar =
+        search_bar::view(search_query, locale, SearchBarStyle::top_bar(&context, 0.0));
 
     let drag_region = mouse_area(
         container(Space::new())
@@ -318,9 +330,10 @@ pub fn view<'a>(
         .on_press(Message::ToggleSidebarDrawer);
         tooltip(
             animated_window_button(button.into(), control_radius),
-            locale.get(Key::NavigationMenu),
+            text(locale.get(Key::NavigationMenu)).size(tokens.text(TextRole::Caption)),
             tooltip::Position::Bottom,
         )
+        .padding(tokens.space(5.0))
         .into()
     } else {
         Space::new().width(0).height(0).into()

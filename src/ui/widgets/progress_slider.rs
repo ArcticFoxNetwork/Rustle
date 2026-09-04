@@ -7,6 +7,7 @@ use iced::widget::{slider, vertical_slider};
 use iced::{Color, Element, Length};
 
 use super::multi_track_slider::{self, MultiTrackSlider};
+use crate::ui::responsive::UiTokens;
 use crate::ui::theme;
 
 /// Size variant for progress slider
@@ -18,41 +19,13 @@ pub enum SliderSize {
     Edge,
 }
 
-/// Build the progress slider with optional download progress indicator
-///
-/// # Arguments
-/// * `position` - Current playback position (0.0 to 1.0)
-/// * `download_progress` - Download progress (0.0 to 1.0), None if not streaming
-/// * `size` - Size variant
-/// * `on_seek_preview` - Generic action emitted while seeking
-/// * `on_seek_release` - Generic action emitted when seeking ends
+/// Build a progress slider using shared root-rem tokens and optional cover-derived colors.
 pub fn view<M, F>(
     position: f32,
     download_progress: Option<f32>,
     size: SliderSize,
-    on_seek_preview: F,
-    on_seek_release: M,
-) -> Element<'static, M>
-where
-    M: Clone + 'static,
-    F: Fn(f32) -> M + 'static,
-{
-    view_with_gradient(
-        position,
-        download_progress,
-        size,
-        None,
-        on_seek_preview,
-        on_seek_release,
-    )
-}
-
-/// Build a progress slider whose played track can use cover-derived colors.
-pub fn view_with_gradient<M, F>(
-    position: f32,
-    download_progress: Option<f32>,
-    size: SliderSize,
     played_gradient: Option<[Color; 3]>,
+    tokens: UiTokens,
     on_seek_preview: F,
     on_seek_release: M,
 ) -> Element<'static, M>
@@ -60,52 +33,21 @@ where
     M: Clone + 'static,
     F: Fn(f32) -> M + 'static,
 {
-    view_with_gradient_scaled(
-        position,
-        download_progress,
-        size,
-        played_gradient,
-        1.0,
-        on_seek_preview,
-        on_seek_release,
-    )
-}
-
-/// Build a progress slider using a density scale from the shared UI policy.
-pub fn view_with_gradient_scaled<M, F>(
-    position: f32,
-    download_progress: Option<f32>,
-    size: SliderSize,
-    played_gradient: Option<[Color; 3]>,
-    density: f32,
-    on_seek_preview: F,
-    on_seek_release: M,
-) -> Element<'static, M>
-where
-    M: Clone + 'static,
-    F: Fn(f32) -> M + 'static,
-{
-    let density = if density.is_finite() && density > 0.0 {
-        density
-    } else {
-        1.0
-    };
     let clamped_position = position.clamp(0.0, 1.0);
     let played_gradient = played_gradient.map(colors_light_to_dark);
 
     let width = Length::Fill;
 
     let height = match size {
-        SliderSize::Edge => (8.0 * density).max(6.0),
-        SliderSize::Full => (16.0 * density).max(12.0),
+        SliderSize::Edge => tokens.size(8.0),
+        SliderSize::Full => tokens.size(16.0),
     };
 
     // Use multi-track slider for download progress display
-    MultiTrackSlider::new(0.0..=1.0, clamped_position, on_seek_preview)
+    MultiTrackSlider::new(0.0..=1.0, clamped_position, height, tokens, on_seek_preview)
         .secondary(download_progress)
         .on_release(on_seek_release)
         .width(width)
-        .height(height)
         .step(0.001)
         .style(move |iced_theme, status| {
             let fallback_color = if size == SliderSize::Full {
@@ -144,16 +86,16 @@ where
                     secondary_background: Some(iced::Background::Color(Color::from_rgba(
                         0.6, 0.6, 0.6, 0.5,
                     ))),
-                    width: 4.0 * density,
+                    width: tokens.size(4.0),
                     border: iced::Border {
-                        radius: (rail_radius * density).into(),
+                        radius: tokens.size(rail_radius).into(),
                         width: 0.0,
                         color: Color::TRANSPARENT,
                     },
                 },
                 handle: multi_track_slider::Handle {
                     shape: multi_track_slider::HandleShape::Circle {
-                        radius: handle_radius * density,
+                        radius: tokens.size(handle_radius),
                     },
                     background: iced::Background::Color(handle_color),
                     border_width: 0.0,
@@ -175,38 +117,20 @@ fn perceived_brightness(color: Color) -> f32 {
     color.r * 0.299 + color.g * 0.587 + color.b * 0.114
 }
 
-/// Build a volume slider
-///
-/// # Arguments
-/// * `volume` - Current volume (0.0 to 1.0)
-/// * `on_change` - Generic action emitted when the volume changes
-pub fn volume_slider<M, F>(volume: f32, width: f32, on_change: F) -> Element<'static, M>
-where
-    M: Clone + 'static,
-    F: Fn(f32) -> M + 'static,
-{
-    volume_slider_scaled(volume, width, 1.0, on_change)
-}
-
-/// Build a horizontal volume slider using a density scale.
-pub fn volume_slider_scaled<M, F>(
+/// Build a horizontal volume slider using shared root-rem tokens.
+pub fn volume_slider<M, F>(
     volume: f32,
     width: f32,
-    density: f32,
+    tokens: UiTokens,
     on_change: F,
 ) -> Element<'static, M>
 where
     M: Clone + 'static,
     F: Fn(f32) -> M + 'static,
 {
-    let density = if density.is_finite() && density > 0.0 {
-        density
-    } else {
-        1.0
-    };
     slider(0.0..=1.0, volume, on_change)
         .width(width)
-        .height((4.0 * density).max(3.0))
+        .height(tokens.size(4.0))
         .step(0.01_f32)
         .shift_step(0.05_f32)
         .style(move |iced_theme, status| {
@@ -220,16 +144,16 @@ where
                         iced::Background::Color(theme::text_primary(iced_theme)),
                         iced::Background::Color(theme::divider(iced_theme)),
                     ),
-                    width: 4.0 * density,
+                    width: tokens.size(4.0),
                     border: iced::Border {
-                        radius: (2.0 * density).into(),
+                        radius: tokens.size(2.0).into(),
                         width: 0.0,
                         color: Color::TRANSPARENT,
                     },
                 },
                 handle: slider::Handle {
                     shape: slider::HandleShape::Circle {
-                        radius: handle_radius * density,
+                        radius: tokens.size(handle_radius),
                     },
                     background: iced::Background::Color(theme::text_primary(iced_theme)),
                     border_width: 0.0,
@@ -240,34 +164,19 @@ where
         .into()
 }
 
-/// Build the vertical volume slider used by a narrow player bar popup.
-pub fn vertical_volume_slider<M, F>(volume: f32, height: f32, on_change: F) -> Element<'static, M>
-where
-    M: Clone + 'static,
-    F: Fn(f32) -> M + 'static,
-{
-    vertical_volume_slider_scaled(volume, height, 1.0, on_change)
-}
-
-/// Build the vertical volume slider using a density scale from the shared UI policy.
-pub fn vertical_volume_slider_scaled<M, F>(
+/// Build the vertical volume slider using shared root-rem tokens.
+pub fn vertical_volume_slider<M, F>(
     volume: f32,
     height: f32,
-    density: f32,
+    tokens: UiTokens,
     on_change: F,
 ) -> Element<'static, M>
 where
     M: Clone + 'static,
     F: Fn(f32) -> M + 'static,
 {
-    let density = if density.is_finite() && density > 0.0 {
-        density
-    } else {
-        1.0
-    };
-
     vertical_slider(0.0..=1.0, volume, on_change)
-        .width((16.0 * density).max(16.0))
+        .width(tokens.size(16.0))
         .height(height)
         .step(0.01_f32)
         .shift_step(0.05_f32)
@@ -282,16 +191,16 @@ where
                         iced::Background::Color(theme::text_primary(iced_theme)),
                         iced::Background::Color(theme::divider(iced_theme)),
                     ),
-                    width: 4.0 * density,
+                    width: tokens.size(4.0),
                     border: iced::Border {
-                        radius: (2.0 * density).into(),
+                        radius: tokens.size(2.0).into(),
                         width: 0.0,
                         color: Color::TRANSPARENT,
                     },
                 },
                 handle: slider::Handle {
                     shape: slider::HandleShape::Circle {
-                        radius: handle_radius * density,
+                        radius: tokens.size(handle_radius),
                     },
                     background: iced::Background::Color(theme::text_primary(iced_theme)),
                     border_width: 0.0,

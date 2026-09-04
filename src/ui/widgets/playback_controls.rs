@@ -6,78 +6,59 @@
 use iced::widget::{Space, button, container, row, svg};
 use iced::{Alignment, Color, Element, Padding};
 
+use crate::ui::responsive::UiTokens;
 use crate::ui::{icons, theme};
 
 /// Size variant for playback controls
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum ControlSize {
-    /// Small size for player bar (40px play button)
+    /// Small controls for player chrome.
     Small,
-    /// Large size for lyrics page (64px play button)
+    /// Large controls for full-screen surfaces.
     Large,
-    /// Density-scaled small controls for high-resolution player chrome.
-    ScaledSmall(f32),
-    /// Density-scaled large controls for high-resolution full-screen surfaces.
-    ScaledLarge(f32),
+    /// Slightly emphasized large controls for the compact lyrics focus mode.
+    LargeEmphasized,
 }
 
 impl ControlSize {
-    fn play_button_size(&self) -> f32 {
+    fn emphasis(self) -> f32 {
         match self {
-            Self::Small => 40.0,
-            Self::Large => 64.0,
-            Self::ScaledSmall(scale) => 40.0 * scale.max(0.1),
-            Self::ScaledLarge(scale) => 64.0 * scale.max(0.1),
+            Self::Small | Self::Large => 1.0,
+            Self::LargeEmphasized => 1.08,
         }
     }
 
-    fn play_icon_size(&self) -> f32 {
-        match self {
-            Self::Small => 20.0,
-            Self::Large => 28.0,
-            Self::ScaledSmall(scale) => 20.0 * scale.max(0.1),
-            Self::ScaledLarge(scale) => 28.0 * scale.max(0.1),
-        }
+    fn play_button_size(self, tokens: UiTokens) -> f32 {
+        let reference = if self.is_small() { 40.0 } else { 64.0 };
+        tokens.size(reference * self.emphasis())
     }
 
-    fn skip_icon_size(&self) -> f32 {
-        match self {
-            Self::Small => 20.0,
-            Self::Large => 28.0,
-            Self::ScaledSmall(scale) => 20.0 * scale.max(0.1),
-            Self::ScaledLarge(scale) => 28.0 * scale.max(0.1),
-        }
+    fn play_icon_size(self, tokens: UiTokens) -> f32 {
+        let reference = if self.is_small() { 20.0 } else { 28.0 };
+        tokens.size(reference * self.emphasis())
     }
 
-    fn skip_button_padding(&self) -> f32 {
-        match self {
-            Self::Small => 8.0,
-            Self::Large => 12.0,
-            Self::ScaledSmall(scale) => 8.0 * scale.max(0.1),
-            Self::ScaledLarge(scale) => 12.0 * scale.max(0.1),
-        }
+    fn skip_icon_size(self, tokens: UiTokens) -> f32 {
+        self.play_icon_size(tokens)
     }
 
-    fn skip_button_radius(&self) -> f32 {
-        match self {
-            Self::Small => 20.0,
-            Self::Large => 26.0,
-            Self::ScaledSmall(scale) => 20.0 * scale.max(0.1),
-            Self::ScaledLarge(scale) => 26.0 * scale.max(0.1),
-        }
+    fn skip_button_padding(self, tokens: UiTokens) -> f32 {
+        let reference = if self.is_small() { 8.0 } else { 12.0 };
+        tokens.space(reference * self.emphasis())
     }
 
-    fn spacing(&self) -> f32 {
-        match self {
-            Self::Small => 8.0,
-            Self::Large => 16.0,
-            Self::ScaledSmall(scale) => 8.0 * scale.max(0.1),
-            Self::ScaledLarge(scale) => 16.0 * scale.max(0.1),
-        }
+    fn skip_button_radius(self, tokens: UiTokens) -> f32 {
+        let reference = if self.is_small() { 20.0 } else { 26.0 };
+        tokens.size(reference * self.emphasis())
     }
 
-    fn is_small(&self) -> bool {
-        matches!(self, Self::Small | Self::ScaledSmall(_))
+    fn spacing(self, tokens: UiTokens) -> f32 {
+        let reference = if self.is_small() { 8.0 } else { 16.0 };
+        tokens.space(reference * self.emphasis())
+    }
+
+    fn is_small(self) -> bool {
+        matches!(self, Self::Small)
     }
 }
 
@@ -86,6 +67,7 @@ pub fn play_button_with_buffering<M: Clone + 'static>(
     is_playing: bool,
     is_buffering: bool,
     size: ControlSize,
+    tokens: UiTokens,
     on_press: M,
 ) -> Element<'static, M> {
     // Only show loading icon when playing AND buffering
@@ -98,17 +80,17 @@ pub fn play_button_with_buffering<M: Clone + 'static>(
         icons::PLAY
     };
 
-    let btn_size = size.play_button_size();
-    let icon_size = size.play_icon_size();
+    let btn_size = size.play_button_size(tokens);
+    let icon_size = size.play_icon_size(tokens);
     let inner_padding = (btn_size - icon_size) / 2.0;
     let icon_opacity: f32 = if show_loading { 0.4 } else { 1.0 };
     // Offset to visually center the triangle (play icon is not symmetric)
     let offset = if is_playing || show_loading {
         0.0
     } else if size.is_small() {
-        2.0
+        tokens.size(2.0)
     } else {
-        3.0
+        tokens.size(3.0)
     };
 
     let btn = button(
@@ -170,12 +152,13 @@ pub fn play_button_with_buffering<M: Clone + 'static>(
 /// Build the previous song button
 pub fn prev_button<M: Clone + 'static>(
     size: ControlSize,
+    tokens: UiTokens,
     disabled: bool,
     on_press: Option<M>,
 ) -> Element<'static, M> {
-    let icon_size = size.skip_icon_size();
-    let padding = size.skip_button_padding();
-    let radius = size.skip_button_radius();
+    let icon_size = size.skip_icon_size(tokens);
+    let padding = size.skip_button_padding(tokens);
+    let radius = size.skip_button_radius(tokens);
     let icon_opacity: f32 = if disabled { 0.5 } else { 1.0 };
 
     let btn = button(
@@ -220,10 +203,14 @@ pub fn prev_button<M: Clone + 'static>(
 }
 
 /// Build the next song button
-pub fn next_button<M: Clone + 'static>(size: ControlSize, on_press: M) -> Element<'static, M> {
-    let icon_size = size.skip_icon_size();
-    let padding = size.skip_button_padding();
-    let radius = size.skip_button_radius();
+pub fn next_button<M: Clone + 'static>(
+    size: ControlSize,
+    tokens: UiTokens,
+    on_press: M,
+) -> Element<'static, M> {
+    let icon_size = size.skip_icon_size(tokens);
+    let padding = size.skip_button_padding(tokens);
+    let radius = size.skip_button_radius(tokens);
 
     let btn = button(
         svg(svg::Handle::from_memory(icons::SKIP_NEXT.as_bytes()))
@@ -261,12 +248,13 @@ pub fn next_button<M: Clone + 'static>(size: ControlSize, on_press: M) -> Elemen
 /// application action separately; `None` keeps the button visible but disabled.
 pub fn favorite_button<M: Clone + 'static>(
     size: ControlSize,
+    tokens: UiTokens,
     favorite: Option<bool>,
     on_press: Option<M>,
 ) -> Element<'static, M> {
-    let icon_size = size.skip_icon_size();
-    let padding = size.skip_button_padding();
-    let radius = size.skip_button_radius();
+    let icon_size = size.skip_icon_size(tokens);
+    let padding = size.skip_button_padding(tokens);
+    let radius = size.skip_button_radius(tokens);
     let is_liked = favorite.unwrap_or(false);
     let enabled = favorite.is_some();
     let icon_opacity: f32 = if enabled { 1.0 } else { 0.4 };
@@ -320,6 +308,7 @@ pub fn view_player_bar<M: Clone + 'static>(
     is_playing: bool,
     is_buffering: bool,
     size: ControlSize,
+    tokens: UiTokens,
     prev_disabled: bool,
     play_mode_button: Element<'static, M>,
     prev_action: Option<M>,
@@ -328,18 +317,18 @@ pub fn view_player_bar<M: Clone + 'static>(
     favorite: Option<bool>,
     favorite_action: Option<M>,
 ) -> Element<'static, M> {
-    let spacing = size.spacing();
+    let spacing = size.spacing(tokens);
 
     row![
         play_mode_button,
         Space::new().width(spacing),
-        prev_button(size, prev_disabled, prev_action),
+        prev_button(size, tokens, prev_disabled, prev_action),
         Space::new().width(spacing),
-        play_button_with_buffering(is_playing, is_buffering, size, play_action),
+        play_button_with_buffering(is_playing, is_buffering, size, tokens, play_action),
         Space::new().width(spacing),
-        next_button(size, next_action),
+        next_button(size, tokens, next_action),
         Space::new().width(spacing),
-        favorite_button(size, favorite, favorite_action),
+        favorite_button(size, tokens, favorite, favorite_action),
     ]
     .align_y(Alignment::Center)
     .into()
@@ -350,19 +339,20 @@ pub fn view<M: Clone + 'static>(
     is_playing: bool,
     is_buffering: bool,
     size: ControlSize,
+    tokens: UiTokens,
     prev_disabled: bool,
     prev_action: Option<M>,
     play_action: M,
     next_action: M,
 ) -> Element<'static, M> {
-    let spacing = size.spacing();
+    let spacing = size.spacing(tokens);
 
     row![
-        prev_button(size, prev_disabled, prev_action),
+        prev_button(size, tokens, prev_disabled, prev_action),
         Space::new().width(spacing),
-        play_button_with_buffering(is_playing, is_buffering, size, play_action),
+        play_button_with_buffering(is_playing, is_buffering, size, tokens, play_action),
         Space::new().width(spacing),
-        next_button(size, next_action),
+        next_button(size, tokens, next_action),
     ]
     .align_y(Alignment::Center)
     .into()
@@ -372,6 +362,7 @@ pub fn view<M: Clone + 'static>(
 pub fn view_simple<M: Clone + 'static>(
     is_playing: bool,
     size: ControlSize,
+    tokens: UiTokens,
     prev_action: Option<M>,
     play_action: M,
     next_action: M,
@@ -380,6 +371,7 @@ pub fn view_simple<M: Clone + 'static>(
         is_playing,
         false,
         size,
+        tokens,
         prev_action.is_none(),
         prev_action,
         play_action,

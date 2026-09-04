@@ -1,7 +1,6 @@
 //! Exit confirmation dialog component
 
 use iced::Element;
-use iced::Size;
 use iced::widget::{Space, checkbox, column, text};
 
 use crate::app::Message;
@@ -9,17 +8,8 @@ use crate::i18n::{Key, Locale};
 use crate::ui::responsive::{IconRole, ResponsiveContext, TextRole};
 use crate::ui::theme;
 
-/// Content-only body for unified modal layout (message + checkbox, no backdrop/title/buttons).
-pub fn view_body(remember_choice: bool, locale: Locale) -> Element<'static, Message> {
-    view_body_responsive(
-        remember_choice,
-        locale,
-        ResponsiveContext::new(Size::new(1_920.0, 1_080.0)),
-    )
-}
-
-/// Render the exit confirmation body with density-aware typography and controls.
-pub fn view_body_responsive(
+/// Render the exit confirmation body with rem-aware typography and controls.
+pub fn view_body(
     remember_choice: bool,
     locale: Locale,
     context: ResponsiveContext,
@@ -37,7 +27,7 @@ pub fn view_body_responsive(
         .size(tokens.icon(IconRole::Small))
         .text_size(tokens.text(TextRole::Label))
         .spacing(tokens.space(8.0))
-        .style(|theme, status| {
+        .style(move |theme, status| {
             let is_checked = matches!(
                 status,
                 checkbox::Status::Active { is_checked: true }
@@ -51,8 +41,8 @@ pub fn view_body_responsive(
                 }),
                 icon_color: theme::BLACK,
                 border: iced::Border {
-                    radius: 4.0.into(),
-                    width: if is_checked { 0.0 } else { 1.0 },
+                    radius: tokens.size(4.0).into(),
+                    width: if is_checked { 0.0 } else { tokens.size(1.0) },
                     color: theme::hover_bg_alpha(theme, 0.3),
                 },
                 text_color: Some(theme::text_secondary(theme)),

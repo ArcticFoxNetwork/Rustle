@@ -296,13 +296,13 @@ fn pointer_is_over(event: &Event, cursor: Cursor, bounds: Rectangle) -> bool {
 /// Configuration for a modal dialog.
 #[derive(Debug, Clone)]
 pub struct ModalConfig {
-    /// Width of the content panel in logical pixels.
+    /// Width in 1080P reference pixels, resolved through the current root rem.
     pub width: f32,
     /// Whether clicking the backdrop dismisses the modal.
     pub backdrop_dismiss: bool,
     /// Whether pressing Escape dismisses the modal.
     pub escape_close: bool,
-    /// Border radius of the content panel.
+    /// Border radius in 1080P reference pixels, resolved through root rem.
     pub border_radius: f32,
 }
 
@@ -318,8 +318,8 @@ impl Default for ModalConfig {
 }
 
 impl ModalConfig {
-    pub fn width(mut self, width: f32) -> Self {
-        self.width = width;
+    pub fn width(mut self, reference_width: f32) -> Self {
+        self.width = reference_width;
         self
     }
 
@@ -329,22 +329,8 @@ impl ModalConfig {
     }
 }
 
-/// Render a unified modal dialog.
-pub fn modal_view<'a>(
-    config: &ModalConfig,
-    content: Element<'a, Message>,
-    on_dismiss: Message,
-) -> Element<'a, Message> {
-    modal_view_responsive(
-        ResponsiveContext::new(Size::new(1_920.0, 1_080.0)),
-        config,
-        content,
-        on_dismiss,
-    )
-}
-
 /// Render a modal bounded by the current logical viewport.
-pub fn modal_view_responsive<'a>(
+pub fn modal_view<'a>(
     context: ResponsiveContext,
     config: &ModalConfig,
     content: Element<'a, Message>,
@@ -361,10 +347,14 @@ pub fn modal_view_responsive<'a>(
     let border_radius = tokens.size(config.border_radius);
 
     let content = if context.profile.is_compact() {
-        scrollable(container(content).width(Length::Fill))
-            .id(iced::widget::Id::new("modal_body_scroll"))
-            .height(Length::Fixed(compact_height))
-            .into()
+        crate::ui::widgets::scaled_scroll(
+            scrollable(container(content).width(Length::Fill))
+                .direction(crate::ui::widgets::vertical_scrollbar(tokens))
+                .id(iced::widget::Id::new("modal_body_scroll"))
+                .height(Length::Fixed(compact_height)),
+            tokens,
+        )
+        .into()
     } else {
         content
     };
@@ -376,7 +366,7 @@ pub fn modal_view_responsive<'a>(
                 background: Some(Background::Color(theme::surface(t))),
                 border: Border {
                     color: theme::divider(t),
-                    width: 1.0,
+                    width: tokens.size(1.0),
                     radius: Radius::new(border_radius),
                 },
                 shadow: Shadow {
@@ -409,17 +399,8 @@ pub fn modal_view_responsive<'a>(
 // Unified Modal Layout — Header / Body / Footer with dividers
 // ============================================================================
 
-/// Header bar: title left, close button (✕) right.
-pub fn modal_header(title: String, on_close: Message) -> Element<'static, Message> {
-    modal_header_responsive(
-        ResponsiveContext::new(Size::new(1_920.0, 1_080.0)),
-        title,
-        on_close,
-    )
-}
-
-/// Header bar with density-aware typography and a stable close hit target.
-pub fn modal_header_responsive(
+/// Header bar with rem-aware typography and a stable close hit target.
+pub fn modal_header(
     context: ResponsiveContext,
     title: String,
     on_close: Message,
@@ -471,13 +452,8 @@ pub fn modal_header_responsive(
     .into()
 }
 
-/// Footer bar: divider line + right-aligned buttons.
-pub fn modal_footer<'a>(buttons: Vec<Element<'a, Message>>) -> Element<'a, Message> {
-    modal_footer_responsive(ResponsiveContext::new(Size::new(1_920.0, 1_080.0)), buttons)
-}
-
 /// Footer bar with token-scaled spacing.
-pub fn modal_footer_responsive<'a>(
+pub fn modal_footer<'a>(
     context: ResponsiveContext,
     buttons: Vec<Element<'a, Message>>,
 ) -> Element<'a, Message> {
@@ -489,16 +465,11 @@ pub fn modal_footer_responsive<'a>(
         .align_y(Alignment::Center)
         .spacing(tokens.space(12.0))
         .padding([tokens.space(14.0), tokens.space(20.0)]);
-    column![divider_responsive(context), btn_row].into()
+    column![divider(context), btn_row].into()
 }
 
-/// Content area with standard padding.
-pub fn modal_body<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
-    modal_body_responsive(ResponsiveContext::new(Size::new(1_920.0, 1_080.0)), content)
-}
-
-/// Content area with density-aware standard padding.
-pub fn modal_body_responsive<'a>(
+/// Content area with rem-aware standard padding.
+pub fn modal_body<'a>(
     context: ResponsiveContext,
     content: Element<'a, Message>,
 ) -> Element<'a, Message> {
@@ -507,24 +478,8 @@ pub fn modal_body_responsive<'a>(
         .into()
 }
 
-/// Full modal layout: header + divider + body + footer.
+/// Full modal layout with rem-aware header, body, and footer spacing.
 pub fn modal_section<'a>(
-    title: String,
-    on_close: Message,
-    body: Element<'a, Message>,
-    footer: Element<'a, Message>,
-) -> Element<'a, Message> {
-    modal_section_responsive(
-        ResponsiveContext::new(Size::new(1_920.0, 1_080.0)),
-        title,
-        on_close,
-        body,
-        footer,
-    )
-}
-
-/// Full modal layout with density-aware header, body, and footer spacing.
-pub fn modal_section_responsive<'a>(
     context: ResponsiveContext,
     title: String,
     on_close: Message,
@@ -532,15 +487,15 @@ pub fn modal_section_responsive<'a>(
     footer: Element<'a, Message>,
 ) -> Element<'a, Message> {
     column![
-        modal_header_responsive(context, title, on_close),
-        divider_responsive(context),
+        modal_header(context, title, on_close),
+        divider(context),
         body,
         footer
     ]
     .into()
 }
 
-fn divider_responsive(context: ResponsiveContext) -> Element<'static, Message> {
+fn divider(context: ResponsiveContext) -> Element<'static, Message> {
     let line_size = context.tokens.space(1.0);
     container(
         iced::widget::Space::new()

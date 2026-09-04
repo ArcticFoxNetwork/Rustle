@@ -30,19 +30,13 @@ where
     pub fn new(
         anchor: impl Into<Element<'a, Message, Theme, Renderer>>,
         popup: impl Into<Element<'a, Message, Theme, Renderer>>,
+        gap: f32,
     ) -> Self {
         Self {
             anchor: anchor.into(),
             popup: popup.into(),
-            gap: 8.0,
+            gap: gap.max(0.0),
         }
-    }
-
-    /// Sets the visual gap between the anchor and popup.
-    #[must_use]
-    pub fn gap(mut self, gap: f32) -> Self {
-        self.gap = gap.max(0.0);
-        self
     }
 }
 
@@ -212,11 +206,12 @@ where
 pub fn hover_popup<'a, Message, Theme, Renderer>(
     anchor: impl Into<Element<'a, Message, Theme, Renderer>>,
     popup: impl Into<Element<'a, Message, Theme, Renderer>>,
+    gap: f32,
 ) -> HoverPopup<'a, Message, Theme, Renderer>
 where
     Renderer: renderer::Renderer,
 {
-    HoverPopup::new(anchor, popup)
+    HoverPopup::new(anchor, popup, gap)
 }
 
 struct PopupOverlay<'a, 'b, Message, Theme, Renderer>

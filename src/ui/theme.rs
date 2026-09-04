@@ -11,6 +11,8 @@ pub use crate::platform::theme::{BOLD_WEIGHT, MEDIUM_WEIGHT};
 // Typography
 // ============================================================================
 
+/// 1080P reference sizes; production callers resolve these through
+/// `UiTokens::text` instead of passing them directly to iced.
 pub const TEXT_SIZE_MICRO: f32 = 10.0;
 pub const TEXT_SIZE_CAPTION: f32 = 12.0;
 pub const TEXT_SIZE_LABEL: f32 = 13.0;
@@ -21,16 +23,28 @@ pub const TEXT_SIZE_TITLE: f32 = 24.0;
 pub const TEXT_SIZE_TITLE_LARGE: f32 = 28.0;
 pub const TEXT_SIZE_HERO: f32 = 32.0;
 pub const TEXT_SIZE_DISPLAY: f32 = 48.0;
-pub const TEXT_SIZE_DISPLAY_LARGE: f32 = 72.0;
 
 // ============================================================================
 // Layout
 // ============================================================================
 
+/// 1080P reference height resolved by the shared chrome token.
 pub const TOP_BAR_HEIGHT: f32 = 60.0;
 pub const TOP_BAR_BACKGROUND_ALPHA: f32 = 0.78;
-/// Width of Iced's default vertical scrollbar at the right edge.
+/// 1080P reference width of Iced's default vertical scrollbar at the right edge.
 pub const TOP_BAR_SCROLLBAR_GUTTER_WIDTH: f32 = 10.0;
+
+/// Root-rem-resolved dimensions shared by reusable theme style callbacks.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ThemeMetrics {
+    pub small_radius: f32,
+    pub medium_radius: f32,
+    pub large_radius: f32,
+    pub pill_radius: f32,
+    pub border_width: f32,
+    pub popup_shadow_offset_y: f32,
+    pub popup_shadow_blur: f32,
+}
 
 // ============================================================================
 // Color Palette - Dynamic based on theme
@@ -225,19 +239,19 @@ pub fn sidebar(theme: &Theme) -> container::Style {
 }
 
 /// Login popup container
-pub fn login_popup(theme: &Theme) -> container::Style {
+pub fn login_popup(theme: &Theme, metrics: ThemeMetrics) -> container::Style {
     container::Style {
         background: Some(Background::Color(surface(theme))),
         text_color: Some(text_primary(theme)),
         border: Border {
-            radius: 16.0.into(),
-            width: 1.0,
+            radius: metrics.large_radius.into(),
+            width: metrics.border_width,
             color: border_color(theme),
         },
         shadow: Shadow {
             color: Color::from_rgba(0.0, 0.0, 0.0, 0.5),
-            offset: Vector::new(0.0, 8.0),
-            blur_radius: 24.0,
+            offset: Vector::new(0.0, metrics.popup_shadow_offset_y),
+            blur_radius: metrics.popup_shadow_blur,
         },
         ..Default::default()
     }
@@ -248,12 +262,16 @@ pub fn login_popup(theme: &Theme) -> container::Style {
 // ============================================================================
 
 /// Primary button style
-pub fn primary_button(_theme: &Theme, status: button::Status) -> button::Style {
+pub fn primary_button(
+    _theme: &Theme,
+    status: button::Status,
+    metrics: ThemeMetrics,
+) -> button::Style {
     let base = button::Style {
         background: Some(Background::Color(ACCENT)),
         text_color: Color::WHITE,
         border: Border {
-            radius: 24.0.into(),
+            radius: metrics.pill_radius.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -269,13 +287,17 @@ pub fn primary_button(_theme: &Theme, status: button::Status) -> button::Style {
 }
 
 /// Secondary button - transparent with border
-pub fn secondary_button(theme: &Theme, status: button::Status) -> button::Style {
+pub fn secondary_button(
+    theme: &Theme,
+    status: button::Status,
+    metrics: ThemeMetrics,
+) -> button::Style {
     let base = button::Style {
         background: Some(Background::Color(Color::TRANSPARENT)),
         text_color: text_primary(theme),
         border: Border {
-            radius: 24.0.into(),
-            width: 1.0,
+            radius: metrics.pill_radius.into(),
+            width: metrics.border_width,
             color: border_color(theme),
         },
         ..Default::default()
@@ -313,12 +335,16 @@ pub fn text_button(theme: &Theme, status: button::Status) -> button::Style {
 }
 
 /// Danger button (red for destructive actions)
-pub fn danger_button(theme: &Theme, status: button::Status) -> button::Style {
+pub fn danger_button(
+    theme: &Theme,
+    status: button::Status,
+    metrics: ThemeMetrics,
+) -> button::Style {
     let base = button::Style {
         background: Some(Background::Color(danger(theme))),
         text_color: Color::WHITE,
         border: Border {
-            radius: 24.0.into(),
+            radius: metrics.pill_radius.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -423,12 +449,12 @@ pub fn overlay_backdrop(theme: &Theme, opacity: f32) -> Color {
 }
 
 /// Navigation menu item - inactive
-pub fn nav_item(theme: &Theme, status: button::Status) -> button::Style {
+pub fn nav_item(theme: &Theme, status: button::Status, metrics: ThemeMetrics) -> button::Style {
     let base = button::Style {
         background: Some(Background::Color(Color::TRANSPARENT)),
         text_color: text_muted(theme),
         border: Border {
-            radius: 8.0.into(),
+            radius: metrics.medium_radius.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -455,7 +481,11 @@ pub fn transparent_btn(theme: &Theme, _status: button::Status) -> button::Style 
 }
 
 /// Danger button (for destructive actions)
-pub fn button_danger(theme: &Theme, status: button::Status) -> button::Style {
+pub fn button_danger(
+    theme: &Theme,
+    status: button::Status,
+    metrics: ThemeMetrics,
+) -> button::Style {
     let base = match status {
         button::Status::Hovered => danger_hover(theme),
         _ => danger(theme),
@@ -465,7 +495,7 @@ pub fn button_danger(theme: &Theme, status: button::Status) -> button::Style {
         background: Some(Background::Color(base)),
         text_color: Color::WHITE,
         border: Border {
-            radius: 4.0.into(),
+            radius: metrics.small_radius.into(),
             ..Default::default()
         },
         ..Default::default()
@@ -485,7 +515,11 @@ pub fn button_danger(theme: &Theme, status: button::Status) -> button::Style {
 // ============================================================================
 
 /// Unified dropdown style - semi-transparent background with rounded corners
-pub fn settings_pick_list(theme: &Theme, status: pick_list::Status) -> pick_list::Style {
+pub fn settings_pick_list(
+    theme: &Theme,
+    status: pick_list::Status,
+    metrics: ThemeMetrics,
+) -> pick_list::Style {
     let bg = if is_dark(theme) {
         match status {
             pick_list::Status::Active => Color::from_rgba(1.0, 1.0, 1.0, 0.08),
@@ -514,15 +548,15 @@ pub fn settings_pick_list(theme: &Theme, status: pick_list::Status) -> pick_list
         handle_color: text_secondary(theme),
         background: Background::Color(bg),
         border: Border {
-            radius: 8.0.into(),
-            width: 1.0,
+            radius: metrics.medium_radius.into(),
+            width: metrics.border_width,
             color: border_color,
         },
     }
 }
 
 /// Unified dropdown menu style - dark background with rounded corners
-pub fn settings_pick_list_menu(theme: &Theme) -> iced::overlay::menu::Style {
+pub fn settings_pick_list_menu(theme: &Theme, metrics: ThemeMetrics) -> iced::overlay::menu::Style {
     let (bg, selected_bg, border_color) = if is_dark(theme) {
         (
             Color::from_rgb(0.15, 0.15, 0.15),
@@ -541,8 +575,8 @@ pub fn settings_pick_list_menu(theme: &Theme) -> iced::overlay::menu::Style {
         text_color: text_primary(theme),
         background: Background::Color(bg),
         border: Border {
-            radius: 8.0.into(),
-            width: 1.0,
+            radius: metrics.medium_radius.into(),
+            width: metrics.border_width,
             color: border_color,
         },
         selected_text_color: text_primary(theme),
@@ -556,14 +590,18 @@ pub fn settings_pick_list_menu(theme: &Theme) -> iced::overlay::menu::Style {
 // ============================================================================
 
 /// Scrollbar style for main content
-pub fn dark_scrollable(theme: &Theme, _status: scrollable::Status) -> scrollable::Style {
+pub fn dark_scrollable(
+    theme: &Theme,
+    _status: scrollable::Status,
+    metrics: ThemeMetrics,
+) -> scrollable::Style {
     let scrollbar = scrollable::Rail {
         background: Some(Background::Color(Color::TRANSPARENT)),
         border: Border::default(),
         scroller: scrollable::Scroller {
             background: Background::Color(border_color(theme)),
             border: Border {
-                radius: 4.0.into(),
+                radius: metrics.small_radius.into(),
                 ..Default::default()
             },
         },

@@ -8,7 +8,6 @@ mod discover;
 mod images;
 mod import;
 mod keyboard;
-mod layout;
 mod lyrics;
 pub mod lyrics_preload_manager;
 pub mod lyrics_render_manager;
@@ -67,7 +66,6 @@ impl App {
         handle!(handle_mpris);
         handle!(handle_discord);
         handle!(handle_keyboard);
-        handle!(handle_layout);
         handle!(handle_lyrics);
         handle!(handle_image);
         handle!(handle_ncm);

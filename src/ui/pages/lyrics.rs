@@ -143,25 +143,43 @@ pub fn view<'a>(
                                 context,
                                 ArtworkPanelPresentation::Focus,
                             );
-                            let media_width = lyrics_media_width(context);
-                            let estimated_detail_height = tokens.size(220.0);
-                            let available_height = (context.height() - title_bar_height).max(0.0);
-                            let vertical_padding =
-                                ((available_height - media_width - estimated_detail_height) / 2.0)
-                                    .max(tokens.space(16.0));
-                            let top_padding = title_bar_height + vertical_padding;
+                            let horizontal_padding = tokens.space(24.0);
+                            let minimum_vertical_padding = tokens.space(16.0);
 
-                            scrollable(
-                                container(artwork_panel).width(Fill).center_x(Fill).padding(
-                                    Padding::new(tokens.space(24.0))
-                                        .top(top_padding)
-                                        .bottom(vertical_padding),
-                                ),
-                            )
-                            .id(iced::widget::Id::new("lyrics_artwork_scroll"))
-                            .width(Fill)
-                            .height(Fill)
-                            .into()
+                            if artwork_requires_vertical_scroll(context, title_bar_height) {
+                                crate::ui::widgets::scaled_scroll(
+                                    scrollable(
+                                        container(artwork_panel)
+                                            .width(Fill)
+                                            .center_x(Fill)
+                                            .padding(
+                                                Padding::new(horizontal_padding)
+                                                    .top(
+                                                        title_bar_height + minimum_vertical_padding,
+                                                    )
+                                                    .bottom(minimum_vertical_padding),
+                                            ),
+                                    )
+                                    .direction(crate::ui::widgets::vertical_scrollbar(tokens))
+                                    .id(iced::widget::Id::new("lyrics_artwork_scroll"))
+                                    .width(Fill)
+                                    .height(Fill),
+                                    tokens,
+                                )
+                                .into()
+                            } else {
+                                column![
+                                    Space::new().height(title_bar_height),
+                                    Space::new().height(Fill),
+                                    container(artwork_panel).width(Fill).center_x(Fill).padding(
+                                        Padding::new(horizontal_padding).top(0.0).bottom(0.0),
+                                    ),
+                                    Space::new().height(Fill),
+                                ]
+                                .width(Fill)
+                                .height(Fill)
+                                .into()
+                            }
                         }
                         LyricsDisplayMode::Lyrics => {
                             let lyrics_panel = if power_saving_mode {
@@ -227,6 +245,7 @@ pub fn view<'a>(
     )
     .width(window_button_size)
     .height(window_button_size)
+    .padding(0)
     .style(move |_theme, status| {
         let bg = match status {
             button::Status::Hovered => Color::from_rgba(1.0, 1.0, 1.0, 0.12),
@@ -245,12 +264,12 @@ pub fn view<'a>(
     .on_press(Message::CloseLyricsPage);
 
     // Top-right buttons - using unified window control styles
-    let icon_btn_style = |_theme: &iced::Theme, status: button::Status| {
+    let icon_btn_style = move |_theme: &iced::Theme, status: button::Status| {
         let base = button::Style {
             background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
             text_color: theme::text_primary(_theme),
             border: iced::Border {
-                radius: 6.0.into(),
+                radius: tokens.size(6.0).into(),
                 ..Default::default()
             },
             shadow: iced::Shadow::default(),
@@ -275,12 +294,12 @@ pub fn view<'a>(
         }
     };
 
-    let close_btn_style = |_theme: &iced::Theme, status: button::Status| {
+    let close_btn_style = move |_theme: &iced::Theme, status: button::Status| {
         let base = button::Style {
             background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
             text_color: theme::text_primary(_theme),
             border: iced::Border {
-                radius: 6.0.into(),
+                radius: tokens.size(6.0).into(),
                 ..Default::default()
             },
             shadow: iced::Shadow::default(),
@@ -316,6 +335,7 @@ pub fn view<'a>(
     )
     .width(window_button_size)
     .height(window_button_size)
+    .padding(0)
     .style(icon_btn_style)
     .on_press(Message::OpenSettingsWithCloseLyrics);
 
@@ -329,6 +349,7 @@ pub fn view<'a>(
     )
     .width(window_button_size)
     .height(window_button_size)
+    .padding(0)
     .style(icon_btn_style)
     .on_press(Message::WindowMinimize);
 
@@ -344,6 +365,7 @@ pub fn view<'a>(
     )
     .width(window_button_size)
     .height(window_button_size)
+    .padding(0)
     .style(icon_btn_style)
     .on_press(Message::WindowMaximize);
 
@@ -357,6 +379,7 @@ pub fn view<'a>(
     )
     .width(window_button_size)
     .height(window_button_size)
+    .padding(0)
     .style(close_btn_style)
     .on_press(Message::RequestClose);
 
@@ -444,6 +467,16 @@ fn foreground_reveal_at_progress(progress: f32) -> f32 {
     (2.0 * progress - 1.0).abs()
 }
 
+#[inline]
+fn artwork_requires_vertical_scroll(context: ResponsiveContext, title_bar_height: f32) -> bool {
+    let tokens = context.tokens;
+    let available_height = (context.height() - title_bar_height).max(0.0);
+    let required_height =
+        lyrics_media_width(context) + tokens.size(220.0) + 2.0 * tokens.space(16.0);
+
+    required_height > available_height
+}
+
 /// Build the player panel with cover, song info, and controls.
 fn build_artwork_panel<'a>(
     song: &'a DbSong,
@@ -462,17 +495,16 @@ fn build_artwork_panel<'a>(
     let tokens = context.tokens;
     let current_time = crate::utils::format_time(position * duration_secs);
     let total_time = crate::utils::format_time(duration_secs);
-    let focus_media_width = matches!(presentation, ArtworkPanelPresentation::Focus)
-        .then(|| lyrics_media_width(context));
+    let media_width = lyrics_media_width(context);
 
     let (cover_kind, cover_id) =
         crate::image::song_cover_key(song.id).unwrap_or((crate::image::ImageKind::SongCover, 0));
-    let cover_width = focus_media_width.unwrap_or_else(|| tokens.size(400.0));
     let cover = crate::ui::components::cover_image::custom(
         image_state.get(cover_kind, cover_id),
         cover_kind,
-        cover_width,
+        media_width,
         tokens.radius(RadiusRole::Large),
+        tokens,
     );
 
     // Song title
@@ -503,20 +535,17 @@ fn build_artwork_panel<'a>(
     .into();
 
     // Progress bar - using unified widget with download progress
-    let progress_slider = widgets::progress_slider::view_with_gradient_scaled(
+    let progress_slider = widgets::progress_slider::view(
         position,
         download_progress,
         SliderSize::Full,
         None,
-        tokens.density().value(),
+        tokens,
         Message::SeekPreview,
         Message::SeekRelease,
     );
-    let progress_slider: Element<'a, Message> = if let Some(media_width) = focus_media_width {
-        container(progress_slider).width(media_width).into()
-    } else {
-        progress_slider
-    };
+    let progress_slider: Element<'a, Message> =
+        container(progress_slider).width(media_width).into();
 
     let time_row = row![
         text(current_time)
@@ -531,20 +560,17 @@ fn build_artwork_panel<'a>(
                 color: Some(theme::text_muted(theme))
             }),
     ];
-    let time_row = if let Some(media_width) = focus_media_width {
-        time_row.width(media_width)
-    } else {
-        time_row.width(Fill)
-    };
+    let time_row = time_row.width(media_width);
 
     // Playback controls - using unified widgets
-    let control_scale = match presentation {
-        ArtworkPanelPresentation::Wide => tokens.density().value(),
-        ArtworkPanelPresentation::Focus => tokens.density().value() * 1.08,
+    let control_size = match presentation {
+        ArtworkPanelPresentation::Wide => ControlSize::Large,
+        ArtworkPanelPresentation::Focus => ControlSize::LargeEmphasized,
     };
     let playback_controls = widgets::playback_controls::view_simple(
         is_playing,
-        ControlSize::ScaledLarge(control_scale),
+        control_size,
+        tokens,
         Some(Message::PrevSong),
         Message::TogglePlayback,
         Message::NextSong,
@@ -554,7 +580,11 @@ fn build_artwork_panel<'a>(
     // into the generic widget.
     let play_mode_btn = crate::ui::components::playback_controls::play_mode_button(
         play_mode,
-        widgets::PlayModeButtonSize::ScaledLarge(control_scale),
+        match presentation {
+            ArtworkPanelPresentation::Wide => widgets::PlayModeButtonSize::Large,
+            ArtworkPanelPresentation::Focus => widgets::PlayModeButtonSize::LargeEmphasized,
+        },
+        tokens,
         is_fm_mode,
     );
 
@@ -622,14 +652,10 @@ fn build_artwork_panel<'a>(
         mouse_area(disabled_button).on_press(Message::Noop).into()
     };
 
-    let controls_width = focus_media_width.map_or(Fill, Length::Fixed);
-    let controls: Element<'a, Message> = if context.profile.is_narrow() {
-        row![play_mode_btn, playback_controls, like_btn]
-            .spacing(tokens.space(8.0))
-            .align_y(Alignment::Center)
-            .width(controls_width)
-            .into()
-    } else {
+    // The whole action lane shares the exact media width used by the cover,
+    // progress rail, and time row. Keep this contract in narrow focus mode as
+    // well: flexible gaps compress before any action is removed or wrapped.
+    let controls: Element<'a, Message> = container(
         row![
             play_mode_btn,
             Space::new().width(Fill),
@@ -638,9 +664,10 @@ fn build_artwork_panel<'a>(
             like_btn,
         ]
         .align_y(Alignment::Center)
-        .width(controls_width)
-        .into()
-    };
+        .width(Fill),
+    )
+    .width(Length::Fixed(media_width))
+    .into();
 
     // Content container with max width
     let content = column![
@@ -660,17 +687,16 @@ fn build_artwork_panel<'a>(
     match presentation {
         ArtworkPanelPresentation::Wide => column![
             Space::new().height(Fill),
-            content.width(Fill.max(tokens.size(400.0))),
+            content.width(media_width),
             Space::new().height(Fill),
         ]
         .align_x(Alignment::Center)
         .width(Fill)
         .height(Fill)
         .into(),
-        ArtworkPanelPresentation::Focus => content
-            .align_x(Alignment::Start)
-            .width(focus_media_width.unwrap_or_default())
-            .into(),
+        ArtworkPanelPresentation::Focus => {
+            content.align_x(Alignment::Start).width(media_width).into()
+        }
     }
 }
 
@@ -740,9 +766,9 @@ fn build_right_panel_engine<'a>(
             .height(Fill);
 
         mouse_area(content)
-            .on_scroll(|delta| {
+            .on_scroll(move |delta| {
                 let scroll_amount = match delta {
-                    iced::mouse::ScrollDelta::Lines { y, .. } => y * 40.0,
+                    iced::mouse::ScrollDelta::Lines { y, .. } => y * tokens.size(40.0),
                     iced::mouse::ScrollDelta::Pixels { y, .. } => y,
                 };
                 Message::LyricsScroll(-scroll_amount)
@@ -787,7 +813,8 @@ fn build_simple_lyrics_panel_from_engine_lines(
                 let size = if is_active {
                     tokens.text(TextRole::TitleLarge)
                 } else {
-                    (tokens.text(TextRole::Title) - tokens.space(2.0)).max(11.0)
+                    (tokens.text(TextRole::Title) - tokens.space(2.0))
+                        .max(tokens.text(TextRole::Caption))
                 };
 
                 text(line_text)
@@ -967,8 +994,12 @@ pub fn find_current_line(lyrics: &[LyricLine], position_ms: u64) -> Option<usize
 
 #[cfg(test)]
 mod responsive_mode_transition_tests {
-    use super::{foreground_reveal_at_progress, lyrics_mode_at_progress};
+    use super::{
+        artwork_requires_vertical_scroll, foreground_reveal_at_progress, lyrics_mode_at_progress,
+    };
     use crate::app::LyricsDisplayMode;
+    use crate::ui::responsive::ResponsiveContext;
+    use iced::Size;
 
     #[test]
     fn component_swap_happens_only_at_the_fully_hidden_midpoint() {
@@ -989,5 +1020,28 @@ mod responsive_mode_transition_tests {
         assert_eq!(foreground_reveal_at_progress(0.75), 0.5);
         assert_eq!(foreground_reveal_at_progress(1.0), 1.0);
         assert_eq!(foreground_reveal_at_progress(2.0), 1.0);
+    }
+
+    #[test]
+    fn artwork_scroll_is_enabled_only_when_the_focus_content_cannot_fit() {
+        for viewport in [
+            Size::new(2_560.0, 1_440.0),
+            Size::new(960.0, 1_080.0),
+            Size::new(768.0, 1_024.0),
+            Size::new(720.0, 800.0),
+            Size::new(560.0, 800.0),
+        ] {
+            let context = ResponsiveContext::from_viewport(viewport);
+            assert!(
+                !artwork_requires_vertical_scroll(context, context.tokens.size(64.0)),
+                "artwork should fit without a scroll surface at {viewport:?}"
+            );
+        }
+
+        let compact_landscape = ResponsiveContext::from_viewport(Size::new(960.0, 540.0));
+        assert!(artwork_requires_vertical_scroll(
+            compact_landscape,
+            compact_landscape.tokens.size(64.0)
+        ));
     }
 }

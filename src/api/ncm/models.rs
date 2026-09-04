@@ -102,19 +102,6 @@ pub enum NcmQualityLevel {
 }
 
 impl NcmQualityLevel {
-    #[allow(dead_code)]
-    pub const ALL: [Self; 9] = [
-        Self::Standard,
-        Self::Higher,
-        Self::ExHigh,
-        Self::Lossless,
-        Self::HiRes,
-        Self::JvEffect,
-        Self::Sky,
-        Self::Dolby,
-        Self::JyMaster,
-    ];
-
     pub fn api_level(self) -> &'static str {
         match self {
             Self::Standard => "standard",
@@ -175,21 +162,6 @@ impl NcmQualityLevel {
         })
     }
 
-    #[allow(dead_code)]
-    pub fn display_name(self) -> &'static str {
-        match self {
-            Self::Standard => "标准音质",
-            Self::Higher => "较高音质",
-            Self::ExHigh => "极高音质",
-            Self::Lossless => "无损音质",
-            Self::HiRes => "Hi-Res",
-            Self::JvEffect => "高清臻音",
-            Self::Sky => "沉浸环绕声",
-            Self::Dolby => "杜比全景声",
-            Self::JyMaster => "超清母带",
-        }
-    }
-
     pub fn short_name(self) -> &'static str {
         match self {
             Self::Standard => "128K",
@@ -218,14 +190,6 @@ impl NcmQualityLevel {
             Self::JyMaster => 8,
         }
     }
-
-    #[allow(dead_code)]
-    pub fn is_spatial_or_enhanced(self) -> bool {
-        matches!(
-            self,
-            Self::JvEffect | Self::Sky | Self::Dolby | Self::JyMaster
-        )
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]
@@ -243,20 +207,6 @@ pub struct SongQualityOption {
     pub volume_delta: Option<f64>,
     /// Spatial codec/effect marker (`it`) for enhanced levels.
     pub effect_type: Option<String>,
-}
-
-impl SongQualityOption {
-    #[allow(dead_code)]
-    pub fn description(&self) -> String {
-        let mut parts = Vec::new();
-        if let Some(bitrate) = self.bitrate.filter(|value| *value > 0) {
-            parts.push(format!("{} kbps", bitrate / 1000));
-        }
-        if let Some(size) = self.size.filter(|value| *value > 0) {
-            parts.push(format!("{:.1} MB", size as f64 / 1024.0 / 1024.0));
-        }
-        parts.join(" · ")
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Deserialize, Serialize)]

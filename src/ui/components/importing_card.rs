@@ -9,6 +9,7 @@ use iced::widget::{Space, button, column, container, row, text};
 use iced::{Alignment, Element, Fill, Padding};
 
 use crate::app::Message;
+use crate::ui::responsive::{TextRole, UiTokens};
 use crate::ui::theme;
 use crate::ui::widgets::{ProgressRing, view_progress_ring_styled};
 
@@ -119,7 +120,7 @@ impl ImportingPlaylist {
 }
 
 /// Build an importing playlist card for the sidebar
-pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
+pub fn view(playlist: &ImportingPlaylist, tokens: UiTokens) -> Element<'static, Message> {
     let name = playlist.name.clone();
     let progress = playlist.progress;
     let percentage = (progress * 100.0) as u32;
@@ -131,40 +132,39 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
             iced::widget::svg(iced::widget::svg::Handle::from_memory(
                 crate::ui::icons::CHECK.as_bytes(),
             ))
-            .width(22)
-            .height(22)
+            .width(tokens.size(22.0))
+            .height(tokens.size(22.0))
             .style(|_theme, _status| iced::widget::svg::Style {
                 color: Some(theme::ACCENT_PINK),
             }),
         )
-        .width(22)
-        .height(22)
-        .center_x(22)
-        .center_y(22)
+        .width(tokens.size(22.0))
+        .height(tokens.size(22.0))
+        .center_x(tokens.size(22.0))
+        .center_y(tokens.size(22.0))
         .into()
     } else {
         // Show progress ring with percentage during import
-        let progress_ring = ProgressRing::new(progress)
-            .stroke_width(2.5)
+        let progress_ring = ProgressRing::new(progress, tokens.size(2.5), tokens.size(1.0))
             .background_color(theme::SURFACE_LIGHT)
             .progress_color(theme::ACCENT_PINK);
 
         container(
             column![
-                view_progress_ring_styled(progress_ring, 32.0),
+                view_progress_ring_styled(progress_ring, tokens.size(32.0)),
                 text(format!("{}%", percentage))
-                    .size(theme::TEXT_SIZE_CAPTION)
+                    .size(tokens.text(TextRole::Caption))
                     .style(|theme| text::Style {
                         color: Some(theme::text_muted(theme))
                     })
                     .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT))
             ]
             .align_x(Alignment::Center)
-            .spacing(2),
+            .spacing(tokens.space(2.0)),
         )
-        .width(38)
-        .center_x(38)
-        .center_y(38)
+        .width(tokens.size(38.0))
+        .center_x(tokens.size(38.0))
+        .center_y(tokens.size(38.0))
         .into()
     };
 
@@ -185,7 +185,7 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
     let completed = playlist.completed;
     let mut info = column![
         text(name)
-            .size(theme::TEXT_SIZE_BODY_LARGE)
+            .size(tokens.text(TextRole::BodyLarge))
             .style(move |theme| text::Style {
                 color: Some(if completed {
                     theme::text_primary(theme)
@@ -195,7 +195,7 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
             })
             .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT)),
         text(status_text)
-            .size(theme::TEXT_SIZE_BODY)
+            .size(tokens.text(TextRole::Body))
             .style(|theme| text::Style {
                 color: Some(theme::text_muted(theme))
             })
@@ -204,19 +204,19 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
     if let Some(detail) = skip_detail {
         info = info.push(
             text(detail)
-                .size(theme::TEXT_SIZE_CAPTION)
+                .size(tokens.text(TextRole::Caption))
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme)),
                 })
                 .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT)),
         );
     }
-    let info = info.spacing(3);
+    let info = info.spacing(tokens.space(3.0));
 
     let trailing: Element<'static, Message> = if !playlist.completed {
         if playlist.cancelling {
             text("取消中")
-                .size(theme::TEXT_SIZE_BODY)
+                .size(tokens.text(TextRole::Body))
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme)),
                 })
@@ -225,29 +225,34 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
         } else {
             button(
                 text("取消")
-                    .size(theme::TEXT_SIZE_BODY)
+                    .size(tokens.text(TextRole::Body))
                     .style(|theme| text::Style {
                         color: Some(theme::text_muted(theme)),
                     })
                     .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT)),
             )
             .style(theme::text_button)
+            .padding([tokens.space(5.0), tokens.space(10.0)])
             .on_press(Message::CancelScan)
             .into()
         }
     } else {
-        Space::new().width(1).into()
+        Space::new().width(tokens.size(1.0)).into()
     };
 
     let content = row![
         progress_indicator,
-        Space::new().width(14),
+        Space::new().width(tokens.space(14.0)),
         info,
         Space::new().width(Fill),
         trailing,
     ]
     .align_y(Alignment::Center)
-    .padding(Padding::new(12.0).left(16.0).right(16.0));
+    .padding(
+        Padding::new(tokens.space(12.0))
+            .left(tokens.space(16.0))
+            .right(tokens.space(16.0)),
+    );
 
     // Make it a button only if completed
     if playlist.completed {
@@ -257,7 +262,8 @@ pub fn view(playlist: &ImportingPlaylist) -> Element<'static, Message> {
             .unwrap_or(Message::PlayHero);
         button(content)
             .width(Fill)
-            .style(theme::nav_item)
+            .padding(0)
+            .style(move |theme, status| theme::nav_item(theme, status, tokens.theme_metrics()))
             .on_press(on_press)
             .into()
     } else {

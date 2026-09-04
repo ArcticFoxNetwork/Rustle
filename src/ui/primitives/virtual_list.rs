@@ -29,17 +29,13 @@ use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::rc::Rc;
 
+use crate::ui::responsive::UiTokens;
+
 /// Buffer items to render above and below the visible area
 const BUFFER_ITEMS: usize = 8;
 /// Number of rows used before the first real layout reports a viewport size.
 /// This keeps initial image demand bounded while the widget is bootstrapping.
 const INITIAL_VIEWPORT_ITEMS: usize = 10;
-
-/// Scrollbar configuration
-const SCROLLBAR_WIDTH: f32 = 6.0;
-const SCROLLBAR_MIN_HEIGHT: f32 = 30.0;
-const SCROLLBAR_MARGIN: f32 = 2.0;
-const SCROLLBAR_BORDER_RADIUS: f32 = 3.0;
 
 /// Events that must reach every mounted row because child widgets may own
 /// lifecycle, focus, or clipboard state that is independent of pointer hit
@@ -71,7 +67,7 @@ impl Default for VirtualListState {
             scroll_offset: 0.0,
             viewport_height: 0.0,
             item_count: 0,
-            item_height: 62.0,
+            item_height: 0.0,
         }
     }
 }
@@ -98,7 +94,7 @@ impl VirtualListState {
             return (0, 0);
         }
 
-        if self.viewport_height <= 0.0 {
+        if self.viewport_height <= 0.0 || self.item_height <= 0.0 {
             return (
                 0,
                 (INITIAL_VIEWPORT_ITEMS + BUFFER_ITEMS).min(self.item_count),
@@ -147,6 +143,7 @@ impl VirtualListState {
 #[cfg(test)]
 mod tests {
     use super::{VirtualList, VirtualListState};
+    use crate::ui::responsive::UiTokens;
     use iced::advanced::Shell;
     use iced::advanced::layout::{self, Layout};
     use iced::advanced::renderer;
@@ -325,13 +322,14 @@ mod tests {
     fn redraw_events_reach_visible_children() {
         let redraw_count = Rc::new(Cell::new(0));
         let probe_count = Rc::clone(&redraw_count);
-        let list: VirtualList<'_, (), (), ()> = VirtualList::new(1, 50.0, move |_| {
-            Element::new(EventProbe {
-                redraw_count: Rc::clone(&probe_count),
-                pointer_count: Rc::new(Cell::new(0)),
+        let list: VirtualList<'_, (), (), ()> =
+            VirtualList::new(1, 50.0, UiTokens::default(), move |_| {
+                Element::new(EventProbe {
+                    redraw_count: Rc::clone(&probe_count),
+                    pointer_count: Rc::new(Cell::new(0)),
+                })
             })
-        })
-        .scrollbar(false);
+            .scrollbar(false);
         let mut renderer = ();
         let mut user_interface = UserInterface::build(
             list,
@@ -359,7 +357,7 @@ mod tests {
     #[test]
     fn initial_redraw_publishes_the_visible_range() {
         let list: VirtualList<'_, (usize, usize), (), ()> =
-            VirtualList::new(100, 50.0, move |_| {
+            VirtualList::new(100, 50.0, UiTokens::default(), move |_| {
                 Element::new(EventProbe {
                     redraw_count: Rc::new(Cell::new(0)),
                     pointer_count: Rc::new(Cell::new(0)),
@@ -395,13 +393,14 @@ mod tests {
     fn pointer_events_only_reach_the_hit_row() {
         let pointer_counts = [Rc::new(Cell::new(0)), Rc::new(Cell::new(0))];
         let probe_counts = pointer_counts.clone();
-        let list: VirtualList<'_, (), (), ()> = VirtualList::new(2, 50.0, move |index| {
-            Element::new(EventProbe {
-                redraw_count: Rc::new(Cell::new(0)),
-                pointer_count: Rc::clone(&probe_counts[index]),
+        let list: VirtualList<'_, (), (), ()> =
+            VirtualList::new(2, 50.0, UiTokens::default(), move |index| {
+                Element::new(EventProbe {
+                    redraw_count: Rc::new(Cell::new(0)),
+                    pointer_count: Rc::clone(&probe_counts[index]),
+                })
             })
-        })
-        .scrollbar(false);
+            .scrollbar(false);
         let mut renderer = ();
         let mut user_interface = UserInterface::build(
             list,
@@ -432,7 +431,7 @@ mod tests {
         let child_viewports = Rc::new(RefCell::new(Vec::new()));
         let observed_viewports = Rc::clone(&child_viewports);
         let mut list: VirtualList<'_, (), (), LayerRecordingRenderer> =
-            VirtualList::new(3, 50.0, move |_| {
+            VirtualList::new(3, 50.0, UiTokens::default(), move |_| {
                 Element::new(DrawViewportProbe {
                     viewports: Rc::clone(&observed_viewports),
                 })
@@ -485,6 +484,8 @@ where
     height: Length,
     /// Whether to show scrollbar
     show_scrollbar: bool,
+    /// Root-rem tokens for renderer-owned scrollbar and line-wheel metrics.
+    tokens: UiTokens,
     /// Message to send when mouse moves over empty area (not over any item)
     on_empty_area: Option<Message>,
     /// Function to create hover message for an item index
@@ -505,7 +506,7 @@ where
     Renderer: renderer::Renderer,
 {
     /// Create a new virtual list
-    pub fn new<F>(item_count: usize, item_height: f32, item_builder: F) -> Self
+    pub fn new<F>(item_count: usize, item_height: f32, tokens: UiTokens, item_builder: F) -> Self
     where
         F: Fn(usize) -> Element<'a, Message, Theme, Renderer> + 'a,
     {
@@ -519,6 +520,7 @@ where
             width: Length::Fill,
             height: Length::Fill,
             show_scrollbar: true,
+            tokens,
             on_empty_area: None,
             on_item_hover: None,
             on_visible_range: None,
@@ -631,6 +633,7 @@ where
             width: self.width,
             height: self.height,
             show_scrollbar: self.show_scrollbar,
+            tokens: self.tokens,
             on_empty_area: self.on_empty_area,
             on_item_hover: self.on_item_hover,
             on_visible_range: self.on_visible_range,
@@ -985,7 +988,7 @@ where
                     if max_scroll > 0.0 && total_height > 0.0 {
                         let view_ratio = bounds.height / total_height;
                         let scrollbar_height =
-                            (bounds.height * view_ratio).max(SCROLLBAR_MIN_HEIGHT);
+                            (bounds.height * view_ratio).max(self.tokens.size(30.0));
                         let available_track = bounds.height - scrollbar_height;
 
                         if available_track > 0.0 {
@@ -1047,7 +1050,7 @@ where
         {
             match delta {
                 mouse::ScrollDelta::Lines { y, .. } if self.on_smooth_scroll.is_some() => {
-                    let delta = -*y * 50.0;
+                    let delta = -*y * self.tokens.size(50.0);
                     if delta.abs() > f32::EPSILON
                         && let Some(on_smooth_scroll) = &self.on_smooth_scroll
                     {
@@ -1056,7 +1059,11 @@ where
                 }
                 mouse::ScrollDelta::Lines { y, .. } => {
                     let mut state = self.state.borrow_mut();
-                    if state.scroll_by_immediate(-*y * 50.0).abs() > 0.01 {
+                    if state
+                        .scroll_by_immediate(-*y * self.tokens.size(50.0))
+                        .abs()
+                        > 0.01
+                    {
                         shell.invalidate_layout();
                         drop(state);
                         self.publish_visible_range(internal_state, shell);
@@ -1276,7 +1283,7 @@ where
         }
 
         let view_ratio = bounds.height / total_height;
-        let scrollbar_height = (bounds.height * view_ratio).max(SCROLLBAR_MIN_HEIGHT);
+        let scrollbar_height = (bounds.height * view_ratio).max(self.tokens.size(30.0));
 
         let scroll_ratio = if max_scroll > 0.0 {
             state.scroll_offset / max_scroll
@@ -1287,9 +1294,9 @@ where
         let scrollbar_y = scroll_ratio * available_track;
 
         Some(Rectangle {
-            x: bounds.x + bounds.width - SCROLLBAR_WIDTH - SCROLLBAR_MARGIN,
+            x: bounds.x + bounds.width - self.tokens.size(6.0) - self.tokens.space(2.0),
             y: bounds.y + scrollbar_y,
-            width: SCROLLBAR_WIDTH,
+            width: self.tokens.size(6.0),
             height: scrollbar_height,
         })
     }
@@ -1315,7 +1322,7 @@ where
                 renderer::Quad {
                     bounds: scrollbar_bounds,
                     border: iced::Border {
-                        radius: SCROLLBAR_BORDER_RADIUS.into(),
+                        radius: self.tokens.size(3.0).into(),
                         width: 0.0,
                         color: Color::TRANSPARENT,
                     },

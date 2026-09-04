@@ -43,9 +43,11 @@ pub use hover_popup::hover_popup;
 pub use hover_surface::hover_surface;
 pub use play_mode_button::ButtonSize as PlayModeButtonSize;
 pub use playback_controls::ControlSize;
-pub use playlist_card::view as playlist_card;
 pub use progress_slider::SliderSize;
-pub use responsive::{calculate_grid_columns, measured_scrollable, usable_content_width};
-pub use smooth_scroll::smooth_scroll;
+pub use responsive::{
+    hidden_horizontal_scrollbar, hidden_vertical_scrollbar, page_scrollable,
+    responsive_card_columns, vertical_scrollbar,
+};
+pub use smooth_scroll::{scaled_scroll, smooth_scroll};
 pub use toast::{Toast, view_toast};
 pub use vertical_slider::vertical_slider;

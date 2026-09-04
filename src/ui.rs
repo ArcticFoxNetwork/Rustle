@@ -18,7 +18,6 @@ pub mod icons;
 pub mod overlay;
 pub mod pages;
 pub mod primitives;
-#[allow(dead_code)]
 pub mod responsive;
 pub mod theme;
 pub mod widgets;

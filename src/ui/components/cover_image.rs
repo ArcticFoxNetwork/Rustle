@@ -7,7 +7,6 @@
 //!
 //! | Situation | Use |
 //! |---|---|
-//! | Standard cover with `CoverSize` | `cover(handle, kind, size)` |
 //! | Custom pixel size / radius | `custom(handle, kind, px, radius)` |
 //! | Circular avatar | `circle(handle, kind, px)` |
 //!
@@ -17,21 +16,13 @@
 use iced::Element;
 use iced::widget::{container, image, svg};
 
-use crate::image::{CoverSize, ImageKind};
+use crate::image::ImageKind;
+use crate::ui::responsive::UiTokens;
 use crate::ui::widgets;
 
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
-
-/// Render a cover image at a standard `CoverSize`.
-pub fn cover(
-    handle: Option<&image::Handle>,
-    kind: ImageKind,
-    size: CoverSize,
-) -> Element<'static, crate::app::Message> {
-    shaped(handle, kind, size.px(), size.radius())
-}
 
 /// Render with a custom pixel size and border radius.
 pub fn custom(
@@ -39,8 +30,9 @@ pub fn custom(
     kind: ImageKind,
     px: f32,
     radius: f32,
+    tokens: UiTokens,
 ) -> Element<'static, crate::app::Message> {
-    shaped(handle, kind, px, radius)
+    shaped(handle, kind, px, radius, tokens)
 }
 
 /// Render a circular image (avatar, artist portrait).
@@ -48,8 +40,9 @@ pub fn circle(
     handle: Option<&image::Handle>,
     kind: ImageKind,
     px: f32,
+    tokens: UiTokens,
 ) -> Element<'static, crate::app::Message> {
-    shaped(handle, kind, px, px / 2.0)
+    shaped(handle, kind, px, px / 2.0, tokens)
 }
 
 // ---------------------------------------------------------------------------
@@ -61,9 +54,10 @@ fn shaped(
     kind: ImageKind,
     px: f32,
     radius: f32,
+    tokens: UiTokens,
 ) -> Element<'static, crate::app::Message> {
     let svg_data = placeholder_svg(kind);
-    let icon = (px * 0.4).min(64.0);
+    let icon = (px * 0.4).min(tokens.size(64.0));
     let placeholder = container(
         svg(svg::Handle::from_memory(svg_data.as_bytes()))
             .width(icon)

@@ -172,6 +172,47 @@ impl AudioPreloadManager {
         }
     }
 
+    fn direction_for_index(
+        &self,
+        idx: usize,
+        preferred: PreloadDirection,
+    ) -> Option<PreloadDirection> {
+        if self
+            .slot(preferred)
+            .is_some_and(|slot| slot.is_for_index(idx))
+        {
+            return Some(preferred);
+        }
+        let alternate = match preferred {
+            PreloadDirection::Next => PreloadDirection::Previous,
+            PreloadDirection::Previous => PreloadDirection::Next,
+        };
+        self.slot(alternate)
+            .is_some_and(|slot| slot.is_for_index(idx))
+            .then_some(alternate)
+    }
+
+    fn slot_for_index(&self, idx: usize, preferred: PreloadDirection) -> Option<&AudioPreloadSlot> {
+        self.direction_for_index(idx, preferred)
+            .and_then(|direction| self.slot(direction))
+    }
+
+    fn slot_mut_by_pending_identity(
+        &mut self,
+        identity: &PreloadIdentity,
+    ) -> Option<&mut AudioPreloadSlot> {
+        if self
+            .next
+            .as_ref()
+            .is_some_and(|slot| slot.pending_request_id.as_ref() == Some(identity))
+        {
+            return self.next.as_mut();
+        }
+        self.prev
+            .as_mut()
+            .filter(|slot| slot.pending_request_id.as_ref() == Some(identity))
+    }
+
     fn clear_slot(slot: &mut Option<AudioPreloadSlot>) -> Vec<PreloadIdentity> {
         let Some(slot) = slot.take() else {
             return Vec::new();
@@ -190,10 +231,8 @@ impl AudioPreloadManager {
     }
 
     pub fn should_preload(&self, idx: usize, direction: PreloadDirection) -> bool {
-        let slot = self.slot_ref(direction);
-        match slot {
+        match self.slot_for_index(idx, direction) {
             None => true,
-            Some(s) if !s.is_for_index(idx) => true,
             Some(s) => match &s.state {
                 SlotState::Failed { retry_count } => *retry_count < MAX_RETRIES,
                 SlotState::Idle => true,
@@ -204,9 +243,8 @@ impl AudioPreloadManager {
     }
 
     pub fn is_ready(&self, idx: usize, direction: PreloadDirection) -> bool {
-        self.slot_ref(direction)
-            .as_ref()
-            .is_some_and(|slot| slot.is_for_index(idx) && slot.is_ready())
+        self.slot_for_index(idx, direction)
+            .is_some_and(AudioPreloadSlot::is_ready)
     }
 
     pub fn mark_pending(
@@ -232,13 +270,13 @@ impl AudioPreloadManager {
     pub fn mark_failed_if_pending(
         &mut self,
         idx: usize,
-        direction: PreloadDirection,
+        _direction: PreloadDirection,
         identity: &PreloadIdentity,
     ) -> bool {
-        let Some(slot) = self.slot_mut(direction) else {
+        let Some(slot) = self.slot_mut_by_pending_identity(identity) else {
             return false;
         };
-        if slot.idx != idx || slot.pending_request_id.as_ref() != Some(identity) {
+        if slot.idx != idx {
             return false;
         }
 
@@ -272,6 +310,7 @@ impl AudioPreloadManager {
         idx: usize,
         direction: PreloadDirection,
     ) -> Option<AudioPreloadSlot> {
+        let direction = self.direction_for_index(idx, direction)?;
         let slot_ref = self.slot_entry_mut(direction);
         match slot_ref {
             Some(slot) if slot.is_for_index(idx) && slot.is_ready() => slot_ref.take(),
@@ -320,24 +359,37 @@ impl AudioPreloadManager {
         direction: PreloadDirection,
         identity: &PreloadIdentity,
     ) -> bool {
-        self.slot(direction)
+        self.slot_for_index(idx, direction)
             .is_some_and(|slot| slot.idx == idx && slot.has_pending_request(identity))
     }
 
     pub fn replace_pending_request(
         &mut self,
-        direction: PreloadDirection,
+        _direction: PreloadDirection,
         parent: &PreloadIdentity,
         handoff: PreloadIdentity,
     ) -> bool {
-        let Some(slot) = self.slot_mut(direction) else {
+        let Some(slot) = self.slot_mut_by_pending_identity(parent) else {
             return false;
         };
-        if slot.pending_request_id.as_ref() != Some(parent) {
-            return false;
-        }
         slot.pending_request_id = Some(handoff);
         true
+    }
+
+    pub fn slot_mut_for_identity(
+        &mut self,
+        identity: &PreloadIdentity,
+    ) -> Option<&mut AudioPreloadSlot> {
+        if self.next.as_ref().is_some_and(|slot| {
+            slot.request_id.as_ref() == Some(identity)
+                || slot.pending_request_id.as_ref() == Some(identity)
+        }) {
+            return self.next.as_mut();
+        }
+        self.prev.as_mut().filter(|slot| {
+            slot.request_id.as_ref() == Some(identity)
+                || slot.pending_request_id.as_ref() == Some(identity)
+        })
     }
 
     pub fn accepts_identity(&self, identity: &PreloadIdentity) -> bool {
@@ -420,6 +472,7 @@ async fn download_audio_streaming(
                 url,
                 cache_path,
                 cache_key,
+                quality.bitrate,
                 StreamingIdentity::Preload(identity.clone()),
                 None,
             ),
@@ -554,5 +607,27 @@ mod tests {
         assert!(manager.has_pending_request(3, PreloadDirection::Next, &parent));
         assert!(manager.replace_pending_request(PreloadDirection::Next, &parent, handoff.clone()));
         assert!(manager.has_pending_request(3, PreloadDirection::Next, &handoff));
+    }
+
+    #[test]
+    fn same_target_is_one_preload_entity_for_both_directions() {
+        let (identity, _, _, _) = identities();
+        let mut manager = AudioPreloadManager::default();
+        manager.mark_pending(1, PreloadDirection::Next);
+        manager
+            .slot_mut(PreloadDirection::Next)
+            .unwrap()
+            .pending_request_id = Some(identity.clone());
+
+        assert!(!manager.should_preload(1, PreloadDirection::Previous));
+        assert!(manager.has_pending_request(1, PreloadDirection::Previous, &identity));
+
+        let slot = manager.slot_mut(PreloadDirection::Next).unwrap();
+        slot.pending_request_id = None;
+        slot.request_id = Some(identity);
+        slot.state = SlotState::Ready;
+        assert!(manager.is_ready(1, PreloadDirection::Previous));
+        assert!(manager.take_ready(1, PreloadDirection::Previous).is_some());
+        assert!(manager.slot(PreloadDirection::Next).is_none());
     }
 }

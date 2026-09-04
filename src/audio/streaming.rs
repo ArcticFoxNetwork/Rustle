@@ -21,29 +21,107 @@ use parking_lot::{Condvar, Mutex, RwLock};
 
 // ============ Constants ============
 
-/// Refill once decoder-visible bytes fall below this threshold.
-pub const LOW_WATER_MARK_BYTES: u64 = 1024 * 1024;
+const KIB: u64 = 1024;
+const MIB: u64 = 1024 * KIB;
 
-/// Start/resume once decoder-visible bytes reach this threshold.
+/// One bitrate-aware policy owns every decoder-visible streaming threshold.
 ///
-/// Keep this below the retained capacity so consumed history can remain
-/// available for container probes and short backward seeks.
-pub const HIGH_WATER_MARK_BYTES: u64 = 3 * 1024 * 1024;
+/// The cache file length never determines retained memory. Bitrate only
+/// converts safe playback durations into bounded byte watermarks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamingBufferPolicy {
+    low_water_mark_bytes: u64,
+    high_water_mark_bytes: u64,
+    range_chunk_bytes: u64,
+    capacity_bytes: usize,
+}
 
-/// Fixed upper bound for decoder-facing retained bytes.
-///
-/// The remote object length must never determine the in-memory allocation.
-pub const STREAMING_BUFFER_CAPACITY_BYTES: usize = 4 * 1024 * 1024;
+impl StreamingBufferPolicy {
+    const DEFAULT_BITRATE_BPS: u64 = 2_000_000;
+    const LOW_SECONDS: u64 = 2;
+    const HIGH_SECONDS: u64 = 8;
+    const CHUNK_SECONDS: u64 = 2;
+    const MIN_LOW_BYTES: u64 = 512 * KIB;
+    const MAX_LOW_BYTES: u64 = 4 * MIB;
+    const MIN_HIGH_BYTES: u64 = 2 * MIB;
+    const MAX_HIGH_BYTES: u64 = 10 * MIB;
+    const MIN_CHUNK_BYTES: u64 = 512 * KIB;
+    const MAX_CHUNK_BYTES: u64 = 4 * MIB;
+    const MAX_CAPACITY_BYTES: u64 = 16 * MIB;
 
-fn range_window_needs_refill(buffered_ahead: u64) -> bool {
-    buffered_ahead < HIGH_WATER_MARK_BYTES
+    pub fn from_bitrate(bitrate_bps: Option<u32>) -> Self {
+        let bitrate_bps = bitrate_bps
+            .filter(|bitrate| *bitrate > 0)
+            .map(u64::from)
+            .unwrap_or(Self::DEFAULT_BITRATE_BPS);
+        let bytes_per_second = bitrate_bps.div_ceil(8);
+        let low_water_mark_bytes = bytes_per_second
+            .saturating_mul(Self::LOW_SECONDS)
+            .clamp(Self::MIN_LOW_BYTES, Self::MAX_LOW_BYTES);
+        let range_chunk_bytes = bytes_per_second
+            .saturating_mul(Self::CHUNK_SECONDS)
+            .clamp(Self::MIN_CHUNK_BYTES, Self::MAX_CHUNK_BYTES);
+        let high_water_mark_bytes = bytes_per_second.saturating_mul(Self::HIGH_SECONDS).clamp(
+            Self::MIN_HIGH_BYTES.max(low_water_mark_bytes.saturating_add(1)),
+            Self::MAX_HIGH_BYTES,
+        );
+        let capacity_bytes = high_water_mark_bytes
+            .saturating_add(range_chunk_bytes)
+            .min(Self::MAX_CAPACITY_BYTES) as usize;
+
+        Self {
+            low_water_mark_bytes,
+            high_water_mark_bytes,
+            range_chunk_bytes,
+            capacity_bytes,
+        }
+    }
+
+    pub fn low_water_mark_bytes(self) -> u64 {
+        self.low_water_mark_bytes
+    }
+
+    pub fn high_water_mark_bytes(self) -> u64 {
+        self.high_water_mark_bytes
+    }
+
+    pub fn range_chunk_bytes(self) -> u64 {
+        self.range_chunk_bytes
+    }
+
+    pub fn capacity_bytes(self) -> usize {
+        self.capacity_bytes
+    }
+
+    pub fn should_refill(self, buffered_ahead: u64) -> bool {
+        buffered_ahead < self.high_water_mark_bytes
+    }
+
+    pub fn should_enter_buffering(
+        self,
+        buffered_ahead: u64,
+        source_has_all_required_bytes: bool,
+    ) -> bool {
+        buffered_ahead < self.low_water_mark_bytes && !source_has_all_required_bytes
+    }
+
+    pub fn can_start_or_resume(
+        self,
+        buffered_ahead: u64,
+        source_has_all_required_bytes: bool,
+    ) -> bool {
+        source_has_all_required_bytes || buffered_ahead >= self.high_water_mark_bytes
+    }
+}
+
+impl Default for StreamingBufferPolicy {
+    fn default() -> Self {
+        Self::from_bitrate(None)
+    }
 }
 
 /// Maximum prefix read while identifying a finalized cache file.
 const FORMAT_DETECTION_PREFIX_BYTES: usize = 64 * 1024;
-
-/// Size of each strict HTTP Range window.
-const RANGE_CHUNK_BYTES: u64 = 512 * 1024;
 
 /// Network deadlines are explicit so CDN or socket stalls cannot become an
 /// unbounded decoder-liveness dependency.
@@ -195,8 +273,8 @@ pub struct AudioCacheKey {
 pub enum StreamingEventKind {
     /// Enough data downloaded, playback can start.
     Playable,
-    /// Download progress update (downloaded_bytes, total_bytes).
-    Progress(u64, u64),
+    /// Contiguous disk-cache progress update (cached_bytes, total_bytes).
+    CacheProgress(u64, u64),
     /// Remote bytes have all been received; persistence is not implied.
     DownloadComplete,
     /// Download and formal cache publication both completed.
@@ -232,7 +310,7 @@ impl StreamingIdentity {
 
 #[derive(Debug, Clone)]
 pub enum BufferEvent {
-    DataAppended { downloaded: u64, total: u64 },
+    CacheAdvanced { cached: u64, total: u64 },
     Complete,
 }
 
@@ -270,6 +348,11 @@ impl SharedBufferHealth {
 
 type BufferCallback = Box<dyn Fn(BufferEvent) + Send + Sync>;
 
+struct BufferCallbackEntry {
+    subscription_id: u64,
+    callback: BufferCallback,
+}
+
 // ============ Buffer State ============
 
 /// Inner shared state
@@ -277,6 +360,7 @@ struct SharedBufferInner {
     /// Retained decoder bytes. The deque never grows beyond `capacity`.
     data: RwLock<VecDeque<u8>>,
     capacity: usize,
+    policy: StreamingBufferPolicy,
     /// Absolute offset represented by the first retained byte.
     base_offset: AtomicU64,
     /// Total file size, when known.
@@ -302,7 +386,8 @@ struct SharedBufferInner {
     demand_stall_timeout: Duration,
     data_available: Condvar,
     wait_mutex: Mutex<()>,
-    buffer_callback: RwLock<Option<BufferCallback>>,
+    next_callback_subscription: AtomicU64,
+    buffer_callback: RwLock<Option<BufferCallbackEntry>>,
 }
 
 static AUDIO_IN_FLIGHT: OnceLock<Mutex<HashMap<AudioCacheKey, Weak<SharedBufferInner>>>> =
@@ -342,6 +427,9 @@ impl Drop for CoordinatorGuard {
 #[derive(Clone)]
 pub struct SharedBuffer {
     inner: Arc<SharedBufferInner>,
+    /// Callback ownership belongs to this caller handle, not the shared cache
+    /// coordinator. Clones used by the same playback lifecycle share it.
+    callback_subscription: Arc<AtomicU64>,
 }
 
 /// Cancellation scoped to one `StreamingBuffer` reader.
@@ -393,24 +481,43 @@ impl std::fmt::Debug for SharedBuffer {
 
 impl SharedBuffer {
     /// Create a fixed-capacity retained-window buffer.
+    #[cfg(test)]
     pub fn new(total_size: u64) -> Self {
-        Self::with_capacity(total_size, STREAMING_BUFFER_CAPACITY_BYTES)
+        Self::with_policy(total_size, StreamingBufferPolicy::default())
     }
 
+    pub fn with_policy(total_size: u64, policy: StreamingBufferPolicy) -> Self {
+        Self::with_policy_and_stall_timeout(total_size, policy, DECODER_DEMAND_STALL_TIMEOUT)
+    }
+
+    #[cfg(test)]
     pub fn with_capacity(total_size: u64, capacity: usize) -> Self {
         Self::with_capacity_and_stall_timeout(total_size, capacity, DECODER_DEMAND_STALL_TIMEOUT)
     }
 
+    #[cfg(test)]
     fn with_capacity_and_stall_timeout(
         total_size: u64,
         capacity: usize,
         demand_stall_timeout: Duration,
     ) -> Self {
+        let mut policy = StreamingBufferPolicy::default();
+        policy.capacity_bytes = capacity.max(1);
+        Self::with_policy_and_stall_timeout(total_size, policy, demand_stall_timeout)
+    }
+
+    fn with_policy_and_stall_timeout(
+        total_size: u64,
+        policy: StreamingBufferPolicy,
+        demand_stall_timeout: Duration,
+    ) -> Self {
+        let capacity = policy.capacity_bytes().max(1);
         let capacity = capacity.max(1);
         Self {
             inner: Arc::new(SharedBufferInner {
                 data: RwLock::new(VecDeque::with_capacity(capacity)),
                 capacity,
+                policy,
                 base_offset: AtomicU64::new(0),
                 total_size: AtomicU64::new(total_size),
                 downloaded: AtomicU64::new(0),
@@ -428,8 +535,17 @@ impl SharedBuffer {
                 demand_stall_timeout,
                 data_available: Condvar::new(),
                 wait_mutex: Mutex::new(()),
+                next_callback_subscription: AtomicU64::new(0),
                 buffer_callback: RwLock::new(None),
             }),
+            callback_subscription: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    fn from_shared_inner(inner: Arc<SharedBufferInner>) -> Self {
+        Self {
+            inner,
+            callback_subscription: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -437,17 +553,42 @@ impl SharedBuffer {
     where
         F: Fn(BufferEvent) + Send + Sync + 'static,
     {
-        *self.inner.buffer_callback.write() = Some(Box::new(callback));
+        let subscription_id = self
+            .inner
+            .next_callback_subscription
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1)
+            .max(1);
+        self.callback_subscription
+            .store(subscription_id, Ordering::Release);
+        *self.inner.buffer_callback.write() = Some(BufferCallbackEntry {
+            subscription_id,
+            callback: Box::new(callback),
+        });
     }
 
     pub fn clear_buffer_callback(&self) {
-        *self.inner.buffer_callback.write() = None;
+        let subscription_id = self.callback_subscription.swap(0, Ordering::AcqRel);
+        if subscription_id == 0 {
+            return;
+        }
+        let mut callback = self.inner.buffer_callback.write();
+        if callback
+            .as_ref()
+            .is_some_and(|entry| entry.subscription_id == subscription_id)
+        {
+            callback.take();
+        }
     }
 
     fn notify_callback(&self, event: BufferEvent) {
-        if let Some(callback) = self.inner.buffer_callback.read().as_ref() {
-            callback(event);
+        if let Some(entry) = self.inner.buffer_callback.read().as_ref() {
+            (entry.callback)(event);
         }
+    }
+
+    pub fn policy(&self) -> StreamingBufferPolicy {
+        self.inner.policy
     }
 
     /// Absolute offset of the first byte still retained in memory.
@@ -533,7 +674,10 @@ impl SharedBuffer {
 
         self.inner.data_available.notify_all();
         let total = self.inner.total_size.load(Ordering::Acquire);
-        self.notify_callback(BufferEvent::DataAppended { downloaded, total });
+        self.notify_callback(BufferEvent::CacheAdvanced {
+            cached: downloaded,
+            total,
+        });
     }
 
     fn append_window(&self, start: u64, chunk: &[u8], epoch: u64) -> bool {
@@ -573,8 +717,8 @@ impl SharedBuffer {
         self.inner.request_pending.store(false, Ordering::Release);
         drop(data);
         self.inner.data_available.notify_all();
-        self.notify_callback(BufferEvent::DataAppended {
-            downloaded: self.cached_prefix(),
+        self.notify_callback(BufferEvent::CacheAdvanced {
+            cached: self.cached_prefix(),
             total: self.total_size(),
         });
         true
@@ -892,8 +1036,12 @@ impl SharedBuffer {
         }
     }
 
-    /// Cancel the download
-    pub fn cancel(&self) {
+    /// Cancel the cache/download coordinator itself.
+    ///
+    /// Playback, preload, seek and crossfade lifecycles must cancel their
+    /// `StreamingReaderCancellation` instead. This is intentionally scoped to
+    /// the audio module so ordinary callers cannot poison a shared cache key.
+    pub(crate) fn cancel_coordinator(&self) {
         self.inner.cancelled.store(true, Ordering::Release);
         self.inner.data_available.notify_all();
     }
@@ -928,7 +1076,8 @@ impl SharedBuffer {
         self.inner.data_available.notify_all();
     }
 
-    /// Get download progress as fraction (0.0 to 1.0)
+    /// Get contiguous cache progress as a fraction (0.0 to 1.0).
+    #[cfg(test)]
     pub fn progress(&self) -> f32 {
         let total = self.inner.total_size.load(Ordering::Acquire);
         if total == 0 {
@@ -1221,13 +1370,14 @@ fn follow_existing_download(
                 last_progress = Some(progress);
                 let _ = event_tx.try_send(StreamingEvent::new(
                     identity.clone(),
-                    StreamingEventKind::Progress(progress.0, progress.1),
+                    StreamingEventKind::CacheProgress(progress.0, progress.1),
                 ));
             }
             if !playable_sent
-                && (buffer.buffered_ahead() >= HIGH_WATER_MARK_BYTES
-                    || buffer.remote_eof_reached()
-                    || buffer.is_download_complete())
+                && buffer.policy().can_start_or_resume(
+                    buffer.buffered_ahead(),
+                    buffer.remote_eof_reached() || buffer.is_download_complete(),
+                )
             {
                 let _ = event_tx
                     .send(StreamingEvent::new(
@@ -1286,13 +1436,14 @@ pub fn start_buffer_download(
     url: String,
     cache_path: PathBuf,
     cache_key: AudioCacheKey,
+    bitrate_bps: Option<u32>,
     identity: StreamingIdentity,
     event_tx: Option<tokio::sync::mpsc::Sender<StreamingEvent>>,
 ) -> SharedBuffer {
     let (shared_buffer, is_new) = {
         let mut in_flight = audio_in_flight().lock();
         if let Some(existing) = in_flight.get(&cache_key).and_then(Weak::upgrade) {
-            let existing = SharedBuffer { inner: existing };
+            let existing = SharedBuffer::from_shared_inner(existing);
             if !matches!(
                 existing.health(),
                 SharedBufferHealth::Failed(_)
@@ -1302,7 +1453,8 @@ pub fn start_buffer_download(
                 (existing, false)
             } else {
                 in_flight.remove(&cache_key);
-                let shared_buffer = SharedBuffer::new(0);
+                let shared_buffer =
+                    SharedBuffer::with_policy(0, StreamingBufferPolicy::from_bitrate(bitrate_bps));
                 shared_buffer
                     .inner
                     .coordinator_active
@@ -1311,7 +1463,8 @@ pub fn start_buffer_download(
                 (shared_buffer, true)
             }
         } else {
-            let shared_buffer = SharedBuffer::new(0);
+            let shared_buffer =
+                SharedBuffer::with_policy(0, StreamingBufferPolicy::from_bitrate(bitrate_bps));
             shared_buffer
                 .inner
                 .coordinator_active
@@ -1516,7 +1669,7 @@ pub fn start_buffer_download(
             let _ = tx
                 .send(StreamingEvent::new(
                     identity.clone(),
-                    StreamingEventKind::Progress(downloaded, total_size),
+                    StreamingEventKind::CacheProgress(downloaded, total_size),
                 ))
                 .await;
         }
@@ -1546,7 +1699,7 @@ pub fn start_buffer_download(
 
             if feed_ring {
                 let buffered_ahead = buffer_clone.buffered_ahead();
-                if !range_window_needs_refill(buffered_ahead) {
+                if !buffer_clone.policy().should_refill(buffered_ahead) {
                     if !playable_sent {
                         if let Some(tx) = &event_tx {
                             let _ = tx
@@ -1574,8 +1727,10 @@ pub fn start_buffer_download(
                 feed_ring = false;
             }
 
-            let end = (start.saturating_add(RANGE_CHUNK_BYTES).saturating_sub(1))
-                .min(total_size.saturating_sub(1));
+            let end = (start
+                .saturating_add(buffer_clone.policy().range_chunk_bytes())
+                .saturating_sub(1))
+            .min(total_size.saturating_sub(1));
             let body =
                 match fetch_range_chunk(&client, &url, start, end, &buffer_clone, active_epoch)
                     .await
@@ -1583,7 +1738,7 @@ pub fn start_buffer_download(
                     RangeFetchResult::Data(body) => body,
                     RangeFetchResult::Superseded => continue 'download,
                     RangeFetchResult::Cancelled => {
-                        buffer_clone.cancel();
+                        buffer_clone.cancel_coordinator();
                         drop(file);
                         crate::cache::cleanup_temp_file(&temp_path);
                         return;
@@ -1641,14 +1796,19 @@ pub fn start_buffer_download(
                     tokio::time::sleep(Duration::from_millis(10)).await;
                 }
             } else {
-                buffer_clone.notify_callback(BufferEvent::DataAppended {
-                    downloaded: buffer_clone.cached_prefix(),
+                buffer_clone.notify_callback(BufferEvent::CacheAdvanced {
+                    cached: buffer_clone.cached_prefix(),
                     total: total_size,
                 });
             }
             downloaded = end.saturating_add(1);
 
-            if feed_ring && !playable_sent && buffer_clone.buffered_ahead() >= HIGH_WATER_MARK_BYTES
+            if feed_ring
+                && !playable_sent
+                && buffer_clone.policy().can_start_or_resume(
+                    buffer_clone.buffered_ahead(),
+                    buffer_clone.remote_eof_reached() || buffer_clone.is_download_complete(),
+                )
             {
                 if let Some(tx) = &event_tx {
                     let _ = tx
@@ -1663,7 +1823,7 @@ pub fn start_buffer_download(
             if let Some(tx) = &event_tx {
                 let _ = tx.try_send(StreamingEvent::new(
                     identity.clone(),
-                    StreamingEventKind::Progress(buffer_clone.cached_prefix(), total_size),
+                    StreamingEventKind::CacheProgress(buffer_clone.cached_prefix(), total_size),
                 ));
             }
             start = end.saturating_add(1);
@@ -1849,10 +2009,10 @@ pub async fn wait_for_buffer_playable(buffer: &SharedBuffer, timeout_secs: u64) 
             if buffer.is_cancelled() || buffer.has_error() {
                 return false;
             }
-            if buffer.buffered_ahead() >= HIGH_WATER_MARK_BYTES
-                || buffer.remote_eof_reached()
-                || buffer.is_complete()
-            {
+            if buffer.policy().can_start_or_resume(
+                buffer.buffered_ahead(),
+                buffer.remote_eof_reached() || buffer.is_complete(),
+            ) {
                 return true;
             }
             tokio::time::sleep(Duration::from_millis(25)).await;
@@ -1869,10 +2029,68 @@ mod tests {
     use super::*;
 
     #[test]
-    fn range_window_refills_through_the_previous_low_high_dead_zone() {
-        assert!(range_window_needs_refill(LOW_WATER_MARK_BYTES + 1));
-        assert!(range_window_needs_refill(HIGH_WATER_MARK_BYTES - 1));
-        assert!(!range_window_needs_refill(HIGH_WATER_MARK_BYTES));
+    fn range_window_refills_until_the_policy_high_water_mark() {
+        let policy = StreamingBufferPolicy::from_bitrate(Some(9_200_000));
+        assert!(policy.should_refill(policy.low_water_mark_bytes() + 1));
+        assert!(policy.should_refill(policy.high_water_mark_bytes() - 1));
+        assert!(!policy.should_refill(policy.high_water_mark_bytes()));
+    }
+
+    #[test]
+    fn streaming_policy_is_bitrate_aware_monotonic_and_bounded() {
+        let standard = StreamingBufferPolicy::from_bitrate(Some(320_000));
+        let lossless = StreamingBufferPolicy::from_bitrate(Some(2_000_000));
+        let high_rate = StreamingBufferPolicy::from_bitrate(Some(9_200_000));
+
+        for policy in [standard, lossless, high_rate] {
+            assert!(policy.low_water_mark_bytes() < policy.high_water_mark_bytes());
+            assert!(policy.high_water_mark_bytes() < policy.capacity_bytes() as u64);
+            assert!(
+                policy.capacity_bytes() as u64
+                    >= policy.high_water_mark_bytes() + policy.range_chunk_bytes()
+            );
+        }
+        assert!(standard.low_water_mark_bytes() <= lossless.low_water_mark_bytes());
+        assert!(lossless.low_water_mark_bytes() <= high_rate.low_water_mark_bytes());
+        assert!(standard.high_water_mark_bytes() <= lossless.high_water_mark_bytes());
+        assert!(lossless.high_water_mark_bytes() <= high_rate.high_water_mark_bytes());
+    }
+
+    #[test]
+    fn high_rate_refill_has_a_chunk_of_network_delay_before_low_water() {
+        let policy = StreamingBufferPolicy::from_bitrate(Some(9_200_000));
+        let mut buffered_ahead = policy.high_water_mark_bytes();
+        assert!(!policy.should_refill(buffered_ahead));
+
+        buffered_ahead -= 1;
+        assert!(policy.should_refill(buffered_ahead));
+        buffered_ahead = buffered_ahead.saturating_sub(policy.range_chunk_bytes());
+        assert!(buffered_ahead > policy.low_water_mark_bytes());
+        assert!(!policy.should_enter_buffering(buffered_ahead, false));
+    }
+
+    #[test]
+    fn stale_callback_handle_cannot_clear_a_new_subscription() {
+        let coordinator = SharedBuffer::new(4);
+        let old = SharedBuffer::from_shared_inner(coordinator.inner.clone());
+        let current = SharedBuffer::from_shared_inner(coordinator.inner.clone());
+        let old_calls = Arc::new(AtomicU64::new(0));
+        let current_calls = Arc::new(AtomicU64::new(0));
+
+        let old_counter = old_calls.clone();
+        old.set_buffer_callback(move |_| {
+            old_counter.fetch_add(1, Ordering::Relaxed);
+        });
+        let current_counter = current_calls.clone();
+        current.set_buffer_callback(move |_| {
+            current_counter.fetch_add(1, Ordering::Relaxed);
+        });
+
+        old.clear_buffer_callback();
+        coordinator.append(&[1, 2, 3, 4]);
+
+        assert_eq!(old_calls.load(Ordering::Relaxed), 0);
+        assert_eq!(current_calls.load(Ordering::Relaxed), 1);
     }
 
     #[test]
@@ -1893,6 +2111,7 @@ mod tests {
             "http://127.0.0.1:1/audio".to_string(),
             std::env::temp_dir().join("rustle-dedupe"),
             key,
+            Some(320_000),
             StreamingIdentity::Preload(controller.reserve_preload_identity().unwrap()),
             None,
         );
@@ -1933,7 +2152,7 @@ mod tests {
         assert!(failed.health().promotion_error().is_some());
 
         let cancelled = SharedBuffer::new(100);
-        cancelled.cancel();
+        cancelled.cancel_coordinator();
         assert_eq!(cancelled.health(), SharedBufferHealth::Cancelled);
 
         let stopped = SharedBuffer::new(100);
@@ -2038,7 +2257,7 @@ mod tests {
         started_rx.recv_timeout(Duration::from_millis(100)).unwrap();
         std::thread::sleep(Duration::from_millis(20));
 
-        buffer.cancel();
+        buffer.cancel_coordinator();
 
         let error = result_rx
             .recv_timeout(Duration::from_millis(300))
@@ -2275,7 +2494,7 @@ mod tests {
         let buffer = SharedBuffer::new(100);
         assert!(!buffer.is_cancelled());
 
-        buffer.cancel();
+        buffer.cancel_coordinator();
         assert!(buffer.is_cancelled());
 
         // Read should return error when cancelled
@@ -2322,7 +2541,7 @@ mod tests {
         }
         drop(result_tx);
 
-        shared.cancel();
+        shared.cancel_coordinator();
         for _ in 0..2 {
             assert_eq!(
                 result_rx.recv_timeout(Duration::from_millis(500)).unwrap(),
@@ -2344,7 +2563,7 @@ mod tests {
     }
 
     #[test]
-    fn test_shared_buffer_progress() {
+    fn test_shared_buffer_cache_progress() {
         let buffer = SharedBuffer::new(100);
         assert_eq!(buffer.progress(), 0.0);
 

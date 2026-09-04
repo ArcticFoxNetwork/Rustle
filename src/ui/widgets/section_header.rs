@@ -11,6 +11,7 @@ use iced::widget::{Space, button, row, svg, text};
 use iced::{Alignment, Element, Fill};
 
 use crate::ui::icons;
+use crate::ui::responsive::{IconRole, TextRole, UiTokens};
 use crate::ui::theme::{self, BOLD_WEIGHT};
 
 /// Create a section header element
@@ -23,9 +24,10 @@ pub fn view<'a, Message: Clone + 'a>(
     title: &'a str,
     see_all_text: &'a str,
     on_see_all: Option<Message>,
+    tokens: UiTokens,
 ) -> Element<'a, Message> {
     let title_text = text(title)
-        .size(theme::TEXT_SIZE_TITLE_LARGE)
+        .size(tokens.text(TextRole::TitleLarge))
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         })
@@ -35,14 +37,14 @@ pub fn view<'a, Message: Clone + 'a>(
         button(
             row![
                 text(see_all_text)
-                    .size(theme::TEXT_SIZE_BODY)
+                    .size(tokens.text(TextRole::Body))
                     .style(|theme| text::Style {
                         color: Some(theme::text_secondary(theme))
                     }),
-                Space::new().width(4),
+                Space::new().width(tokens.space(4.0)),
                 svg(svg::Handle::from_memory(icons::CHEVRON_RIGHT.as_bytes()))
-                    .width(16)
-                    .height(16)
+                    .width(tokens.icon(IconRole::Small))
+                    .height(tokens.icon(IconRole::Small))
                     .style(|_theme, _status| svg::Style {
                         color: Some(theme::text_secondary(_theme)),
                     }),

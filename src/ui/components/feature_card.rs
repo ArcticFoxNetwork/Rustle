@@ -4,10 +4,11 @@ use iced::widget::{Space, button, column, container, mouse_area, row, svg, text}
 use iced::{Alignment, Color, Element, Fill, Length, Padding};
 
 use crate::ui::responsive::{
-    CardRole, IconRole, RadiusRole, ResponsiveContext, TargetRole, TextRole,
+    CardRole, IconRole, RadiusRole, ResponsiveContext, TargetRole, TextRole, UiTokens,
 };
 use crate::ui::{icons, theme, widgets};
 
+// Visual dimensions are 1080P reference pixels resolved through `UiTokens`.
 const PLAY_BUTTON_SIZE: f32 = 42.0;
 const PLAY_BUTTON_START_OFFSET: f32 = 12.0;
 const PLAY_BUTTON_END_OFFSET: f32 = 6.0;
@@ -16,38 +17,6 @@ const HOVER_IMAGE_SCALE: f32 = 1.06;
 
 #[allow(clippy::too_many_arguments)]
 pub fn view<'a, Message: Clone + 'a>(
-    title: String,
-    subtitle: String,
-    badge: Option<String>,
-    icon: &'static str,
-    cover_handle: Option<&'a iced::widget::image::Handle>,
-    gradient: (Color, Color),
-    width: Length,
-    hover_progress: f32,
-    on_click: Message,
-    on_play: Message,
-    on_hover: Message,
-    on_unhover: Message,
-) -> Element<'a, Message> {
-    view_with_context(
-        title,
-        subtitle,
-        badge,
-        icon,
-        cover_handle,
-        gradient,
-        width,
-        hover_progress,
-        on_click,
-        on_play,
-        on_hover,
-        on_unhover,
-        ResponsiveContext::new(iced::Size::new(1920.0, 1080.0)),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-pub fn view_with_context<'a, Message: Clone + 'a>(
     title: String,
     subtitle: String,
     badge: Option<String>,
@@ -114,7 +83,7 @@ pub fn view_with_context<'a, Message: Clone + 'a>(
 
     let play: Element<'a, Message> = if hover_progress > 0.001 {
         let opacity = hover_progress.clamp(0.0, 1.0);
-        let icon_size = tokens.icon(IconRole::Medium).max(play_icon_size(opacity));
+        let icon_size = tokens.icon(IconRole::Medium).max(play_icon_size(tokens));
         let play_button = button(
             container(
                 svg(svg::Handle::from_memory(icons::PLAY.as_bytes()))
@@ -131,7 +100,9 @@ pub fn view_with_context<'a, Message: Clone + 'a>(
             .center_y(play_button_size),
         )
         .padding(0)
-        .style(move |_theme, status| play_button_style(opacity, status, play_button_size / 2.0))
+        .style(move |_theme, status| {
+            play_button_style(opacity, status, play_button_size / 2.0, tokens)
+        })
         .on_press(on_play);
 
         container(play_button)
@@ -180,10 +151,12 @@ pub fn view_with_context<'a, Message: Clone + 'a>(
         })
         .on_press(on_click);
 
-    mouse_area(container(card).style(move |_theme| shadow_style(hover_progress, card_radius)))
-        .on_enter(on_hover.clone())
-        .on_exit(on_unhover)
-        .into()
+    mouse_area(
+        container(card).style(move |_theme| shadow_style(hover_progress, card_radius, tokens)),
+    )
+    .on_enter(on_hover.clone())
+    .on_exit(on_unhover)
+    .into()
 }
 
 fn gradient_style(colors: (Color, Color), radius: f32) -> iced::widget::container::Style {
@@ -216,7 +189,11 @@ fn scrim_style(radius: f32) -> iced::widget::container::Style {
     }
 }
 
-fn shadow_style(hover_progress: f32, radius: f32) -> iced::widget::container::Style {
+fn shadow_style(
+    hover_progress: f32,
+    radius: f32,
+    tokens: UiTokens,
+) -> iced::widget::container::Style {
     iced::widget::container::Style {
         border: iced::Border {
             radius: radius.into(),
@@ -224,19 +201,11 @@ fn shadow_style(hover_progress: f32, radius: f32) -> iced::widget::container::St
         },
         shadow: iced::Shadow {
             color: Color::from_rgba(0.0, 0.0, 0.0, 0.22 + 0.14 * hover_progress),
-            offset: iced::Vector::new(0.0, 5.0 + 3.0 * hover_progress),
-            blur_radius: 18.0 + 8.0 * hover_progress,
+            offset: iced::Vector::new(0.0, tokens.size(5.0 + 3.0 * hover_progress)),
+            blur_radius: tokens.size(18.0 + 8.0 * hover_progress),
         },
         ..Default::default()
     }
-}
-
-fn play_button_offset(hover_progress: f32) -> f32 {
-    play_button_offset_for(
-        hover_progress,
-        PLAY_BUTTON_START_OFFSET,
-        PLAY_BUTTON_END_OFFSET,
-    )
 }
 
 fn play_button_offset_for(hover_progress: f32, start: f32, end: f32) -> f32 {
@@ -246,8 +215,8 @@ fn play_button_offset_for(hover_progress: f32, start: f32, end: f32) -> f32 {
 
 // Keep SVG raster bounds stable across the hover animation. Subpixel image
 // bounds can abort preparation of the remaining Iced image layer.
-fn play_icon_size(_hover_progress: f32) -> f32 {
-    PLAY_ICON_SIZE
+fn play_icon_size(tokens: UiTokens) -> f32 {
+    tokens.size(PLAY_ICON_SIZE)
 }
 
 fn background_image_scale(hover_progress: f32) -> f32 {
@@ -258,6 +227,7 @@ fn play_button_style(
     opacity: f32,
     status: iced::widget::button::Status,
     radius: f32,
+    tokens: UiTokens,
 ) -> iced::widget::button::Style {
     let status_alpha = match status {
         iced::widget::button::Status::Hovered => 0.98,
@@ -278,8 +248,8 @@ fn play_button_style(
         },
         shadow: iced::Shadow {
             color: Color::from_rgba(0.0, 0.0, 0.0, 0.26 * opacity),
-            offset: iced::Vector::new(0.0, 3.0),
-            blur_radius: 8.0,
+            offset: iced::Vector::new(0.0, tokens.size(3.0)),
+            blur_radius: tokens.size(8.0),
         },
         ..Default::default()
     }
@@ -289,24 +259,30 @@ fn play_button_style(
 mod tests {
     use super::{
         HOVER_IMAGE_SCALE, PLAY_BUTTON_END_OFFSET, PLAY_BUTTON_START_OFFSET, PLAY_ICON_SIZE,
-        background_image_scale, play_button_offset, play_icon_size,
+        background_image_scale, play_button_offset_for, play_icon_size,
     };
+    use crate::ui::responsive::UiTokens;
 
     #[test]
     fn feature_play_button_moves_up_as_hover_progresses() {
-        assert_eq!(play_button_offset(0.0), PLAY_BUTTON_START_OFFSET);
         assert_eq!(
-            play_button_offset(0.5),
+            play_button_offset_for(0.0, PLAY_BUTTON_START_OFFSET, PLAY_BUTTON_END_OFFSET),
+            PLAY_BUTTON_START_OFFSET
+        );
+        assert_eq!(
+            play_button_offset_for(0.5, PLAY_BUTTON_START_OFFSET, PLAY_BUTTON_END_OFFSET),
             (PLAY_BUTTON_START_OFFSET + PLAY_BUTTON_END_OFFSET) / 2.0
         );
-        assert_eq!(play_button_offset(1.0), PLAY_BUTTON_END_OFFSET);
+        assert_eq!(
+            play_button_offset_for(1.0, PLAY_BUTTON_START_OFFSET, PLAY_BUTTON_END_OFFSET),
+            PLAY_BUTTON_END_OFFSET
+        );
     }
 
     #[test]
     fn feature_icon_stays_fixed_while_background_animates_with_hover() {
-        assert_eq!(play_icon_size(0.0), PLAY_ICON_SIZE);
-        assert_eq!(play_icon_size(0.5), PLAY_ICON_SIZE);
-        assert_eq!(play_icon_size(1.0), PLAY_ICON_SIZE);
+        let tokens = UiTokens::default();
+        assert_eq!(play_icon_size(tokens), PLAY_ICON_SIZE);
         assert_eq!(background_image_scale(0.0), 1.0);
         assert_eq!(background_image_scale(1.0), HOVER_IMAGE_SCALE);
     }

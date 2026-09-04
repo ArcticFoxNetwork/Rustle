@@ -45,7 +45,8 @@ use std::time::Instant;
 
 /// Configuration for the lyrics engine
 ///
-/// All timing values are in seconds, distances in logical pixels.
+/// All timing values are in seconds. Dimension fields are authored in 1080P
+/// reference pixels and resolved with the caller-provided visual scale.
 ///
 /// ## Features
 ///
@@ -58,6 +59,10 @@ use std::time::Instant;
 /// - Translation and romanized text support
 #[derive(Debug, Clone)]
 pub struct LyricsEngineConfig {
+    /// Application-owned visual scale. Rustle supplies its root-rem scale;
+    /// the renderer does not derive a second scale from its widget bounds.
+    visual_scale: f32,
+
     // === Font Size ===
     /// Font size configuration for lyrics rendering
     pub font_size_config: FontSizeConfig,
@@ -137,6 +142,8 @@ pub enum AlignAnchor {
 impl Default for LyricsEngineConfig {
     fn default() -> Self {
         Self {
+            visual_scale: 1.0,
+
             // Font Size
             font_size_config: FontSizeConfig::default(),
 
@@ -174,6 +181,42 @@ impl Default for LyricsEngineConfig {
             hide_passed_lines: false,
             overscan_px: 300.0,
         }
+    }
+}
+
+impl LyricsEngineConfig {
+    /// Resolve reference-space renderer metrics with a caller-owned scale.
+    pub fn with_visual_scale(mut self, visual_scale: f32) -> Self {
+        self.set_visual_scale(visual_scale);
+        self
+    }
+
+    fn set_visual_scale(&mut self, visual_scale: f32) {
+        self.visual_scale = if visual_scale.is_finite() && visual_scale > 0.0 {
+            visual_scale
+        } else {
+            1.0
+        };
+    }
+
+    #[inline]
+    pub fn resolved_font_size(&self) -> f32 {
+        self.font_size_config.calculate_font_size(self.visual_scale)
+    }
+
+    #[inline]
+    pub fn visual_scale(&self) -> f32 {
+        self.visual_scale
+    }
+
+    #[inline]
+    pub fn resolved_line_height(&self) -> f32 {
+        self.line_height * self.visual_scale
+    }
+
+    #[inline]
+    pub fn resolved_overscan(&self) -> f32 {
+        self.overscan_px * self.visual_scale
     }
 }
 
@@ -321,6 +364,9 @@ impl LyricsEngine {
             last_content_width: 0.0,
             last_font_size: 0.0,
             layout_dirty: true,
+            // Non-zero renderer bootstrap bounds. Sensor measurements replace
+            // them before viewport-owned layout is considered initialized;
+            // they are not visual sizing policy.
             viewport_height: 800.0,
             viewport_width: 1200.0,
             last_disable_blur: false,
@@ -369,6 +415,28 @@ impl LyricsEngine {
     /// Get the current configuration
     pub fn config(&self) -> &LyricsEngineConfig {
         &self.config
+    }
+
+    /// Update application-owned responsive scaling without deriving layout
+    /// policy from renderer bounds. Existing shaped metrics remain active
+    /// until their replacement is ready, avoiding a one-frame size flash.
+    pub fn set_visual_scale(&mut self, visual_scale: f32) {
+        let previous = self.config.visual_scale;
+        self.config.set_visual_scale(visual_scale);
+        if (self.config.visual_scale - previous).abs() > f32::EPSILON {
+            self.last_content_width = 0.0;
+            self.layout_dirty = true;
+        }
+    }
+
+    /// Font size currently matching the shaped cache, with a responsive
+    /// fallback for the first frame before shaping completes.
+    pub fn resolved_font_size(&self) -> f32 {
+        if self.last_font_size > 0.0 {
+            self.last_font_size
+        } else {
+            self.config.resolved_font_size()
+        }
     }
 
     /// Handle mouse wheel event
@@ -611,7 +679,7 @@ impl LyricsEngine {
         self.last_target_align_index = self.scroll_to_index;
 
         // Use the same line_spacing formula as GPU pipeline
-        let line_spacing = self.config.line_height * 0.5;
+        let line_spacing = self.config.resolved_line_height() * 0.5;
 
         // Get line heights (use cached if available)
         let line_heights: Vec<f32> = lines
@@ -621,7 +689,7 @@ impl LyricsEngine {
                 if idx < self.cached_line_heights.len() {
                     self.cached_line_heights[idx]
                 } else {
-                    self.config.line_height * 1.4
+                    self.config.resolved_line_height() * 1.4
                 }
             })
             .collect();
@@ -638,7 +706,8 @@ impl LyricsEngine {
             0.0
         };
 
-        // 应用 `window.innerWidth <= 1024 ? blur * 0.8 : blur` 的设计。
+        // Blur intensity is width-independent; root-rem scaling is applied at
+        // the renderer boundary together with the physical scale factor.
         let mut bounds = self.line_animations.calc_layout_full(
             &line_heights,
             line_spacing,
@@ -657,7 +726,7 @@ impl LyricsEngine {
             disable_blur,
             self.interlude_insert_after,
             self.interlude_extra_height,
-            interlude_dots::dot_margin(self.last_font_size.max(self.config.line_height)),
+            interlude_dots::dot_margin(self.last_font_size.max(self.config.resolved_line_height())),
         );
 
         self.physics.set_scroll_bounds(bounds.min, bounds.max);
@@ -683,7 +752,9 @@ impl LyricsEngine {
                 disable_blur,
                 self.interlude_insert_after,
                 self.interlude_extra_height,
-                interlude_dots::dot_margin(self.last_font_size.max(self.config.line_height)),
+                interlude_dots::dot_margin(
+                    self.last_font_size.max(self.config.resolved_line_height()),
+                ),
             );
             self.physics.set_scroll_bounds(bounds.min, bounds.max);
         }
@@ -1076,7 +1147,7 @@ impl LyricsEngine {
             self.interlude_dots
                 .set_interlude(Some((gap_start as f32, gap_end as f32)));
             self.interlude_dots.sync_time(current_time as f32);
-            let font_size = self.last_font_size.max(self.config.line_height);
+            let font_size = self.last_font_size.max(self.config.resolved_line_height());
             // `interlude_line_idx == -1` means the gap is before the first lyric line.
             // Keep that state explicit with a sentinel instead of casting directly and overflowing later.
             self.interlude_insert_after = Some(if interlude_line_idx < 0 {
@@ -1115,14 +1186,14 @@ impl LyricsEngine {
             return;
         };
 
-        let font_size = self.last_font_size.max(self.config.line_height);
+        let font_size = self.last_font_size.max(self.config.resolved_line_height());
         let dot_width = interlude_dots::dot_container_width(
             font_size,
             self.viewport_width,
             self.viewport_height,
         );
         let pad_x = interlude_dots::dot_padding_x(font_size);
-        let trailing_margin = interlude_dots::dot_trailing_margin_px();
+        let trailing_margin = interlude_dots::dot_trailing_margin_px(font_size);
         let base_padding = self.viewport_width * 0.05;
         let left = if self.interlude_align_right {
             (self.viewport_width - base_padding - dot_width + pad_x + trailing_margin).max(0.0)

@@ -119,14 +119,13 @@ pub fn download_panel(
         column![
             header,
             Space::new().height(tokens.space(24.0)),
-            scrollable(row![tab_active, tab_done, tab_failed].spacing(0))
-                .direction(iced::widget::scrollable::Direction::Horizontal(
-                    iced::widget::scrollable::Scrollbar::new()
-                        .width(0)
-                        .scroller_width(0),
-                ))
-                .id(iced::widget::Id::new("downloads_tabs_scroll"))
-                .width(Length::Fill),
+            crate::ui::widgets::scaled_scroll(
+                scrollable(row![tab_active, tab_done, tab_failed].spacing(0))
+                    .direction(crate::ui::widgets::hidden_horizontal_scrollbar())
+                    .id(iced::widget::Id::new("downloads_tabs_scroll"))
+                    .width(Length::Fill),
+                tokens,
+            ),
         ]
         .width(Length::Fill),
     )
@@ -155,8 +154,10 @@ pub fn download_panel(
         )
         .width(Length::Fill)
         .height(Length::Fill)
+        .direction(crate::ui::widgets::vertical_scrollbar(tokens))
         .id(iced::widget::Id::new("downloads_scroll")),
         SmoothScrollTarget::Native("downloads_scroll"),
+        tokens,
         Message::SmoothScroll,
     );
 
@@ -204,7 +205,7 @@ fn make_tab_button(
             })
             .into()
     } else {
-        Space::new().height(2).into()
+        Space::new().height(tokens.size(2.0)).into()
     };
     column![
         button(
@@ -277,7 +278,7 @@ fn build_active_card(
                 color: Some(theme::text_secondary(theme))
             }),
     ]
-    .spacing(2);
+    .spacing(tokens.space(2.0));
 
     // Responsive progress bar with FillPortion
     let pct = (progress * 100.0) as u32;
@@ -365,7 +366,7 @@ fn build_active_card(
             background: Some(Background::Color(theme::panel_bg(theme))),
             border: iced::Border {
                 radius: tokens.radius(RadiusRole::Medium).into(),
-                width: 1.0,
+                width: tokens.size(1.0),
                 color: theme::panel_border(theme),
             },
             ..Default::default()
@@ -446,7 +447,7 @@ fn build_pending_card(
         background: Some(Background::Color(theme::panel_bg(theme))),
         border: iced::Border {
             radius: tokens.radius(RadiusRole::Medium).into(),
-            width: 1.0,
+            width: tokens.size(1.0),
             color: theme::panel_border(theme),
         },
         ..Default::default()
@@ -674,7 +675,7 @@ fn build_failed_card(
         background: Some(Background::Color(theme::panel_bg(theme))),
         border: iced::Border {
             radius: tokens.radius(RadiusRole::Medium).into(),
-            width: 1.0,
+            width: tokens.size(1.0),
             color: theme::panel_border(theme),
         },
         ..Default::default()
@@ -708,6 +709,7 @@ fn download_cover(
         kind,
         tokens.size(56.0),
         tokens.radius(RadiusRole::Medium),
+        tokens,
     )
 }
 
@@ -727,7 +729,7 @@ fn quality_badge_el(
             background: Some(Background::Color(Color::from_rgba(r, g, b, 0.15))),
             border: iced::Border {
                 radius: tokens.radius(RadiusRole::Small).into(),
-                width: 1.0,
+                width: tokens.size(1.0),
                 color: Color::from_rgba(r, g, b, 0.25),
             },
             ..Default::default()
@@ -801,6 +803,7 @@ fn icon_danger_btn(
     .on_press(Message::DownloadCancel(song_id))
     .width(tokens.target(TargetRole::Control))
     .height(tokens.target(TargetRole::Control))
+    .padding(0)
     .style(move |_theme, status| {
         let bg = if status == button::Status::Hovered {
             Background::Color(Color::from_rgba(0.94, 0.34, 0.34, 0.1))

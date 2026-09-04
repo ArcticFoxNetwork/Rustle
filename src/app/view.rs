@@ -9,7 +9,7 @@ use iced::{Alignment, Color, Element, Fill, Length};
 
 use super::message::Message;
 use super::{App, Route};
-use crate::image::{CoverSize, ImageKind};
+use crate::image::ImageKind;
 use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::cover_image;
 use crate::ui::overlay::{self, ModalKind, OverlayKind};
@@ -104,7 +104,7 @@ impl App {
                         } else {
                             false
                         },
-                        self.playback_buffer_progress(),
+                        self.playback_cache_progress(),
                         self.is_fm_mode(),
                         self.core.window_maximized,
                         self.ui.lyrics.display_mode,
@@ -198,7 +198,6 @@ impl App {
                         self.ui.playlist_page.scroll_state.clone(),
                         current_user_id,
                         current_playing_id,
-                        self.ui.playlist_page.content_width,
                         self.ui.playlist_page.description_expanded,
                         self.ui.playlist_page.gradient_source(),
                         self.ui.playlist_page.gradient_animation.progress(),
@@ -223,7 +222,6 @@ impl App {
                         self.ui.playlist_page.scroll_state.clone(),
                         current_user_id,
                         current_playing_id,
-                        self.ui.playlist_page.content_width,
                         self.ui.playlist_page.description_expanded,
                         self.ui.playlist_page.gradient_source(),
                         self.ui.playlist_page.gradient_animation.progress(),
@@ -397,7 +395,7 @@ impl App {
             current_favorite,
             progress_colors,
             is_buffering,
-            self.playback_buffer_progress(),
+            self.playback_cache_progress(),
             is_fm_mode,
             is_first_song,
             current_song_cover,
@@ -487,7 +485,7 @@ impl App {
         // Intentionally pointer-transparent: notifications should not disturb controls beneath.
         let toast_overlay: Element<'_, Message> = if self.ui.toast_visible {
             if let Some(toast) = &self.ui.toast {
-                let toast_widget = widgets::view_toast(toast);
+                let toast_widget = widgets::view_toast(toast, context.tokens);
                 container(toast_widget)
                     .width(Fill)
                     .padding(context.tokens.space(20.0))
@@ -514,7 +512,7 @@ impl App {
         // Context menu overlay — positioned at cursor (independent)
         let context_menu_overlay: Element<'_, Message> =
             if let Some(ref menu) = self.ui.context_menu {
-                components::context_menu::view_responsive(menu, self.core.locale, context)
+                components::context_menu::view(menu, self.core.locale, context)
             } else {
                 Space::new().width(0).height(0).into()
             };
@@ -528,17 +526,17 @@ impl App {
                         let content: Element<'_, Message> = match kind {
                             ModalKind::SongEdit(edit) => {
                                 let title = locale.get(crate::i18n::Key::SongEditTitle).to_string();
-                                overlay::modal_section_responsive(
+                                overlay::modal_section(
                                     context,
                                     title,
                                     Message::DismissTopModal,
-                                    overlay::modal_body_responsive(
+                                    overlay::modal_body(
                                         context,
-                                        components::song_info_dialog::view_edit_body_responsive(
+                                        components::song_info_dialog::view_edit_body(
                                             edit, locale, context,
                                         ),
                                     ),
-                                    overlay::modal_footer_responsive(
+                                    overlay::modal_footer(
                                         context,
                                         vec![
                                             cancel_btn(locale, context),
@@ -562,7 +560,7 @@ impl App {
                                 watch_available,
                                 watch_path,
                             } => {
-                                let body = components::edit_dialog::view_body_responsive(
+                                let body = components::edit_dialog::view_body(
                                     name,
                                     description,
                                     cover_path.as_deref(),
@@ -574,12 +572,12 @@ impl App {
                                 );
                                 let title =
                                     locale.get(crate::i18n::Key::EditPlaylistTitle).to_string();
-                                overlay::modal_section_responsive(
+                                overlay::modal_section(
                                     context,
                                     title,
                                     Message::DismissTopModal,
-                                    overlay::modal_body_responsive(context, body),
-                                    overlay::modal_footer_responsive(
+                                    overlay::modal_body(context, body),
+                                    overlay::modal_footer(
                                         context,
                                         vec![
                                             cancel_btn(locale, context),
@@ -595,11 +593,11 @@ impl App {
                                 let title = locale
                                     .get(crate::i18n::Key::DeletePlaylistTitle)
                                     .to_string();
-                                overlay::modal_section_responsive(
+                                overlay::modal_section(
                                     context,
                                     title,
                                     Message::DismissTopModal,
-                                    overlay::modal_body_responsive(
+                                    overlay::modal_body(
                                         context,
                                         text(format!(
                                             "确定要删除歌单「{}」吗？此操作无法撤销。",
@@ -612,7 +610,7 @@ impl App {
                                         )
                                         .into(),
                                     ),
-                                    overlay::modal_footer_responsive(
+                                    overlay::modal_footer(
                                         context,
                                         vec![
                                             cancel_btn(locale, context),
@@ -637,11 +635,11 @@ impl App {
                                 let confirm_label = locale
                                     .get(crate::i18n::Key::DownloadPlaylistConfirmBtn)
                                     .to_string();
-                                overlay::modal_section_responsive(
+                                overlay::modal_section(
                                     context,
                                     title,
                                     Message::DismissTopModal,
-                                    overlay::modal_body_responsive(
+                                    overlay::modal_body(
                                         context,
                                         text(body)
                                             .size(
@@ -651,7 +649,7 @@ impl App {
                                             )
                                             .into(),
                                     ),
-                                    overlay::modal_footer_responsive(
+                                    overlay::modal_footer(
                                         context,
                                         vec![
                                             cancel_btn(locale, context),
@@ -665,19 +663,19 @@ impl App {
                                 )
                             }
                             ModalKind::ExitConfirm { remember_choice } => {
-                                let body = components::exit_dialog::view_body_responsive(
+                                let body = components::exit_dialog::view_body(
                                     *remember_choice,
                                     locale,
                                     context,
                                 );
                                 let title =
                                     locale.get(crate::i18n::Key::ExitDialogTitle).to_string();
-                                overlay::modal_section_responsive(
+                                overlay::modal_section(
                                     context,
                                     title,
                                     Message::DismissTopModal,
-                                    overlay::modal_body_responsive(context, body),
-                                    overlay::modal_footer_responsive(
+                                    overlay::modal_body(context, body),
+                                    overlay::modal_footer(
                                         context,
                                         vec![
                                             cancel_btn(locale, context),
@@ -703,13 +701,16 @@ impl App {
                                         for pl in pls {
                                             let pl_name = pl.name.clone();
                                             let pl_id = pl.id;
-                                            let s = CoverSize::Picker;
-                                            let cover_el = cover_image::cover(
+                                            let cover_el = cover_image::custom(
                                                 self.ui
                                                     .image_state
                                                     .get(ImageKind::PlaylistCover, pl_id),
                                                 ImageKind::PlaylistCover,
-                                                s,
+                                                context.tokens.size(40.0),
+                                                context.tokens.radius(
+                                                    crate::ui::responsive::RadiusRole::Medium,
+                                                ),
+                                                context.tokens,
                                             );
                                             col = col.push(
                                                 button(
@@ -756,10 +757,14 @@ impl App {
                                         widgets::smooth_scroll(
                                             scrollable(container(col).width(Fill))
                                                 .height(Length::Fixed(context.tokens.size(300.0)))
+                                                .direction(widgets::vertical_scrollbar(
+                                                    context.tokens,
+                                                ))
                                                 .id(iced::widget::Id::new(
                                                     "playlist_picker_scroll",
                                                 )),
                                             SmoothScrollTarget::Native("playlist_picker_scroll"),
+                                            context.tokens,
                                             Message::SmoothScroll,
                                         )
                                         .into()
@@ -768,7 +773,7 @@ impl App {
                                         let playlists = self.library.playlists.clone();
                                         if playlists.is_empty() {
                                             text("No playlists available")
-                                                .size(14)
+                                                .size(context.tokens.text(TextRole::Body))
                                                 .style(|theme| text::Style {
                                                     color: Some(crate::ui::theme::text_muted(
                                                         theme,
@@ -781,7 +786,6 @@ impl App {
                                             for pl in &playlists {
                                                 let pl_id = pl.id;
                                                 let pl_name = pl.name.clone();
-                                                let s = CoverSize::Picker;
                                                 let cover_handle =
                                                     u64::try_from(pl_id).ok().and_then(|id| {
                                                         self.ui
@@ -791,8 +795,11 @@ impl App {
                                                 let thumb = cover_image::custom(
                                                     cover_handle,
                                                     ImageKind::LocalPlaylistCover,
-                                                    s.px(),
-                                                    s.radius(),
+                                                    context.tokens.size(40.0),
+                                                    context.tokens.radius(
+                                                        crate::ui::responsive::RadiusRole::Medium,
+                                                    ),
+                                                    context.tokens,
                                                 );
                                                 col = col.push(
                                                     button(
@@ -843,12 +850,16 @@ impl App {
                                                     .height(Length::Fixed(
                                                         context.tokens.size(300.0),
                                                     ))
+                                                    .direction(widgets::vertical_scrollbar(
+                                                        context.tokens,
+                                                    ))
                                                     .id(iced::widget::Id::new(
                                                         "playlist_picker_scroll",
                                                     )),
                                                 SmoothScrollTarget::Native(
                                                     "playlist_picker_scroll",
                                                 ),
+                                                context.tokens,
                                                 Message::SmoothScroll,
                                             )
                                             .into()
@@ -856,24 +867,19 @@ impl App {
                                     }
                                 };
 
-                                overlay::modal_section_responsive(
+                                overlay::modal_section(
                                     context,
                                     title,
                                     Message::DismissTopModal,
-                                    overlay::modal_body_responsive(context, list),
-                                    overlay::modal_footer_responsive(
+                                    overlay::modal_body(context, list),
+                                    overlay::modal_footer(
                                         context,
                                         vec![cancel_btn(locale, context)],
                                     ),
                                 )
                             }
                         };
-                        overlay::modal_view_responsive(
-                            context,
-                            config,
-                            content,
-                            Message::DismissTopModal,
-                        )
+                        overlay::modal_view(context, config, content, Message::DismissTopModal)
                     }
                 },
                 _ => Space::new().width(0).height(0).into(),
@@ -934,7 +940,7 @@ fn cancel_btn(
             ))),
             border: iced::Border {
                 radius: tokens.radius(RadiusRole::Medium).into(),
-                width: 1.0,
+                width: tokens.size(1.0),
                 color: theme::divider(theme),
             },
             ..Default::default()
@@ -1033,7 +1039,7 @@ fn exit_btn(locale: crate::i18n::Locale, context: ResponsiveContext) -> Element<
             ))),
             border: iced::Border {
                 radius: tokens.radius(RadiusRole::Medium).into(),
-                width: 1.0,
+                width: tokens.size(1.0),
                 color: theme::divider(theme),
             },
             ..Default::default()

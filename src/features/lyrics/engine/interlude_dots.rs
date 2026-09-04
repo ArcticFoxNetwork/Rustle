@@ -2,6 +2,9 @@
 //!
 //! Shows animated dots during instrumental interludes.
 
+const DOT_PADDING_Y_EM: f32 = 0.8;
+const DOT_TRAILING_MARGIN_EM: f32 = 4.0 / 60.48;
+
 /// Easing function: easeInOutBack
 fn ease_in_out_back(x: f32) -> f32 {
     const C1: f32 = 1.70158;
@@ -27,20 +30,20 @@ fn clamp(min: f32, cur: f32, max: f32) -> f32 {
     cur.max(min).min(max)
 }
 
-pub fn dot_size(font_size: f32, viewport_height: f32) -> f32 {
-    (viewport_height * 0.01).clamp(font_size * 0.5, font_size * 3.0)
+pub fn dot_size(font_size: f32, _viewport_height: f32) -> f32 {
+    font_size * 0.5
 }
 
 pub fn dot_padding_x(font_size: f32) -> f32 {
     font_size * 0.75
 }
 
-pub fn dot_padding_y(viewport_width: f32) -> f32 {
-    viewport_width * 0.025
+pub fn dot_padding_y(font_size: f32) -> f32 {
+    font_size * DOT_PADDING_Y_EM
 }
 
 pub fn dot_spacing(font_size: f32) -> f32 {
-    font_size * 0.25 + 4.0
+    font_size * (0.25 + DOT_TRAILING_MARGIN_EM)
 }
 
 pub fn dot_margin(font_size: f32) -> f32 {
@@ -51,26 +54,26 @@ fn dot_gap(font_size: f32) -> f32 {
     font_size * 0.25
 }
 
-fn dot_trailing_margin() -> f32 {
-    4.0
+fn dot_trailing_margin(font_size: f32) -> f32 {
+    font_size * DOT_TRAILING_MARGIN_EM
 }
 
-pub fn dot_trailing_margin_px() -> f32 {
-    dot_trailing_margin()
+pub fn dot_trailing_margin_px(font_size: f32) -> f32 {
+    dot_trailing_margin(font_size)
 }
 
 pub fn dot_container_width(font_size: f32, _viewport_width: f32, viewport_height: f32) -> f32 {
     let dot_size = dot_size(font_size, viewport_height);
     let pad_x = dot_padding_x(font_size);
     let gap = dot_gap(font_size);
-    let trailing_margin = dot_trailing_margin();
+    let trailing_margin = dot_trailing_margin(font_size);
 
     pad_x * 2.0 + dot_size * 3.0 + gap * 2.0 + trailing_margin * 3.0
 }
 
-pub fn dot_container_height(font_size: f32, viewport_width: f32, viewport_height: f32) -> f32 {
+pub fn dot_container_height(font_size: f32, _viewport_width: f32, viewport_height: f32) -> f32 {
     let dot_size = dot_size(font_size, viewport_height);
-    let pad_y = dot_padding_y(viewport_width);
+    let pad_y = dot_padding_y(font_size);
     dot_size + pad_y * 2.0
 }
 

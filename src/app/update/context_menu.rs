@@ -197,8 +197,11 @@ impl App {
         match action {
             ContextMenuAction::PlayNow => Some(Task::done(Message::PlaySong(song_id))),
             ContextMenuAction::PlayNext => {
-                self.insert_next_in_queue(song_id);
-                Some(Self::toast_success("已添加到下一首".to_string()))
+                let preload = self.insert_next_in_queue(song_id);
+                Some(Task::batch([
+                    Self::toast_success("已添加到下一首".to_string()),
+                    preload,
+                ]))
             }
             ContextMenuAction::AddToFavorites => {
                 // NCM songs use negative id -> positive ncm_id
@@ -224,7 +227,7 @@ impl App {
 
     // ── Helpers ──────────────────────────────────────
 
-    fn insert_next_in_queue(&mut self, song_id: i64) {
+    fn insert_next_in_queue(&mut self, song_id: i64) -> Task<Message> {
         if song_id < 0
             && let Some(track) = self
                 .ui
@@ -243,8 +246,13 @@ impl App {
             if idx <= self.playback.queue.len() {
                 self.playback.queue.insert(idx, s);
                 self.persist_queue_snapshot();
+                self.clear_shuffle_cache();
+                self.cache_shuffle_indices();
+                self.refresh_preload_window();
+                return self.preload_adjacent_tracks_with_ncm();
             }
         }
+        Task::none()
     }
 
     fn navigate_to_artist(&mut self, song_id: i64) -> Option<Task<Message>> {
@@ -386,10 +394,16 @@ impl App {
                 }
             }
             self.persist_queue_snapshot();
+            self.clear_shuffle_cache();
+            self.cache_shuffle_indices();
+            self.refresh_preload_window();
             removed = true;
         }
         if removed {
-            Some(Self::toast_success("已从列表移除".to_string()))
+            Some(Task::batch([
+                Self::toast_success("已从列表移除".to_string()),
+                self.preload_adjacent_tracks_with_ncm(),
+            ]))
         } else {
             Some(Self::toast_info("歌曲不在播放列表中".to_string()))
         }

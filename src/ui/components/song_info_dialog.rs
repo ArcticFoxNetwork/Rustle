@@ -2,28 +2,20 @@
 
 use iced::border::Radius;
 use iced::widget::{button, column, container, row, text, text_input};
-use iced::{Border, Color, Element, Length, Size};
+use iced::{Border, Color, Element, Length};
 
 use crate::app::{Message, SongEditDialogState};
 use crate::i18n::{Key, Locale};
-use crate::ui::responsive::{LayoutProfile, RadiusRole, ResponsiveContext, TextRole};
+use crate::ui::responsive::{LayoutProfile, RadiusRole, ResponsiveContext, TextRole, UiTokens};
 use crate::ui::{theme, widgets};
 
+// Visual dimensions are 1080P reference pixels resolved through `UiTokens`.
 const COVER_SIZE: f32 = 192.0;
 
 // ── Public ─────────────────────────────────────────
 
-/// Content-only edit body (used by unified overlay — header/footer from modal_section).
-pub fn view_edit_body(e: &SongEditDialogState, locale: Locale) -> Element<'_, Message> {
-    view_edit_body_responsive(
-        e,
-        locale,
-        ResponsiveContext::new(Size::new(1_920.0, 1_080.0)),
-    )
-}
-
 /// Content-only song editor body with token-scaled fields and a stacked compact layout.
-pub fn view_edit_body_responsive(
+pub fn view_edit_body(
     e: &SongEditDialogState,
     locale: Locale,
     context: ResponsiveContext,
@@ -120,6 +112,7 @@ fn edit_cover_block<'a>(
         crate::image::ImageKind::SongCover,
         cover_size,
         tokens.radius(RadiusRole::Medium),
+        tokens,
     );
     let label = replace_label.to_string();
     let replace_button = button(text(label).size(tokens.text(TextRole::Caption)))
@@ -141,7 +134,7 @@ fn edit_cover_block<'a>(
         container(img)
             .width(cover_size)
             .height(cover_size)
-            .style(move |theme| cover_border(theme, tokens.radius(RadiusRole::Medium))),
+            .style(move |theme| cover_border(theme, tokens.radius(RadiusRole::Medium), tokens)),
         iced::widget::Space::new().height(tokens.space(6.0)),
         replace_button,
     ]
@@ -169,7 +162,9 @@ fn inp<'a>(
             .id(format!("song_edit_{field}"))
             .padding([tokens.space(8.0), tokens.space(10.0)])
             .size(tokens.text(TextRole::Body))
-            .style(move |theme, status| inp_s(theme, status, tokens.radius(RadiusRole::Medium))),
+            .style(move |theme, status| {
+                inp_s(theme, status, tokens.radius(RadiusRole::Medium), tokens)
+            }),
         iced::widget::Space::new().height(tokens.space(10.0)),
     ]
     .width(Length::Fill)
@@ -196,7 +191,9 @@ fn inp2<'a>(
             .width(Length::Fixed(tokens.size(90.0)))
             .padding([tokens.space(8.0), tokens.space(10.0)])
             .size(tokens.text(TextRole::Body))
-            .style(move |theme, status| inp_s(theme, status, tokens.radius(RadiusRole::Medium))),
+            .style(move |theme, status| {
+                inp_s(theme, status, tokens.radius(RadiusRole::Medium), tokens)
+            }),
     ]
     .into()
 }
@@ -225,7 +222,12 @@ fn dim_btn(t: &iced::Theme, s: button::Status) -> button::Style {
     }
 }
 
-fn inp_s(t: &iced::Theme, s: text_input::Status, radius: f32) -> text_input::Style {
+fn inp_s(
+    t: &iced::Theme,
+    s: text_input::Status,
+    radius: f32,
+    tokens: UiTokens,
+) -> text_input::Style {
     let purple = Color::from_rgba(0.659, 0.333, 0.969, 1.0);
     let c = match s {
         text_input::Status::Focused { .. } => Color::from_rgba(0.659, 0.333, 0.969, 0.50),
@@ -236,7 +238,7 @@ fn inp_s(t: &iced::Theme, s: text_input::Status, radius: f32) -> text_input::Sty
         background: iced::Background::Color(Color::from_rgba(1.0, 1.0, 1.0, 0.05)),
         border: Border {
             color: c,
-            width: 1.0,
+            width: tokens.size(1.0),
             radius: Radius::new(radius),
         },
         placeholder: theme::TEXT_MUTED,
@@ -270,11 +272,11 @@ fn st(f: fn(&iced::Theme) -> Color) -> impl Fn(&iced::Theme) -> text::Style {
     move |t| text::Style { color: Some(f(t)) }
 }
 
-fn cover_border(t: &iced::Theme, radius: f32) -> container::Style {
+fn cover_border(t: &iced::Theme, radius: f32, tokens: UiTokens) -> container::Style {
     container::Style {
         border: Border {
             radius: Radius::new(radius),
-            width: 1.0,
+            width: tokens.size(1.0),
             color: glass_border(t),
         },
         ..Default::default()

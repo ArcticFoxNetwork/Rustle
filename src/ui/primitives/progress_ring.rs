@@ -18,34 +18,23 @@ pub struct ProgressRing {
     pub progress: f32,
     /// Ring stroke width
     pub stroke_width: f32,
+    /// Inset between the ring stroke and the canvas edge.
+    pub edge_inset: f32,
     /// Background ring color
     pub background_color: Color,
     /// Progress ring color
     pub progress_color: Color,
 }
 
-impl Default for ProgressRing {
-    fn default() -> Self {
+impl ProgressRing {
+    pub fn new(progress: f32, stroke_width: f32, edge_inset: f32) -> Self {
         Self {
-            progress: 0.0,
-            stroke_width: 4.0,
+            progress: progress.clamp(0.0, 1.0),
+            stroke_width,
+            edge_inset,
             background_color: crate::ui::theme::divider(&iced::Theme::Dark),
             progress_color: crate::ui::theme::ACCENT_PINK,
         }
-    }
-}
-
-impl ProgressRing {
-    pub fn new(progress: f32) -> Self {
-        Self {
-            progress: progress.clamp(0.0, 1.0),
-            ..Default::default()
-        }
-    }
-
-    pub fn stroke_width(mut self, width: f32) -> Self {
-        self.stroke_width = width;
-        self
     }
 
     pub fn background_color(mut self, color: Color) -> Self {
@@ -72,7 +61,8 @@ impl<Message> Program<Message> for ProgressRing {
     ) -> Vec<Geometry> {
         let mut frame = Frame::new(renderer, bounds.size());
         let center = Point::new(bounds.width / 2.0, bounds.height / 2.0);
-        let radius = (bounds.width.min(bounds.height) / 2.0) - (self.stroke_width / 2.0) - 1.0;
+        let radius =
+            (bounds.width.min(bounds.height) / 2.0) - (self.stroke_width / 2.0) - self.edge_inset;
 
         // Background circle
         let background_circle = Path::circle(center, radius);

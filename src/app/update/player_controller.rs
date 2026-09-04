@@ -128,11 +128,7 @@ impl App {
         &mut self,
         next_buffer: Option<crate::audio::SharedBuffer>,
     ) {
-        if let Some(old_buffer) = self.playback.active_streaming_buffer.take() {
-            old_buffer.cancel();
-            tracing::debug!("Cancelled previous streaming buffer");
-        }
-
+        self.playback.active_streaming_buffer.take();
         self.playback.active_streaming_buffer = next_buffer;
     }
 
@@ -1390,9 +1386,12 @@ impl App {
     /// 确保预加载和实际播放使用相同的索引
     pub fn cache_shuffle_indices(&mut self) {
         let queue_len = self.playback.queue.len();
+        let current_index = self.playback.current_index;
 
-        if self.core.settings.play_mode == PlayMode::Shuffle {
-            self.playback.shuffle_cache.regenerate(queue_len);
+        if self.effective_queue_play_mode() == PlayMode::Shuffle {
+            self.playback
+                .shuffle_cache
+                .sync_current(queue_len, current_index);
         } else {
             self.playback.shuffle_cache.clear();
         }

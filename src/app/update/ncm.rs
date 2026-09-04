@@ -239,22 +239,29 @@ impl App {
         if self.is_fm_mode() && !play_now {
             debug!("FM mode: appending {} songs to queue", db_songs.len());
             self.extend_queue_artist_metadata(tracks);
+            self.clear_shuffle_cache();
             self.playback.queue.extend(db_songs);
             self.persist_queue_snapshot();
-            return Some(Task::none());
+            self.cache_shuffle_indices();
+            self.refresh_preload_window();
+            return Some(self.preload_adjacent_tracks_with_ncm());
         }
 
         if play_now {
             self.replace_queue_artist_metadata(tracks);
+            self.clear_shuffle_cache();
             self.playback.queue = db_songs;
             self.playback.current_index = Some(0);
             self.persist_queue_snapshot();
             Some(self.update(Message::PlayQueueIndex(0)))
         } else {
             self.extend_queue_artist_metadata(tracks);
+            self.clear_shuffle_cache();
             self.playback.queue.extend(db_songs);
             self.persist_queue_snapshot();
-            Some(Task::none())
+            self.cache_shuffle_indices();
+            self.refresh_preload_window();
+            Some(self.preload_adjacent_tracks_with_ncm())
         }
     }
 
@@ -1046,6 +1053,7 @@ impl App {
                 self.ui.home.current_ncm_playlist_songs = vec![song_info.clone()];
                 self.set_ncm_scrobble_source(None);
                 self.replace_queue_artist_metadata(std::slice::from_ref(song_info));
+                self.clear_shuffle_cache();
                 self.playback.queue.clear();
                 self.playback
                     .queue

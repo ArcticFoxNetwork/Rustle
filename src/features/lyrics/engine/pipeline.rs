@@ -30,17 +30,19 @@ use iced::widget::shader::{Pipeline, Primitive};
 use std::collections::HashSet;
 use std::sync::Arc;
 
-const AMLL_MAX_BLUR_PX: f32 = 5.0;
-const AMLL_BG_SLIDE_DISTANCE: f32 = 80.0;
+const AMLL_MAX_BLUR_REFERENCE_PX: f32 = 5.0;
+const AMLL_BG_SLIDE_PERCENT: f32 = 80.0;
 
 #[inline]
-fn logical_blur_to_physical(logical_blur: f32, scale: f32) -> f32 {
-    logical_blur.clamp(0.0, AMLL_MAX_BLUR_PX) * scale.max(0.0)
+fn logical_blur_to_physical(logical_blur: f32, renderer_scale: f32, visual_scale: f32) -> f32 {
+    logical_blur.clamp(0.0, AMLL_MAX_BLUR_REFERENCE_PX)
+        * visual_scale.max(0.0)
+        * renderer_scale.max(0.0)
 }
 
 #[inline]
 fn background_slide_progress(slide_y: f32) -> f32 {
-    (1.0 - slide_y.abs() / AMLL_BG_SLIDE_DISTANCE).clamp(0.0, 1.0)
+    (1.0 - slide_y.abs() / AMLL_BG_SLIDE_PERCENT).clamp(0.0, 1.0)
 }
 
 #[inline]
@@ -124,6 +126,8 @@ pub struct LyricsEnginePrimitive {
     pub scroll_to_index: usize,
     /// Current playback time in milliseconds
     pub current_time_ms: f32,
+    /// Logical font size matching the shaped cache.
+    pub font_size: f32,
     /// Engine configuration
     pub config: LyricsEngineConfig,
     /// Whether playback is active
@@ -278,6 +282,7 @@ impl LyricsEnginePrimitive {
             buffered_lines: engine.buffered_lines().clone(),
             scroll_to_index: engine.scroll_to_index(),
             current_time_ms,
+            font_size: engine.resolved_font_size(),
             config: engine.config().clone(),
             is_playing: engine.is_playing(),
             interlude_dots,
@@ -311,7 +316,6 @@ impl LyricsEnginePrimitive {
         let mut styles = Vec::with_capacity(self.lines.len());
         let is_non_dynamic = self.line_traits.is_non_dynamic;
 
-        let logical_width = viewport.width;
         let physical_height = viewport.height * scale;
 
         // Calculate alignment position for lens calculations
@@ -360,7 +364,7 @@ impl LyricsEnginePrimitive {
                 .cached_line_heights
                 .get(idx)
                 .copied()
-                .unwrap_or(self.config.line_height)
+                .unwrap_or(self.config.resolved_line_height())
                 * scale;
 
             let is_active = self.buffered_lines.contains(&idx);
@@ -384,12 +388,7 @@ impl LyricsEnginePrimitive {
                     level +=
                         (idx as i32 - latest_index.max(self.scroll_to_index) as i32).abs() as f32;
                 }
-                // Scale blur for smaller screens (default: window.innerWidth <= 1024 ? blur * 0.8 : blur)
-                if logical_width <= 1024.0 {
-                    level * 0.8
-                } else {
-                    level
-                }
+                level
             };
 
             // Calculate glow for active lines
@@ -428,7 +427,7 @@ impl LyricsEnginePrimitive {
 
             // Animation state is kept in logical/CSS pixels. Convert blur to
             // physical pixels at the same boundary as positions and glyphs.
-            let blur_px = logical_blur_to_physical(blur, scale);
+            let blur_px = logical_blur_to_physical(blur, scale, self.config.visual_scale());
             let (bright_mask_alpha, dark_mask_alpha) = if idx < self.line_bright_mask_alpha.len()
                 && idx < self.line_dark_mask_alpha.len()
             {
@@ -464,9 +463,10 @@ mod tests {
 
     #[test]
     fn blur_cap_is_applied_before_physical_scale() {
-        assert_eq!(logical_blur_to_physical(4.0, 2.0), 8.0);
-        assert_eq!(logical_blur_to_physical(8.0, 2.0), 10.0);
-        assert_eq!(logical_blur_to_physical(-1.0, 2.0), 0.0);
+        assert_eq!(logical_blur_to_physical(4.0, 2.0, 1.0), 8.0);
+        assert_eq!(logical_blur_to_physical(8.0, 2.0, 1.0), 10.0);
+        assert_eq!(logical_blur_to_physical(-1.0, 2.0, 1.0), 0.0);
+        assert!((logical_blur_to_physical(5.0, 1.0, 4.0 / 3.0) - 20.0 / 3.0).abs() < 0.0001);
     }
 
     #[test]
@@ -510,14 +510,10 @@ impl Primitive for LyricsEnginePrimitive {
         let bounds_width = bounds.width * scale;
         let bounds_height = bounds.height * scale;
 
-        // Calculate font size using FontSizeConfig
-        // The config handles min/max clamping and multiplier
-        // We use logical height (bounds.height) for calculation, then multiply by scale
-        let font_size = self
-            .config
-            .font_size_config
-            .calculate_font_size(bounds.width, bounds.height)
-            * scale;
+        // Shaping and rendering share one resolved logical font size. The
+        // application supplies root-rem scaling to the engine; widget bounds
+        // only determine clipping and available layout space.
+        let font_size = self.font_size * scale;
 
         // Compute line styles based on scroll position (using physical pixels)
         let line_styles = self.compute_line_styles_physical(bounds, scale);
@@ -543,7 +539,7 @@ impl Primitive for LyricsEnginePrimitive {
             self.scroll_position,
             font_size,
             self.config.word_fade_width,
-            self.config.overscan_px,
+            self.config.resolved_overscan(),
             scale, // Scale factor for logical to physical conversion
             self.config.trans_height_ratio,
             self.config.roman_height_ratio,

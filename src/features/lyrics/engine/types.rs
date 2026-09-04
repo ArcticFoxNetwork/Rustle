@@ -14,6 +14,11 @@ use cosmic_text::Weight;
 
 pub const SUB_LINE_HEIGHT_MULTIPLIER: f32 = 1.5;
 
+/// Main lyric font size in 1080P reference pixels before the configurable
+/// multiplier is applied. The application supplies its root-rem scale at the
+/// rendering boundary, keeping viewport policy out of the renderer.
+const MAIN_FONT_REFERENCE_PX: f32 = 54.0;
+
 /// Font configuration for lyrics rendering
 ///
 /// 控制字体族、字重和调试日志
@@ -65,13 +70,12 @@ impl FontConfig {
 
 /// Font size configuration for lyrics rendering
 ///
-/// Controls main font size calculation parameters including min/max bounds
-/// and the global multiplier.
+/// Controls main font size resolution in 1080P reference pixels.
 #[derive(Debug, Clone)]
 pub struct FontSizeConfig {
-    /// Minimum font size in logical pixels (default: 12.0)
+    /// Minimum font size in 1080P reference pixels (default: 12.0).
     pub min_font_size: f32,
-    /// Maximum font size in logical pixels (default: 96.0)
+    /// Maximum font size in 1080P reference pixels (default: 96.0).
     pub max_font_size: f32,
     /// Font size multiplier (default: 1.12)
     pub font_size_multiplier: f32,
@@ -105,17 +109,19 @@ impl FontSizeConfig {
         self
     }
 
-    /// Calculate the main font size for a given viewport size.
+    /// Resolve the main font size using the caller-owned visual scale.
     ///
-    /// - desktop: `max(max(5vh, 2.5vw), 12px)`
-    /// - narrow/mobile: `max(8vw, 12px)`
-    pub fn calculate_font_size(&self, viewport_width: f32, viewport_height: f32) -> f32 {
-        let base_size = if viewport_width <= 768.0 {
-            viewport_width * 0.08
+    /// Rustle passes the application root-rem scale here. Keeping the scale as
+    /// an input avoids a second renderer-local viewport breakpoint system.
+    pub fn calculate_font_size(&self, visual_scale: f32) -> f32 {
+        let visual_scale = if visual_scale.is_finite() && visual_scale > 0.0 {
+            visual_scale
         } else {
-            (viewport_height * 0.05).max(viewport_width * 0.025)
+            1.0
         };
-        (base_size * self.font_size_multiplier).clamp(self.min_font_size, self.max_font_size)
+        let reference_size = (MAIN_FONT_REFERENCE_PX * self.font_size_multiplier)
+            .clamp(self.min_font_size, self.max_font_size);
+        reference_size * visual_scale
     }
 }
 
@@ -978,30 +984,35 @@ mod tests {
     #[test]
     fn test_font_size_config_calculate_font_size() {
         let config = super::FontSizeConfig::default();
-        // 1920x1080 => max(54, 48) = 54, * 1.12 = 60.48
-        let size = config.calculate_font_size(1920.0, 1080.0);
+        let size = config.calculate_font_size(1.0);
         assert!((size - 60.48).abs() < 0.1, "Expected ~60.48, got {}", size);
     }
 
     #[test]
     fn test_font_size_config_calculate_font_size_min_clamp() {
-        let config = super::FontSizeConfig::default();
-        let size = config.calculate_font_size(100.0, 100.0);
-        assert!((size - 12.0).abs() < 0.001, "Expected 12.0, got {}", size);
+        let config = super::FontSizeConfig::with_bounds(80.0, 96.0);
+        let size = config.calculate_font_size(1.0);
+        assert!((size - 80.0).abs() < 0.001, "Expected 80.0, got {}", size);
     }
 
     #[test]
     fn test_font_size_config_calculate_font_size_max_clamp() {
-        let config = super::FontSizeConfig::default();
-        let size = config.calculate_font_size(5000.0, 4000.0);
+        let config = super::FontSizeConfig::default().multiplier(2.0);
+        let size = config.calculate_font_size(1.0);
         assert!((size - 96.0).abs() < 0.001, "Expected 96.0, got {}", size);
     }
 
     #[test]
-    fn test_font_size_config_calculate_font_size_mobile_branch() {
+    fn test_font_size_config_uses_root_rem_scale() {
         let config = super::FontSizeConfig::default();
-        // 375x812 => 30, * 1.12 = 33.6
-        let size = config.calculate_font_size(375.0, 812.0);
-        assert!((size - 33.6).abs() < 0.1, "Expected ~33.6, got {}", size);
+        let size = config.calculate_font_size(4.0 / 3.0);
+        assert!((size - 80.64).abs() < 0.1, "Expected ~80.64, got {}", size);
+    }
+
+    #[test]
+    fn test_font_size_config_rejects_invalid_scale() {
+        let config = super::FontSizeConfig::default();
+        assert!((config.calculate_font_size(f32::NAN) - 60.48).abs() < 0.1);
+        assert!((config.calculate_font_size(0.0) - 60.48).abs() < 0.1);
     }
 }

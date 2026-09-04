@@ -7,14 +7,12 @@ use iced::widget::text::{Ellipsis, Wrapping};
 use iced::widget::{Space, button, column, container, row, scrollable, text};
 use iced::{Alignment, Background, Border, Element, Fill, Length, Padding};
 
-use crate::app::{ContentWidthTarget, ImageState, Message, SearchPageState, SearchTab};
+use crate::app::{ImageState, Message, SearchPageState, SearchTab};
 use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::animation::{SmoothScrollEvent, SmoothScrollTarget};
 use crate::ui::components::cover_image;
-use crate::ui::responsive::{
-    CardRole, LayoutProfile, ResponsiveContext, TextRole, complete_card_grid_columns,
-};
+use crate::ui::responsive::{LayoutProfile, ResponsiveContext, TextRole, playlist_card_metrics};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::{theme, widgets};
 
@@ -22,8 +20,8 @@ use crate::ui::primitives::virtual_list::VirtualList;
 
 /// Page size for pagination
 const PAGE_SIZE: u32 = 50;
+// Visual dimensions are 1080P reference pixels resolved through `UiTokens`.
 const SONG_ROW_HEIGHT: f32 = 64.0;
-const SEARCH_GRID_HORIZONTAL_PADDING: f32 = 64.0;
 
 /// Build the search results page view
 pub fn view<'a>(
@@ -128,7 +126,7 @@ fn view_for_context<'a>(
                     let table_header = search_table_header(context);
 
                     let virtual_list =
-                        VirtualList::new(song_count, song_row_height, move |index| {
+                        VirtualList::new(song_count, song_row_height, tokens, move |index| {
                             if index >= songs.len() {
                                 return Space::new().height(song_row_height).into();
                             }
@@ -268,12 +266,7 @@ fn view_for_context<'a>(
                         .into()
                 };
 
-                widgets::measured_scrollable(
-                    content,
-                    "search_scroll",
-                    |size| Message::ContentWidthResized(ContentWidthTarget::Search, size),
-                    Message::SmoothScroll,
-                )
+                widgets::page_scrollable(content, "search_scroll", tokens, Message::SmoothScroll)
             }
         }
     };
@@ -468,7 +461,7 @@ fn search_tabs(
             .padding([tokens.space(12.0), 0.0])
             .width(Fill);
 
-            let underline = container(Space::new().height(2))
+            let underline = container(Space::new().height(tokens.size(2.0)))
                 .width(Fill)
                 .style(move |theme| container::Style {
                     background: Some(Background::Color(if is_active {
@@ -485,15 +478,14 @@ fn search_tabs(
         })
         .collect();
 
-    scrollable(row(tab_buttons).spacing(0))
-        .direction(iced::widget::scrollable::Direction::Horizontal(
-            iced::widget::scrollable::Scrollbar::new()
-                .width(0)
-                .scroller_width(0),
-        ))
-        .id(iced::widget::Id::new("search_tabs_scroll"))
-        .width(Fill)
-        .into()
+    widgets::scaled_scroll(
+        scrollable(row(tab_buttons).spacing(0))
+            .direction(widgets::hidden_horizontal_scrollbar())
+            .id(iced::widget::Id::new("search_tabs_scroll"))
+            .width(Fill),
+        tokens,
+    )
+    .into()
 }
 
 /// Search table header
@@ -600,60 +592,50 @@ fn grid_results<'a>(
     let kind = search_image_kind(tab);
 
     let tokens = context.tokens;
-    let card_metrics = context.tokens.card(CardRole::Playlist);
+    let card_metrics = playlist_card_metrics(context);
     let card_width = card_metrics.width;
     let card_spacing = card_metrics.gap;
     let row_spacing = tokens.space(32.0);
 
-    let columns = search_grid_columns(state.content_width, context);
+    widgets::responsive_card_columns(card_metrics, usize::MAX, move |columns| {
+        let mut rows: Vec<Element<'a, Message>> = Vec::new();
 
-    let mut rows: Vec<Element<'a, Message>> = Vec::new();
+        for chunk in items.chunks(columns) {
+            let mut row_items: Vec<Element<'a, Message>> = Vec::new();
 
-    for chunk in items.chunks(columns) {
-        let mut row_items: Vec<Element<'a, Message>> = Vec::new();
+            for item in chunk {
+                let hover_progress = state.card_animations.get_progress(&item.id());
+                let item_id = item.id();
+                let item_tab = tab;
 
-        for item in chunk {
-            let hover_progress = state.card_animations.get_progress(&item.id());
-            let item_id = item.id();
-            let item_tab = tab;
-
-            let cover_handle = image_state.get(kind, item_id);
-            let card = grid_card(
-                *item,
-                cover_handle,
-                kind,
-                hover_progress,
-                item_id,
-                item_tab,
-                card_width,
-                card_metrics.radius,
-                tokens,
-            );
-            row_items.push(card);
-        }
-
-        let mut spaced_row = Vec::with_capacity(row_items.len().saturating_mul(2));
-        for (index, item) in row_items.into_iter().enumerate() {
-            if index > 0 {
-                spaced_row.push(Space::new().width(card_spacing).into());
+                let cover_handle = image_state.get(kind, item_id);
+                let card = grid_card(
+                    *item,
+                    cover_handle,
+                    kind,
+                    hover_progress,
+                    item_id,
+                    item_tab,
+                    card_width,
+                    card_metrics.radius,
+                    tokens,
+                );
+                row_items.push(card);
             }
-            spaced_row.push(item);
+
+            let mut spaced_row = Vec::with_capacity(row_items.len().saturating_mul(2));
+            for (index, item) in row_items.into_iter().enumerate() {
+                if index > 0 {
+                    spaced_row.push(Space::new().width(card_spacing).into());
+                }
+                spaced_row.push(item);
+            }
+            rows.push(row(spaced_row).into());
+            rows.push(Space::new().height(row_spacing).into());
         }
-        rows.push(row(spaced_row).into());
-        rows.push(Space::new().height(row_spacing).into());
-    }
 
-    column(rows).into()
-}
-
-fn search_grid_columns(content_width: f32, context: ResponsiveContext) -> usize {
-    complete_card_grid_columns(
-        content_width,
-        context,
-        CardRole::Playlist,
-        SEARCH_GRID_HORIZONTAL_PADDING,
-        usize::MAX,
-    )
+        column(rows).into()
+    })
 }
 
 /// Grid card for album/playlist
@@ -675,6 +657,7 @@ fn grid_card<'a>(
         kind,
         card_width,
         card_radius,
+        tokens,
     ))
     .width(card_width)
     .height(card_width)
@@ -827,7 +810,7 @@ fn cover_base_style(
         background: Some(background),
         border: iced::Border {
             radius: radius.into(),
-            width: 1.0,
+            width: tokens.size(1.0),
             color: theme::border_color(theme),
         },
         shadow: iced::Shadow {
@@ -854,7 +837,7 @@ fn pagination<'a>(state: &'a SearchPageState, context: ResponsiveContext) -> Ele
                 .left(tokens.space(16.0))
                 .right(tokens.space(16.0)),
         )
-        .style(theme::secondary_button)
+        .style(move |theme, status| theme::secondary_button(theme, status, tokens.theme_metrics()))
         .on_press_maybe(if current_page > 0 {
             Some(Message::SearchPageChanged(current_page - 1))
         } else {
@@ -879,7 +862,7 @@ fn pagination<'a>(state: &'a SearchPageState, context: ResponsiveContext) -> Ele
                 .left(tokens.space(16.0))
                 .right(tokens.space(16.0)),
         )
-        .style(theme::secondary_button)
+        .style(move |theme, status| theme::secondary_button(theme, status, tokens.theme_metrics()))
         .on_press_maybe(if current_page + 1 < total_pages {
             Some(Message::SearchPageChanged(current_page + 1))
         } else {
@@ -965,25 +948,32 @@ fn empty_results_state<'a>(keyword: &str, context: ResponsiveContext) -> Element
 mod tests {
     use iced::Size;
 
-    use super::search_grid_columns;
-    use crate::ui::responsive::{MIN_USABLE_CONTENT_WIDTH, ResponsiveContext};
+    use crate::ui::responsive::{
+        ResponsiveContext, calculate_grid_columns_clamped, playlist_card_metrics,
+    };
+
+    fn visible_column_count(available_width: f32, context: ResponsiveContext) -> usize {
+        let metrics = playlist_card_metrics(context);
+        calculate_grid_columns_clamped(available_width, metrics.width, metrics.gap, usize::MAX)
+    }
 
     #[test]
     fn search_card_results_use_complete_columns_at_all_validation_viewports() {
         let fixtures = [
-            (Size::new(1_920.0, 1_080.0), 8),
-            (Size::new(2_560.0, 1_440.0), 8),
-            (Size::new(960.0, 1_080.0), 5),
-            (Size::new(768.0, 1_024.0), 4),
-            (Size::new(720.0, 800.0), 3),
-            (Size::new(960.0, 540.0), 5),
-            (Size::new(560.0, 800.0), 3),
+            (Size::new(1_920.0, 1_080.0), 1_650.0, 9),
+            (Size::new(2_560.0, 1_440.0), 2_093.0, 9),
+            (Size::new(960.0, 1_080.0), 828.0, 5),
+            (Size::new(1_280.0, 1_440.0), 1_104.0, 5),
+            (Size::new(768.0, 1_024.0), 642.0, 3),
+            (Size::new(720.0, 800.0), 601.0, 3),
+            (Size::new(960.0, 540.0), 841.0, 5),
+            (Size::new(560.0, 800.0), 502.0, 3),
         ];
 
-        for (viewport, expected_columns) in fixtures {
+        for (viewport, available_width, expected_columns) in fixtures {
             let context = ResponsiveContext::from_viewport(viewport);
             assert_eq!(
-                search_grid_columns(MIN_USABLE_CONTENT_WIDTH, context),
+                visible_column_count(available_width, context),
                 expected_columns,
                 "unexpected complete search-card columns for {viewport:?}"
             );

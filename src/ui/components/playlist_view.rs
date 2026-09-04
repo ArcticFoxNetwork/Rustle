@@ -27,11 +27,12 @@ use crate::ui::{icons, theme};
 use crate::utils::Source;
 
 /// Song row height constant for virtual list
+// Visual dimensions are 1080P reference pixels resolved through `UiTokens`.
 pub const SONG_ROW_HEIGHT: f32 = 62.0;
 /// Favorite glyph size is intentionally smaller than its interaction target.
-const FAVORITE_GLYPH_SIZE: f32 = 13.0;
+const FAVORITE_GLYPH_SIZE: f32 = 16.0;
 
-/// Resolve the virtual-list row height from the current design density.
+/// Resolve the virtual-list row height from the current root rem.
 #[inline]
 fn song_row_height(tokens: UiTokens) -> f32 {
     tokens.size(SONG_ROW_HEIGHT)
@@ -282,7 +283,7 @@ pub fn build_header(
     let header_container = container(header).width(Fill);
 
     // Divider line
-    let divider = container(Space::new().height(1))
+    let divider = container(Space::new().height(tokens.size(1.0)))
         .width(Fill)
         .padding(
             Padding::new(0.0)
@@ -373,7 +374,7 @@ pub fn build_list<'a>(
     let songs_for_visible = songs;
     let image_generation = image_state.generation;
 
-    VirtualList::new(song_count, row_height, item_builder)
+    VirtualList::new(song_count, row_height, tokens, item_builder)
         .keyed_by(move |index| {
             let song_index = indices_for_key
                 .as_ref()
@@ -495,6 +496,7 @@ fn build_song_row(
         crate::image::ImageKind::SongCover,
         tokens.size(44.0),
         tokens.radius(crate::ui::responsive::RadiusRole::Small),
+        tokens,
     );
 
     // --- Title info (use pre-truncated strings) ---
@@ -529,7 +531,7 @@ fn build_song_row(
             })
             .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT)),
         row![
-            super::source_badge::source_badge(song.source),
+            super::source_badge::source_badge(song.source, tokens),
             text(secondary_text)
                 .size(tokens.text(TextRole::Label))
                 .width(Fill)
@@ -751,20 +753,15 @@ mod favorite_tests {
                 "favorite glyph must not consume its hit target at {viewport:?}"
             );
             assert!(
-                favorite_glyph_size(context.tokens) > context.tokens.size(11.0),
-                "favorite glyph must remain larger than the rejected 11px reference at {viewport:?}"
-            );
-            assert!(
-                favorite_glyph_size(context.tokens) < context.tokens.size(14.0),
-                "favorite glyph must remain smaller than the previous 14px reference at {viewport:?}"
+                favorite_glyph_size(context.tokens) >= context.tokens.size(FAVORITE_GLYPH_SIZE),
+                "favorite glyph must preserve the intended visual size at {viewport:?}"
             );
         }
     }
 
     #[test]
-    fn favorite_glyph_reference_is_intermediate() {
-        assert!(FAVORITE_GLYPH_SIZE > 11.0);
-        assert!(FAVORITE_GLYPH_SIZE < 14.0);
+    fn favorite_glyph_uses_the_small_icon_reference_size() {
+        assert_eq!(FAVORITE_GLYPH_SIZE, 16.0);
     }
 
     #[test]

@@ -136,41 +136,6 @@ pub struct ImageResult {
 }
 
 // ---------------------------------------------------------------------------
-// Cover size enum
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, Copy)]
-pub enum CoverSize {
-    Tiny,
-    Picker,
-    Medium,
-    Large,
-    ExtraLarge,
-}
-
-impl CoverSize {
-    pub fn px(&self) -> f32 {
-        match self {
-            CoverSize::Tiny => 42.0,
-            CoverSize::Picker => 40.0,
-            CoverSize::Medium => 56.0,
-            CoverSize::Large => 200.0,
-            CoverSize::ExtraLarge => 400.0,
-        }
-    }
-
-    pub fn radius(&self) -> f32 {
-        match self {
-            CoverSize::Tiny => 5.0,
-            CoverSize::Picker => 8.0,
-            CoverSize::Medium => 8.0,
-            CoverSize::Large => 12.0,
-            CoverSize::ExtraLarge => 16.0,
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
 // Pure cache-resolver (no side effects)
 // ---------------------------------------------------------------------------
 

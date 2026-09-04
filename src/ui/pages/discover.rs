@@ -1,16 +1,16 @@
 //! Discovery-first home page.
 
-use iced::widget::{Space, column, container, row, scrollable, text};
+use iced::widget::{Space, column, container, responsive, row, scrollable, text};
 use iced::{Color, Element, Fill, Length, Padding};
 
 use crate::api::PRIVATE_RADAR_PLAYLIST_ID;
-use crate::app::{ContentWidthTarget, DiscoverPageState, DiscoverViewMode, ImageState, Message};
+use crate::app::{DiscoverPageState, DiscoverViewMode, ImageState, Message};
 use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::components::{feature_card, playlist_grid};
 use crate::ui::responsive::{
-    CardRole, DISCOVER_TRAILING_SPACE_REDUCTION, ResponsiveContext, TextRole,
-    complete_card_grid_columns, top_bar_height,
+    CardRole, DISCOVER_TRAILING_SPACE_REDUCTION, ResponsiveContext, TextRole, UiTokens,
+    calculate_grid_columns_clamped, top_bar_height,
 };
 use crate::ui::theme;
 use crate::ui::widgets::{self, section_header};
@@ -18,10 +18,13 @@ use crate::ui::widgets::{self, section_header};
 const DAILY_FEATURE_ID: u64 = 0;
 const PERSONAL_FM_FEATURE_ID: u64 = u64::MAX;
 const FEATURE_SCROLL_ID: &str = "discover_feature_scroll";
-const DISCOVER_HORIZONTAL_PADDING: f32 = 64.0;
-
 fn personal_fm_action() -> Message {
     Message::Navigate(crate::ui::components::NavItem::Radio)
+}
+
+fn page_padding(tokens: UiTokens) -> Padding {
+    let inset = tokens.space(32.0);
+    Padding::new(inset).right((inset - tokens.size(DISCOVER_TRAILING_SPACE_REDUCTION)).max(0.0))
 }
 
 pub fn view<'a>(
@@ -74,17 +77,18 @@ fn view_overview<'a>(
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
     let tokens = context.tokens;
-    let content_width = state.content_width + tokens.size(DISCOVER_TRAILING_SPACE_REDUCTION);
-    let page_padding = tokens.space(32.0);
-    let right_padding = (page_padding - tokens.size(DISCOVER_TRAILING_SPACE_REDUCTION)).max(0.0);
-    let feature_row = personal_feature_row(
-        state,
-        image_state,
-        locale,
-        active_personal_fm_cover,
-        content_width,
-        context,
-    );
+    let feature_row = responsive(move |size| {
+        personal_feature_row(
+            state,
+            image_state,
+            locale,
+            active_personal_fm_cover,
+            feature_cards_fit(size.width, context),
+            context,
+        )
+    })
+    .width(Fill)
+    .height(Length::Shrink);
 
     let content = column![
         Space::new().height(top_bar_height(&context) + tokens.space(4.0)),
@@ -94,13 +98,13 @@ fn view_overview<'a>(
             locale.get(Key::DiscoverRecommended),
             locale.get(Key::DiscoverSeeAll),
             Some(Message::SeeAllRecommended),
+            tokens,
         ),
         Space::new().height(tokens.space(16.0)),
-        playlist_grid::view_single_row_with_context(
+        playlist_grid::view_single_row(
             &state.recommended_playlists,
             image_state,
             &state.card_animations,
-            content_width,
             context,
         ),
         Space::new().height(tokens.space(40.0)),
@@ -108,13 +112,13 @@ fn view_overview<'a>(
             locale.get(Key::DiscoverHot),
             locale.get(Key::DiscoverSeeAll),
             Some(Message::SeeAllHot),
+            tokens,
         ),
         Space::new().height(tokens.space(16.0)),
-        playlist_grid::view_single_row_with_context(
+        playlist_grid::view_single_row(
             &state.hot_playlists,
             image_state,
             &state.card_animations,
-            content_width,
             context,
         ),
         Space::new().height(tokens.space(40.0)),
@@ -122,23 +126,23 @@ fn view_overview<'a>(
             locale.get(Key::DiscoverOfficialPicks),
             locale.get(Key::DiscoverSeeAll),
             Some(Message::SeeAllOfficial),
+            tokens,
         ),
         Space::new().height(tokens.space(16.0)),
-        playlist_grid::view_single_row_with_context(
+        playlist_grid::view_single_row(
             &state.official_playlists,
             image_state,
             &state.card_animations,
-            content_width,
             context,
         ),
         Space::new().height(tokens.space(40.0)),
     ]
-    .padding(Padding::new(page_padding).right(right_padding));
+    .padding(page_padding(tokens));
 
-    container(widgets::measured_scrollable(
+    container(widgets::page_scrollable(
         content,
         "discover_scroll",
-        |size| Message::ContentWidthResized(ContentWidthTarget::Discover, size),
+        tokens,
         Message::SmoothScroll,
     ))
     .width(Fill)
@@ -152,19 +156,18 @@ fn personal_feature_row<'a>(
     image_state: &'a ImageState,
     locale: Locale,
     active_personal_fm_cover: Option<&'a iced::widget::image::Handle>,
-    content_width: f32,
+    fits_inline: bool,
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
     let tokens = context.tokens;
     let feature_metrics = tokens.card(CardRole::Feature);
-    let fits_inline = feature_cards_fit(content_width, context);
     let feature_width = if fits_inline {
         Length::FillPortion(1)
     } else {
         Length::Fixed(feature_metrics.width)
     };
     let day = chrono::Local::now().format("%d").to_string();
-    let daily = feature_card::view_with_context(
+    let daily = feature_card::view(
         locale.get(Key::DiscoverDailyRecommend).to_string(),
         locale.get(Key::DiscoverDailyRecommendDesc).to_string(),
         Some(day),
@@ -192,7 +195,7 @@ fn personal_feature_row<'a>(
         .filter(|name| !name.is_empty())
         .unwrap_or_else(|| locale.get(Key::DiscoverPrivateRadar).to_string());
     let radar_subtitle = locale.get(Key::DiscoverPrivateRadarDesc).to_string();
-    let radar = feature_card::view_with_context(
+    let radar = feature_card::view(
         radar_title,
         radar_subtitle,
         None,
@@ -214,7 +217,7 @@ fn personal_feature_row<'a>(
     );
 
     let personal_fm_action = personal_fm_action();
-    let personal_fm = feature_card::view_with_context(
+    let personal_fm = feature_card::view(
         locale.get(Key::DiscoverPersonalFm).to_string(),
         locale.get(Key::DiscoverPersonalFmDesc).to_string(),
         None,
@@ -242,14 +245,15 @@ fn personal_feature_row<'a>(
     if fits_inline {
         cards.width(Fill).into()
     } else {
-        scrollable(cards)
-            .direction(scrollable::Direction::Horizontal(
-                scrollable::Scrollbar::new().width(0).scroller_width(0),
-            ))
-            .id(iced::widget::Id::new(FEATURE_SCROLL_ID))
-            .width(Fill)
-            .height(feature_metrics.height)
-            .into()
+        widgets::scaled_scroll(
+            scrollable(cards)
+                .direction(widgets::hidden_horizontal_scrollbar())
+                .id(iced::widget::Id::new(FEATURE_SCROLL_ID))
+                .width(Fill)
+                .height(feature_metrics.height),
+            tokens,
+        )
+        .into()
     }
 }
 
@@ -258,7 +262,7 @@ mod tests {
     use super::{feature_cards_fit, personal_fm_action};
     use crate::app::Message;
     use crate::ui::components::NavItem;
-    use crate::ui::responsive::{MIN_USABLE_CONTENT_WIDTH, ResponsiveContext};
+    use crate::ui::responsive::ResponsiveContext;
     use iced::Size;
 
     #[test]
@@ -272,19 +276,19 @@ mod tests {
     #[test]
     fn feature_cards_scroll_as_one_horizontal_sequence_when_three_do_not_fit() {
         let fixtures = [
-            (Size::new(1_920.0, 1_080.0), true),
-            (Size::new(2_560.0, 1_440.0), true),
-            (Size::new(960.0, 1_080.0), false),
-            (Size::new(768.0, 1_024.0), false),
-            (Size::new(720.0, 800.0), false),
-            (Size::new(960.0, 540.0), false),
-            (Size::new(560.0, 800.0), false),
+            (Size::new(1_920.0, 1_080.0), 1_575.0, true),
+            (Size::new(2_560.0, 1_440.0), 2_100.0, true),
+            (Size::new(960.0, 1_080.0), 833.0, false),
+            (Size::new(768.0, 1_024.0), 647.0, false),
+            (Size::new(720.0, 800.0), 605.0, false),
+            (Size::new(960.0, 540.0), 845.0, false),
+            (Size::new(560.0, 800.0), 506.0, false),
         ];
 
-        for (viewport, expected_inline) in fixtures {
+        for (viewport, available_width, expected_inline) in fixtures {
             let context = ResponsiveContext::from_viewport(viewport);
             assert_eq!(
-                feature_cards_fit(MIN_USABLE_CONTENT_WIDTH, context),
+                feature_cards_fit(available_width, context),
                 expected_inline,
                 "unexpected feature-card composition for {viewport:?}"
             );
@@ -292,14 +296,9 @@ mod tests {
     }
 }
 
-fn feature_cards_fit(content_width: f32, context: ResponsiveContext) -> bool {
-    complete_card_grid_columns(
-        content_width,
-        context,
-        CardRole::Feature,
-        DISCOVER_HORIZONTAL_PADDING,
-        3,
-    ) == 3
+fn feature_cards_fit(available_width: f32, context: ResponsiveContext) -> bool {
+    let metrics = context.tokens.card(CardRole::Feature);
+    calculate_grid_columns_clamped(available_width, metrics.width, metrics.gap, 3) == 3
 }
 
 fn view_all_playlists<'a>(
@@ -315,22 +314,21 @@ fn view_all_playlists<'a>(
         Space::new().height(top_bar_height(&context) + tokens.space(4.0)),
         text(locale.get(title)).size(tokens.text(TextRole::Title)),
         Space::new().height(tokens.space(24.0)),
-        playlist_grid::view_with_context(
+        playlist_grid::view(
             playlists,
             image_state,
             &state.card_animations,
             None,
-            state.content_width,
             context,
         ),
         Space::new().height(tokens.space(40.0)),
     ]
-    .padding(tokens.space(32.0));
+    .padding(page_padding(tokens));
 
-    container(widgets::measured_scrollable(
+    container(widgets::page_scrollable(
         content,
         "discover_scroll",
-        |size| Message::ContentWidthResized(ContentWidthTarget::Discover, size),
+        tokens,
         Message::SmoothScroll,
     ))
     .width(Fill)
