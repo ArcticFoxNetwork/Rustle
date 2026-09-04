@@ -134,7 +134,7 @@ impl App {
                         .set_visual_scale(responsive_context.root_rem.scale());
                 }
 
-                Some(Task::batch([Self::sync_window_maximized_task()]))
+                Some(Self::sync_window_maximized_after_resize_task())
             }
 
             // Handle async FontSystem initialization
