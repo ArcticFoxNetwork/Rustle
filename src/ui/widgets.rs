@@ -17,6 +17,7 @@
 //! - **Components** (`crate::ui::components`): Business-specific UI with Message handling
 
 mod crossfade_image;
+pub mod detail_header;
 mod hover_popup;
 mod hover_surface;
 pub mod multi_track_slider;

@@ -107,6 +107,7 @@ impl App {
                         self.playback_buffer_progress(),
                         self.is_fm_mode(),
                         self.core.window_maximized,
+                        self.ui.lyrics.display_mode,
                         context,
                     )
                 } else {

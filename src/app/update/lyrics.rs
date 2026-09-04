@@ -9,7 +9,7 @@
 use iced::Task;
 
 use crate::app::message::Message;
-use crate::app::state::App;
+use crate::app::state::{App, LyricsDisplayMode};
 use crate::app::update::lyrics_preload_manager::DisplayFetchAction;
 
 impl App {
@@ -19,6 +19,9 @@ impl App {
             Message::OpenLyricsPage => {
                 // Only open if there's a song playing
                 if let Some(song) = self.playback.current_song.clone() {
+                    if !self.ui.lyrics.is_open {
+                        self.ui.lyrics.display_mode = LyricsDisplayMode::Artwork;
+                    }
                     self.ui.lyrics.is_open = true;
                     if self.core.settings.display.power_saving_mode {
                         self.ui.lyrics.animation.settle_at(1.0);
@@ -66,6 +69,20 @@ impl App {
                         // Still need to update background if cover changed
                         return Some(self.update_background_async(&song));
                     }
+                }
+                Some(Task::none())
+            }
+
+            Message::ShowLyricsContent => {
+                if self.ui.lyrics.is_open {
+                    self.ui.lyrics.display_mode = LyricsDisplayMode::Lyrics;
+                }
+                Some(Task::none())
+            }
+
+            Message::ShowLyricsArtwork => {
+                if self.ui.lyrics.is_open {
+                    self.ui.lyrics.display_mode = LyricsDisplayMode::Artwork;
                 }
                 Some(Task::none())
             }

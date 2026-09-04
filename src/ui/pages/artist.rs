@@ -16,8 +16,11 @@ use crate::ui::components::{
     playlist_view::{self, PlaylistColumns},
 };
 use crate::ui::pages::playlist::{self, ArtistPageTab, DetailGradientSnapshot, PlaylistView};
-use crate::ui::responsive::{LayoutProfile, ResponsiveContext, TextRole, detail_grid_columns};
+use crate::ui::responsive::{
+    ResponsiveContext, TextRole, detail_grid_columns, detail_header_metrics,
+};
 use crate::ui::theme::BOLD_WEIGHT;
+use crate::ui::widgets::detail_header;
 use crate::ui::{theme, widgets};
 
 pub fn view<'a>(
@@ -147,12 +150,8 @@ fn build_header(
     context: ResponsiveContext,
 ) -> Element<'static, Message> {
     let tokens = context.tokens;
-    let avatar_size = match context.profile {
-        LayoutProfile::Expanded | LayoutProfile::Standard => tokens.size(216.0),
-        LayoutProfile::Compact => tokens.size(192.0),
-        LayoutProfile::Tablet => tokens.size(176.0),
-        LayoutProfile::Narrow => tokens.size(152.0),
-    };
+    let header_metrics = detail_header_metrics(context);
+    let avatar_size = header_metrics.artwork_size;
     let avatar_handle = artist
         .owner_artist_id
         .and_then(|id| image_state.get(ImageKind::ArtistCover, id));
@@ -164,7 +163,7 @@ fn build_header(
     );
 
     let title = text(artist.name.clone())
-        .size(tokens.text(TextRole::DisplayLarge).min(tokens.size(84.0)))
+        .size(header_metrics.title_size)
         .style(|theme| iced::widget::text::Style {
             color: Some(theme::text_primary(theme)),
         })
@@ -264,45 +263,20 @@ fn build_header(
 
     let info = column![
         title,
-        Space::new().height(10),
+        Space::new().height(tokens.space(10.0)),
         stats,
-        Space::new().height(12),
+        Space::new().height(tokens.space(12.0)),
         intro,
     ]
     .align_x(Alignment::Start)
     .width(Fill);
 
-    if matches!(
-        context.profile,
-        LayoutProfile::Expanded | LayoutProfile::Standard | LayoutProfile::Compact
-    ) {
-        row![avatar, Space::new().width(tokens.space(28.0)), info]
-            .align_y(Alignment::Center)
-            .padding(
-                Padding::new(if context.profile == LayoutProfile::Compact {
-                    tokens.space(28.0)
-                } else {
-                    tokens.space(48.0)
-                })
-                .top(if context.profile == LayoutProfile::Compact {
-                    tokens.space(48.0)
-                } else {
-                    tokens.space(84.0)
-                })
-                .bottom(tokens.space(28.0)),
-            )
-            .into()
-    } else {
-        column![avatar, Space::new().height(tokens.space(20.0)), info]
-            .align_x(Alignment::Start)
-            .width(Fill)
-            .padding(
-                Padding::new(tokens.space(24.0))
-                    .top(tokens.space(48.0))
-                    .bottom(tokens.space(24.0)),
-            )
-            .into()
-    }
+    detail_header::view(
+        avatar,
+        info,
+        context,
+        detail_header::VerticalAlignment::Center,
+    )
 }
 
 fn build_tabs(

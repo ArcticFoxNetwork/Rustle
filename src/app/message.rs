@@ -341,6 +341,10 @@ pub enum Message {
     // ============ Lyrics page ============
     /// Open lyrics page
     OpenLyricsPage,
+    /// Show the lyric renderer inside the already-open full-screen player
+    ShowLyricsContent,
+    /// Return from lyric rendering to the artwork-focused player
+    ShowLyricsArtwork,
     /// Close lyrics page
     CloseLyricsPage,
     /// Scroll lyrics manually (delta in pixels)
@@ -1082,6 +1086,8 @@ impl std::fmt::Debug for Message {
 
             // Lyrics
             Self::OpenLyricsPage => simple!("OpenLyricsPage"),
+            Self::ShowLyricsContent => simple!("ShowLyricsContent"),
+            Self::ShowLyricsArtwork => simple!("ShowLyricsArtwork"),
             Self::CloseLyricsPage => simple!("CloseLyricsPage"),
             Self::LyricsScroll(d) => simple!("LyricsScroll", "{:.1}", d),
             Self::LyricsViewportResized(size) => {

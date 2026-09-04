@@ -1843,6 +1843,7 @@ impl UiState {
 
             lyrics: LyricsState {
                 is_open: false,
+                display_mode: LyricsDisplayMode::default(),
                 animation: Default::default(),
                 displayed_song_id: None,
                 pending_song_id: None,
@@ -2222,8 +2223,30 @@ mod detail_gradient_state_tests {
     }
 }
 
+/// Presentation selected inside the full-screen player.
+///
+/// This state is intentionally independent from the displayed song and lyrics
+/// loading pipeline so changing tracks does not reset the user's current view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LyricsDisplayMode {
+    #[default]
+    Artwork,
+    Lyrics,
+}
+
+#[cfg(test)]
+mod lyrics_display_mode_tests {
+    use super::LyricsDisplayMode;
+
+    #[test]
+    fn full_screen_player_opens_from_artwork_mode() {
+        assert_eq!(LyricsDisplayMode::default(), LyricsDisplayMode::Artwork);
+    }
+}
+
 pub struct LyricsState {
     pub is_open: bool,
+    pub display_mode: LyricsDisplayMode,
     pub animation: SingleHoverAnimation,
     /// Song currently displayed in the lyrics page.
     pub displayed_song_id: Option<i64>,

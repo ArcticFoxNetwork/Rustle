@@ -19,9 +19,11 @@ use crate::i18n::{Key, Locale};
 use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::detail_description;
 use crate::ui::components::playlist_view::{self, PlaylistColumns, SongItem};
-use crate::ui::responsive::{LayoutProfile, RadiusRole, ResponsiveContext, TargetRole, TextRole};
+use crate::ui::responsive::{
+    RadiusRole, ResponsiveContext, TargetRole, TextRole, detail_header_metrics,
+};
 use crate::ui::theme::BOLD_WEIGHT;
-use crate::ui::widgets::VirtualListState;
+use crate::ui::widgets::{VirtualListState, detail_header};
 use crate::ui::{icons, theme};
 use crate::utils::ColorPalette;
 
@@ -414,12 +416,8 @@ fn build_header(
     context: ResponsiveContext,
 ) -> Element<'static, Message> {
     let tokens = context.tokens;
-    let cover_size = match context.profile {
-        LayoutProfile::Expanded | LayoutProfile::Standard => tokens.size(200.0),
-        LayoutProfile::Compact => tokens.size(184.0),
-        LayoutProfile::Tablet => tokens.size(176.0),
-        LayoutProfile::Narrow => tokens.size(160.0),
-    };
+    let header_metrics = detail_header_metrics(context);
+    let cover_size = header_metrics.artwork_size;
     let cover_handle = playlist_header_cover_handle(playlist, image_state);
     let cover: Element<'static, Message> = crate::ui::components::cover_image::custom(
         cover_handle,
@@ -444,7 +442,7 @@ fn build_header(
     // Playlist title - larger font for big screens
     // Use Inter or system sans-serif with bold weight
     let title = text(playlist.name.clone())
-        .size(tokens.text(TextRole::DisplayLarge))
+        .size(header_metrics.title_size)
         .line_height(iced::widget::text::LineHeight::Relative(1.0))
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
@@ -657,42 +655,10 @@ fn build_header(
         Space::new().height(tokens.space(12.0)),
         stats,
     ]
-    .spacing(0);
+    .spacing(0)
+    .width(Fill);
 
-    let horizontal_padding = tokens.space(36.0);
-    let top_padding = tokens.space(60.0);
-    let bottom_padding = tokens.space(12.0);
-    if matches!(
-        context.profile,
-        LayoutProfile::Expanded | LayoutProfile::Standard | LayoutProfile::Compact
-    ) {
-        row![cover, Space::new().width(tokens.space(28.0)), info,]
-            .align_y(Alignment::End)
-            .padding(
-                Padding::new(if context.profile == LayoutProfile::Compact {
-                    tokens.space(28.0)
-                } else {
-                    horizontal_padding
-                })
-                .top(if context.profile == LayoutProfile::Compact {
-                    tokens.space(48.0)
-                } else {
-                    top_padding
-                })
-                .bottom(bottom_padding),
-            )
-            .into()
-    } else {
-        column![cover, Space::new().height(tokens.space(20.0)), info]
-            .align_x(Alignment::Start)
-            .width(Fill)
-            .padding(
-                Padding::new(tokens.space(24.0))
-                    .top(tokens.space(48.0))
-                    .bottom(bottom_padding),
-            )
-            .into()
-    }
+    detail_header::view(cover, info, context, detail_header::VerticalAlignment::End)
 }
 
 fn playlist_page_cover_handle<'a>(

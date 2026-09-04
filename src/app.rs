@@ -16,8 +16,8 @@ pub use message::{
 };
 pub use state::{
     App, ContextMenuState, CoreState, DiscoverPageState, DiscoverViewMode, DownloadTab, ImageState,
-    LibraryState, PlaybackSessionState, Route, SearchPageState, SearchTab, SongEditDialogState,
-    UiState, UserInfo,
+    LibraryState, LyricsDisplayMode, PlaybackSessionState, Route, SearchPageState, SearchTab,
+    SongEditDialogState, UiState, UserInfo,
 };
 pub use update::song_resolver::ResolvedAudioQuality;
 

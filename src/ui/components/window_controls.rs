@@ -160,47 +160,38 @@ pub fn view<'a>(
             .into()
     };
 
+    // A fixed Iced button does not center a smaller child: zero padding places
+    // the avatar at the target's leading/top edge. Keep the target and visual
+    // contracts separate by centering the circular image explicitly, then use
+    // an unpainted event surface so no rounded-square account shape can leak
+    // through hover or pressed states.
+    let avatar_target = container(avatar_elem).center(button_size);
     let user_content: Element<'_, Message> = if compact_actions {
-        avatar_elem
+        avatar_target.into()
     } else {
         row![
-            avatar_elem,
+            avatar_target,
             Space::new().width(tokens.space(6.0)),
             user_text
         ]
+        .height(button_size)
         .align_y(Alignment::Center)
         .into()
     };
-    let user_info_button = button(user_content)
-        .style(|_theme, _status| button::Style {
-            background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
-            text_color: iced::Color::TRANSPARENT,
-            border: iced::Border::default(),
-            shadow: iced::Shadow::default(),
-            snap: false,
+    let account_action = if is_logged_in {
+        user_info.map_or(Message::OpenSettings, |info| {
+            Message::OpenUser(info.user_id)
         })
-        .height(button_size)
-        .padding(if compact_actions {
-            0.0
-        } else {
-            tokens.space(4.0)
-        })
-        .on_press(if is_logged_in {
-            user_info.map_or(Message::OpenSettings, |info| {
-                Message::OpenUser(info.user_id)
-            })
-        } else {
-            Message::ToggleLoginPopup
-        });
-    let user_info_button = if compact_actions {
-        user_info_button.width(button_size)
     } else {
-        user_info_button
+        Message::ToggleLoginPopup
     };
+    let user_info_surface = mouse_area(user_content)
+        .on_press(account_action)
+        .interaction(iced::mouse::Interaction::Pointer);
 
     let user_info_widget: Element<'a, Message> = if compact_actions {
         tooltip(
-            user_info_button,
+            user_info_surface,
             text(if is_logged_in {
                 user_info
                     .map(|info| info.nickname.clone())
@@ -213,7 +204,7 @@ pub fn view<'a>(
         )
         .into()
     } else {
-        user_info_button.into()
+        user_info_surface.into()
     };
 
     // Window control buttons (right side)

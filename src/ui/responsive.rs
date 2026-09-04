@@ -517,6 +517,88 @@ pub struct CardMetrics {
     pub radius: f32,
 }
 
+/// Shared geometry for the horizontal identity header used by playlist,
+/// album, user, and artist detail pages.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DetailHeaderMetrics {
+    pub artwork_size: f32,
+    pub gap: f32,
+    pub horizontal_padding: f32,
+    pub top_padding: f32,
+    pub bottom_padding: f32,
+    pub title_size: f32,
+}
+
+/// Resolve the detail-family header metrics without coupling the policy to a
+/// route, business model, or application message.
+///
+/// Every profile keeps the same left-artwork/right-information composition.
+/// Narrower profiles compact the visual metrics instead of treating a
+/// portrait-like aspect ratio as proof that the row cannot fit.
+#[inline]
+pub fn detail_header_metrics(context: ResponsiveContext) -> DetailHeaderMetrics {
+    let tokens = context.tokens;
+    let (artwork, gap, horizontal_padding, top_padding, bottom_padding, title) = match context
+        .profile
+    {
+        LayoutProfile::Expanded | LayoutProfile::Standard => (224.0, 28.0, 40.0, 64.0, 20.0, 38.0),
+        LayoutProfile::Compact => (200.0, 24.0, 28.0, 52.0, 18.0, 36.0),
+        LayoutProfile::Tablet => (184.0, 20.0, 24.0, 48.0, 16.0, 34.0),
+        LayoutProfile::Narrow => (152.0, 16.0, 16.0, 44.0, 14.0, 30.0),
+    };
+
+    DetailHeaderMetrics {
+        artwork_size: tokens.size(artwork),
+        gap: tokens.space(gap),
+        horizontal_padding: tokens.space(horizontal_padding),
+        top_padding: tokens.space(top_padding),
+        bottom_padding: tokens.space(bottom_padding),
+        title_size: tokens.size(title).max(tokens.text(TextRole::TitleLarge)),
+    }
+}
+
+/// Responsive composition used by the full-screen lyrics surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LyricsPageLayout {
+    /// Established wide artwork/lyrics `4:6` split.
+    Split,
+    /// Same-page artwork/lyrics component switch for insufficient width.
+    Focus,
+}
+
+/// Preserve the established split whenever the desktop content lanes fit.
+#[inline]
+pub fn lyrics_page_layout(context: ResponsiveContext) -> LyricsPageLayout {
+    if context.profile.is_desktop() {
+        LyricsPageLayout::Split
+    } else {
+        LyricsPageLayout::Focus
+    }
+}
+
+/// Resolve the single square-media width shared by the lyrics artwork and its
+/// progress/time lane.
+///
+/// The preferred size follows the design density while width and height caps
+/// reserve enough room for full-screen chrome, metadata, and playback controls.
+#[inline]
+pub fn lyrics_media_width(context: ResponsiveContext) -> f32 {
+    let tokens = context.tokens;
+    let (preferred, horizontal_gutter, reserved_vertical) = match context.profile {
+        LayoutProfile::Expanded => (480.0, 80.0, 320.0),
+        LayoutProfile::Standard => (460.0, 64.0, 320.0),
+        LayoutProfile::Compact => (340.0, 48.0, 260.0),
+        LayoutProfile::Tablet => (500.0, 40.0, 260.0),
+        LayoutProfile::Narrow => (400.0, 32.0, 260.0),
+    };
+    let width_cap =
+        (positive_dimension(context.width()) - 2.0 * tokens.space(horizontal_gutter)).max(0.0);
+    let height_cap =
+        (positive_dimension(context.height()) - tokens.size(reserved_vertical)).max(0.0);
+
+    tokens.size(preferred).min(width_cap).min(height_cap)
+}
+
 impl CardRole {
     #[inline]
     fn reference(self) -> CardMetrics {
@@ -1034,6 +1116,75 @@ mod tests {
                 expected_columns,
                 "unexpected complete detail-card columns for {viewport:?}"
             );
+        }
+    }
+
+    #[test]
+    fn detail_header_metrics_scale_without_changing_the_horizontal_contract() {
+        let reference = detail_header_metrics(ResponsiveContext::from_viewport(Size::new(
+            1_920.0, 1_080.0,
+        )));
+        let two_k = detail_header_metrics(ResponsiveContext::from_viewport(Size::new(
+            2_560.0, 1_440.0,
+        )));
+        let half_width =
+            detail_header_metrics(ResponsiveContext::from_viewport(Size::new(960.0, 1_080.0)));
+        let narrow =
+            detail_header_metrics(ResponsiveContext::from_viewport(Size::new(560.0, 800.0)));
+
+        assert_approx(reference.artwork_size, 224.0);
+        assert_approx(reference.title_size, 38.0);
+        assert_approx(two_k.artwork_size, 896.0 / 3.0);
+        assert_approx(two_k.title_size, 152.0 / 3.0);
+        assert_approx(half_width.artwork_size, 165.6);
+        assert_approx(half_width.title_size, 30.6);
+        assert_approx(narrow.artwork_size, 136.8);
+        assert_approx(narrow.title_size, 27.0);
+
+        for viewport in [Size::new(1_280.0, 1_440.0), Size::new(720.0, 800.0)] {
+            let metrics = detail_header_metrics(ResponsiveContext::from_viewport(viewport));
+            assert!(metrics.artwork_size > 0.0);
+            assert!(metrics.title_size >= 24.0);
+        }
+    }
+
+    #[test]
+    fn lyrics_layout_preserves_wide_split_and_focuses_only_when_width_is_insufficient() {
+        for viewport in [Size::new(1_920.0, 1_080.0), Size::new(2_560.0, 1_440.0)] {
+            assert_eq!(
+                lyrics_page_layout(ResponsiveContext::from_viewport(viewport)),
+                LyricsPageLayout::Split
+            );
+        }
+
+        for viewport in [
+            Size::new(960.0, 1_080.0),
+            Size::new(720.0, 800.0),
+            Size::new(960.0, 540.0),
+            Size::new(560.0, 800.0),
+        ] {
+            assert_eq!(
+                lyrics_page_layout(ResponsiveContext::from_viewport(viewport)),
+                LyricsPageLayout::Focus
+            );
+        }
+    }
+
+    #[test]
+    fn lyrics_media_width_is_shared_and_bounded_for_validation_viewports() {
+        let fixtures = [
+            (Size::new(960.0, 1_080.0), 450.0),
+            (Size::new(720.0, 800.0), 450.0),
+            (Size::new(960.0, 540.0), 306.0),
+            (Size::new(560.0, 800.0), 360.0),
+        ];
+
+        for (viewport, expected) in fixtures {
+            let context = ResponsiveContext::from_viewport(viewport);
+            let width = lyrics_media_width(context);
+            assert_approx(width, expected);
+            assert!(width <= viewport.width);
+            assert!(width <= viewport.height);
         }
     }
 

@@ -4,12 +4,15 @@
 //! - Left panel: Cover art, song title, artist, progress bar, playback controls
 //! - Right panel: Scrollable lyrics with current line highlighted
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
-use iced::widget::{Sensor, Space, button, column, container, mouse_area, row, shader, svg, text};
-use iced::{Alignment, Color, Element, Fill, Length, Padding};
+use iced::widget::{
+    Sensor, Space, button, column, container, mouse_area, row, scrollable, shader, svg, text,
+    transition,
+};
+use iced::{Alignment, Animation, Color, Element, Fill, Length, Padding};
 
-use crate::app::{ImageState, Message};
+use crate::app::{ImageState, LyricsDisplayMode, Message};
 use crate::database::DbSong;
 use crate::features::PlayMode;
 use crate::features::lyrics::engine::{LyricLineData, LyricsEngine};
@@ -17,7 +20,8 @@ use crate::ui::effects::textured_background::TexturedBackgroundProgram;
 use crate::ui::icons;
 use crate::ui::overlay;
 use crate::ui::responsive::{
-    IconRole, LayoutProfile, RadiusRole, ResponsiveContext, TargetRole, TextRole,
+    IconRole, LyricsPageLayout, RadiusRole, ResponsiveContext, TargetRole, TextRole,
+    lyrics_media_width, lyrics_page_layout,
 };
 use crate::ui::theme::{self, BOLD_WEIGHT};
 use crate::ui::widgets::{self, ControlSize, SliderSize};
@@ -38,7 +42,7 @@ pub fn view<'a>(
     is_playing: bool,
     position: f32, // 0.0 to 1.0
     duration_secs: f32,
-    cached_engine_lines: Option<&Arc<Vec<LyricLineData>>>,
+    cached_engine_lines: Option<&'a Arc<Vec<LyricLineData>>>,
     _current_line_index: Option<usize>,
     play_mode: PlayMode,
     animation_progress: f32,
@@ -51,96 +55,168 @@ pub fn view<'a>(
     download_progress: Option<f32>,
     is_fm_mode: bool,
     is_maximized: bool,
+    display_mode: LyricsDisplayMode,
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
-    let left_panel = build_left_panel(
-        song,
-        image_state,
-        artist_id,
-        is_playing,
-        position,
-        duration_secs,
-        play_mode,
-        is_liked,
-        download_progress,
-        is_fm_mode,
-        context,
-    );
-    let right_panel = if power_saving_mode {
-        // Power saving mode: use simple text rendering
-        build_simple_lyrics_panel(
-            cached_engine_lines,
-            position * duration_secs * 1000.0,
-            context,
-        )
-    } else {
-        build_right_panel_engine(
-            cached_engine_lines,
-            lyrics_engine,
-            position * duration_secs * 1000.0,
-            context,
-        )
-    };
-
     let tokens = context.tokens;
-    let content: Element<'a, Message> = match context.profile {
-        LayoutProfile::Expanded | LayoutProfile::Standard => row![
-            container(left_panel)
-                .width(Length::FillPortion(4))
-                .height(Fill)
-                .padding(tokens.space(40.0)),
-            container(right_panel)
-                .width(Length::FillPortion(6))
-                .height(Fill)
-                .padding(
-                    Padding::new(0.0)
-                        .left(tokens.space(20.0))
-                        .right(tokens.space(40.0)),
-                ),
-        ]
-        .width(Fill)
-        .height(Fill)
-        .into(),
-        LayoutProfile::Compact => row![
-            container(left_panel)
-                .width(Length::FillPortion(3))
-                .height(Fill)
-                .padding(tokens.space(24.0)),
-            container(right_panel)
-                .width(Length::FillPortion(7))
-                .height(Fill)
-                .padding(
-                    Padding::new(0.0)
-                        .left(tokens.space(12.0))
-                        .right(tokens.space(24.0)),
-                ),
-        ]
-        .width(Fill)
-        .height(Fill)
-        .into(),
-        LayoutProfile::Tablet | LayoutProfile::Narrow => column![
-            container(left_panel)
-                .width(Fill)
-                .height(Length::Shrink)
-                .padding(
-                    Padding::new(tokens.space(20.0))
-                        .top(tokens.space(44.0))
-                        .bottom(tokens.space(16.0)),
-                ),
-            container(right_panel).width(Fill).height(Fill).padding(
-                Padding::new(0.0)
-                    .left(tokens.space(16.0))
-                    .right(tokens.space(16.0))
-                    .bottom(tokens.space(16.0)),
-            ),
-        ]
-        .width(Fill)
-        .height(Fill)
-        .into(),
-    };
-
     const TITLE_BAR_HEIGHT: f32 = 64.0;
     let title_bar_height = tokens.size(TITLE_BAR_HEIGHT);
+
+    let content: Element<'a, Message> = match lyrics_page_layout(context) {
+        LyricsPageLayout::Split => {
+            let artwork_panel = build_artwork_panel(
+                song,
+                image_state,
+                artist_id,
+                is_playing,
+                position,
+                duration_secs,
+                play_mode,
+                is_liked,
+                download_progress,
+                is_fm_mode,
+                context,
+                ArtworkPanelPresentation::Wide,
+            );
+            let lyrics_panel = if power_saving_mode {
+                build_simple_lyrics_panel(
+                    cached_engine_lines,
+                    position * duration_secs * 1000.0,
+                    context,
+                )
+            } else {
+                build_right_panel_engine(
+                    cached_engine_lines,
+                    lyrics_engine,
+                    position * duration_secs * 1000.0,
+                    context,
+                )
+            };
+
+            row![
+                container(artwork_panel)
+                    .width(Length::FillPortion(4))
+                    .height(Fill)
+                    .padding(tokens.space(40.0)),
+                container(lyrics_panel)
+                    .width(Length::FillPortion(6))
+                    .height(Fill)
+                    .padding(
+                        Padding::new(0.0)
+                            .left(tokens.space(20.0))
+                            .right(tokens.space(40.0)),
+                    ),
+            ]
+            .width(Fill)
+            .height(Fill)
+            .into()
+        }
+        LyricsPageLayout::Focus => {
+            let transition_color = bg_colors.primary;
+            let target = match display_mode {
+                LyricsDisplayMode::Artwork => 0.0,
+                LyricsDisplayMode::Lyrics => 1.0,
+            };
+
+            transition(
+                target,
+                || {
+                    Animation::new(0.0)
+                        .duration(Duration::from_millis(220))
+                        .easing(iced::animation::Easing::EaseInOutCubic)
+                },
+                move |animation, now| {
+                    let progress = animation.interpolate(now).clamp(0.0, 1.0);
+                    let visible_mode = lyrics_mode_at_progress(progress);
+                    let body: Element<'a, Message> = match visible_mode {
+                        LyricsDisplayMode::Artwork => {
+                            let artwork_panel = build_artwork_panel(
+                                song,
+                                image_state,
+                                artist_id,
+                                is_playing,
+                                position,
+                                duration_secs,
+                                play_mode,
+                                is_liked,
+                                download_progress,
+                                is_fm_mode,
+                                context,
+                                ArtworkPanelPresentation::Focus,
+                            );
+                            let media_width = lyrics_media_width(context);
+                            let estimated_detail_height = tokens.size(220.0);
+                            let available_height = (context.height() - title_bar_height).max(0.0);
+                            let vertical_padding =
+                                ((available_height - media_width - estimated_detail_height) / 2.0)
+                                    .max(tokens.space(16.0));
+                            let top_padding = title_bar_height + vertical_padding;
+
+                            scrollable(
+                                container(artwork_panel).width(Fill).center_x(Fill).padding(
+                                    Padding::new(tokens.space(24.0))
+                                        .top(top_padding)
+                                        .bottom(vertical_padding),
+                                ),
+                            )
+                            .id(iced::widget::Id::new("lyrics_artwork_scroll"))
+                            .width(Fill)
+                            .height(Fill)
+                            .into()
+                        }
+                        LyricsDisplayMode::Lyrics => {
+                            let lyrics_panel = if power_saving_mode {
+                                build_simple_lyrics_panel(
+                                    cached_engine_lines,
+                                    position * duration_secs * 1000.0,
+                                    context,
+                                )
+                            } else {
+                                build_right_panel_engine(
+                                    cached_engine_lines,
+                                    lyrics_engine,
+                                    position * duration_secs * 1000.0,
+                                    context,
+                                )
+                            };
+
+                            container(lyrics_panel)
+                                .width(Fill)
+                                .height(Fill)
+                                .padding(
+                                    Padding::new(tokens.space(20.0))
+                                        .top(title_bar_height + tokens.space(12.0))
+                                        .bottom(tokens.space(24.0)),
+                                )
+                                .into()
+                        }
+                    };
+                    let toggle_message = match visible_mode {
+                        LyricsDisplayMode::Artwork => Message::ShowLyricsContent,
+                        LyricsDisplayMode::Lyrics => Message::ShowLyricsArtwork,
+                    };
+                    let interactive_body = mouse_area(body).on_press(toggle_message);
+                    let veil_opacity = fade_through_opacity(progress);
+                    let veil =
+                        container(Space::new())
+                            .width(Fill)
+                            .height(Fill)
+                            .style(move |_theme| iced::widget::container::Style {
+                                background: Some(iced::Background::Color(
+                                    transition_color.scale_alpha(veil_opacity),
+                                )),
+                                ..Default::default()
+                            });
+
+                    iced::widget::stack![interactive_body, veil]
+                        .width(Fill)
+                        .height(Fill)
+                },
+            )
+            .key("lyrics-focus-transition")
+            .into()
+        }
+    };
     let window_button_size = tokens.target(TargetRole::WindowControl);
     let window_icon_size = tokens.icon(IconRole::WindowControl);
     let back_icon_size = tokens.icon(IconRole::Large);
@@ -359,8 +435,29 @@ pub fn view<'a>(
     )
 }
 
-/// Build the left panel with cover, song info, and controls
-fn build_left_panel<'a>(
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArtworkPanelPresentation {
+    Wide,
+    Focus,
+}
+
+#[inline]
+fn lyrics_mode_at_progress(progress: f32) -> LyricsDisplayMode {
+    if progress.clamp(0.0, 1.0) < 0.5 {
+        LyricsDisplayMode::Artwork
+    } else {
+        LyricsDisplayMode::Lyrics
+    }
+}
+
+#[inline]
+fn fade_through_opacity(progress: f32) -> f32 {
+    let progress = progress.clamp(0.0, 1.0);
+    (1.0 - (2.0 * progress - 1.0).abs()).clamp(0.0, 1.0)
+}
+
+/// Build the player panel with cover, song info, and controls.
+fn build_artwork_panel<'a>(
     song: &'a DbSong,
     image_state: &'a ImageState,
     artist_id: Option<u64>,
@@ -372,23 +469,21 @@ fn build_left_panel<'a>(
     download_progress: Option<f32>,
     is_fm_mode: bool,
     context: ResponsiveContext,
+    presentation: ArtworkPanelPresentation,
 ) -> Element<'a, Message> {
     let tokens = context.tokens;
     let current_time = crate::utils::format_time(position * duration_secs);
     let total_time = crate::utils::format_time(duration_secs);
+    let focus_media_width = matches!(presentation, ArtworkPanelPresentation::Focus)
+        .then(|| lyrics_media_width(context));
 
     let (cover_kind, cover_id) =
         crate::image::song_cover_key(song.id).unwrap_or((crate::image::ImageKind::SongCover, 0));
-    let cover_px = if context.profile.is_desktop() {
-        tokens.size(400.0)
-    } else {
-        let available = (context.width() - tokens.space(48.0)).max(0.0);
-        available.max(tokens.size(160.0)).min(tokens.size(320.0))
-    };
+    let cover_width = focus_media_width.unwrap_or_else(|| tokens.size(400.0));
     let cover = crate::ui::components::cover_image::custom(
         image_state.get(cover_kind, cover_id),
         cover_kind,
-        cover_px,
+        cover_width,
         tokens.radius(RadiusRole::Large),
     );
 
@@ -429,6 +524,11 @@ fn build_left_panel<'a>(
         Message::SeekPreview,
         Message::SeekRelease,
     );
+    let progress_slider: Element<'a, Message> = if let Some(media_width) = focus_media_width {
+        container(progress_slider).width(media_width).into()
+    } else {
+        progress_slider
+    };
 
     let time_row = row![
         text(current_time)
@@ -442,13 +542,21 @@ fn build_left_panel<'a>(
             .style(|theme| text::Style {
                 color: Some(theme::text_muted(theme))
             }),
-    ]
-    .width(Fill);
+    ];
+    let time_row = if let Some(media_width) = focus_media_width {
+        time_row.width(media_width)
+    } else {
+        time_row.width(Fill)
+    };
 
     // Playback controls - using unified widgets
+    let control_scale = match presentation {
+        ArtworkPanelPresentation::Wide => tokens.density().value(),
+        ArtworkPanelPresentation::Focus => tokens.density().value() * 1.08,
+    };
     let playback_controls = widgets::playback_controls::view_simple(
         is_playing,
-        ControlSize::ScaledLarge(tokens.density().value()),
+        ControlSize::ScaledLarge(control_scale),
         Some(Message::PrevSong),
         Message::TogglePlayback,
         Message::NextSong,
@@ -458,7 +566,7 @@ fn build_left_panel<'a>(
     // into the generic widget.
     let play_mode_btn = crate::ui::components::playback_controls::play_mode_button(
         play_mode,
-        widgets::PlayModeButtonSize::ScaledLarge(tokens.density().value()),
+        widgets::PlayModeButtonSize::ScaledLarge(control_scale),
         is_fm_mode,
     );
 
@@ -502,7 +610,7 @@ fn build_left_panel<'a>(
         .into()
     } else {
         // Local songs - show disabled like button
-        button(
+        let disabled_button = button(
             svg(svg::Handle::from_memory(icons::HEART.as_bytes()))
                 .width(tokens.icon(IconRole::Large))
                 .height(tokens.icon(IconRole::Large))
@@ -519,15 +627,19 @@ fn build_left_panel<'a>(
                 ..Default::default()
             },
             ..Default::default()
-        })
-        .into()
+        });
+
+        // The compact body itself is clickable. Shield this disabled target so
+        // pressing it does not bubble into the component toggle surface.
+        mouse_area(disabled_button).on_press(Message::Noop).into()
     };
 
+    let controls_width = focus_media_width.map_or(Fill, Length::Fixed);
     let controls: Element<'a, Message> = if context.profile.is_narrow() {
         row![play_mode_btn, playback_controls, like_btn]
             .spacing(tokens.space(8.0))
             .align_y(Alignment::Center)
-            .width(Fill)
+            .width(controls_width)
             .into()
     } else {
         row![
@@ -538,7 +650,7 @@ fn build_left_panel<'a>(
             like_btn,
         ]
         .align_y(Alignment::Center)
-        .width(Fill)
+        .width(controls_width)
         .into()
     };
 
@@ -555,27 +667,22 @@ fn build_left_panel<'a>(
         time_row,
         Space::new().height(tokens.space(20.0)),
         controls,
-    ]
-    .width(Fill.max(tokens.size(400.0)));
+    ];
 
-    // Keep the large desktop panel centered. Compact profiles use a natural
-    // height so the renderer gets the remaining viewport instead of losing
-    // space to two unconstrained Fill spacers.
-    if context.profile.is_desktop() {
-        column![
+    match presentation {
+        ArtworkPanelPresentation::Wide => column![
             Space::new().height(Fill),
-            content,
+            content.width(Fill.max(tokens.size(400.0))),
             Space::new().height(Fill),
         ]
         .align_x(Alignment::Center)
         .width(Fill)
         .height(Fill)
-        .into()
-    } else {
-        container(content)
-            .align_x(Alignment::Center)
-            .width(Fill)
-            .into()
+        .into(),
+        ArtworkPanelPresentation::Focus => content
+            .align_x(Alignment::Start)
+            .width(focus_media_width.unwrap_or_default())
+            .into(),
     }
 }
 
@@ -868,4 +975,31 @@ pub fn find_current_line(lyrics: &[LyricLine], position_ms: u64) -> Option<usize
     }
 
     current
+}
+
+#[cfg(test)]
+mod responsive_mode_transition_tests {
+    use super::{fade_through_opacity, lyrics_mode_at_progress};
+    use crate::app::LyricsDisplayMode;
+
+    #[test]
+    fn component_swap_happens_only_at_the_fully_veiled_midpoint() {
+        assert_eq!(lyrics_mode_at_progress(-1.0), LyricsDisplayMode::Artwork);
+        assert_eq!(lyrics_mode_at_progress(0.0), LyricsDisplayMode::Artwork);
+        assert_eq!(lyrics_mode_at_progress(0.49), LyricsDisplayMode::Artwork);
+        assert_eq!(lyrics_mode_at_progress(0.5), LyricsDisplayMode::Lyrics);
+        assert_eq!(lyrics_mode_at_progress(1.0), LyricsDisplayMode::Lyrics);
+        assert_eq!(lyrics_mode_at_progress(2.0), LyricsDisplayMode::Lyrics);
+    }
+
+    #[test]
+    fn fade_through_is_clear_at_rest_and_opaque_at_the_swap() {
+        assert_eq!(fade_through_opacity(-1.0), 0.0);
+        assert_eq!(fade_through_opacity(0.0), 0.0);
+        assert_eq!(fade_through_opacity(0.25), 0.5);
+        assert_eq!(fade_through_opacity(0.5), 1.0);
+        assert_eq!(fade_through_opacity(0.75), 0.5);
+        assert_eq!(fade_through_opacity(1.0), 0.0);
+        assert_eq!(fade_through_opacity(2.0), 0.0);
+    }
 }

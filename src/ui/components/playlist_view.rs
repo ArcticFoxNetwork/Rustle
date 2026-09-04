@@ -29,7 +29,7 @@ use crate::utils::Source;
 /// Song row height constant for virtual list
 pub const SONG_ROW_HEIGHT: f32 = 62.0;
 /// Favorite glyph size is intentionally smaller than its interaction target.
-const FAVORITE_GLYPH_SIZE: f32 = 14.0;
+const FAVORITE_GLYPH_SIZE: f32 = 13.0;
 
 /// Resolve the virtual-list row height from the current design density.
 #[inline]
@@ -40,6 +40,12 @@ fn song_row_height(tokens: UiTokens) -> f32 {
 #[inline]
 fn favorite_glyph_size(tokens: UiTokens) -> f32 {
     tokens.size(FAVORITE_GLYPH_SIZE)
+}
+
+#[inline]
+fn favorite_crossfade(progress: f32) -> (f32, f32) {
+    let favorite_opacity = progress.clamp(0.0, 1.0);
+    (1.0 - favorite_opacity, favorite_opacity)
 }
 
 /// Pre-cached SVG handles to avoid repeated parsing in render loop
@@ -345,13 +351,10 @@ pub fn build_list<'a>(
 
         let is_playing = current_playing_id == Some(song.id);
         let animation_progress = song_animations.get_progress(&song.id);
-        let is_hovered = animation_progress > 0.5;
-
         container(build_song_row(
             song,
             image_state,
             is_playing,
-            is_hovered,
             animation_progress,
             liked_songs,
             columns,
@@ -436,7 +439,6 @@ fn build_song_row(
     song: &SongItem,
     image_state: &ImageState,
     is_playing: bool,
-    is_hovered: bool,
     animation_progress: f32,
     liked_songs: Option<&HashSet<u64>>,
     columns: PlaylistColumns,
@@ -457,6 +459,7 @@ fn build_song_row(
     // through the widget's opacity field; alpha in `svg::Style::color` is only
     // a tint in the renderer and is not a reliable transparency control.
     let hover_progress = animation_progress.clamp(0.0, 1.0);
+    let (duration_opacity, favorite_opacity) = favorite_crossfade(hover_progress);
     let hovered_icon = svg(PLAY_ICON_HANDLE.clone())
         .width(tokens.icon(crate::ui::responsive::IconRole::Small))
         .height(tokens.icon(crate::ui::responsive::IconRole::Small))
@@ -550,9 +553,9 @@ fn build_song_row(
     };
     let is_liked = liked_songs.is_some_and(|songs| songs.contains(&ncm_song_id));
 
-    // Duration and like button. Desktop keeps the original hover replacement
-    // interaction; compact rows keep the favorite action mounted because a
-    // tablet/touch surface cannot depend on a hover event to expose it.
+    // Duration and favorite share one fixed trailing target at every profile.
+    // Both widgets stay mounted while opacity alone performs the cross-fade,
+    // preserving virtual-row geometry and touch/pointer event identity.
     let duration_or_like: Element<'static, Message> = if columns.show_like {
         let favorite_target_size = tokens.target(TargetRole::Icon);
         let favorite_glyph_size = favorite_glyph_size(tokens);
@@ -564,16 +567,11 @@ fn build_song_row(
                 .style(move |theme| text::Style {
                     color: Some(
                         theme::animated_text(theme, animation_progress * 0.8)
-                            .scale_alpha(1.0 - hover_progress),
+                            .scale_alpha(duration_opacity),
                     ),
                 }),
         )
-        .width(if columns.compact {
-            Length::Fill
-        } else {
-            Length::Fixed(favorite_target_size)
-        })
-        .align_x(iced::alignment::Horizontal::Center)
+        .center(favorite_target_size)
         .into();
 
         let heart_handle = if is_liked {
@@ -581,27 +579,8 @@ fn build_song_row(
         } else {
             HEART_OUTLINE_ICON_HANDLE.clone()
         };
-        let heart: Element<'static, Message> = if columns.compact {
-            button(
-                svg(heart_handle)
-                    .width(favorite_glyph_size)
-                    .height(favorite_glyph_size)
-                    .style(move |theme, _status| svg::Style {
-                        color: Some(if is_liked {
-                            theme::ACCENT_PINK
-                        } else {
-                            theme::text_primary(theme)
-                        }),
-                    }),
-            )
-            .width(favorite_target_size)
-            .height(favorite_target_size)
-            .padding(0)
-            .style(transparent_button)
-            .on_press(Message::ToggleFavorite(ncm_song_id))
-            .into()
-        } else if hover_progress > 0.001 {
-            button(
+        let heart: Element<'static, Message> = button(
+            container(
                 svg(heart_handle)
                     .width(favorite_glyph_size)
                     .height(favorite_glyph_size)
@@ -612,32 +591,21 @@ fn build_song_row(
                             theme::text_primary(theme)
                         }),
                     })
-                    .opacity(hover_progress),
+                    .opacity(favorite_opacity),
             )
-            .width(favorite_target_size)
-            .height(favorite_target_size)
-            .padding(0)
-            .style(transparent_button)
-            .on_press_maybe(is_hovered.then_some(Message::ToggleFavorite(ncm_song_id)))
-            .into()
-        } else {
-            Space::new()
-                .width(favorite_target_size)
-                .height(favorite_target_size)
-                .into()
-        };
+            .center(favorite_target_size),
+        )
+        .width(favorite_target_size)
+        .height(favorite_target_size)
+        .padding(0)
+        .style(transparent_button)
+        .on_press(Message::ToggleFavorite(ncm_song_id))
+        .into();
 
-        if columns.compact {
-            row![duration_text, heart]
-                .spacing(tokens.space(4.0))
-                .align_y(Alignment::Center)
-                .into()
-        } else {
-            container(iced::widget::stack![duration_text, heart])
-                .width(tokens.size(50.0))
-                .center_x(tokens.size(50.0))
-                .into()
-        }
+        container(iced::widget::stack![duration_text, heart])
+            .width(tokens.size(50.0))
+            .center_x(tokens.size(50.0))
+            .into()
     } else {
         text(duration)
             .size(tokens.text(TextRole::Body))
@@ -688,11 +656,7 @@ fn build_song_row(
         );
     }
 
-    let duration_slot_width = if columns.show_like && columns.compact {
-        tokens.size(50.0) + tokens.target(TargetRole::Icon) + tokens.space(4.0)
-    } else {
-        tokens.size(50.0)
-    };
+    let duration_slot_width = tokens.size(50.0);
     row_items.push(
         container(duration_or_like)
             .width(duration_slot_width)
@@ -764,7 +728,7 @@ pub fn filter_song_indices(songs: &[SongItem], query: &str) -> Option<Vec<usize>
 
 #[cfg(test)]
 mod favorite_tests {
-    use super::favorite_glyph_size;
+    use super::{FAVORITE_GLYPH_SIZE, favorite_crossfade, favorite_glyph_size};
     use crate::ui::responsive::{ResponsiveContext, TargetRole};
     use iced::Size;
 
@@ -786,6 +750,29 @@ mod favorite_tests {
                 favorite_glyph_size(context.tokens) < context.tokens.target(TargetRole::Icon),
                 "favorite glyph must not consume its hit target at {viewport:?}"
             );
+            assert!(
+                favorite_glyph_size(context.tokens) > context.tokens.size(11.0),
+                "favorite glyph must remain larger than the rejected 11px reference at {viewport:?}"
+            );
+            assert!(
+                favorite_glyph_size(context.tokens) < context.tokens.size(14.0),
+                "favorite glyph must remain smaller than the previous 14px reference at {viewport:?}"
+            );
         }
+    }
+
+    #[test]
+    fn favorite_glyph_reference_is_intermediate() {
+        assert!(FAVORITE_GLYPH_SIZE > 11.0);
+        assert!(FAVORITE_GLYPH_SIZE < 14.0);
+    }
+
+    #[test]
+    fn favorite_crossfade_hides_the_glyph_at_rest() {
+        assert_eq!(favorite_crossfade(0.0), (1.0, 0.0));
+        assert_eq!(favorite_crossfade(0.5), (0.5, 0.5));
+        assert_eq!(favorite_crossfade(1.0), (0.0, 1.0));
+        assert_eq!(favorite_crossfade(-1.0), (1.0, 0.0));
+        assert_eq!(favorite_crossfade(2.0), (0.0, 1.0));
     }
 }
