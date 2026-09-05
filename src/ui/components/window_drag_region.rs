@@ -35,7 +35,9 @@ where
             .height(Length::Fixed(height(context))),
     )
     .on_press(on_press)
-    .interaction(mouse::Interaction::Grab);
+    // `Idle` keeps the ordinary arrow cursor while remaining a non-None stack
+    // interaction, so empty chrome still shields hover from lower layers.
+    .interaction(mouse::Interaction::Idle);
 
     // A fixed-height Stack passes its exact minimum height to the base layer.
     // Let this outer container satisfy that contract, then loosen and top-align
