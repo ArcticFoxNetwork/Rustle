@@ -66,6 +66,7 @@ pub fn convert_ncm_tracks_to_views_with_offset(
 
             crate::ui::components::playlist_view::SongItem::new(
                 -(track.id as i64),
+                Some((crate::image::ImageKind::SongCover, track.id)),
                 Some(track.cover_url().to_string()),
                 start_index + i + 1,
                 meta.title.clone(),

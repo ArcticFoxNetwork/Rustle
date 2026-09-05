@@ -23,6 +23,9 @@ use parking_lot::{Condvar, Mutex, RwLock};
 
 const KIB: u64 = 1024;
 const MIB: u64 = 1024 * KIB;
+/// Bound disk-only cache work so active decoder refill is reconsidered
+/// frequently even on high-bitrate sources.
+const CACHE_BACKFILL_CHUNK_BYTES: u64 = 512 * KIB;
 
 /// One bitrate-aware policy owns every decoder-visible streaming threshold.
 ///
@@ -367,9 +370,12 @@ struct SharedBufferInner {
     total_size: AtomicU64,
     /// Absolute end offset of bytes received so far.
     downloaded: AtomicU64,
-    /// Absolute decoder read position. The coordinator uses this instead of
-    /// estimating a byte offset from wall-clock playback time.
-    reader_position: AtomicU64,
+    /// Only one decoder owns retained-window demand for a cache coordinator.
+    /// Other prepared readers keep independent positions and cannot overwrite
+    /// this lease until the active reader explicitly releases it.
+    next_reader_id: AtomicU64,
+    active_reader_id: AtomicU64,
+    active_reader_position: AtomicU64,
     /// Latest decoder-requested Range window generation and start offset.
     window_epoch: AtomicU64,
     requested_offset: AtomicU64,
@@ -379,6 +385,7 @@ struct SharedBufferInner {
     /// cache file is complete after out-of-order Range windows.
     cached_prefix: AtomicU64,
     finalized_cache_path: RwLock<Option<PathBuf>>,
+    finalized_cache_reader: Mutex<Option<std::fs::File>>,
     download_complete: AtomicBool,
     cache_finalized: AtomicBool,
     cancelled: AtomicBool,
@@ -441,22 +448,100 @@ pub struct SharedBuffer {
 #[derive(Clone)]
 pub(crate) struct StreamingReaderCancellation {
     cancelled: Arc<AtomicBool>,
+    reader_id: u64,
+    position: Arc<AtomicU64>,
     shared: std::sync::Weak<SharedBufferInner>,
 }
 
 impl StreamingReaderCancellation {
     fn new(shared: &SharedBuffer) -> Self {
-        Self {
+        let reader_id = shared
+            .inner
+            .next_reader_id
+            .fetch_add(1, Ordering::AcqRel)
+            .wrapping_add(1)
+            .max(1);
+        let reader = Self {
             cancelled: Arc::new(AtomicBool::new(false)),
+            reader_id,
+            position: Arc::new(AtomicU64::new(0)),
             shared: Arc::downgrade(&shared.inner),
-        }
+        };
+        let _ = reader.activate();
+        reader
     }
 
     pub(crate) fn cancel(&self) {
         self.cancelled.store(true, Ordering::Release);
         if let Some(shared) = self.shared.upgrade() {
+            let _ = shared.active_reader_id.compare_exchange(
+                self.reader_id,
+                0,
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            );
             shared.data_available.notify_all();
         }
+    }
+
+    /// Acquire the single retained-window demand lease without stealing it
+    /// from another decoder.
+    pub(crate) fn activate(&self) -> bool {
+        if self.is_cancelled() {
+            return false;
+        }
+        let Some(shared) = self.shared.upgrade() else {
+            return false;
+        };
+        let active = shared.active_reader_id.load(Ordering::Acquire);
+        if active == self.reader_id {
+            shared
+                .active_reader_position
+                .store(self.position.load(Ordering::Acquire), Ordering::Release);
+            return true;
+        }
+        if active != 0 {
+            return false;
+        }
+        match shared.active_reader_id.compare_exchange(
+            0,
+            self.reader_id,
+            Ordering::AcqRel,
+            Ordering::Acquire,
+        ) {
+            Ok(_) => {
+                shared
+                    .active_reader_position
+                    .store(self.position.load(Ordering::Acquire), Ordering::Release);
+                shared.data_available.notify_all();
+                true
+            }
+            Err(active) if active == self.reader_id => {
+                shared
+                    .active_reader_position
+                    .store(self.position.load(Ordering::Acquire), Ordering::Release);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn update_position(&self, position: u64) {
+        self.position.store(position, Ordering::Release);
+        if let Some(shared) = self.shared.upgrade()
+            && shared.active_reader_id.load(Ordering::Acquire) == self.reader_id
+        {
+            shared
+                .active_reader_position
+                .store(position, Ordering::Release);
+            shared.data_available.notify_all();
+        }
+    }
+
+    fn owns_demand(&self) -> bool {
+        self.shared
+            .upgrade()
+            .is_some_and(|shared| shared.active_reader_id.load(Ordering::Acquire) == self.reader_id)
     }
 
     pub(crate) fn is_cancelled(&self) -> bool {
@@ -521,13 +606,16 @@ impl SharedBuffer {
                 base_offset: AtomicU64::new(0),
                 total_size: AtomicU64::new(total_size),
                 downloaded: AtomicU64::new(0),
-                reader_position: AtomicU64::new(0),
+                next_reader_id: AtomicU64::new(0),
+                active_reader_id: AtomicU64::new(0),
+                active_reader_position: AtomicU64::new(0),
                 window_epoch: AtomicU64::new(0),
                 requested_offset: AtomicU64::new(0),
                 request_pending: AtomicBool::new(false),
                 coordinator_active: AtomicBool::new(false),
                 cached_prefix: AtomicU64::new(0),
                 finalized_cache_path: RwLock::new(None),
+                finalized_cache_reader: Mutex::new(None),
                 download_complete: AtomicBool::new(false),
                 cache_finalized: AtomicBool::new(false),
                 cancelled: AtomicBool::new(false),
@@ -633,12 +721,13 @@ impl SharedBuffer {
     }
 
     fn reader_position(&self) -> u64 {
-        self.inner.reader_position.load(Ordering::Acquire)
+        self.inner.active_reader_position.load(Ordering::Acquire)
     }
 
+    #[cfg(test)]
     fn set_reader_position(&self, position: u64) {
         self.inner
-            .reader_position
+            .active_reader_position
             .store(position, Ordering::Release);
         self.inner.data_available.notify_all();
     }
@@ -765,6 +854,7 @@ impl SharedBuffer {
 
     fn set_finalized_cache_path(&self, path: PathBuf) {
         *self.inner.finalized_cache_path.write() = Some(path);
+        self.inner.finalized_cache_reader.lock().take();
     }
 
     pub fn finalized_cache_path(&self) -> Option<PathBuf> {
@@ -774,7 +864,11 @@ impl SharedBuffer {
     fn read_finalized_cache(&self, position: u64, buf: &mut [u8]) -> Option<io::Result<usize>> {
         let path = self.inner.finalized_cache_path.read().clone()?;
         Some((|| {
-            let mut file = std::fs::File::open(path)?;
+            let mut reader = self.inner.finalized_cache_reader.lock();
+            if reader.is_none() {
+                *reader = Some(std::fs::File::open(path)?);
+            }
+            let file = reader.as_mut().expect("finalized cache reader initialized");
             file.seek(SeekFrom::Start(position))?;
             file.read(buf)
         })())
@@ -832,13 +926,10 @@ impl SharedBuffer {
                 return Ok(0);
             }
 
-            if is_complete && position >= downloaded {
-                tracing::debug!(
-                    "read_at: EOF at position {} (downloaded: {}, complete: true)",
-                    position,
-                    downloaded
-                );
-                return Ok(0);
+            if (position < base || position >= downloaded)
+                && let Some(result) = self.read_finalized_cache(position, buf)
+            {
+                return result;
             }
 
             if position < downloaded {
@@ -855,7 +946,16 @@ impl SharedBuffer {
                             ),
                         ));
                     }
-                    self.request_window(position);
+                    if reader_cancellation.is_some_and(StreamingReaderCancellation::owns_demand) {
+                        self.request_window(position);
+                    } else if reader_cancellation.is_some() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::WouldBlock,
+                            "streaming reader does not own retained-window demand",
+                        ));
+                    } else {
+                        self.request_window(position);
+                    }
                 } else {
                     let data = self.inner.data.read();
                     let available = downloaded.saturating_sub(position) as usize;
@@ -897,6 +997,9 @@ impl SharedBuffer {
             }
 
             if !self.inner.coordinator_active.load(Ordering::Acquire) {
+                if is_complete && total == 0 {
+                    return Ok(0);
+                }
                 return Err(io::Error::new(
                     io::ErrorKind::UnexpectedEof,
                     format!(
@@ -1126,14 +1229,14 @@ impl StreamingBuffer {
 
 impl Read for StreamingBuffer {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.shared.set_reader_position(self.position);
+        self.reader_cancellation.update_position(self.position);
         let bytes_read = self.shared.read_at_with_reader_cancel(
             self.position,
             buf,
             Some(&self.reader_cancellation),
         )?;
         self.position += bytes_read as u64;
-        self.shared.set_reader_position(self.position);
+        self.reader_cancellation.update_position(self.position);
         Ok(bytes_read)
     }
 }
@@ -1156,8 +1259,10 @@ impl Seek for StreamingBuffer {
         let new_pos = match pos {
             SeekFrom::Start(offset) => offset,
             SeekFrom::End(offset) => {
-                let size = if is_complete || total > 0 {
-                    if is_complete { downloaded } else { total }
+                let size = if total > 0 {
+                    total
+                } else if is_complete {
+                    downloaded
                 } else {
                     tracing::warn!("SeekFrom::End failed: unknown file size");
                     return Err(io::Error::new(
@@ -1183,12 +1288,19 @@ impl Seek for StreamingBuffer {
         };
 
         self.position = new_pos;
-        self.shared.set_reader_position(new_pos);
+        self.reader_cancellation.update_position(new_pos);
         let base = self.shared.base_offset();
         let end = self.shared.downloaded();
         if new_pos < base || (new_pos >= end && new_pos < total) {
+            if !self.reader_cancellation.owns_demand() {
+                return Err(io::Error::new(
+                    io::ErrorKind::WouldBlock,
+                    "streaming reader does not own retained-window demand",
+                ));
+            }
             self.shared.request_window(new_pos);
-        } else if self.shared.requested_window().is_some() {
+        } else if self.reader_cancellation.owns_demand() && self.shared.requested_window().is_some()
+        {
             // A rapid seek can return to retained data while an older miss is
             // still in flight. Supersede that epoch with the current window's
             // continuation so the stale response cannot replace readable data.
@@ -1203,6 +1315,12 @@ impl Seek for StreamingBuffer {
         );
 
         Ok(self.position)
+    }
+}
+
+impl Drop for StreamingBuffer {
+    fn drop(&mut self) {
+        self.reader_cancellation.cancel();
     }
 }
 
@@ -1673,9 +1791,7 @@ pub fn start_buffer_download(
                 ))
                 .await;
         }
-        let mut start = 1u64;
         let mut active_epoch = buffer_clone.window_epoch();
-        let mut feed_ring = true;
 
         'download: loop {
             if buffer_clone.is_cancelled() {
@@ -1689,49 +1805,86 @@ pub fn start_buffer_download(
                 return;
             }
 
-            if let Some((epoch, offset)) = buffer_clone.requested_window()
-                && epoch != active_epoch
-            {
+            let requested_window = buffer_clone.requested_window();
+            if let Some((epoch, _)) = requested_window {
                 active_epoch = epoch;
-                start = offset.min(total_size.saturating_sub(1));
-                feed_ring = true;
             }
 
-            if feed_ring {
-                let buffered_ahead = buffer_clone.buffered_ahead();
-                if !buffer_clone.policy().should_refill(buffered_ahead) {
-                    if !playable_sent {
-                        if let Some(tx) = &event_tx {
-                            let _ = tx
-                                .send(StreamingEvent::new(
-                                    identity.clone(),
-                                    StreamingEventKind::Playable,
-                                ))
-                                .await;
-                        }
-                        playable_sent = true;
+            let buffered_ahead = buffer_clone.buffered_ahead();
+            if !playable_sent
+                && buffer_clone.policy().can_start_or_resume(
+                    buffered_ahead,
+                    buffer_clone.remote_eof_reached() || buffer_clone.is_download_complete(),
+                )
+            {
+                if let Some(tx) = &event_tx {
+                    let _ = tx
+                        .send(StreamingEvent::new(
+                            identity.clone(),
+                            StreamingEventKind::Playable,
+                        ))
+                        .await;
+                }
+                playable_sent = true;
+            }
+
+            let ring_needs_refill = buffer_clone.policy().should_refill(buffered_ahead)
+                && buffer_clone.downloaded() < total_size;
+            let cached_prefix = buffer_clone.cached_prefix();
+            let (start, feed_ring, chunk_bytes) = if let Some((_, offset)) = requested_window {
+                (
+                    offset.min(total_size.saturating_sub(1)),
+                    true,
+                    buffer_clone.policy().range_chunk_bytes(),
+                )
+            } else if ring_needs_refill {
+                (
+                    buffer_clone.downloaded(),
+                    true,
+                    buffer_clone.policy().range_chunk_bytes(),
+                )
+            } else if cached_prefix < total_size {
+                // Keep the persistent cache moving while playback already has
+                // a healthy reserve. Small chunks bound the time before active
+                // decoder demand is reconsidered.
+                (cached_prefix, false, CACHE_BACKFILL_CHUNK_BYTES)
+            } else {
+                break;
+            };
+
+            let from_disk_cache = feed_ring && start < cached_prefix;
+            let readable_end = if from_disk_cache {
+                cached_prefix.saturating_sub(1)
+            } else {
+                total_size.saturating_sub(1)
+            };
+            let end = (start.saturating_add(chunk_bytes).saturating_sub(1)).min(readable_end);
+            let body = if from_disk_cache {
+                let len = end.saturating_sub(start).saturating_add(1) as usize;
+                let mut body = vec![0; len];
+                if let Err(error) = file
+                    .seek(SeekFrom::Start(start))
+                    .and_then(|_| file.read_exact(&mut body))
+                {
+                    let message = format!("I/O: cache read failed: {error}");
+                    fail(message.clone(), &buffer_clone);
+                    drop(file);
+                    crate::cache::cleanup_temp_file(&temp_path);
+                    if let Some(tx) = &event_tx {
+                        let _ = tx
+                            .send(StreamingEvent::new(
+                                identity.clone(),
+                                StreamingEventKind::Error(message),
+                            ))
+                            .await;
                     }
-                    tokio::time::sleep(Duration::from_millis(25)).await;
-                    continue;
+                    return;
                 }
-            }
-
-            if start >= total_size {
-                let cached_prefix = buffer_clone.cached_prefix();
-                if cached_prefix >= total_size {
-                    break;
+                if buffer_clone.window_epoch() != active_epoch {
+                    continue 'download;
                 }
-                // A seek can leave holes in the sparse cache. Backfill them
-                // without replacing the decoder's retained playback window.
-                start = cached_prefix;
-                feed_ring = false;
-            }
-
-            let end = (start
-                .saturating_add(buffer_clone.policy().range_chunk_bytes())
-                .saturating_sub(1))
-            .min(total_size.saturating_sub(1));
-            let body =
+                body
+            } else {
                 match fetch_range_chunk(&client, &url, start, end, &buffer_clone, active_epoch)
                     .await
                 {
@@ -1757,28 +1910,31 @@ pub fn start_buffer_download(
                         }
                         return;
                     }
-                };
-
-            if let Err(error) = file
-                .seek(SeekFrom::Start(start))
-                .and_then(|_| file.write_all(&body))
-            {
-                let message = format!("I/O: cache write failed: {}", error);
-                fail(message.clone(), &buffer_clone);
-                drop(file);
-                crate::cache::cleanup_temp_file(&temp_path);
-                if let Some(tx) = &event_tx {
-                    let _ = tx
-                        .send(StreamingEvent::new(
-                            identity.clone(),
-                            StreamingEventKind::Error(message),
-                        ))
-                        .await;
                 }
-                return;
-            }
-            if start == buffer_clone.cached_prefix() {
-                buffer_clone.set_cached_prefix(end.saturating_add(1));
+            };
+
+            if !from_disk_cache {
+                if let Err(error) = file
+                    .seek(SeekFrom::Start(start))
+                    .and_then(|_| file.write_all(&body))
+                {
+                    let message = format!("I/O: cache write failed: {}", error);
+                    fail(message.clone(), &buffer_clone);
+                    drop(file);
+                    crate::cache::cleanup_temp_file(&temp_path);
+                    if let Some(tx) = &event_tx {
+                        let _ = tx
+                            .send(StreamingEvent::new(
+                                identity.clone(),
+                                StreamingEventKind::Error(message),
+                            ))
+                            .await;
+                    }
+                    return;
+                }
+                if start == buffer_clone.cached_prefix() {
+                    buffer_clone.set_cached_prefix(end.saturating_add(1));
+                }
             }
             if feed_ring {
                 while !buffer_clone.append_window(start, &body, active_epoch) {
@@ -1801,7 +1957,7 @@ pub fn start_buffer_download(
                     total: total_size,
                 });
             }
-            downloaded = end.saturating_add(1);
+            downloaded = downloaded.max(end.saturating_add(1));
 
             if feed_ring
                 && !playable_sent
@@ -1826,7 +1982,6 @@ pub fn start_buffer_download(
                     StreamingEventKind::CacheProgress(buffer_clone.cached_prefix(), total_size),
                 ));
             }
-            start = end.saturating_add(1);
         }
 
         if let Err(error) = file.flush() {
@@ -2393,6 +2548,48 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_reader_cannot_overwrite_active_demand_position() {
+        let buffer = SharedBuffer::with_capacity(100, 16);
+        assert!(buffer.append_window(0, &[0; 12], 0));
+        let mut active = StreamingBuffer::new(buffer.clone());
+        let mut prepared = StreamingBuffer::new(buffer.clone());
+
+        assert!(active.reader_cancellation().owns_demand());
+        assert!(!prepared.reader_cancellation().owns_demand());
+        assert_eq!(active.read(&mut [0; 5]).unwrap(), 5);
+        assert_eq!(buffer.buffered_ahead(), 7);
+
+        assert_eq!(prepared.seek(SeekFrom::Start(2)).unwrap(), 2);
+        assert_eq!(buffer.buffered_ahead(), 7);
+
+        active.reader_cancellation().cancel();
+        assert!(prepared.reader_cancellation().activate());
+        assert_eq!(buffer.buffered_ahead(), 10);
+    }
+
+    #[test]
+    fn inactive_reader_cannot_replace_the_retained_window() {
+        let buffer = SharedBuffer::with_capacity(100, 16);
+        assert!(buffer.append_window(0, &[0; 12], 0));
+        buffer.set_coordinator_active_for_test(true);
+        let active = StreamingBuffer::new(buffer.clone());
+        let mut prepared = StreamingBuffer::new(buffer.clone());
+
+        let error = prepared.seek(SeekFrom::Start(40)).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        assert!(buffer.requested_window().is_none());
+
+        active.reader_cancellation().cancel();
+        assert!(prepared.reader_cancellation().activate());
+        assert_eq!(prepared.seek(SeekFrom::Start(40)).unwrap(), 40);
+        assert!(
+            buffer
+                .requested_window()
+                .is_some_and(|(_, offset)| offset == 40)
+        );
+    }
+
+    #[test]
     fn remote_eof_is_independent_from_cache_finalization() {
         let buffer = SharedBuffer::with_capacity(12, 12);
         assert!(buffer.append_window(0, &[0; 12], 0));
@@ -2479,7 +2676,7 @@ mod tests {
 
     #[test]
     fn test_shared_buffer_read_at_eof_when_complete() {
-        let buffer = SharedBuffer::new(10);
+        let buffer = SharedBuffer::new(5);
         buffer.append(&[1, 2, 3, 4, 5]);
         buffer.mark_complete();
 
@@ -2487,6 +2684,141 @@ mod tests {
         let mut buf = [0u8; 5];
         let bytes_read = buffer.read_at(5, &mut buf).unwrap();
         assert_eq!(bytes_read, 0); // EOF
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn persistent_cache_advances_beyond_a_full_playback_window() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        const TOTAL_SIZE: u64 = 6 * MIB;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    break;
+                };
+                tokio::spawn(async move {
+                    let mut request = Vec::new();
+                    let mut chunk = [0u8; 1024];
+                    loop {
+                        let Ok(read) = socket.read(&mut chunk).await else {
+                            return;
+                        };
+                        if read == 0 {
+                            return;
+                        }
+                        request.extend_from_slice(&chunk[..read]);
+                        if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    let request = String::from_utf8_lossy(&request);
+                    if request.starts_with("HEAD ") {
+                        let response = format!(
+                            "HTTP/1.1 200 OK\r\nContent-Length: {TOTAL_SIZE}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n"
+                        );
+                        let _ = socket.write_all(response.as_bytes()).await;
+                        return;
+                    }
+
+                    let Some(range) = request.lines().find_map(|line| {
+                        line.strip_prefix("Range: bytes=")
+                            .or_else(|| line.strip_prefix("range: bytes="))
+                    }) else {
+                        return;
+                    };
+                    let range = range.trim();
+                    let Some((start, end)) = range.split_once('-') else {
+                        return;
+                    };
+                    let (Ok(start), Ok(end)) = (start.parse::<u64>(), end.parse::<u64>()) else {
+                        return;
+                    };
+                    let len = end.saturating_sub(start).saturating_add(1) as usize;
+                    let mut body = vec![0u8; len];
+                    for (index, byte) in body.iter_mut().enumerate() {
+                        let absolute = start + index as u64;
+                        *byte = match absolute {
+                            0 => b'I',
+                            1 => b'D',
+                            2 => b'3',
+                            _ => (absolute % 251) as u8,
+                        };
+                    }
+                    let response = format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Length: {len}\r\nContent-Range: bytes {start}-{end}/{TOTAL_SIZE}\r\nAccept-Ranges: bytes\r\nConnection: close\r\n\r\n"
+                    );
+                    if socket.write_all(response.as_bytes()).await.is_ok() {
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                        let _ = socket.write_all(&body).await;
+                    }
+                });
+            }
+        });
+
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let cache_dir = std::env::temp_dir().join(format!(
+            "rustle-cache-progress-{}-{unique}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        let controller = crate::audio::identity::PlaybackGenerationController::new();
+        let context = controller.activate_generation();
+        let buffer = start_buffer_download(
+            format!("http://{address}/audio.mp3"),
+            cache_dir.join("range-cache"),
+            AudioCacheKey {
+                song_id: unique as u64,
+                actual_quality: crate::api::NcmQualityLevel::Standard,
+            },
+            Some(320_000),
+            StreamingIdentity::Playback(context),
+            None,
+        );
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if buffer.cached_bytes() > buffer.downloaded()
+                && buffer.cached_bytes() > buffer.policy().high_water_mark_bytes()
+            {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "cache prefix did not advance beyond the retained window: cached={}, retained_end={}",
+                buffer.cached_bytes(),
+                buffer.downloaded()
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        while !buffer.is_cache_finalized() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "cache did not finalize after its prefix reached the remote size"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        let mut reader = StreamingBuffer::new(buffer.clone());
+        let mut consumed = 0u64;
+        let mut bytes = [0u8; 64 * 1024];
+        while consumed < TOTAL_SIZE {
+            let count = reader.read(&mut bytes).unwrap();
+            assert!(count > 0, "finalized cache returned an early EOF");
+            consumed += count as u64;
+        }
+        assert_eq!(consumed, TOTAL_SIZE);
+        assert_eq!(reader.read(&mut bytes).unwrap(), 0);
+
+        server.abort();
+        drop(reader);
+        buffer.inner.finalized_cache_reader.lock().take();
+        drop(buffer);
+        let _ = std::fs::remove_dir_all(cache_dir);
     }
 
     #[test]

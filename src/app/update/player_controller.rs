@@ -62,6 +62,16 @@ fn extend_ncm_artist_metadata(cache: &mut HashMap<u64, Vec<ArtistSummary>>, trac
     cache.extend(tracks.iter().map(|track| (track.id, track.artists.clone())));
 }
 
+fn apply_resolved_song_metadata(song: &mut DbSong, resolved: &ResolvedSong) {
+    // `finalized_cache_path` is a playback transport, not song identity.
+    // Keep `ncm://<id>` (or the negative application ID) intact so cover,
+    // lyrics, favorites, persistence, and later quality negotiation still
+    // resolve the same NCM resource after the cache is published.
+    if let Some(cover_path) = &resolved.cover_path {
+        song.cover_path = Some(cover_path.clone());
+    }
+}
+
 impl App {
     pub(super) fn replace_queue_artist_metadata(&mut self, tracks: &[Track]) {
         self.playback.queue_artists_by_song_id.clear();
@@ -230,12 +240,7 @@ impl App {
         resolved: &ResolvedSong,
     ) -> Option<DbSong> {
         let song = self.playback.queue.get_mut(idx)?;
-        if let Some(path) = &resolved.finalized_cache_path {
-            song.file_path = path.clone();
-        }
-        if let Some(cover_path) = &resolved.cover_path {
-            song.cover_path = Some(cover_path.clone());
-        }
+        apply_resolved_song_metadata(song, resolved);
 
         if let Some(db) = &self.core.db {
             let db = db.clone();
@@ -1757,10 +1762,54 @@ impl App {
 
 #[cfg(test)]
 mod tests {
-    use super::{extend_ncm_artist_metadata, handoff_active_streaming_buffer};
+    use super::{
+        ResolvedSong, apply_resolved_song_metadata, extend_ncm_artist_metadata,
+        handoff_active_streaming_buffer,
+    };
     use crate::api::{ArtistSummary, Track};
     use crate::audio::SharedBuffer;
+    use crate::database::DbSong;
     use std::collections::HashMap;
+
+    #[test]
+    fn finalized_cache_transport_does_not_replace_ncm_source_identity() {
+        let mut song = DbSong {
+            id: 1476,
+            file_path: "ncm://4934355".to_string(),
+            title: "Song".to_string(),
+            artist: "Artist".to_string(),
+            album: "Album".to_string(),
+            duration_secs: 180,
+            track_number: None,
+            year: None,
+            genre: None,
+            cover_path: None,
+            file_hash: None,
+            file_size: 0,
+            format: Some("ncm".to_string()),
+            normalization_gain: None,
+            play_count: 0,
+            last_played: None,
+            last_modified: 0,
+            is_missing: false,
+            created_at: 0,
+        };
+        let resolved = ResolvedSong {
+            finalized_cache_path: Some("/cache/4934355_lossless.flac".to_string()),
+            cover_path: Some("https://example.invalid/cover.jpg".to_string()),
+            shared_buffer: None,
+            duration_secs: Some(180),
+            quality: None,
+        };
+
+        apply_resolved_song_metadata(&mut song, &resolved);
+
+        assert_eq!(song.file_path, "ncm://4934355");
+        assert_eq!(
+            song.cover_path.as_deref(),
+            Some("https://example.invalid/cover.jpg")
+        );
+    }
 
     #[test]
     fn queue_artist_metadata_retains_every_structured_artist_by_song_id() {

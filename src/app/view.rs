@@ -149,7 +149,7 @@ impl App {
             self.playback
                 .current_song
                 .as_ref()
-                .and_then(|song| crate::image::song_cover_key(song.id))
+                .and_then(|song| crate::image::song_cover_key_for_source(song.id, &song.file_path))
                 .and_then(|(kind, id)| self.ui.image_state.get(kind, id))
         } else {
             None
@@ -357,7 +357,7 @@ impl App {
             .unwrap_or(true);
 
         let current_song_cover = self.playback.current_song.as_ref().and_then(|song| {
-            let (kind, id) = crate::image::song_cover_key(song.id)?;
+            let (kind, id) = crate::image::song_cover_key_for_source(song.id, &song.file_path)?;
             self.ui.image_state.get(kind, id)
         });
 

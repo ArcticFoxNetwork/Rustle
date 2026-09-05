@@ -22,7 +22,7 @@ pub struct ResolvedSong {
     /// Finalized cache file path with the detected audio extension.
     /// `None` means playback remains ring-buffer backed.
     pub finalized_cache_path: Option<String>,
-    /// Local cover path (if available)
+    /// Local cover path or recoverable remote source (if available).
     pub cover_path: Option<String>,
     /// Shared buffer for direct memory playback (None if using cached file)
     pub shared_buffer: Option<SharedBuffer>,
@@ -207,16 +207,9 @@ pub fn needs_resolution(song: &DbSong) -> bool {
 
 /// Get NCM song ID from DbSong
 pub fn get_ncm_id(song: &DbSong) -> u64 {
-    if song.id < 0 {
-        (-song.id) as u64
-    } else if song.file_path.starts_with("ncm://") {
-        song.file_path
-            .trim_start_matches("ncm://")
-            .parse()
-            .unwrap_or(song.id as u64)
-    } else {
-        song.id as u64
-    }
+    crate::image::ncm_song_id(song.id, &song.file_path)
+        .or_else(|| u64::try_from(song.id).ok())
+        .unwrap_or_default()
 }
 
 /// Resolve a song with streaming support
@@ -225,7 +218,7 @@ pub fn get_ncm_id(song: &DbSong) -> u64 {
 /// 1. Checks whether the preferred quality is already cached locally
 /// 2. Otherwise negotiates the actual quality with the official playback API
 /// 3. Reuses an actual-quality cache or streams into one with SharedBuffer
-/// 4. Reuses a cover already cached by the unified image pipeline
+/// 4. Reuses a cached cover or recovers its remote source from track metadata
 pub async fn resolve_song(
     client: Arc<NcmClient>,
     song: &DbSong,
@@ -234,9 +227,14 @@ pub async fn resolve_song(
 ) -> Result<ResolvedSong, String> {
     let ncm_id = get_ncm_id(song);
     let identity = StreamingIdentity::Playback(context.clone());
-    // Cover downloads are handled by app::update::images; song resolution only reuses cache.
-    let cover_path = resolve_cover(ncm_id).await;
-    let source = match resolve_audio_source(&client, song).await {
+    // Audio negotiation and stale-cover recovery are independent network work.
+    // Resolve them concurrently so image metadata cannot add a serial delay to
+    // streaming startup. The image pipeline still owns the actual download.
+    let (cover_path, source) = tokio::join!(
+        resolve_cover(&client, song, ncm_id),
+        resolve_audio_source(&client, song)
+    );
+    let source = match source {
         Ok(source) => source,
         Err(message) => {
             tracing::error!("{message}");
@@ -308,7 +306,26 @@ pub async fn resolve_song(
     })
 }
 
-async fn resolve_cover(ncm_id: u64) -> Option<String> {
-    crate::image::resolve_cached(crate::image::ImageKind::SongCover, ncm_id)
-        .map(|p| p.to_string_lossy().to_string())
+async fn resolve_cover(client: &NcmClient, song: &DbSong, ncm_id: u64) -> Option<String> {
+    if let Some(path) = crate::image::resolve_cached(crate::image::ImageKind::SongCover, ncm_id) {
+        return Some(path.to_string_lossy().to_string());
+    }
+
+    if let Some(source) = song.cover_path.as_deref() {
+        if crate::image::is_remote_url(source) || crate::image::is_valid_local_path(source) {
+            return Some(source.to_string());
+        }
+    }
+
+    match client.track_detail(&[ncm_id]).await {
+        Ok(tracks) => tracks
+            .into_iter()
+            .find(|track| track.id == ncm_id)
+            .map(|track| track.cover_url().to_string())
+            .filter(|url| crate::image::is_remote_url(url)),
+        Err(error) => {
+            tracing::warn!(ncm_id, %error, "Failed to recover current-song cover source");
+            None
+        }
+    }
 }

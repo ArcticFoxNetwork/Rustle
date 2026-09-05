@@ -361,9 +361,8 @@ impl App {
             .create_preload_sink_for_file(identity.clone(), PathBuf::from(&file_path), track_gain)
             .is_ok()
         {
-            if let Some(song) = self.playback.queue.get_mut(idx) {
-                song.file_path = file_path.clone();
-            }
+            // The cached file is owned by the preload transport. Do not replace
+            // the queue song's logical `ncm://<id>` source with it.
             tracing::info!(
                 "Preload file ready ({}): idx={}, path={}, identity={:?}",
                 direction,
@@ -448,11 +447,8 @@ impl App {
             )
             .is_ok()
         {
-            if let Some(path) = &finalized_cache_path
-                && let Some(song) = self.playback.queue.get_mut(idx)
-            {
-                song.file_path = path.clone();
-            }
+            // A finalized cache path remains transport metadata; the queue
+            // keeps the stable NCM source identity used by every other layer.
             if let Some(slot) = self
                 .playback
                 .audio_preload_manager

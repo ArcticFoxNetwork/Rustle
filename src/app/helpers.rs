@@ -380,7 +380,8 @@ pub async fn load_playlist_view(
         if !crate::image::is_valid_local_path(path) {
             return None;
         }
-        let (kind, id) = crate::image::song_cover_key(song.song.id)?;
+        let (kind, id) =
+            crate::image::song_cover_key_for_source(song.song.id, &song.song.file_path)?;
         Some((kind, id, PathBuf::from(path)))
     }));
 
@@ -393,6 +394,7 @@ pub async fn load_playlist_view(
             let added_date = format_relative_time(song.added_at);
             pages::PlaylistSongView::new(
                 song.song.id,
+                crate::image::song_cover_key_for_source(song.song.id, &song.song.file_path),
                 None,
                 i + 1,
                 meta.title.clone(),

@@ -497,8 +497,8 @@ fn build_artwork_panel<'a>(
     let total_time = crate::utils::format_time(duration_secs);
     let media_width = lyrics_media_width(context);
 
-    let (cover_kind, cover_id) =
-        crate::image::song_cover_key(song.id).unwrap_or((crate::image::ImageKind::SongCover, 0));
+    let (cover_kind, cover_id) = crate::image::song_cover_key_for_source(song.id, &song.file_path)
+        .unwrap_or((crate::image::ImageKind::SongCover, 0));
     let cover = crate::ui::components::cover_image::custom(
         image_state.get(cover_kind, cover_id),
         cover_kind,

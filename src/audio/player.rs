@@ -441,6 +441,9 @@ impl AudioPlayer {
         track_gain: f32,
     ) -> Result<Option<String>, String> {
         self.stop();
+        if !reader_cancellation.activate() {
+            return Err("streaming reader demand lease is owned by another decoder".to_string());
+        }
         self.chain.refresh_eq_coefficients();
         let runtime = self.prepare_runtime(false);
         self.chain.activate_runtime(Some(&runtime));
@@ -598,6 +601,13 @@ impl AudioPlayer {
         let can_overlap = self.preloaded_will_overlap(&transition)?;
 
         if can_overlap {
+            if is_streaming
+                && !reader_cancellation
+                    .as_ref()
+                    .is_some_and(StreamingReaderCancellation::activate)
+            {
+                return Err("streaming preload shares an active retained-window lease".to_string());
+            }
             self.last_transition_group = Some(transition.group);
             if let Some(previous) = self.outgoing_transition.take() {
                 if let Some(cancellation) = previous.reader_cancellation {
@@ -668,6 +678,15 @@ impl AudioPlayer {
                 buffer.clear_buffer_callback();
             }
             self.stop();
+            if is_streaming
+                && !reader_cancellation
+                    .as_ref()
+                    .is_some_and(StreamingReaderCancellation::activate)
+            {
+                return Err(
+                    "streaming preload could not acquire retained-window demand".to_string()
+                );
+            }
             sink.set_volume(self.get_sink_volume());
             if fade_in {
                 runtime.set_fade_volume(0.0);
@@ -714,6 +733,9 @@ impl AudioPlayer {
         track_gain: f32,
     ) -> Result<(), String> {
         self.stop();
+        if !reader_cancellation.activate() {
+            return Err("streaming reader demand lease is owned by another decoder".to_string());
+        }
         self.chain.refresh_eq_coefficients();
         let runtime = self.prepare_runtime(fade_in);
         self.chain.activate_runtime(Some(&runtime));
@@ -1114,8 +1136,13 @@ impl AudioPlayer {
         position: Duration,
         track_gain: f32,
         paused: bool,
-    ) {
+    ) -> Result<(), String> {
         self.stop();
+        if !reader_cancellation.activate() {
+            return Err(
+                "streaming seek reader could not acquire retained-window demand".to_string(),
+            );
+        }
         self.chain.refresh_eq_coefficients();
         let runtime = self.prepare_runtime(false);
         self.chain.activate_runtime(Some(&runtime));
@@ -1144,6 +1171,7 @@ impl AudioPlayer {
         self.is_streaming = true;
         self.detached_seek_position = None;
         self.position_offset = position;
+        Ok(())
     }
 
     /// Get current playback info

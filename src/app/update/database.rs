@@ -438,6 +438,7 @@ impl App {
 
                         pages::PlaylistSongView::new(
                             song.id,
+                            crate::image::song_cover_key_for_source(song.id, &song.file_path),
                             None,
                             i + 1,
                             meta.title.clone(),

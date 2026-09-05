@@ -287,14 +287,9 @@ impl App {
                     }
                 }));
             }
-            Message::DownloadUrlResolved(song_id, ncm_id, _, metadata) => {
+            Message::DownloadUrlResolved(_, ncm_id, _, metadata) => {
                 if let Some(crate::metadata::CoverSource::Url(url)) = &metadata.cover {
-                    let id = if *song_id < 0 {
-                        *ncm_id
-                    } else {
-                        *song_id as u64
-                    };
-                    refs.push(RemoteImage::global(ImageKind::SongCover, id, url));
+                    refs.push(RemoteImage::global(ImageKind::SongCover, *ncm_id, url));
                 }
             }
             Message::ImageViewportChanged(generation, images)
@@ -324,7 +319,8 @@ impl App {
         let Some(song) = self.playback.current_song.clone() else {
             return Task::none();
         };
-        let Some((kind, id)) = crate::image::song_cover_key(song.id) else {
+        let Some((kind, id)) = crate::image::song_cover_key_for_source(song.id, &song.file_path)
+        else {
             return Task::none();
         };
 
@@ -384,8 +380,11 @@ impl App {
 
     /// Return the already available local cover file for a song, using the
     /// unified image state first and the on-disk image cache second.
-    pub(super) fn cached_song_cover_local_path(&self, song_id: i64) -> Option<std::path::PathBuf> {
-        let (kind, id) = crate::image::song_cover_key(song_id)?;
+    pub(super) fn cached_song_cover_local_path(
+        &self,
+        song: &crate::database::DbSong,
+    ) -> Option<std::path::PathBuf> {
+        let (kind, id) = crate::image::song_cover_key_for_source(song.id, &song.file_path)?;
 
         if let Some((path, _, _)) = self.ui.image_state.image_data(kind, id)
             && path.exists()
@@ -407,7 +406,7 @@ impl App {
             return Some(std::path::PathBuf::from(path));
         }
 
-        self.cached_song_cover_local_path(song.id)
+        self.cached_song_cover_local_path(song)
     }
 
     // ── Internal ──
@@ -442,20 +441,13 @@ impl App {
         if let Some(task) = self.register_cached_image(kind, id) {
             return task;
         }
-        if self.ui.image_state.is_inflight(kind, id) || self.ui.image_state.is_queued(kind, id) {
-            return Task::none();
-        }
         if self.core.ncm_client.is_none() {
             return Task::none();
         }
 
-        if scope == ImageRequestScope::Page {
-            self.ui.image_state.enqueue(kind, id, url.to_string());
-        } else {
-            self.ui
-                .image_state
-                .enqueue_with_scope(kind, id, url.to_string(), scope);
-        }
+        self.ui
+            .image_state
+            .enqueue_with_scope(kind, id, url.to_string(), scope);
         Task::none()
     }
 
@@ -517,35 +509,27 @@ impl App {
         id: u64,
         path: &std::path::Path,
     ) -> Task<Message> {
-        let song_id = match kind {
-            ImageKind::SongCover => {
-                let Some(id) = i64::try_from(id).ok().and_then(|id| id.checked_neg()) else {
-                    return Task::none();
-                };
-                id
-            }
-            ImageKind::LocalSongCover => {
-                let Some(id) = i64::try_from(id).ok() else {
-                    return Task::none();
-                };
-                id
-            }
-            _ => return Task::none(),
-        };
+        if !matches!(kind, ImageKind::SongCover | ImageKind::LocalSongCover) {
+            return Task::none();
+        }
+        let key = (kind, id);
 
         let path_string = path.to_string_lossy().to_string();
 
         if let Some(current) = &mut self.playback.current_song
-            && current.id == song_id
+            && crate::image::song_cover_key_for_source(current.id, &current.file_path) == Some(key)
         {
             current.cover_path = Some(path_string.clone());
         }
 
+        let mut matched_song = None;
         if let Some(idx) = self.playback.current_index
             && let Some(queue_song) = self.playback.queue.get_mut(idx)
-            && queue_song.id == song_id
+            && crate::image::song_cover_key_for_source(queue_song.id, &queue_song.file_path)
+                == Some(key)
         {
             queue_song.cover_path = Some(path_string.clone());
+            matched_song = Some(queue_song.clone());
 
             if let Some(db) = &self.core.db {
                 let db = db.clone();
@@ -559,6 +543,7 @@ impl App {
                         });
                     }
                     ImageKind::LocalSongCover => {
+                        let song_id = queue_song.id;
                         let cover_path = path_string.clone();
                         tokio::spawn(async move {
                             if let Err(e) = db.update_song_cover(song_id, &cover_path).await {
@@ -575,20 +560,21 @@ impl App {
         }
 
         if let Some(song) = self.playback.current_song.clone()
-            && song.id == song_id
+            && crate::image::song_cover_key_for_source(song.id, &song.file_path) == Some(key)
         {
             return self.update_lyrics_background(&song);
         }
 
-        if self.ui.lyrics.is_open
+        if let Some(song) = matched_song
+            && self.ui.lyrics.is_open
             && self
                 .playback
                 .preload_coordinator
                 .window()
-                .contains_song(song_id)
+                .contains_song(song.id)
         {
             return self
-                .prepare_lyrics_background_for_cover_path(song_id, std::path::PathBuf::from(path));
+                .prepare_lyrics_background_for_cover_path(song.id, std::path::PathBuf::from(path));
         }
 
         Task::none()
@@ -616,7 +602,7 @@ impl App {
             if !crate::image::is_valid_local_path(path) {
                 return None;
             }
-            let (kind, id) = crate::image::song_cover_key(song.id)?;
+            let (kind, id) = crate::image::song_cover_key_for_source(song.id, &song.file_path)?;
             Some((kind, id, std::path::PathBuf::from(path)))
         });
         self.store_image_paths(images);

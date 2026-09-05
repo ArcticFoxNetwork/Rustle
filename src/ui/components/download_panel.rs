@@ -256,8 +256,7 @@ fn build_active_card(
     let artist = task.metadata.artist.clone();
     let song_id = task.song_id;
 
-    let (cover_kind, cover_id) =
-        crate::image::song_cover_key(task.song_id).unwrap_or((ImageKind::SongCover, 0));
+    let (cover_kind, cover_id) = (ImageKind::SongCover, task.ncm_id);
     let cover = download_cover(image_state.get(cover_kind, cover_id), cover_kind, tokens);
 
     let info = column![
@@ -385,8 +384,7 @@ fn build_pending_card(
     let artist = task.metadata.artist.clone();
     let song_id = task.song_id;
 
-    let (cover_kind, cover_id) =
-        crate::image::song_cover_key(task.song_id).unwrap_or((ImageKind::SongCover, 0));
+    let (cover_kind, cover_id) = (ImageKind::SongCover, task.ncm_id);
     let cover = download_cover(image_state.get(cover_kind, cover_id), cover_kind, tokens);
 
     let info = column![
@@ -535,8 +533,7 @@ fn build_completed_card(
     ]
     .spacing(tokens.space(4.0));
 
-    let (cover_kind, cover_id) =
-        crate::image::song_cover_key(task.song_id).unwrap_or((ImageKind::SongCover, 0));
+    let (cover_kind, cover_id) = (ImageKind::SongCover, task.ncm_id);
     let cover = download_cover(image_state.get(cover_kind, cover_id), cover_kind, tokens);
 
     let content: Element<'static, Message> = match context.profile {
@@ -607,8 +604,7 @@ fn build_failed_card(
         _ => String::new(),
     };
 
-    let (cover_kind, cover_id) =
-        crate::image::song_cover_key(task.song_id).unwrap_or((ImageKind::SongCover, 0));
+    let (cover_kind, cover_id) = (ImageKind::SongCover, task.ncm_id);
     let cover = download_cover(image_state.get(cover_kind, cover_id), cover_kind, tokens);
 
     let info = column![

@@ -68,6 +68,9 @@ const MAX_ARTIST_LEN: usize = 25;
 #[derive(Debug, Clone)]
 pub struct SongItem {
     pub id: i64,
+    /// Stable image-cache identity. Persisted NCM rows may have a positive DB
+    /// ID, so the view must not re-derive this from `id` alone.
+    pub cover_key: Option<(crate::image::ImageKind, u64)>,
     /// Remote cover URL when the row represents an online song.
     /// Local songs resolve their cover through the local image cache.
     pub cover_url: Option<String>,
@@ -96,6 +99,7 @@ impl SongItem {
     /// Cover resolution is deferred to `image::resolve`.
     pub fn new(
         id: i64,
+        cover_key: Option<(crate::image::ImageKind, u64)>,
         cover_url: Option<String>,
         index: usize,
         title: String,
@@ -118,6 +122,7 @@ impl SongItem {
 
         Self {
             id,
+            cover_key,
             cover_url,
             index_str,
             title,
@@ -418,7 +423,7 @@ pub fn build_list<'a>(
                 let Some(song) = songs_for_visible.get(song_index) else {
                     continue;
                 };
-                let Some((kind, id)) = crate::image::song_cover_key(song.id) else {
+                let Some((kind, id)) = song.cover_key else {
                     continue;
                 };
                 let Some(url) = song.cover_url.as_deref() else {
@@ -489,8 +494,9 @@ fn build_song_row(
     };
 
     // --- Song cover (use pre-loaded handle, no disk IO) ---
-    let cover_handle =
-        crate::image::song_cover_key(song.id).and_then(|(kind, id)| image_state.get(kind, id));
+    let cover_handle = song
+        .cover_key
+        .and_then(|(kind, id)| image_state.get(kind, id));
     let cover = crate::ui::components::cover_image::custom(
         cover_handle,
         crate::image::ImageKind::SongCover,

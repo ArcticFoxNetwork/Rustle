@@ -717,7 +717,7 @@ fn playlist_header_cover_handle<'a>(
 ) -> Option<&'a iced::widget::image::Handle> {
     playlist_page_cover_handle(playlist, image_state).or_else(|| {
         playlist.songs.iter().find_map(|song| {
-            let (kind, id) = crate::image::song_cover_key(song.id)?;
+            let (kind, id) = song.cover_key?;
             image_state.get(kind, id)
         })
     })

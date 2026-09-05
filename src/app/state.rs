@@ -77,9 +77,13 @@ pub enum ImageRequestScope {
 
 #[derive(Debug)]
 pub struct ImageInFlight {
+    /// Completion identity captured by the already-running task.
     pub generation: u64,
     pub handle: iced::task::Handle,
     pub scope: ImageRequestScope,
+    /// Cancellation ownership may be promoted without changing the completion
+    /// identity emitted by an already-running task.
+    pub ownership: ImageRequestScope,
 }
 
 impl ImageState {
@@ -176,10 +180,12 @@ impl ImageState {
         self.inflight.contains_key(&(kind, id))
     }
 
+    #[cfg(test)]
     pub fn is_queued(&self, kind: crate::image::ImageKind, id: u64) -> bool {
         self.queued.contains(&(kind, id))
     }
 
+    #[cfg(test)]
     pub fn enqueue(&mut self, kind: crate::image::ImageKind, id: u64, url: String) -> bool {
         self.enqueue_with_scope(kind, id, url, ImageRequestScope::Page)
     }
@@ -192,11 +198,28 @@ impl ImageState {
         scope: ImageRequestScope,
     ) -> bool {
         let key = (kind, id);
-        if self.entries.contains_key(&key)
-            || self.inflight.contains_key(&key)
-            || self.queued.contains(&key)
-            || url.is_empty()
-        {
+        if self.entries.contains_key(&key) || url.is_empty() {
+            return false;
+        }
+
+        if scope == ImageRequestScope::Global {
+            if let Some(request) = self
+                .pending
+                .iter_mut()
+                .find(|request| (request.kind, request.id) == key)
+            {
+                request.url = url;
+                request.generation = 0;
+                request.scope = ImageRequestScope::Global;
+                return false;
+            }
+            if let Some(request) = self.inflight.get_mut(&key) {
+                request.ownership = ImageRequestScope::Global;
+                return false;
+            }
+        }
+
+        if self.inflight.contains_key(&key) || self.queued.contains(&key) {
             return false;
         }
 
@@ -231,6 +254,7 @@ impl ImageState {
                 generation,
                 handle,
                 scope,
+                ownership: scope,
             },
         );
     }
@@ -247,7 +271,7 @@ impl ImageState {
     ) {
         let mut retained = StateMap::default();
         for (key, request) in self.inflight.drain() {
-            if request.scope == ImageRequestScope::Viewport && !desired.contains(&key) {
+            if request.ownership == ImageRequestScope::Viewport && !desired.contains(&key) {
                 request.handle.abort();
             } else {
                 retained.insert(key, request);
@@ -267,7 +291,7 @@ impl ImageState {
     pub fn cancel_pending_and_inflight(&mut self) {
         let mut retained = StateMap::default();
         for (key, request) in self.inflight.drain() {
-            if request.scope == ImageRequestScope::Global {
+            if request.ownership == ImageRequestScope::Global {
                 retained.insert(key, request);
             } else {
                 request.handle.abort();
@@ -552,6 +576,69 @@ mod image_state_tests {
             key.1,
             request.generation,
             ImageRequestScope::Page,
+        ));
+    }
+
+    #[test]
+    fn pending_viewport_request_is_promoted_to_global_ownership() {
+        let mut state = ImageState::default();
+        let key = (crate::image::ImageKind::SongCover, 19);
+        assert!(state.enqueue_with_scope(
+            key.0,
+            key.1,
+            "https://example.invalid/row.jpg".to_string(),
+            ImageRequestScope::Viewport,
+        ));
+
+        assert!(!state.enqueue_with_scope(
+            key.0,
+            key.1,
+            "https://example.invalid/current.jpg".to_string(),
+            ImageRequestScope::Global,
+        ));
+        state.reconcile_viewport_requests(&std::collections::HashSet::new());
+
+        let request = state.pop_pending().expect("promoted global request");
+        assert_eq!(request.generation, 0);
+        assert_eq!(request.scope, ImageRequestScope::Global);
+        assert_eq!(request.url, "https://example.invalid/current.jpg");
+    }
+
+    #[test]
+    fn inflight_viewport_request_keeps_completion_identity_after_global_promotion() {
+        let mut state = ImageState::default();
+        let key = (crate::image::ImageKind::SongCover, 20);
+        assert!(state.enqueue_with_scope(
+            key.0,
+            key.1,
+            "https://example.invalid/row.jpg".to_string(),
+            ImageRequestScope::Viewport,
+        ));
+        let request = state.pop_pending().expect("viewport request");
+        let (_task, handle) = iced::Task::perform(async {}, |_| ()).abortable();
+        let observer = handle.clone();
+        state.mark_inflight(
+            request.kind,
+            request.id,
+            request.generation,
+            request.scope,
+            handle,
+        );
+
+        assert!(!state.enqueue_with_scope(
+            key.0,
+            key.1,
+            "https://example.invalid/current.jpg".to_string(),
+            ImageRequestScope::Global,
+        ));
+        state.cancel_pending_and_inflight();
+
+        assert!(!observer.is_aborted());
+        assert!(state.is_current_inflight(
+            key.0,
+            key.1,
+            request.generation,
+            ImageRequestScope::Viewport,
         ));
     }
 }

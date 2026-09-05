@@ -2407,9 +2407,9 @@ fn handle_streaming_seek_result(
             )
         })
     {
+        reader_cancellation.cancel();
         let buffer = StreamingBuffer::new(shared_buffer.clone());
         let next_reader_cancellation = buffer.reader_cancellation();
-        reader_cancellation.cancel();
         submit_streaming_seek(
             worker,
             player,
@@ -2463,15 +2463,36 @@ fn handle_streaming_seek_result(
         Ok(source) => {
             player.cancel_current_streaming_reader();
             sink.stop();
-            player.install_preseeked_streaming_source(
+            if let Err(error) = player.install_preseeked_streaming_source(
                 source,
-                reader_cancellation,
+                reader_cancellation.clone(),
                 duration,
                 cache_path,
                 target_position,
                 track_gain,
                 was_paused,
-            );
+            ) {
+                tracing::warn!(
+                    generation = context.generation.0,
+                    nonce = nonce.0,
+                    target_ms = target_position.as_millis(),
+                    %error,
+                    "Streaming seek handoff failed"
+                );
+                reader_cancellation.cancel();
+                cancel_current_streaming_buffer(current_buffer);
+                *current_context = None;
+                player.stop();
+                update_state_from_player(player, state);
+                state.set_current_path(None);
+                let _ = event_tx.send(AudioEvent::SeekFailed {
+                    context: context.clone(),
+                    nonce,
+                    error,
+                });
+                let _ = event_tx.send(AudioEvent::Stopped { context });
+                return;
+            }
             setup_buffer_callback(&shared_buffer, buffer_mailbox, &context);
             update_state_from_player(player, state);
             let _ = event_tx.send(AudioEvent::SeekComplete {

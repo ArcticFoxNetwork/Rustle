@@ -69,12 +69,27 @@ impl ImageKind {
     }
 }
 
-pub fn song_cover_key(song_id: i64) -> Option<(ImageKind, u64)> {
-    if song_id < 0 {
-        song_id
-            .checked_neg()
-            .and_then(|id| u64::try_from(id).ok())
-            .map(|id| (ImageKind::SongCover, id))
+/// Return the NCM resource ID carried by an application song identity.
+///
+/// Persisted NCM rows use a positive SQLite row ID together with an
+/// `ncm://<id>` source, while queue/view models commonly use the negative NCM
+/// ID directly. The source URI is therefore authoritative when it is present.
+pub fn ncm_song_id(song_id: i64, file_path: &str) -> Option<u64> {
+    if let Some(id) = file_path.strip_prefix("ncm://") {
+        return id.parse::<u64>().ok().filter(|id| *id > 0);
+    }
+
+    song_id
+        .checked_neg()
+        .and_then(|id| u64::try_from(id).ok())
+        .filter(|id| *id > 0)
+}
+
+/// Resolve a song-cover cache identity from both the application ID and its
+/// source. This must be used whenever a complete `DbSong` is available.
+pub fn song_cover_key_for_source(song_id: i64, file_path: &str) -> Option<(ImageKind, u64)> {
+    if let Some(id) = ncm_song_id(song_id, file_path) {
+        Some((ImageKind::SongCover, id))
     } else {
         u64::try_from(song_id)
             .ok()
@@ -107,8 +122,20 @@ pub fn vip_badge_key(user_id: u64, tier: crate::api::VipTier, icon_url: &str) ->
 
 #[cfg(test)]
 mod tests {
-    use super::vip_badge_key;
+    use super::{ImageKind, song_cover_key_for_source, vip_badge_key};
     use crate::api::VipTier;
+
+    #[test]
+    fn persisted_ncm_song_uses_remote_cover_identity() {
+        assert_eq!(
+            song_cover_key_for_source(1476, "ncm://4934355"),
+            Some((ImageKind::SongCover, 4_934_355))
+        );
+        assert_eq!(
+            song_cover_key_for_source(1476, "/music/local.flac"),
+            Some((ImageKind::LocalSongCover, 1476))
+        );
+    }
 
     #[test]
     fn vip_badge_key_includes_membership_tier() {
