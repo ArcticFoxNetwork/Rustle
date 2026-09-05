@@ -85,6 +85,7 @@ fn view_for_context<'a>(
         search_animation,
         search_expanded,
         search_query,
+        locale,
         current_user_id,
         context,
     );

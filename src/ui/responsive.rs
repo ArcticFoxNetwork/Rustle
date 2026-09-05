@@ -495,8 +495,8 @@ pub fn detail_header_metrics(context: ResponsiveContext) -> DetailHeaderMetrics 
     let tokens = context.tokens;
     let (artwork, gap, horizontal_padding, top_padding, bottom_padding, title) =
         match context.profile {
-            LayoutProfile::Expanded => (224.0, 28.0, 40.0, 76.0, 20.0, 52.0),
-            LayoutProfile::Standard => (224.0, 28.0, 40.0, 76.0, 20.0, 44.0),
+            LayoutProfile::Expanded => (224.0, 28.0, 40.0, 76.0, 20.0, 44.0),
+            LayoutProfile::Standard => (224.0, 28.0, 40.0, 76.0, 20.0, 40.0),
             LayoutProfile::Compact => (200.0, 24.0, 28.0, 62.0, 18.0, 36.0),
             LayoutProfile::Tablet => (184.0, 20.0, 24.0, 58.0, 16.0, 34.0),
             LayoutProfile::Narrow => (152.0, 16.0, 16.0, 52.0, 14.0, 30.0),
@@ -536,7 +536,9 @@ pub fn lyrics_page_layout(context: ResponsiveContext) -> LyricsPageLayout {
 ///
 /// The preferred size follows the responsive root rem while width and height
 /// caps reserve enough room for full-screen chrome, metadata, and playback
-/// controls.
+/// controls. The 1080P wide-focus family preserves the known-good 306px
+/// half-height target; growth toward 2K blends back to the Tablet root-rem
+/// target instead of extending the 1080P width ratio indefinitely.
 #[inline]
 pub fn lyrics_media_width(context: ResponsiveContext) -> f32 {
     const WIDE_FOCUS_MIN_WIDTH: f32 = 900.0;
@@ -555,7 +557,12 @@ pub fn lyrics_media_width(context: ResponsiveContext) -> f32 {
         LayoutProfile::Standard => tokens.size(460.0),
         LayoutProfile::Compact => tokens.size(340.0),
         LayoutProfile::Tablet if context.width() >= WIDE_FOCUS_MIN_WIDTH => {
-            context.width() * HALF_HEIGHT_TARGET_RATIO
+            let half_height_target = context.width() * HALF_HEIGHT_TARGET_RATIO;
+            let two_k_progress =
+                ((context.root_rem.scale() - 1.0) / (REM_SCALE_CEILING - 1.0)).clamp(0.0, 1.0);
+            let root_rem_target = tokens.size(500.0);
+
+            half_height_target + (root_rem_target - half_height_target).max(0.0) * two_k_progress
         }
         LayoutProfile::Tablet => tokens.size(500.0),
         LayoutProfile::Narrow => tokens.size(400.0),
@@ -1173,17 +1180,21 @@ mod tests {
         let two_k = detail_header_metrics(ResponsiveContext::from_viewport(Size::new(
             2_560.0, 1_440.0,
         )));
+        let standard = detail_header_metrics(ResponsiveContext::from_viewport(Size::new(
+            1_280.0, 1_080.0,
+        )));
         let half_width =
             detail_header_metrics(ResponsiveContext::from_viewport(Size::new(960.0, 1_080.0)));
         let narrow =
             detail_header_metrics(ResponsiveContext::from_viewport(Size::new(560.0, 800.0)));
 
         assert_approx(reference.artwork_size, 224.0);
-        assert_approx(reference.title_size, 52.0);
+        assert_approx(reference.title_size, 44.0);
         assert_approx(reference.top_padding, 76.0);
         assert_approx(two_k.artwork_size, 896.0 / 3.0);
-        assert_approx(two_k.title_size, 208.0 / 3.0);
+        assert_approx(two_k.title_size, 176.0 / 3.0);
         assert_approx(two_k.top_padding, 304.0 / 3.0);
+        assert_approx(standard.title_size, 40.0);
         assert_approx(half_width.artwork_size, 184.0);
         assert_approx(half_width.title_size, 34.0);
         assert_approx(half_width.top_padding, 58.0);
@@ -1226,7 +1237,7 @@ mod tests {
             (Size::new(1_920.0, 1_080.0), 480.0),
             (Size::new(2_560.0, 1_440.0), 640.0),
             (Size::new(960.0, 1_080.0), 306.0),
-            (Size::new(1_280.0, 1_440.0), 408.0),
+            (Size::new(1_280.0, 1_440.0), 2_000.0 / 3.0),
             (Size::new(720.0, 800.0), 450.0),
             (Size::new(960.0, 540.0), 306.0),
             (Size::new(560.0, 800.0), 360.0),
@@ -1242,14 +1253,15 @@ mod tests {
     }
 
     #[test]
-    fn lyrics_media_preserves_root_rem_growth_at_half_width() {
+    fn lyrics_media_restores_the_root_rem_target_at_two_k_half_width() {
         let half_1080 =
             lyrics_media_width(ResponsiveContext::from_viewport(Size::new(960.0, 1_080.0)));
         let half_2k = lyrics_media_width(ResponsiveContext::from_viewport(Size::new(
             1_280.0, 1_440.0,
         )));
 
-        assert_approx(half_2k / half_1080, 4.0 / 3.0);
+        assert_approx(half_1080, 306.0);
+        assert_approx(half_2k, 2_000.0 / 3.0);
     }
 
     #[test]

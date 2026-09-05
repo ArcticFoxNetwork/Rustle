@@ -20,7 +20,8 @@ use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::detail_description;
 use crate::ui::components::playlist_view::{self, PlaylistColumns, SongItem};
 use crate::ui::responsive::{
-    CoverRadiusRole, RadiusRole, ResponsiveContext, TargetRole, TextRole, detail_header_metrics,
+    CoverRadiusRole, IconRole, RadiusRole, ResponsiveContext, TargetRole, TextRole, UiTokens,
+    detail_header_metrics,
 };
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::widgets::{VirtualListState, detail_header};
@@ -160,6 +161,7 @@ fn view_for_context<'a>(
         search_animation,
         search_expanded,
         search_query,
+        locale,
         current_user_id,
         context,
     );
@@ -665,14 +667,12 @@ fn build_header<'a>(
 
     let stats = row(stats_items).align_y(Alignment::Center);
 
-    // Match the reference hierarchy: the title owns the flexible top row,
-    // optional description fills the remaining middle space, and metadata plus
-    // actions/search stay pinned beside the bottom of the cover.
-    let title_row = row![title, Space::new().width(tokens.space(12.0)), type_label,]
-        .align_y(Alignment::Center)
-        .width(Fill);
+    // Match the reference hierarchy: type and title are separate identity
+    // levels, while metadata plus actions/search stay pinned beside the cover.
     let info = column![
-        title_row,
+        type_label,
+        Space::new().height(tokens.space(6.0)),
+        title,
         Space::new().height(tokens.space(6.0)),
         container(description).height(Fill).clip(true),
         Space::new().height(tokens.space(6.0)),
@@ -743,6 +743,102 @@ fn playlist_owner_avatar_handle<'a>(
         .and_then(|id| image_state.get(crate::image::ImageKind::ArtistCover, id))
 }
 
+fn capsule_action_button<'a>(
+    label: String,
+    icon_svg: &'static str,
+    icon_id: crate::app::IconId,
+    on_press: Message,
+    emphasized: bool,
+    selected: bool,
+    hover_progress: f32,
+    tokens: UiTokens,
+) -> Element<'a, Message> {
+    let height = tokens.target(TargetRole::Control);
+    let icon_size = tokens.icon(IconRole::Medium);
+    let horizontal_padding = tokens.space(14.0);
+    let content_gap = tokens.space(7.0);
+
+    let icon = svg(svg::Handle::from_memory(icon_svg.as_bytes()))
+        .width(icon_size)
+        .height(icon_size)
+        .style(move |theme, _status| svg::Style {
+            color: Some(if emphasized {
+                theme::BLACK
+            } else if selected {
+                theme::ACCENT_PINK
+            } else {
+                theme::lerp_color(
+                    theme::text_secondary(theme),
+                    theme::text_primary(theme),
+                    hover_progress,
+                )
+            }),
+        });
+    let label = text(label)
+        .size(tokens.text(TextRole::Body))
+        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
+        .style(move |theme| text::Style {
+            color: Some(if emphasized {
+                theme::BLACK
+            } else {
+                theme::lerp_color(
+                    theme::text_secondary(theme),
+                    theme::text_primary(theme),
+                    hover_progress,
+                )
+            }),
+        });
+    let content =
+        container(row![icon, Space::new().width(content_gap), label].align_y(Alignment::Center))
+            .height(height)
+            .center_y(height)
+            .padding(
+                Padding::new(0.0)
+                    .left(horizontal_padding)
+                    .right(horizontal_padding),
+            );
+
+    let control = button(content)
+        .height(height)
+        .padding(0)
+        .style(move |theme, status| {
+            let background = if emphasized {
+                let idle = theme::ACCENT_PINK;
+                let hovered = theme::ACCENT_PINK_HOVER;
+                if matches!(status, button::Status::Pressed) {
+                    idle
+                } else {
+                    theme::lerp_color(idle, hovered, hover_progress)
+                }
+            } else {
+                let mut idle = theme::text_primary(theme);
+                idle.a = 0.10;
+                let mut hovered = theme::text_primary(theme);
+                hovered.a = if matches!(status, button::Status::Pressed) {
+                    0.24
+                } else {
+                    0.18
+                };
+                theme::lerp_color(idle, hovered, hover_progress)
+            };
+
+            button::Style {
+                background: Some(iced::Background::Color(background)),
+                border: iced::Border {
+                    radius: tokens.radius(RadiusRole::Pill).into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })
+        .on_press(on_press);
+
+    mouse_area(control)
+        .on_enter(Message::HoverIcon(Some(icon_id)))
+        .on_exit(Message::HoverIcon(None))
+        .into()
+}
+
 /// Build the control buttons (play, like, download, etc.)
 pub(crate) fn build_controls<'a>(
     playlist: &PlaylistView,
@@ -750,6 +846,7 @@ pub(crate) fn build_controls<'a>(
     search_animation: &crate::ui::animation::SingleHoverAnimation,
     search_expanded: bool,
     search_query: &str,
+    locale: Locale,
     current_user_id: Option<u64>,
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
@@ -773,78 +870,20 @@ pub(crate) fn build_controls<'a>(
         Color::from_rgb(value, value, value)
     };
 
-    // Play button with hover scale animation
-    // Base sizes
-    let base_btn_size = tokens.size(52.0_f32);
-    let base_icon_size = tokens.icon(crate::ui::responsive::IconRole::Large);
-    let container_size = tokens.size(56.0_f32); // Fixed outer container, slightly larger than max button size
-
-    // Scale factor: 1.0 -> 1.06 on hover (3px growth: 52 -> 55)
-    let scale = icon_animations.interpolate_f32(&IconId::PlayButton, 1.0, 1.06);
-    let btn_size = base_btn_size * scale;
-    let icon_size = base_icon_size * scale;
-    let btn_radius = btn_size / 2.0;
-
-    // Color: lighter pink -> slightly lighter on hover
-    let progress = icon_animations.get_progress(&IconId::PlayButton);
-    let play_bg = Color::from_rgb(
-        1.0,
-        0.412 + (0.494 - 0.412) * progress,
-        0.706 + (0.753 - 0.706) * progress,
+    let action_height = tokens.target(TargetRole::Control);
+    let play_btn = capsule_action_button(
+        locale.get(Key::PlaylistPlayAll).to_string(),
+        icons::PLAY,
+        IconId::PlayButton,
+        Message::PlayPlaylist(playlist_id),
+        true,
+        false,
+        icon_animations.get_progress(&IconId::PlayButton),
+        tokens,
     );
 
-    // Build from inside out:
-    // 1. SVG icon
-    // 2. Inner container with rounded pink background (scales with animation)
-    // 3. Fixed outer container to prevent layout shift
-    // 4. mouse_area for hover + click
-    let inner_padding = (btn_size - icon_size) / 2.0;
-    let offset = tokens.size(2.0) * scale; // Triangle visual offset, scales with button
-
-    let play_btn = mouse_area(
-        container(
-            button(
-                container(
-                    svg(svg::Handle::from_memory(icons::PLAY.as_bytes()))
-                        .width(icon_size)
-                        .height(icon_size)
-                        .style(|_theme, _status| svg::Style {
-                            color: Some(theme::BLACK),
-                        }),
-                )
-                .padding(Padding {
-                    top: inner_padding,
-                    bottom: inner_padding,
-                    left: inner_padding + offset,
-                    right: inner_padding - offset,
-                }),
-            )
-            .padding(0)
-            .width(btn_size)
-            .height(btn_size)
-            .style(move |_theme, _status| button::Style {
-                background: Some(iced::Background::Color(play_bg)),
-                border: iced::Border {
-                    radius: btn_radius.into(),
-                    ..Default::default()
-                },
-                ..Default::default()
-            })
-            .on_press(Message::PlayPlaylist(playlist_id)),
-        )
-        .width(container_size)
-        .height(container_size)
-        .center_x(container_size)
-        .center_y(container_size),
-    )
-    .on_enter(Message::HoverIcon(Some(IconId::PlayButton)))
-    .on_exit(Message::HoverIcon(None));
-
     // Build controls row
-    let mut action_items: Vec<Element<'a, Message>> = vec![
-        play_btn.into(),
-        Space::new().width(tokens.space(24.0)).into(),
-    ];
+    let mut action_items: Vec<Element<'a, Message>> = vec![play_btn];
 
     if is_artist || is_user || is_album {
         // Artist page keeps only play and search controls.
@@ -852,17 +891,18 @@ pub(crate) fn build_controls<'a>(
         // For local playlists (but not recently played), show edit button with animated color
         let edit_color = get_icon_color(IconId::Edit);
         let edit_btn = mouse_area(
-            button(
+            button(crate::ui::widgets::centered_button_content(
                 svg(svg::Handle::from_memory(icons::EDIT.as_bytes()))
-                    .width(tokens.icon(crate::ui::responsive::IconRole::Large))
-                    .height(tokens.icon(crate::ui::responsive::IconRole::Large))
+                    .width(tokens.icon(IconRole::Medium))
+                    .height(tokens.icon(IconRole::Medium))
                     .style(move |_theme, _status| svg::Style {
                         color: Some(edit_color),
                     }),
-            )
+                action_height,
+            ))
             .style(theme::transparent_btn)
-            .width(tokens.target(TargetRole::Control))
-            .height(tokens.target(TargetRole::Control))
+            .width(action_height)
+            .height(action_height)
             .padding(0)
             .on_press(Message::EditPlaylist(playlist_id)),
         )
@@ -872,20 +912,20 @@ pub(crate) fn build_controls<'a>(
         action_items.push(edit_btn.into());
 
         // Delete button for local playlists
-        action_items.push(Space::new().width(tokens.space(8.0)).into());
         let delete_color = get_icon_color(IconId::Delete);
         let delete_btn = mouse_area(
-            button(
+            button(crate::ui::widgets::centered_button_content(
                 svg(svg::Handle::from_memory(icons::TRASH.as_bytes()))
-                    .width(tokens.icon(crate::ui::responsive::IconRole::Large))
-                    .height(tokens.icon(crate::ui::responsive::IconRole::Large))
+                    .width(tokens.icon(IconRole::Medium))
+                    .height(tokens.icon(IconRole::Medium))
                     .style(move |_theme, _status| svg::Style {
                         color: Some(delete_color),
                     }),
-            )
+                action_height,
+            ))
             .style(theme::transparent_btn)
-            .width(tokens.target(TargetRole::Control))
-            .height(tokens.target(TargetRole::Control))
+            .width(action_height)
+            .height(action_height)
             .padding(0)
             .on_press(Message::RequestDeletePlaylist(playlist_id)),
         )
@@ -896,63 +936,46 @@ pub(crate) fn build_controls<'a>(
     } else if !is_local {
         // For cloud playlists, show like button only if not own playlist
         if !is_own_playlist {
-            let like_color = if is_subscribed {
-                // Subscribed: show pink color
-                theme::ACCENT_PINK
+            let like_label = if is_subscribed {
+                Key::PlaylistUnsubscribe
             } else {
-                get_icon_color(IconId::Like)
+                Key::PlaylistSubscribe
             };
             let heart_icon = if is_subscribed {
                 icons::HEART
             } else {
                 icons::HEART_OUTLINE
             };
-            let like_btn = mouse_area(
-                button(
-                    svg(svg::Handle::from_memory(heart_icon.as_bytes()))
-                        .width(tokens.icon(crate::ui::responsive::IconRole::Large))
-                        .height(tokens.icon(crate::ui::responsive::IconRole::Large))
-                        .style(move |_theme, _status| svg::Style {
-                            color: Some(like_color),
-                        }),
-                )
-                .style(theme::transparent_btn)
-                .width(tokens.target(TargetRole::Control))
-                .height(tokens.target(TargetRole::Control))
-                .padding(0)
-                .on_press(Message::TogglePlaylistSubscribe(playlist_id)),
-            )
-            .on_enter(Message::HoverIcon(Some(IconId::Like)))
-            .on_exit(Message::HoverIcon(None));
+            let like_btn = capsule_action_button(
+                locale.get(like_label).to_string(),
+                heart_icon,
+                IconId::Like,
+                Message::TogglePlaylistSubscribe(playlist_id),
+                false,
+                is_subscribed,
+                icon_animations.get_progress(&IconId::Like),
+                tokens,
+            );
 
-            action_items.push(like_btn.into());
-            action_items.push(Space::new().width(tokens.space(16.0)).into());
+            action_items.push(like_btn);
         }
 
-        let download_color = get_icon_color(IconId::Download);
-        let download_btn = mouse_area(
-            button(
-                svg(svg::Handle::from_memory(icons::DOWNLOAD.as_bytes()))
-                    .width(tokens.icon(crate::ui::responsive::IconRole::Large))
-                    .height(tokens.icon(crate::ui::responsive::IconRole::Large))
-                    .style(move |_theme, _status| svg::Style {
-                        color: Some(download_color),
-                    }),
-            )
-            .style(theme::transparent_btn)
-            .width(tokens.target(TargetRole::Control))
-            .height(tokens.target(TargetRole::Control))
-            .padding(0)
-            .on_press(Message::RequestDownloadPlaylist(
+        let download_btn = capsule_action_button(
+            locale.get(Key::PlaylistDownload).to_string(),
+            icons::DOWNLOAD,
+            IconId::Download,
+            Message::RequestDownloadPlaylist(
                 playlist_id,
                 playlist.name.clone(),
                 playlist.song_count,
-            )),
-        )
-        .on_enter(Message::HoverIcon(Some(IconId::Download)))
-        .on_exit(Message::HoverIcon(None));
+            ),
+            false,
+            false,
+            icon_animations.get_progress(&IconId::Download),
+            tokens,
+        );
 
-        action_items.push(download_btn.into());
+        action_items.push(download_btn);
     }
 
     // Animated search component - expands from right to left
@@ -973,14 +996,15 @@ pub(crate) fn build_controls<'a>(
 
     let search_component: Element<'a, Message> = if search_expanded || search_progress > 0.01 {
         // Expanded or animating - show input with search icon
-        let search_icon = button(
+        let search_icon = button(crate::ui::widgets::centered_button_content(
             svg(svg::Handle::from_memory(icons::SEARCH.as_bytes()))
                 .width(search_icon_size)
                 .height(search_icon_size)
                 .style(move |_theme, _status| svg::Style {
                     color: Some(search_color),
                 }),
-        )
+            search_target_size,
+        ))
         .style(theme::transparent_btn)
         .width(search_target_size)
         .height(search_target_size)
@@ -1048,14 +1072,15 @@ pub(crate) fn build_controls<'a>(
     } else {
         // Collapsed - just show search button
         mouse_area(
-            button(
+            button(crate::ui::widgets::centered_button_content(
                 svg(svg::Handle::from_memory(icons::SEARCH.as_bytes()))
                     .width(search_icon_size)
                     .height(search_icon_size)
                     .style(move |_theme, _status| svg::Style {
                         color: Some(search_color),
                     }),
-            )
+                search_target_size,
+            ))
             .style(theme::transparent_btn)
             .width(search_target_size)
             .height(search_target_size)
@@ -1067,7 +1092,9 @@ pub(crate) fn build_controls<'a>(
         .into()
     };
 
-    let actions = row(action_items).align_y(Alignment::Center).spacing(0);
+    let actions = row(action_items)
+        .align_y(Alignment::Center)
+        .spacing(tokens.space(8.0));
     let utilities = row![search_component]
         .align_y(Alignment::Center)
         .spacing(0)
@@ -1088,7 +1115,7 @@ pub(crate) fn build_controls<'a>(
         .width(Fill),
     )
     .width(Fill)
-    .height(Length::Fixed(container_size))
+    .height(Length::Fixed(action_height))
     .align_y(Alignment::Center)
     .into()
 }

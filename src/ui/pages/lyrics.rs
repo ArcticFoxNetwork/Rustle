@@ -93,22 +93,27 @@ pub fn view<'a>(
                 )
             };
 
-            row![
-                container(artwork_panel)
-                    .width(Length::FillPortion(4))
-                    .height(Fill)
-                    .padding(tokens.space(40.0)),
-                container(lyrics_panel)
-                    .width(Length::FillPortion(6))
-                    .height(Fill)
-                    .padding(
-                        Padding::new(0.0)
-                            .left(tokens.space(20.0))
-                            .right(tokens.space(40.0)),
-                    ),
-            ]
+            container(
+                row![
+                    container(artwork_panel)
+                        .width(Length::FillPortion(4))
+                        .height(Fill)
+                        .padding(tokens.space(40.0)),
+                    container(lyrics_panel)
+                        .width(Length::FillPortion(6))
+                        .height(Fill)
+                        .padding(
+                            Padding::new(0.0)
+                                .left(tokens.space(20.0))
+                                .right(tokens.space(40.0)),
+                        ),
+                ]
+                .width(Fill)
+                .height(Fill),
+            )
             .width(Fill)
             .height(Fill)
+            .padding(Padding::new(0.0).top(title_bar_height))
             .into()
         }
         LyricsPageLayout::Focus => {
@@ -1032,6 +1037,7 @@ mod responsive_mode_transition_tests {
     fn artwork_scroll_is_enabled_only_when_the_focus_content_cannot_fit() {
         for viewport in [
             Size::new(2_560.0, 1_440.0),
+            Size::new(1_280.0, 1_440.0),
             Size::new(960.0, 1_080.0),
             Size::new(768.0, 1_024.0),
             Size::new(720.0, 800.0),

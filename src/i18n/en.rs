@@ -244,6 +244,10 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::ArtistTypeLabel, "Artist");
     m.insert(Key::PlaylistLikes, "{} likes");
     m.insert(Key::PlaylistSongCount, "{} songs");
+    m.insert(Key::PlaylistPlayAll, "Play All");
+    m.insert(Key::PlaylistSubscribe, "Collect");
+    m.insert(Key::PlaylistUnsubscribe, "Uncollect");
+    m.insert(Key::PlaylistDownload, "Download");
     m.insert(Key::PlaylistHeaderNumber, "#");
     m.insert(Key::PlaylistHeaderTitle, "Title");
     m.insert(Key::PlaylistHeaderAlbum, "Album");
