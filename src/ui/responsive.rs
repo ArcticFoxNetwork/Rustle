@@ -42,8 +42,7 @@ pub const MIN_USABLE_CONTENT_WIDTH: f32 = 200.0;
 pub const MIN_INTERACTION_TARGET: f32 = 36.0;
 /// Reference-space reduction for the trailing inset of Discover playlist rows.
 pub const DISCOVER_TRAILING_SPACE_REDUCTION: f32 = 5.0;
-/// Half-window playlist cards deliberately keep the compact root-rem so their
-/// complete visual geometry does not change when only window height changes.
+/// Half-window playlist-card presentation begins at this logical width.
 const HALF_WINDOW_PLAYLIST_MIN_WIDTH: f32 = 900.0;
 /// Reference minimum width for one three-column shortcut table. This is a
 /// composition threshold, not a fixed cell width; cells still share whatever
@@ -617,7 +616,7 @@ pub fn playlist_card_metrics(context: ResponsiveContext) -> CardMetrics {
     const HALF_WINDOW_CARD_GAP: f32 = 18.0;
     const TWO_K_EXPANDED_CARD_GAP: f32 = 19.0;
 
-    let tokens = playlist_card_tokens(context);
+    let tokens = context.tokens;
     let metrics = tokens.card(CardRole::Playlist);
     let use_half_window_metrics = uses_half_window_playlist_presentation(context);
 
@@ -656,20 +655,32 @@ pub fn playlist_card_metrics(context: ResponsiveContext) -> CardMetrics {
     }
 }
 
-/// Resolve the visual tokens owned by playlist cards.
+/// Resolve playlist-card geometry against the grid's actual local width.
 ///
-/// Half-window full-height and half-height layouts are one presentation even
-/// though their shell profiles differ (`Tablet` versus `Standard`/`Compact`).
-/// Keep the complete card on the compact token scale so its footer, gap,
-/// radius, typography, hover shadow, and play affordance stay identical when
-/// only height changes.
+/// Full-height half-window layouts use a collapsed navigation rail and
+/// therefore have a wider content lane than their short-height counterparts.
+/// Fit exactly five cards across that measured lane instead of forcing the
+/// short-height card width into both shell presentations.
 #[inline]
-pub fn playlist_card_tokens(context: ResponsiveContext) -> UiTokens {
-    if uses_half_window_playlist_presentation(context) {
-        UiTokens::new(RootRem::from_scale(REM_SCALE_FLOOR))
-    } else {
-        context.tokens
+pub fn playlist_card_metrics_for_width(
+    context: ResponsiveContext,
+    available_width: f32,
+) -> CardMetrics {
+    const HALF_WINDOW_COLUMNS: f32 = 5.0;
+
+    let mut metrics = playlist_card_metrics(context);
+    if context.profile == LayoutProfile::Tablet && uses_half_window_playlist_presentation(context) {
+        let gaps = metrics.gap * (HALF_WINDOW_COLUMNS - 1.0);
+        let fitted_width =
+            (positive_dimension(available_width) - gaps).max(0.0) / HALF_WINDOW_COLUMNS;
+        if fitted_width > 0.0 {
+            let footer_height = (metrics.height - metrics.width).max(0.0);
+            metrics.width = fitted_width;
+            metrics.height = fitted_width + footer_height;
+        }
     }
+
+    metrics
 }
 
 #[inline]
@@ -1117,19 +1128,16 @@ mod tests {
         let half_height = ResponsiveContext::from_viewport(Size::new(960.0, 540.0));
         assert_approx(playlist_card_metrics(half_1080).width, 151.2);
         assert_approx(playlist_card_metrics(half_height).width, 151.2);
-        assert_eq!(
-            playlist_card_metrics(half_1080),
-            playlist_card_metrics(half_height),
-        );
-        assert_approx(playlist_card_metrics(half_1080).gap, 16.2);
+        assert_approx(playlist_card_metrics(half_1080).gap, 18.0);
         assert_approx(playlist_card_metrics(half_2k).width, 179.2);
         assert_approx(playlist_card_metrics(half_height_2k).width, 179.2);
-        assert_eq!(
-            playlist_card_metrics(half_2k),
-            playlist_card_metrics(half_height_2k),
-        );
-        assert_approx(playlist_card_tokens(half_1080).root_rem().scale(), 0.9);
-        assert_approx(playlist_card_tokens(half_2k).root_rem().scale(), 0.9);
+        let half_1080_grid = playlist_card_metrics_for_width(half_1080, 828.0);
+        let half_2k_grid = playlist_card_metrics_for_width(half_2k, 1_104.0);
+        let half_height_2k_grid = playlist_card_metrics_for_width(half_height_2k, 969.0);
+        assert_approx(half_1080_grid.width, 151.2);
+        assert_approx(half_2k_grid.width, 201.6);
+        assert_approx(half_height_2k_grid.width, 179.2);
+        assert_approx(half_2k_grid.width * 5.0 + half_2k_grid.gap * 4.0, 1_104.0);
         assert_approx(
             playlist_card_metrics(small_tablet).width,
             small_tablet.tokens.size(168.0),

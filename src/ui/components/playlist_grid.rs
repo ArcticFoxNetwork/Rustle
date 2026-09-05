@@ -1,23 +1,27 @@
 //! Responsive playlist grid and single-row layouts.
 
-use iced::widget::{Space, column, row};
+use iced::widget::{Space, column, responsive, row};
 use iced::{Element, Fill};
 
 use crate::api::PlaylistSummary;
 use crate::app::{ImageState, Message};
 use crate::image::ImageKind;
 use crate::ui::animation::HoverAnimations;
-use crate::ui::responsive::{ResponsiveContext, playlist_card_metrics};
-use crate::ui::widgets::{self, playlist_card};
+use crate::ui::responsive::{
+    CardMetrics, ResponsiveContext, calculate_grid_columns_clamped, playlist_card_metrics,
+    playlist_card_metrics_for_width,
+};
+use crate::ui::widgets::playlist_card;
 
 fn card<'a>(
     playlist: &'a PlaylistSummary,
     image_state: &'a ImageState,
     animations: &'a HoverAnimations<u64>,
+    metrics: CardMetrics,
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
     let hover_progress = animations.get_progress(&playlist.id);
-    playlist_card::view(
+    playlist_card::view_with_metrics(
         &playlist.name,
         image_state.get(ImageKind::PlaylistCover, playlist.id),
         image_state.get_playlist_footer(playlist.id),
@@ -26,7 +30,8 @@ fn card<'a>(
         Message::PlayDiscoverPlaylist(playlist.id),
         Message::HoverDiscoverPlaylist(Some(playlist.id)),
         Message::HoverDiscoverPlaylist(None),
-        context,
+        metrics,
+        context.tokens,
     )
 }
 
@@ -37,12 +42,14 @@ pub fn view_single_row<'a>(
     animations: &'a HoverAnimations<u64>,
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
-    let metrics = playlist_card_metrics(context);
-    widgets::responsive_card_columns(metrics, usize::MAX, move |columns| {
+    responsive(move |size| -> Element<'a, Message> {
+        let metrics = playlist_card_metrics_for_width(context, size.width);
+        let columns =
+            calculate_grid_columns_clamped(size.width, metrics.width, metrics.gap, usize::MAX);
         let cards = playlists
             .iter()
             .take(columns)
-            .map(|playlist| card(playlist, image_state, animations, context))
+            .map(|playlist| card(playlist, image_state, animations, metrics, context))
             .collect::<Vec<_>>();
 
         if cards.is_empty() {
@@ -51,6 +58,9 @@ pub fn view_single_row<'a>(
             row(cards).spacing(metrics.gap).into()
         }
     })
+    .width(Fill)
+    .height(iced::Length::Shrink)
+    .into()
 }
 
 /// Render a complete responsive wrapping grid for full-list views.
@@ -61,22 +71,25 @@ pub fn view<'a>(
     max_items: Option<usize>,
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
-    let metrics = playlist_card_metrics(context);
+    let base_metrics = playlist_card_metrics(context);
     let items = playlists
         .iter()
         .take(max_items.unwrap_or(usize::MAX))
         .collect::<Vec<_>>();
     if items.is_empty() {
-        return Space::new().width(Fill).height(metrics.height).into();
+        return Space::new().width(Fill).height(base_metrics.height).into();
     }
 
-    widgets::responsive_card_columns(metrics, usize::MAX, move |columns| {
+    responsive(move |size| -> Element<'a, Message> {
+        let metrics = playlist_card_metrics_for_width(context, size.width);
+        let columns =
+            calculate_grid_columns_clamped(size.width, metrics.width, metrics.gap, usize::MAX);
         let rows = items
             .chunks(columns)
             .map(|chunk| {
                 let cards = chunk
                     .iter()
-                    .map(|playlist| card(playlist, image_state, animations, context))
+                    .map(|playlist| card(playlist, image_state, animations, metrics, context))
                     .collect::<Vec<_>>();
                 row(cards).spacing(metrics.gap).into()
             })
@@ -84,17 +97,20 @@ pub fn view<'a>(
 
         column(rows).spacing(metrics.gap).into()
     })
+    .width(Fill)
+    .height(iced::Length::Shrink)
+    .into()
 }
 
 #[cfg(test)]
 mod tests {
     use crate::ui::responsive::{
-        ResponsiveContext, calculate_grid_columns_clamped, playlist_card_metrics,
+        ResponsiveContext, calculate_grid_columns_clamped, playlist_card_metrics_for_width,
     };
     use iced::Size;
 
     fn visible_column_count(available_width: f32, context: ResponsiveContext) -> usize {
-        let metrics = playlist_card_metrics(context);
+        let metrics = playlist_card_metrics_for_width(context, available_width);
         calculate_grid_columns_clamped(available_width, metrics.width, metrics.gap, usize::MAX)
     }
 

@@ -3,9 +3,7 @@
 use iced::widget::{Space, button, column, container, mouse_area, svg, text};
 use iced::{Color, Element, Padding};
 
-use crate::ui::responsive::{
-    CardMetrics, ResponsiveContext, TextRole, UiTokens, playlist_card_metrics, playlist_card_tokens,
-};
+use crate::ui::responsive::{CardMetrics, TextRole, UiTokens};
 use crate::ui::theme::{self, MEDIUM_WEIGHT};
 use crate::ui::{icons, widgets};
 
@@ -15,35 +13,8 @@ const PLAY_BUTTON_END_OFFSET: f32 = 4.0;
 const HOVER_MASK_MAX_ALPHA: f32 = 0.24;
 const HOVER_IMAGE_SCALE: f32 = 1.06;
 
-/// Render a playlist card using the shared responsive card metrics.
 #[allow(clippy::too_many_arguments)]
-pub fn view<'a, Message: Clone + 'a>(
-    name: &'a str,
-    cover_handle: Option<&'a iced::widget::image::Handle>,
-    footer_handle: Option<&'a iced::widget::image::Handle>,
-    hover_progress: f32,
-    on_click: Message,
-    on_play: Message,
-    on_hover: Message,
-    on_unhover: Message,
-    context: ResponsiveContext,
-) -> Element<'a, Message> {
-    view_with_metrics(
-        name,
-        cover_handle,
-        footer_handle,
-        hover_progress,
-        on_click,
-        on_play,
-        on_hover,
-        on_unhover,
-        playlist_card_metrics(context),
-        playlist_card_tokens(context),
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn view_with_metrics<'a, Message: Clone + 'a>(
+pub(crate) fn view_with_metrics<'a, Message: Clone + 'a>(
     name: &'a str,
     cover_handle: Option<&'a iced::widget::image::Handle>,
     footer_handle: Option<&'a iced::widget::image::Handle>,
