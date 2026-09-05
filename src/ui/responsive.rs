@@ -42,6 +42,9 @@ pub const MIN_USABLE_CONTENT_WIDTH: f32 = 200.0;
 pub const MIN_INTERACTION_TARGET: f32 = 36.0;
 /// Reference-space reduction for the trailing inset of Discover playlist rows.
 pub const DISCOVER_TRAILING_SPACE_REDUCTION: f32 = 5.0;
+/// Half-window playlist cards deliberately keep the compact root-rem so their
+/// complete visual geometry does not change when only window height changes.
+const HALF_WINDOW_PLAYLIST_MIN_WIDTH: f32 = 900.0;
 /// Reference minimum width for one three-column shortcut table. This is a
 /// composition threshold, not a fixed cell width; cells still share whatever
 /// width the rendered table receives.
@@ -603,7 +606,6 @@ impl CardRole {
 /// portrait tablets retain their established card size.
 #[inline]
 pub fn playlist_card_metrics(context: ResponsiveContext) -> CardMetrics {
-    const HALF_WINDOW_MIN_WIDTH: f32 = 900.0;
     const HALF_WINDOW_START_WIDTH: f32 = 960.0;
     const HALF_WINDOW_END_WIDTH: f32 = 1_280.0;
     const HALF_WINDOW_START_CARD_WIDTH: f32 = 151.2;
@@ -615,10 +617,9 @@ pub fn playlist_card_metrics(context: ResponsiveContext) -> CardMetrics {
     const HALF_WINDOW_CARD_GAP: f32 = 18.0;
     const TWO_K_EXPANDED_CARD_GAP: f32 = 19.0;
 
-    let tokens = context.tokens;
+    let tokens = playlist_card_tokens(context);
     let metrics = tokens.card(CardRole::Playlist);
-    let use_half_window_metrics =
-        context.profile != LayoutProfile::Expanded && context.width() >= HALF_WINDOW_MIN_WIDTH;
+    let use_half_window_metrics = uses_half_window_playlist_presentation(context);
 
     if use_half_window_metrics {
         // The sidebar presentation changes when only a half-window's height
@@ -653,6 +654,27 @@ pub fn playlist_card_metrics(context: ResponsiveContext) -> CardMetrics {
     } else {
         metrics
     }
+}
+
+/// Resolve the visual tokens owned by playlist cards.
+///
+/// Half-window full-height and half-height layouts are one presentation even
+/// though their shell profiles differ (`Tablet` versus `Standard`/`Compact`).
+/// Keep the complete card on the compact token scale so its footer, gap,
+/// radius, typography, hover shadow, and play affordance stay identical when
+/// only height changes.
+#[inline]
+pub fn playlist_card_tokens(context: ResponsiveContext) -> UiTokens {
+    if uses_half_window_playlist_presentation(context) {
+        UiTokens::new(RootRem::from_scale(REM_SCALE_FLOOR))
+    } else {
+        context.tokens
+    }
+}
+
+#[inline]
+fn uses_half_window_playlist_presentation(context: ResponsiveContext) -> bool {
+    context.profile != LayoutProfile::Expanded && context.width() >= HALF_WINDOW_PLAYLIST_MIN_WIDTH
 }
 
 /// Shared application-chrome dimension roles.
@@ -1095,22 +1117,19 @@ mod tests {
         let half_height = ResponsiveContext::from_viewport(Size::new(960.0, 540.0));
         assert_approx(playlist_card_metrics(half_1080).width, 151.2);
         assert_approx(playlist_card_metrics(half_height).width, 151.2);
-        assert_approx(
-            playlist_card_metrics(half_1080).width,
-            playlist_card_metrics(half_height).width,
+        assert_eq!(
+            playlist_card_metrics(half_1080),
+            playlist_card_metrics(half_height),
         );
-        assert_approx(playlist_card_metrics(half_1080).gap, 18.0);
-        assert_approx(
-            playlist_card_metrics(half_1080).width * 5.0
-                + playlist_card_metrics(half_1080).gap * 4.0,
-            828.0,
-        );
+        assert_approx(playlist_card_metrics(half_1080).gap, 16.2);
         assert_approx(playlist_card_metrics(half_2k).width, 179.2);
         assert_approx(playlist_card_metrics(half_height_2k).width, 179.2);
-        assert_approx(
-            playlist_card_metrics(half_2k).width,
-            playlist_card_metrics(half_height_2k).width,
+        assert_eq!(
+            playlist_card_metrics(half_2k),
+            playlist_card_metrics(half_height_2k),
         );
+        assert_approx(playlist_card_tokens(half_1080).root_rem().scale(), 0.9);
+        assert_approx(playlist_card_tokens(half_2k).root_rem().scale(), 0.9);
         assert_approx(
             playlist_card_metrics(small_tablet).width,
             small_tablet.tokens.size(168.0),

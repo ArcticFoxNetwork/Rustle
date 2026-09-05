@@ -4,7 +4,7 @@ use iced::widget::{Space, button, column, container, mouse_area, svg, text};
 use iced::{Color, Element, Padding};
 
 use crate::ui::responsive::{
-    CardMetrics, ResponsiveContext, TextRole, UiTokens, playlist_card_metrics,
+    CardMetrics, ResponsiveContext, TextRole, UiTokens, playlist_card_metrics, playlist_card_tokens,
 };
 use crate::ui::theme::{self, MEDIUM_WEIGHT};
 use crate::ui::{icons, widgets};
@@ -38,7 +38,7 @@ pub fn view<'a, Message: Clone + 'a>(
         on_hover,
         on_unhover,
         playlist_card_metrics(context),
-        context.tokens,
+        playlist_card_tokens(context),
     )
 }
 
