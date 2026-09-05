@@ -17,6 +17,9 @@ use crate::ui::responsive::{
 };
 use crate::ui::{theme, widgets};
 
+const ACCOUNT_AVATAR_NAME_GAP: f32 = 5.0;
+const ACCOUNT_NAME_BADGE_GAP: f32 = 6.0;
+
 /// Build the complete top bar with navigation buttons on left, search bar in center, user info and window controls on right
 pub fn view<'a>(
     context: ResponsiveContext,
@@ -137,7 +140,7 @@ pub fn view<'a>(
                         .style(|theme| text::Style {
                             color: Some(theme::text_primary(theme))
                         }),
-                    Space::new().width(tokens.space(6.0)),
+                    Space::new().width(tokens.space(ACCOUNT_NAME_BADGE_GAP)),
                     vip_badge,
                 ]
                 .align_y(Alignment::Center)
@@ -168,18 +171,21 @@ pub fn view<'a>(
             .into()
     };
 
-    // A fixed Iced button does not center a smaller child: zero padding places
-    // the avatar at the target's leading/top edge. Keep the target and visual
-    // contracts separate by centering the circular image explicitly, then use
-    // an unpainted event surface so no rounded-square account shape can leak
-    // through hover or pressed states.
-    let avatar_target = container(avatar_elem).center(button_size);
     let user_content: Element<'_, Message> = if compact_actions {
-        avatar_target.into()
+        // The avatar-only presentation keeps a complete square hit target.
+        container(avatar_elem).center(button_size).into()
     } else {
+        // The full account row is one interactive surface, so the avatar only
+        // needs its visual width. Avoid hidden horizontal slack from centering
+        // 28px artwork inside a 42px square before applying the visible gap.
+        let avatar = container(avatar_elem)
+            .width(avatar_size)
+            .height(button_size)
+            .center_x(avatar_size)
+            .center_y(button_size);
         row![
-            avatar_target,
-            Space::new().width(tokens.space(8.0)),
+            avatar,
+            Space::new().width(tokens.space(ACCOUNT_AVATAR_NAME_GAP)),
             user_text
         ]
         .height(button_size)
@@ -420,6 +426,16 @@ pub fn view<'a>(
             ..Default::default()
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ACCOUNT_AVATAR_NAME_GAP, ACCOUNT_NAME_BADGE_GAP};
+
+    #[test]
+    fn avatar_name_gap_is_tighter_than_name_badge_gap() {
+        assert!(ACCOUNT_AVATAR_NAME_GAP < ACCOUNT_NAME_BADGE_GAP);
+    }
 }
 
 /// Navigation button style (back/forward)

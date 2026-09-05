@@ -15,8 +15,8 @@ use crate::utils::Source;
 // Visual dimensions are 1080P reference pixels resolved through `UiTokens`.
 const MENU_WIDTH: f32 = 240.0;
 const PANEL_PADDING: f32 = 8.0;
+const ITEM_HORIZONTAL_PADDING: f32 = 12.0;
 const DIVIDER_VERTICAL_PADDING: f32 = 4.0;
-const DIVIDER_HORIZONTAL_PADDING: f32 = 12.0;
 const DIVIDER_COUNT: f32 = 4.0;
 
 /// Render the menu using the same logical viewport and root rem as the shell.
@@ -268,7 +268,8 @@ fn item<'a>(
         )
         .width(Length::Fill)
         .height(Length::Fill)
-        .align_y(Alignment::Center),
+        .align_y(Alignment::Center)
+        .padding(item_content_padding(tokens)),
     )
     .width(Length::Fill)
     .height(Length::Fixed(tokens.target(TargetRole::Icon)))
@@ -324,18 +325,48 @@ fn div<'a>(tokens: crate::ui::responsive::UiTokens) -> Element<'a, Message> {
                 .width(Length::Fill)
                 .height(tokens.space(1.0)),
         )
+        .width(Length::Fill)
         .height(Length::Fixed(tokens.space(1.0)))
         .style(|t| container::Style {
             background: Some(Background::Color(glass_border(t))),
             ..Default::default()
         }),
     )
-    .padding(
-        Padding::new(tokens.space(DIVIDER_VERTICAL_PADDING))
-            .left(tokens.space(DIVIDER_HORIZONTAL_PADDING))
-            .right(tokens.space(DIVIDER_HORIZONTAL_PADDING)),
-    )
+    .width(Length::Fill)
+    .padding(divider_padding(tokens))
     .into()
+}
+
+fn item_content_padding(tokens: crate::ui::responsive::UiTokens) -> Padding {
+    Padding::new(0.0)
+        .left(tokens.space(ITEM_HORIZONTAL_PADDING))
+        .right(tokens.space(ITEM_HORIZONTAL_PADDING))
+}
+
+fn divider_padding(tokens: crate::ui::responsive::UiTokens) -> Padding {
+    Padding::new(tokens.space(DIVIDER_VERTICAL_PADDING))
+        .left(0.0)
+        .right(0.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{divider_padding, item_content_padding};
+    use crate::ui::responsive::UiTokens;
+
+    #[test]
+    fn options_own_horizontal_padding_while_dividers_keep_full_width() {
+        let tokens = UiTokens::default();
+        let item = item_content_padding(tokens);
+        let divider = divider_padding(tokens);
+
+        assert!(item.left > 0.0);
+        assert_eq!(item.left, item.right);
+        assert_eq!(divider.left, 0.0);
+        assert_eq!(divider.right, 0.0);
+        assert!(divider.top > 0.0);
+        assert_eq!(divider.top, divider.bottom);
+    }
 }
 
 // ── Theme-aware helpers ────────────────────────────
