@@ -444,19 +444,28 @@ fn build_header<'a>(
             color: Some(theme::text_primary(theme)),
         });
 
-    // Playlist title - larger font for big screens
-    // Use Inter or system sans-serif with bold weight
-    let title = text(playlist.name.clone())
-        .size(header_metrics.title_size)
+    let description_text = meaningful_description(playlist.description.as_deref());
+    let title_size = if description_text.is_some() {
+        header_metrics.title_size
+    } else {
+        header_metrics.prominent_title_size
+    };
+
+    // Keep the compact title when it shares the identity lane with a real
+    // description. Without a description, the title owns that full region.
+    let title: Element<'static, Message> = text(playlist.name.clone())
+        .size(title_size)
         .line_height(iced::widget::text::LineHeight::Relative(1.0))
+        .width(Fill)
         .style(|theme| text::Style {
             color: Some(theme::text_primary(theme)),
         })
-        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
+        .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
+        .into();
 
     // Description — clamped to 2 lines by default, expandable when long
-    let description: Element<'static, Message> = if let Some(desc) = &playlist.description {
-        let desc_text = desc.clone();
+    let identity_region: Element<'static, Message> = if let Some(desc) = description_text {
+        let desc_text = desc.to_string();
         // Rough estimate: count newlines + approximate line wraps by char count
         let line_count = desc_text.lines().count()
             + desc_text
@@ -471,7 +480,7 @@ fn build_header<'a>(
                 color: Some(theme::text_secondary(theme)),
             });
 
-        if is_long {
+        let description: Element<'static, Message> = if is_long {
             if description_expanded {
                 // Expanded: scrollable description with "收起" button
                 let scrollable_desc = crate::ui::widgets::smooth_scroll(
@@ -522,9 +531,23 @@ fn build_header<'a>(
             }
         } else {
             desc_widget.into()
-        }
+        };
+
+        column![
+            title,
+            Space::new().height(tokens.space(6.0)),
+            container(description).height(Fill).clip(true),
+        ]
+        .spacing(0)
+        .width(Fill)
+        .height(Fill)
+        .into()
     } else {
-        text("").size(tokens.text(TextRole::BodyLarge)).into()
+        container(title)
+            .width(Fill)
+            .height(Fill)
+            .align_y(Alignment::Center)
+            .into()
     };
 
     // Owner avatar - use real avatar if available, otherwise show first letter
@@ -672,9 +695,7 @@ fn build_header<'a>(
     let info = column![
         type_label,
         Space::new().height(tokens.space(6.0)),
-        title,
-        Space::new().height(tokens.space(6.0)),
-        container(description).height(Fill).clip(true),
+        identity_region,
         Space::new().height(tokens.space(6.0)),
         stats,
         Space::new().height(tokens.space(8.0)),
@@ -685,6 +706,11 @@ fn build_header<'a>(
     .height(Length::Fixed(cover_size));
 
     detail_header::view(cover, info, context, detail_header::VerticalAlignment::End)
+}
+
+#[inline]
+fn meaningful_description(description: Option<&str>) -> Option<&str> {
+    description.filter(|description| !description.trim().is_empty())
 }
 
 fn playlist_page_cover_handle<'a>(
@@ -776,6 +802,9 @@ fn capsule_action_button<'a>(
         });
     let label = text(label)
         .size(tokens.text(TextRole::Body))
+        .line_height(iced::widget::text::LineHeight::Relative(1.0))
+        .height(icon_size)
+        .align_y(iced::alignment::Vertical::Center)
         .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
         .style(move |theme| text::Style {
             color: Some(if emphasized {
@@ -803,13 +832,10 @@ fn capsule_action_button<'a>(
         .padding(0)
         .style(move |theme, status| {
             let background = if emphasized {
-                let idle = theme::ACCENT_PINK;
-                let hovered = theme::ACCENT_PINK_HOVER;
-                if matches!(status, button::Status::Pressed) {
-                    idle
-                } else {
-                    theme::lerp_color(idle, hovered, hover_progress)
-                }
+                emphasized_capsule_background(
+                    hover_progress,
+                    matches!(status, button::Status::Pressed),
+                )
             } else {
                 let mut idle = theme::text_primary(theme);
                 idle.a = 0.10;
@@ -837,6 +863,18 @@ fn capsule_action_button<'a>(
         .on_enter(Message::HoverIcon(Some(icon_id)))
         .on_exit(Message::HoverIcon(None))
         .into()
+}
+
+fn emphasized_capsule_background(hover_progress: f32, pressed: bool) -> Color {
+    if pressed {
+        Color::from_rgb(0.86, 0.86, 0.86)
+    } else {
+        theme::lerp_color(
+            Color::WHITE,
+            Color::from_rgb(0.92, 0.92, 0.92),
+            hover_progress,
+        )
+    }
 }
 
 /// Build the control buttons (play, like, download, etc.)
@@ -981,8 +1019,8 @@ pub(crate) fn build_controls<'a>(
     // Animated search component - expands from right to left
     let search_progress = search_animation.progress();
     let search_color = get_icon_color(IconId::Search);
-    let search_target_size = tokens.target(crate::ui::responsive::TargetRole::Icon);
-    let search_icon_size = tokens.icon(crate::ui::responsive::IconRole::Small);
+    let search_target_size = action_height;
+    let search_icon_size = tokens.icon(IconRole::Medium);
 
     // Animation: width goes from 36 (just icon) to 250 (full input)
     let min_width = search_target_size;
@@ -1127,12 +1165,30 @@ const fn control_bar_lane_widths() -> (Length, Length) {
 
 #[cfg(test)]
 mod control_bar_tests {
-    use super::control_bar_lane_widths;
-    use iced::Length;
+    use super::{control_bar_lane_widths, emphasized_capsule_background, meaningful_description};
+    use iced::{Color, Length};
 
     #[test]
     fn utility_lane_keeps_intrinsic_width_while_actions_fill_the_remainder() {
         assert_eq!(control_bar_lane_widths(), (Length::Fill, Length::Fit));
+    }
+
+    #[test]
+    fn only_non_whitespace_text_reserves_the_description_region() {
+        assert_eq!(meaningful_description(None), None);
+        assert_eq!(meaningful_description(Some("")), None);
+        assert_eq!(meaningful_description(Some(" \n\t ")), None);
+        assert_eq!(
+            meaningful_description(Some("  playlist introduction  ")),
+            Some("  playlist introduction  ")
+        );
+    }
+
+    #[test]
+    fn emphasized_capsule_starts_white_and_darkens_on_interaction() {
+        assert_eq!(emphasized_capsule_background(0.0, false), Color::WHITE);
+        assert_ne!(emphasized_capsule_background(1.0, false), Color::WHITE);
+        assert_ne!(emphasized_capsule_background(0.0, true), Color::WHITE);
     }
 }
 

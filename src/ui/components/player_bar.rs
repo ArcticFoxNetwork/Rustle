@@ -463,13 +463,21 @@ fn build_song_info(
         .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     let links = artist_links(&song.artist, current_artists);
+    let metadata_height = tokens.size(20.0);
+    let metadata_text = move |content: String| {
+        text(content)
+            .size(tokens.text(TextRole::Body))
+            .line_height(iced::widget::text::LineHeight::Relative(1.0))
+            .height(metadata_height)
+            .align_y(iced::alignment::Vertical::Center)
+            .wrapping(Wrapping::None)
+    };
     let mut artist_items: Vec<Element<'static, Message>> =
-        Vec::with_capacity(links.len().saturating_mul(2) + usize::from(show_quality));
+        Vec::with_capacity(links.len().saturating_mul(2) + usize::from(show_quality) * 2);
     for (index, link) in links.into_iter().enumerate() {
         if index > 0 {
             artist_items.push(
-                text(" / ")
-                    .size(tokens.text(TextRole::Body))
+                metadata_text(" / ".to_string())
                     .style(|theme| text::Style {
                         color: Some(theme::text_secondary(theme)),
                     })
@@ -477,13 +485,9 @@ fn build_song_info(
             );
         }
 
-        let artist_link = iced::widget::mouse_area(
-            text(link.name)
-                .size(tokens.text(TextRole::Body))
-                .wrapping(Wrapping::None),
-        )
-        .on_press(artist_target_message(link.target))
-        .interaction(mouse::Interaction::Pointer);
+        let artist_link = iced::widget::mouse_area(metadata_text(link.name))
+            .on_press(artist_target_message(link.target))
+            .interaction(mouse::Interaction::Pointer);
         artist_items.push(
             widgets::hover_surface(artist_link)
                 .style(move |theme, progress| iced::widget::container::Style {
@@ -502,9 +506,9 @@ fn build_song_info(
     // artist widget would push a short name and the quality label to opposite
     // ends of the metadata lane.
     if show_quality && let Some(quality) = current_quality {
+        artist_items.push(Space::new().width(tokens.space(8.0)).into());
         artist_items.push(
-            text(format!("  {}", quality.actual.short_name()))
-                .size(tokens.text(TextRole::Body))
+            metadata_text(quality.actual.short_name().to_string())
                 .style(|_theme| text::Style {
                     color: Some(theme::ACCENT),
                 })
@@ -515,7 +519,7 @@ fn build_song_info(
     let artist_line: Element<'static, Message> =
         container(row(artist_items).align_y(Alignment::Center))
             .width(Fill)
-            .height(tokens.size(20.0))
+            .height(metadata_height)
             .clip(true)
             .into();
 
