@@ -482,6 +482,7 @@ pub struct DetailHeaderMetrics {
     pub top_padding: f32,
     pub bottom_padding: f32,
     pub title_size: f32,
+    pub prominent_title_size: f32,
 }
 
 /// Resolve the detail-family header metrics without coupling the policy to a
@@ -493,13 +494,13 @@ pub struct DetailHeaderMetrics {
 #[inline]
 pub fn detail_header_metrics(context: ResponsiveContext) -> DetailHeaderMetrics {
     let tokens = context.tokens;
-    let (artwork, gap, horizontal_padding, top_padding, bottom_padding, title) =
+    let (artwork, gap, horizontal_padding, top_padding, bottom_padding, title, prominent_title) =
         match context.profile {
-            LayoutProfile::Expanded => (224.0, 28.0, 40.0, 76.0, 20.0, 44.0),
-            LayoutProfile::Standard => (224.0, 28.0, 40.0, 76.0, 20.0, 40.0),
-            LayoutProfile::Compact => (200.0, 24.0, 28.0, 62.0, 18.0, 36.0),
-            LayoutProfile::Tablet => (184.0, 20.0, 24.0, 58.0, 16.0, 34.0),
-            LayoutProfile::Narrow => (152.0, 16.0, 16.0, 52.0, 14.0, 30.0),
+            LayoutProfile::Expanded => (224.0, 28.0, 40.0, 76.0, 20.0, 44.0, 52.0),
+            LayoutProfile::Standard => (224.0, 28.0, 40.0, 76.0, 20.0, 40.0, 48.0),
+            LayoutProfile::Compact => (200.0, 24.0, 28.0, 62.0, 18.0, 36.0, 46.0),
+            LayoutProfile::Tablet => (184.0, 20.0, 24.0, 58.0, 16.0, 34.0, 44.0),
+            LayoutProfile::Narrow => (152.0, 16.0, 16.0, 52.0, 14.0, 30.0, 36.0),
         };
 
     DetailHeaderMetrics {
@@ -509,6 +510,9 @@ pub fn detail_header_metrics(context: ResponsiveContext) -> DetailHeaderMetrics 
         top_padding: tokens.space(top_padding),
         bottom_padding: tokens.space(bottom_padding),
         title_size: tokens.size(title).max(tokens.text(TextRole::TitleLarge)),
+        prominent_title_size: tokens
+            .size(prominent_title)
+            .max(tokens.text(TextRole::TitleLarge)),
     }
 }
 
@@ -536,14 +540,10 @@ pub fn lyrics_page_layout(context: ResponsiveContext) -> LyricsPageLayout {
 ///
 /// The preferred size follows the responsive root rem while width and height
 /// caps reserve enough room for full-screen chrome, metadata, and playback
-/// controls. The 1080P wide-focus family preserves the known-good 306px
-/// half-height target; growth toward 2K blends back to the Tablet root-rem
-/// target instead of extending the 1080P width ratio indefinitely.
+/// controls. Short-height layouts remain height-capped, while full-height
+/// Tablet layouts keep the same root-rem target as the rest of the UI.
 #[inline]
 pub fn lyrics_media_width(context: ResponsiveContext) -> f32 {
-    const WIDE_FOCUS_MIN_WIDTH: f32 = 900.0;
-    const HALF_HEIGHT_TARGET_RATIO: f32 = 306.0 / 960.0;
-
     let tokens = context.tokens;
     let (horizontal_gutter, reserved_vertical) = match context.profile {
         LayoutProfile::Expanded => (80.0, 320.0),
@@ -556,14 +556,6 @@ pub fn lyrics_media_width(context: ResponsiveContext) -> f32 {
         LayoutProfile::Expanded => tokens.size(480.0),
         LayoutProfile::Standard => tokens.size(460.0),
         LayoutProfile::Compact => tokens.size(340.0),
-        LayoutProfile::Tablet if context.width() >= WIDE_FOCUS_MIN_WIDTH => {
-            let half_height_target = context.width() * HALF_HEIGHT_TARGET_RATIO;
-            let two_k_progress =
-                ((context.root_rem.scale() - 1.0) / (REM_SCALE_CEILING - 1.0)).clamp(0.0, 1.0);
-            let root_rem_target = tokens.size(500.0);
-
-            half_height_target + (root_rem_target - half_height_target).max(0.0) * two_k_progress
-        }
         LayoutProfile::Tablet => tokens.size(500.0),
         LayoutProfile::Narrow => tokens.size(400.0),
     };
@@ -602,34 +594,46 @@ impl CardRole {
 
 /// Resolve playlist-card geometry for the current composition.
 ///
-/// A full-height half-width window has enough physical area for five useful
-/// cards. Expanded layouts continuously tighten the enlarged reference card
-/// rhythm as the root rem grows from 1080P toward 2K, preserving an eight-card
-/// desktop row even when a maximized window is slightly shorter than the
-/// display because of compositor chrome. Smaller portrait tablets retain their
-/// established card size.
+/// Half-window card width follows the horizontal family instead of root-rem
+/// height so full-height and short-height variants keep the same covers and
+/// five-column density. Expanded layouts continuously tighten the enlarged
+/// reference card rhythm as the root rem grows from 1080P toward 2K,
+/// preserving an eight-card desktop row even when a maximized window is
+/// slightly shorter than the display because of compositor chrome. Smaller
+/// portrait tablets retain their established card size.
 #[inline]
 pub fn playlist_card_metrics(context: ResponsiveContext) -> CardMetrics {
-    const WIDE_TABLET_MIN_WIDTH: f32 = 900.0;
-    const WIDE_TABLET_CARD_WIDTH: f32 = 148.0;
+    const HALF_WINDOW_MIN_WIDTH: f32 = 900.0;
+    const HALF_WINDOW_START_WIDTH: f32 = 960.0;
+    const HALF_WINDOW_END_WIDTH: f32 = 1_280.0;
+    const HALF_WINDOW_START_CARD_WIDTH: f32 = 151.2;
+    const HALF_WINDOW_END_CARD_WIDTH: f32 = 179.2;
     const EXPANDED_CARD_WIDTH: f32 = 183.0;
     const TWO_K_EXPANDED_CARD_WIDTH: f32 = 179.0;
     const PLAYLIST_FOOTER_HEIGHT: f32 = 60.0;
     const EXPANDED_CARD_GAP: f32 = 24.0;
-    const WIDE_TABLET_CARD_GAP: f32 = 18.0;
+    const HALF_WINDOW_CARD_GAP: f32 = 18.0;
     const TWO_K_EXPANDED_CARD_GAP: f32 = 19.0;
 
     let tokens = context.tokens;
     let metrics = tokens.card(CardRole::Playlist);
-    let use_wide_tablet_metrics = context.profile == LayoutProfile::Tablet
-        && context.width() >= tokens.size(WIDE_TABLET_MIN_WIDTH);
+    let use_half_window_metrics =
+        context.profile != LayoutProfile::Expanded && context.width() >= HALF_WINDOW_MIN_WIDTH;
 
-    if use_wide_tablet_metrics {
-        let width = tokens.size(WIDE_TABLET_CARD_WIDTH);
+    if use_half_window_metrics {
+        // The sidebar presentation changes when only a half-window's height
+        // changes (for example, 1280x1440 Tablet vs 1280x720 Standard). Keep
+        // cover width driven by the shared horizontal family so that height
+        // alone cannot make the grid jump to smaller cards.
+        let width_progress = ((context.width() - HALF_WINDOW_START_WIDTH)
+            / (HALF_WINDOW_END_WIDTH - HALF_WINDOW_START_WIDTH))
+            .clamp(0.0, 1.0);
+        let width = HALF_WINDOW_START_CARD_WIDTH
+            + (HALF_WINDOW_END_CARD_WIDTH - HALF_WINDOW_START_CARD_WIDTH) * width_progress;
         CardMetrics {
             width,
             height: width + tokens.size(PLAYLIST_FOOTER_HEIGHT),
-            gap: tokens.space(WIDE_TABLET_CARD_GAP),
+            gap: tokens.space(HALF_WINDOW_CARD_GAP),
             radius: metrics.radius,
         }
     } else if context.profile == LayoutProfile::Expanded {
@@ -1072,6 +1076,7 @@ mod tests {
         let maximized_two_k = ResponsiveContext::from_viewport(Size::new(2_558.0, 1_398.0));
         let half_1080 = ResponsiveContext::from_viewport(Size::new(960.0, 1_080.0));
         let half_2k = ResponsiveContext::from_viewport(Size::new(1_280.0, 1_440.0));
+        let half_height_2k = ResponsiveContext::from_viewport(Size::new(1_280.0, 720.0));
         let small_tablet = ResponsiveContext::from_viewport(Size::new(768.0, 1_024.0));
 
         assert_approx(playlist_card_metrics(full).width, 183.0);
@@ -1087,16 +1092,24 @@ mod tests {
                 8
             );
         }
-        assert_approx(playlist_card_metrics(half_1080).width, 148.0);
-        assert_approx(playlist_card_metrics(half_1080).gap, 18.0);
-        assert!(
-            playlist_card_metrics(half_1080).width * 5.0
-                + playlist_card_metrics(half_1080).gap * 4.0
-                <= 828.0
-        );
+        let half_height = ResponsiveContext::from_viewport(Size::new(960.0, 540.0));
+        assert_approx(playlist_card_metrics(half_1080).width, 151.2);
+        assert_approx(playlist_card_metrics(half_height).width, 151.2);
         assert_approx(
-            playlist_card_metrics(half_2k).width / playlist_card_metrics(half_1080).width,
-            4.0 / 3.0,
+            playlist_card_metrics(half_1080).width,
+            playlist_card_metrics(half_height).width,
+        );
+        assert_approx(playlist_card_metrics(half_1080).gap, 18.0);
+        assert_approx(
+            playlist_card_metrics(half_1080).width * 5.0
+                + playlist_card_metrics(half_1080).gap * 4.0,
+            828.0,
+        );
+        assert_approx(playlist_card_metrics(half_2k).width, 179.2);
+        assert_approx(playlist_card_metrics(half_height_2k).width, 179.2);
+        assert_approx(
+            playlist_card_metrics(half_2k).width,
+            playlist_card_metrics(half_height_2k).width,
         );
         assert_approx(
             playlist_card_metrics(small_tablet).width,
@@ -1190,16 +1203,21 @@ mod tests {
 
         assert_approx(reference.artwork_size, 224.0);
         assert_approx(reference.title_size, 44.0);
+        assert_approx(reference.prominent_title_size, 52.0);
         assert_approx(reference.top_padding, 76.0);
         assert_approx(two_k.artwork_size, 896.0 / 3.0);
         assert_approx(two_k.title_size, 176.0 / 3.0);
+        assert_approx(two_k.prominent_title_size, 208.0 / 3.0);
         assert_approx(two_k.top_padding, 304.0 / 3.0);
         assert_approx(standard.title_size, 40.0);
+        assert_approx(standard.prominent_title_size, 48.0);
         assert_approx(half_width.artwork_size, 184.0);
         assert_approx(half_width.title_size, 34.0);
+        assert_approx(half_width.prominent_title_size, 44.0);
         assert_approx(half_width.top_padding, 58.0);
         assert_approx(narrow.artwork_size, 136.8);
         assert_approx(narrow.title_size, 27.0);
+        assert_approx(narrow.prominent_title_size, 32.4);
         assert_approx(narrow.top_padding, 46.8);
 
         for viewport in [Size::new(1_280.0, 1_440.0), Size::new(720.0, 800.0)] {
@@ -1236,7 +1254,7 @@ mod tests {
         let fixtures = [
             (Size::new(1_920.0, 1_080.0), 480.0),
             (Size::new(2_560.0, 1_440.0), 640.0),
-            (Size::new(960.0, 1_080.0), 306.0),
+            (Size::new(960.0, 1_080.0), 500.0),
             (Size::new(1_280.0, 1_440.0), 2_000.0 / 3.0),
             (Size::new(720.0, 800.0), 450.0),
             (Size::new(960.0, 540.0), 306.0),
@@ -1260,19 +1278,20 @@ mod tests {
             1_280.0, 1_440.0,
         )));
 
-        assert_approx(half_1080, 306.0);
+        assert_approx(half_1080, 500.0);
         assert_approx(half_2k, 2_000.0 / 3.0);
     }
 
     #[test]
-    fn wide_focus_lyrics_media_does_not_grow_when_only_height_changes() {
+    fn wide_focus_lyrics_media_uses_height_cap_only_when_needed() {
         let half_height =
             lyrics_media_width(ResponsiveContext::from_viewport(Size::new(960.0, 540.0)));
         let full_height =
             lyrics_media_width(ResponsiveContext::from_viewport(Size::new(960.0, 1_080.0)));
 
         assert_approx(half_height, 306.0);
-        assert_approx(full_height, half_height);
+        assert_approx(full_height, 500.0);
+        assert!(full_height > half_height);
     }
 
     #[test]

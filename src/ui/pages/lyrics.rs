@@ -93,27 +93,22 @@ pub fn view<'a>(
                 )
             };
 
-            container(
-                row![
-                    container(artwork_panel)
-                        .width(Length::FillPortion(4))
-                        .height(Fill)
-                        .padding(tokens.space(40.0)),
-                    container(lyrics_panel)
-                        .width(Length::FillPortion(6))
-                        .height(Fill)
-                        .padding(
-                            Padding::new(0.0)
-                                .left(tokens.space(20.0))
-                                .right(tokens.space(40.0)),
-                        ),
-                ]
-                .width(Fill)
-                .height(Fill),
-            )
+            row![
+                container(artwork_panel)
+                    .width(Length::FillPortion(4))
+                    .height(Fill)
+                    .padding(tokens.space(40.0)),
+                container(lyrics_panel)
+                    .width(Length::FillPortion(6))
+                    .height(Fill)
+                    .padding(
+                        Padding::new(0.0)
+                            .left(tokens.space(20.0))
+                            .right(tokens.space(40.0)),
+                    ),
+            ]
             .width(Fill)
             .height(Fill)
-            .padding(Padding::new(0.0).top(title_bar_height))
             .into()
         }
         LyricsPageLayout::Focus => {
@@ -159,9 +154,7 @@ pub fn view<'a>(
                                             .center_x(Fill)
                                             .padding(
                                                 Padding::new(horizontal_padding)
-                                                    .top(
-                                                        title_bar_height + minimum_vertical_padding,
-                                                    )
+                                                    .top(minimum_vertical_padding)
                                                     .bottom(minimum_vertical_padding),
                                             ),
                                     )
@@ -174,7 +167,6 @@ pub fn view<'a>(
                                 .into()
                             } else {
                                 column![
-                                    Space::new().height(title_bar_height),
                                     Space::new().height(Fill),
                                     container(artwork_panel).width(Fill).center_x(Fill).padding(
                                         Padding::new(horizontal_padding).top(0.0).bottom(0.0),
@@ -207,7 +199,7 @@ pub fn view<'a>(
                                 .height(Fill)
                                 .padding(
                                     Padding::new(tokens.space(20.0))
-                                        .top(title_bar_height + tokens.space(12.0))
+                                        .top(tokens.space(12.0))
                                         .bottom(tokens.space(24.0)),
                                 )
                                 .into()
@@ -417,7 +409,10 @@ pub fn view<'a>(
         .height(Length::Fixed(title_bar_height)),
     );
 
-    let content_with_overlay = iced::widget::stack![content, top_chrome]
+    // Top chrome must own real layout height. The lyrics shader consumes its
+    // exact widget bounds, so overlaying chrome and compensating with inner
+    // padding leaves the renderer free to occupy the covered region.
+    let foreground = column![top_chrome, container(content).width(Fill).height(Fill),]
         .width(Fill)
         .height(Fill);
 
@@ -439,7 +434,7 @@ pub fn view<'a>(
 
     let content_with_shader = iced::widget::stack![
         background_layer,
-        container(content_with_overlay)
+        container(foreground)
             .width(Fill)
             .height(Fill)
             .padding(Padding::new(0.0).top(slide_offset)),
