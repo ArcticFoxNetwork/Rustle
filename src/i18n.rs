@@ -246,7 +246,6 @@ pub enum Key {
     ArtistTypeLabel,
     PlaylistLikes,
     PlaylistSongCount,
-    PlaylistCustomSort,
     PlaylistHeaderNumber,
     PlaylistHeaderTitle,
     PlaylistHeaderAlbum,

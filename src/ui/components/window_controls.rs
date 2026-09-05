@@ -1,7 +1,7 @@
 //! Window control buttons and navigation bar
 //! Positioned at top of the application with navigation on left, search in center, and controls on right
 
-use iced::widget::{Space, button, container, mouse_area, row, stack, svg, text, tooltip};
+use iced::widget::{Space, button, container, mouse_area, opaque, row, stack, svg, text, tooltip};
 use iced::{Alignment, Color, ContentFit, Element, Fill, Length, Padding};
 
 use crate::app::{ImageState, Message, UserInfo};
@@ -10,6 +10,7 @@ use crate::image::ImageKind;
 use crate::ui::components::{
     cover_image,
     search_bar::{self, SearchBarStyle},
+    window_drag_region,
 };
 use crate::ui::responsive::{
     IconRole, LayoutProfile, ResponsiveContext, TargetRole, TextRole, top_bar_height,
@@ -313,13 +314,6 @@ pub fn view<'a>(
     let desktop_search_bar =
         search_bar::view(search_query, locale, SearchBarStyle::top_bar(&context, 0.0));
 
-    let drag_region = mouse_area(
-        container(Space::new())
-            .width(Fill)
-            .height(Length::Fixed(top_height)),
-    )
-    .on_press(Message::WindowDrag);
-
     let menu_button: Element<'a, Message> = if context.profile == LayoutProfile::Narrow {
         let button = button(widgets::centered_button_content(
             svg(svg::Handle::from_memory(crate::ui::icons::LIST.as_bytes()))
@@ -408,19 +402,24 @@ pub fn view<'a>(
 
     // Complete top bar layout: nav + search on left, user info + window controls on right.
     // The bottom layer provides dragging only in empty space; controls stay interactive above it.
-    container(
-        stack![drag_region, controls, scrollbar_gutter]
+    opaque(
+        container(
+            stack![
+                window_drag_region::view(context),
+                controls,
+                scrollbar_gutter
+            ]
             .width(Fill)
             .height(Length::Fixed(top_height)),
+        )
+        .width(Fill)
+        .height(Length::Fixed(top_height))
+        .style(move |active_theme| container::Style {
+            background: show_background
+                .then(|| iced::Background::Color(theme::top_bar_background(active_theme))),
+            ..Default::default()
+        }),
     )
-    .width(Fill)
-    .height(Length::Fixed(top_height))
-    .style(move |active_theme| container::Style {
-        background: show_background
-            .then(|| iced::Background::Color(theme::top_bar_background(active_theme))),
-        ..Default::default()
-    })
-    .into()
 }
 
 /// Navigation button style (back/forward)

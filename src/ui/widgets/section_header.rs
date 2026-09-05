@@ -7,12 +7,12 @@
 //!
 //! Uses generic Message type to allow reuse across different contexts.
 
-use iced::widget::{Space, button, row, svg, text};
-use iced::{Alignment, Element, Fill};
+use iced::widget::{Space, row, text};
+use iced::{Alignment, Element, Fill, Padding, mouse};
 
-use crate::ui::icons;
-use crate::ui::responsive::{IconRole, TextRole, UiTokens};
+use crate::ui::responsive::{RadiusRole, TextRole, UiTokens};
 use crate::ui::theme::{self, BOLD_WEIGHT};
+use crate::ui::widgets;
 
 /// Create a section header element
 ///
@@ -34,37 +34,44 @@ pub fn view<'a, Message: Clone + 'a>(
         .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT));
 
     let see_all_btn: Element<'a, Message> = if let Some(msg) = on_see_all {
-        button(
-            row![
-                text(see_all_text)
-                    .size(tokens.text(TextRole::Body))
-                    .style(|theme| text::Style {
-                        color: Some(theme::text_secondary(theme))
-                    }),
-                Space::new().width(tokens.space(4.0)),
-                svg(svg::Handle::from_memory(icons::CHEVRON_RIGHT.as_bytes()))
-                    .width(tokens.icon(IconRole::Small))
-                    .height(tokens.icon(IconRole::Small))
-                    .style(|_theme, _status| svg::Style {
-                        color: Some(theme::text_secondary(_theme)),
-                    }),
-            ]
-            .align_y(Alignment::Center),
+        let action = iced::widget::mouse_area(
+            iced::widget::container(
+                row![
+                    text(see_all_text).size(tokens.text(TextRole::Body)),
+                    Space::new().width(tokens.space(4.0)),
+                    text("›").size(tokens.text(TextRole::Subtitle)),
+                ]
+                .align_y(Alignment::Center),
+            )
+            .padding(
+                Padding::new(tokens.space(6.0))
+                    .left(tokens.space(10.0))
+                    .right(tokens.space(10.0)),
+            ),
         )
-        .padding(0)
-        .style(|_theme, status| {
-            let text_color = match status {
-                iced::widget::button::Status::Hovered => theme::text_primary(_theme),
-                _ => theme::text_secondary(_theme),
-            };
-            iced::widget::button::Style {
-                background: None,
-                text_color,
-                ..Default::default()
-            }
-        })
         .on_press(msg)
-        .into()
+        .interaction(mouse::Interaction::Pointer);
+
+        widgets::hover_surface(action)
+            .style(
+                move |active_theme, progress| iced::widget::container::Style {
+                    background: Some(iced::Background::Color(theme::hover_bg_alpha(
+                        active_theme,
+                        0.10 * progress,
+                    ))),
+                    border: iced::Border {
+                        radius: tokens.radius(RadiusRole::Pill).into(),
+                        ..Default::default()
+                    },
+                    text_color: Some(theme::lerp_color(
+                        theme::text_secondary(active_theme),
+                        theme::text_primary(active_theme),
+                        progress,
+                    )),
+                    ..Default::default()
+                },
+            )
+            .into()
     } else {
         Space::new().width(0).into()
     };

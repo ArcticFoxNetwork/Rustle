@@ -102,11 +102,15 @@ pub fn view(
                 color: Some(theme::text_primary(theme))
             }),
         Space::new().width(Fill),
-        text(format!("{}", queue.len()))
-            .size(tokens.text(TextRole::Caption))
-            .style(|theme| text::Style {
-                color: Some(theme::text_muted(theme))
-            }),
+        text(
+            locale
+                .get(Key::QueueSongCount)
+                .replace("{}", &queue.len().to_string()),
+        )
+        .size(tokens.text(TextRole::Caption))
+        .style(|theme| text::Style {
+            color: Some(theme::text_muted(theme))
+        }),
         Space::new().width(tokens.space(8.0)),
         button(
             svg(svg::Handle::from_memory(icons::TRASH.as_bytes()))

@@ -79,20 +79,26 @@ fn view_for_context<'a>(
     gradient_progress: f32,
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
-    let header = build_header(artist, image_state, description_expanded, locale, context);
     let controls = playlist::build_controls(
         artist,
         icon_animations,
         search_animation,
         search_expanded,
         search_query,
-        locale,
         current_user_id,
+        context,
+    );
+    let header = build_header(
+        artist,
+        image_state,
+        description_expanded,
+        locale,
+        controls,
         context,
     );
 
     let tabs = build_tabs(artist.artist_tab, locale, context);
-    let header_and_controls = column![header, controls, tabs].spacing(0).width(Fill);
+    let header_and_controls = column![header, tabs].spacing(0).width(Fill);
 
     let gradient_target = artist.gradient_snapshot();
     let gradient_section = container(header_and_controls)
@@ -137,13 +143,14 @@ fn view_for_context<'a>(
         .into()
 }
 
-fn build_header(
+fn build_header<'a>(
     artist: &PlaylistView,
     image_state: &ImageState,
     description_expanded: bool,
     locale: Locale,
+    controls: Element<'a, Message>,
     context: ResponsiveContext,
-) -> Element<'static, Message> {
+) -> Element<'a, Message> {
     let tokens = context.tokens;
     let header_metrics = detail_header_metrics(context);
     let avatar_size = header_metrics.artwork_size;
@@ -264,11 +271,14 @@ fn build_header(
         title,
         Space::new().height(tokens.space(10.0)),
         stats,
-        Space::new().height(tokens.space(12.0)),
-        intro,
+        Space::new().height(tokens.space(6.0)),
+        container(intro).height(Fill).clip(true),
+        Space::new().height(tokens.space(8.0)),
+        controls,
     ]
     .align_x(Alignment::Start)
-    .width(Fill);
+    .width(Fill)
+    .height(Length::Fixed(avatar_size));
 
     detail_header::view(
         avatar,

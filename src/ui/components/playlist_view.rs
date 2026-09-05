@@ -25,7 +25,7 @@ use crate::ui::responsive::{
 };
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::widgets::{VirtualList, VirtualListState};
-use crate::ui::{icons, theme};
+use crate::ui::{icons, theme, widgets};
 use crate::utils::Source;
 
 /// Song row height constant for virtual list
@@ -589,7 +589,7 @@ fn build_song_row(
         } else {
             HEART_OUTLINE_ICON_HANDLE.clone()
         };
-        let heart: Element<'static, Message> = button(
+        let heart_button = button(
             container(
                 svg(heart_handle)
                     .width(favorite_glyph_size)
@@ -609,8 +609,21 @@ fn build_song_row(
         .height(favorite_target_size)
         .padding(0)
         .style(transparent_button)
-        .on_press(Message::ToggleFavorite(ncm_song_id))
-        .into();
+        .on_press(Message::ToggleFavorite(ncm_song_id));
+        let heart: Element<'static, Message> = widgets::hover_surface(heart_button)
+            .style(move |theme, progress| iced::widget::container::Style {
+                background: Some(iced::Background::Color(theme::hover_bg_alpha(
+                    theme,
+                    0.14 * favorite_opacity * progress,
+                ))),
+                border: iced::Border {
+                    radius: (favorite_target_size / 2.0).into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+            .scale_on_hover(1.06)
+            .into();
 
         container(iced::widget::stack![duration_text, heart])
             .width(tokens.size(50.0))

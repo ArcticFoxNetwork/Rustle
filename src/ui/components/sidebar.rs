@@ -11,6 +11,7 @@ use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::animation::{HoverAnimations, SmoothScrollTarget};
 use crate::ui::components::importing_card::{self, ImportingPlaylist};
+use crate::ui::components::window_drag_region;
 use crate::ui::responsive::{
     ChromeRole, CoverRadiusRole, IconRole, RadiusRole, ResponsiveContext, SidebarPresentation,
     TargetRole, TextRole, bounded_width, sidebar_presentation,
@@ -258,6 +259,10 @@ fn full_view(
     let metrics = SidebarMetrics::from_context(&context);
     // Logo section
     let logo_content = row![
+        // The music-note glyph carries slightly more visual weight on its
+        // left. A small leading-only inset keeps the complete intrinsic group
+        // optically centered without changing sidebar geometry.
+        Space::new().width(context.tokens.space(4.0)),
         // Pink music icon
         container(
             svg(svg::Handle::from_memory(
@@ -270,17 +275,31 @@ fn full_view(
             })
         ),
         Space::new().width(metrics.logo_gap),
-        text(locale.get(Key::AppName))
-            .size(metrics.title_size)
-            .style(|theme| text::Style {
-                color: Some(theme::text_primary(theme))
-            })
-            .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
+        container(
+            text(locale.get(Key::AppName))
+                .size(metrics.title_size)
+                .style(|theme| text::Style {
+                    color: Some(theme::text_primary(theme))
+                })
+                .font(iced::Font::DEFAULT.weight(BOLD_WEIGHT))
+        )
+        .padding(Padding::new(0.0).top(context.tokens.space(1.0)))
     ]
-    .align_y(Alignment::Center)
-    .padding(Padding::new(metrics.content_padding).bottom(metrics.logo_bottom));
+    .align_y(Alignment::Center);
 
-    let logo = mouse_area(logo_content).on_press(Message::WindowDrag);
+    let logo = iced::widget::stack![
+        container(logo_content)
+            .width(Fill)
+            .align_x(Alignment::Center)
+            .padding(
+                Padding::new(metrics.content_padding)
+                    .left(0.0)
+                    .right(0.0)
+                    .bottom(metrics.logo_bottom),
+            ),
+        window_drag_region::view(context),
+    ]
+    .width(Fill);
 
     // Main navigation menu with hover animations
     let nav_items = [NavItem::Home, NavItem::Radio, NavItem::Downloads];
@@ -376,6 +395,8 @@ fn full_view(
 
     // Build scrollable content (only library and cloud playlists, not logo/nav)
     let mut scrollable_items: Vec<Element<'static, Message>> = vec![
+        sidebar_divider(metrics),
+        Space::new().height(metrics.header_padding).into(),
         container(library_header)
             .padding(
                 Padding::new(0.0)
@@ -420,7 +441,9 @@ fn full_view(
                 )
             };
 
-        scrollable_items.push(Space::new().height(context.tokens.space(18.0)).into());
+        scrollable_items.push(Space::new().height(context.tokens.space(10.0)).into());
+        scrollable_items.push(sidebar_divider(metrics));
+        scrollable_items.push(Space::new().height(context.tokens.space(10.0)).into());
 
         // "My Playlists" section (owned)
         scrollable_items.push(collapsible_section_header(
@@ -491,6 +514,24 @@ fn full_view(
     mouse_area(sidebar_container)
         .on_exit(Message::HoverSidebar(None))
         .into()
+}
+
+fn sidebar_divider(metrics: SidebarMetrics) -> Element<'static, Message> {
+    container(
+        container(Space::new().height(metrics.tokens.size(1.0)))
+            .width(Fill)
+            .style(|theme| iced::widget::container::Style {
+                background: Some(iced::Background::Color(theme::divider(theme))),
+                ..Default::default()
+            }),
+    )
+    .width(Fill)
+    .padding(
+        Padding::new(0.0)
+            .left(metrics.content_padding)
+            .right(metrics.content_padding),
+    )
+    .into()
 }
 
 /// Render the compact icon rail with the same playlist destinations as the

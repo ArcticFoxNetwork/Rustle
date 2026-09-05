@@ -198,9 +198,9 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::ActionSeekBackward, "快退");
     m.insert(Key::ActionGoHome, "返回首页");
     m.insert(Key::ActionGoSearch, "搜索");
-    m.insert(Key::ActionGoQueue, "播放队列");
+    m.insert(Key::ActionGoQueue, "播放列表");
     m.insert(Key::ActionGoSettings, "设置");
-    m.insert(Key::ActionToggleQueue, "显示/隐藏队列");
+    m.insert(Key::ActionToggleQueue, "显示/隐藏播放列表");
     m.insert(Key::ActionToggleSidebar, "显示/隐藏侧边栏");
     m.insert(Key::ActionToggleFullscreen, "全屏");
     m.insert(Key::ActionEscape, "取消/关闭");
@@ -214,7 +214,6 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::ArtistTypeLabel, "歌手");
     m.insert(Key::PlaylistLikes, "{} 次点赞");
     m.insert(Key::PlaylistSongCount, "{} 首歌曲");
-    m.insert(Key::PlaylistCustomSort, "自定义排序");
     m.insert(Key::PlaylistHeaderNumber, "#");
     m.insert(Key::PlaylistHeaderTitle, "标题");
     m.insert(Key::PlaylistHeaderAlbum, "专辑");
@@ -260,9 +259,9 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::AudioEngineSpectrum, "频谱");
 
     // Queue Panel
-    m.insert(Key::QueueTitle, "播放队列");
-    m.insert(Key::QueueSongCount, "{} 首");
-    m.insert(Key::QueueEmpty, "队列为空");
+    m.insert(Key::QueueTitle, "播放列表");
+    m.insert(Key::QueueSongCount, "{}首");
+    m.insert(Key::QueueEmpty, "播放列表为空");
 
     // Playlist View
     m.insert(Key::PlaylistNoSongs, "暂无歌曲");

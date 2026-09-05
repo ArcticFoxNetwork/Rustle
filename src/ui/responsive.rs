@@ -493,14 +493,14 @@ pub struct DetailHeaderMetrics {
 #[inline]
 pub fn detail_header_metrics(context: ResponsiveContext) -> DetailHeaderMetrics {
     let tokens = context.tokens;
-    let (artwork, gap, horizontal_padding, top_padding, bottom_padding, title) = match context
-        .profile
-    {
-        LayoutProfile::Expanded | LayoutProfile::Standard => (224.0, 28.0, 40.0, 76.0, 20.0, 38.0),
-        LayoutProfile::Compact => (200.0, 24.0, 28.0, 62.0, 18.0, 36.0),
-        LayoutProfile::Tablet => (184.0, 20.0, 24.0, 58.0, 16.0, 34.0),
-        LayoutProfile::Narrow => (152.0, 16.0, 16.0, 52.0, 14.0, 30.0),
-    };
+    let (artwork, gap, horizontal_padding, top_padding, bottom_padding, title) =
+        match context.profile {
+            LayoutProfile::Expanded => (224.0, 28.0, 40.0, 76.0, 20.0, 52.0),
+            LayoutProfile::Standard => (224.0, 28.0, 40.0, 76.0, 20.0, 44.0),
+            LayoutProfile::Compact => (200.0, 24.0, 28.0, 62.0, 18.0, 36.0),
+            LayoutProfile::Tablet => (184.0, 20.0, 24.0, 58.0, 16.0, 34.0),
+            LayoutProfile::Narrow => (152.0, 16.0, 16.0, 52.0, 14.0, 30.0),
+        };
 
     DetailHeaderMetrics {
         artwork_size: tokens.size(artwork),
@@ -539,19 +539,32 @@ pub fn lyrics_page_layout(context: ResponsiveContext) -> LyricsPageLayout {
 /// controls.
 #[inline]
 pub fn lyrics_media_width(context: ResponsiveContext) -> f32 {
+    const WIDE_FOCUS_MIN_WIDTH: f32 = 900.0;
+    const HALF_HEIGHT_TARGET_RATIO: f32 = 306.0 / 960.0;
+
     let tokens = context.tokens;
-    let (preferred, horizontal_gutter, reserved_vertical) = match context.profile {
-        LayoutProfile::Expanded => (480.0, 80.0, 320.0),
-        LayoutProfile::Standard => (460.0, 64.0, 320.0),
-        LayoutProfile::Compact => (340.0, 48.0, 260.0),
-        LayoutProfile::Tablet => (500.0, 40.0, 260.0),
-        LayoutProfile::Narrow => (400.0, 32.0, 260.0),
+    let (horizontal_gutter, reserved_vertical) = match context.profile {
+        LayoutProfile::Expanded => (80.0, 320.0),
+        LayoutProfile::Standard => (64.0, 320.0),
+        LayoutProfile::Compact => (48.0, 260.0),
+        LayoutProfile::Tablet => (40.0, 260.0),
+        LayoutProfile::Narrow => (32.0, 260.0),
+    };
+    let preferred = match context.profile {
+        LayoutProfile::Expanded => tokens.size(480.0),
+        LayoutProfile::Standard => tokens.size(460.0),
+        LayoutProfile::Compact => tokens.size(340.0),
+        LayoutProfile::Tablet if context.width() >= WIDE_FOCUS_MIN_WIDTH => {
+            context.width() * HALF_HEIGHT_TARGET_RATIO
+        }
+        LayoutProfile::Tablet => tokens.size(500.0),
+        LayoutProfile::Narrow => tokens.size(400.0),
     };
     let width_cap =
         (positive_dimension(context.width()) - 2.0 * tokens.space(horizontal_gutter)).max(0.0);
     let height_cap =
         (positive_dimension(context.height()) - tokens.size(reserved_vertical)).max(0.0);
-    tokens.size(preferred).min(width_cap).min(height_cap)
+    preferred.min(width_cap).min(height_cap)
 }
 
 impl CardRole {
@@ -1166,10 +1179,10 @@ mod tests {
             detail_header_metrics(ResponsiveContext::from_viewport(Size::new(560.0, 800.0)));
 
         assert_approx(reference.artwork_size, 224.0);
-        assert_approx(reference.title_size, 38.0);
+        assert_approx(reference.title_size, 52.0);
         assert_approx(reference.top_padding, 76.0);
         assert_approx(two_k.artwork_size, 896.0 / 3.0);
-        assert_approx(two_k.title_size, 152.0 / 3.0);
+        assert_approx(two_k.title_size, 208.0 / 3.0);
         assert_approx(two_k.top_padding, 304.0 / 3.0);
         assert_approx(half_width.artwork_size, 184.0);
         assert_approx(half_width.title_size, 34.0);
@@ -1212,8 +1225,8 @@ mod tests {
         let fixtures = [
             (Size::new(1_920.0, 1_080.0), 480.0),
             (Size::new(2_560.0, 1_440.0), 640.0),
-            (Size::new(960.0, 1_080.0), 500.0),
-            (Size::new(1_280.0, 1_440.0), 2_000.0 / 3.0),
+            (Size::new(960.0, 1_080.0), 306.0),
+            (Size::new(1_280.0, 1_440.0), 408.0),
             (Size::new(720.0, 800.0), 450.0),
             (Size::new(960.0, 540.0), 306.0),
             (Size::new(560.0, 800.0), 360.0),
@@ -1237,6 +1250,17 @@ mod tests {
         )));
 
         assert_approx(half_2k / half_1080, 4.0 / 3.0);
+    }
+
+    #[test]
+    fn wide_focus_lyrics_media_does_not_grow_when_only_height_changes() {
+        let half_height =
+            lyrics_media_width(ResponsiveContext::from_viewport(Size::new(960.0, 540.0)));
+        let full_height =
+            lyrics_media_width(ResponsiveContext::from_viewport(Size::new(960.0, 1_080.0)));
+
+        assert_approx(half_height, 306.0);
+        assert_approx(full_height, half_height);
     }
 
     #[test]

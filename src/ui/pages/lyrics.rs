@@ -7,8 +7,8 @@
 use std::{sync::Arc, time::Duration};
 
 use iced::widget::{
-    Sensor, Space, button, column, container, mouse_area, row, scrollable, shader, svg, text,
-    transition,
+    Sensor, Space, button, column, container, mouse_area, opaque, row, scrollable, shader, svg,
+    text, transition,
 };
 use iced::{Alignment, Animation, Color, Element, Fill, Length, Padding};
 
@@ -16,6 +16,7 @@ use crate::app::{ImageState, LyricsDisplayMode, Message};
 use crate::database::DbSong;
 use crate::features::PlayMode;
 use crate::features::lyrics::engine::{LyricLineData, LyricsEngine};
+use crate::ui::components::window_drag_region;
 use crate::ui::effects::textured_background::TexturedBackgroundProgram;
 use crate::ui::icons;
 use crate::ui::overlay;
@@ -226,13 +227,6 @@ pub fn view<'a>(
     let window_icon_size = tokens.icon(IconRole::WindowControl);
     let back_icon_size = tokens.icon(IconRole::Large);
 
-    let title_bar_drag_region = mouse_area(
-        container(Space::new())
-            .width(Fill)
-            .height(Length::Fixed(title_bar_height)),
-    )
-    .on_press(Message::WindowDrag);
-
     // Back button overlay in top-left corner
     let back_btn = button(widgets::centered_button_content(
         svg(svg::Handle::from_memory(icons::CHEVRON_DOWN.as_bytes()))
@@ -400,19 +394,27 @@ pub fn view<'a>(
 
     let top_bar = row![back_btn, Space::new().width(Fill), top_right_buttons,]
         .align_y(Alignment::Center)
+        .height(Length::Fixed(title_bar_height))
         .padding(
-            Padding::new(tokens.space(14.0))
+            Padding::new(0.0)
                 .left(tokens.space(20.0))
                 .right(tokens.space(20.0)),
         );
 
-    let content_with_overlay = iced::widget::stack![
-        content,
-        title_bar_drag_region,
-        container(top_bar).width(Fill),
-    ]
-    .width(Fill)
-    .height(Fill);
+    let top_chrome = opaque(
+        iced::widget::stack![
+            window_drag_region::view(context),
+            container(top_bar)
+                .width(Fill)
+                .height(Length::Fixed(title_bar_height)),
+        ]
+        .width(Fill)
+        .height(Length::Fixed(title_bar_height)),
+    );
+
+    let content_with_overlay = iced::widget::stack![content, top_chrome]
+        .width(Fill)
+        .height(Fill);
 
     let slide_offset = (1.0 - animation_progress) * tokens.space(30.0);
 

@@ -36,6 +36,7 @@ pub mod sidebar_resize_handle;
 pub mod song_info_dialog;
 pub mod source_badge;
 pub mod window_controls;
+pub mod window_drag_region;
 pub mod window_resize_handles;
 
 pub use importing_card::ImportingPlaylist;

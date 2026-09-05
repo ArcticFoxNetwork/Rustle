@@ -4,13 +4,12 @@ use iced::widget::{Space, button, column, container, mouse_area, svg, text};
 use iced::{Color, Element, Padding};
 
 use crate::ui::responsive::{
-    CardMetrics, IconRole, ResponsiveContext, TextRole, UiTokens, playlist_card_metrics,
+    CardMetrics, ResponsiveContext, TextRole, UiTokens, playlist_card_metrics,
 };
 use crate::ui::theme::{self, MEDIUM_WEIGHT};
 use crate::ui::{icons, widgets};
 
 // Visual dimensions are 1080P reference pixels resolved through `UiTokens`.
-const PLAY_BUTTON_SIZE: f32 = 48.0;
 const PLAY_BUTTON_START_OFFSET: f32 = 10.0;
 const PLAY_BUTTON_END_OFFSET: f32 = 4.0;
 const HOVER_MASK_MAX_ALPHA: f32 = 0.24;
@@ -60,9 +59,8 @@ fn view_with_metrics<'a, Message: Clone + 'a>(
     let cover_size = metrics.width;
     let footer_height = (metrics.height - metrics.width).max(tokens.size(40.0));
     let card_radius = metrics.radius;
-    let play_button_size = tokens.size(PLAY_BUTTON_SIZE);
+    let play_button_size = widgets::cover_play_button::size(tokens);
     let play_button_start_offset = tokens.size(PLAY_BUTTON_START_OFFSET);
-    let play_icon_dimension = tokens.icon(IconRole::Large);
 
     let placeholder = container(
         svg(svg::Handle::from_memory(icons::MUSIC.as_bytes()))
@@ -93,26 +91,7 @@ fn view_with_metrics<'a, Message: Clone + 'a>(
             .width(cover_size)
             .height(cover_size)
             .style(move |_theme| cover_hover_mask_style_for(opacity, card_radius));
-        let play_btn = button(
-            container(
-                svg(svg::Handle::from_memory(icons::PLAY.as_bytes()))
-                    .width(play_icon_dimension)
-                    .height(play_icon_dimension)
-                    .style(|_theme, _status| svg::Style {
-                        color: Some(Color::WHITE),
-                    })
-                    .opacity(opacity),
-            )
-            .width(play_button_size)
-            .height(play_button_size)
-            .center_x(play_button_size)
-            .center_y(play_button_size),
-        )
-        .padding(0)
-        .style(move |_theme, status| {
-            play_button_style_for(opacity, status, play_button_size, tokens)
-        })
-        .on_press(on_play);
+        let play_btn = widgets::cover_play_button::view(on_play, opacity, tokens);
 
         let play_btn = container(play_btn)
             .width(play_button_size)
@@ -294,38 +273,6 @@ fn footer_scrim_style_for(radius: f32) -> iced::widget::container::Style {
         border: iced::Border {
             radius: iced::border::bottom(radius),
             ..Default::default()
-        },
-        ..Default::default()
-    }
-}
-
-fn play_button_style_for(
-    opacity: f32,
-    status: iced::widget::button::Status,
-    button_size: f32,
-    tokens: UiTokens,
-) -> iced::widget::button::Style {
-    let bg_alpha = match status {
-        iced::widget::button::Status::Hovered => opacity,
-        iced::widget::button::Status::Pressed => 0.8 * opacity,
-        _ => 0.9 * opacity,
-    };
-
-    iced::widget::button::Style {
-        background: Some(iced::Background::Color(Color::from_rgba(
-            theme::ACCENT_PINK.r,
-            theme::ACCENT_PINK.g,
-            theme::ACCENT_PINK.b,
-            bg_alpha,
-        ))),
-        border: iced::Border {
-            radius: (button_size / 2.0).into(),
-            ..Default::default()
-        },
-        shadow: iced::Shadow {
-            color: Color::from_rgba(0.0, 0.0, 0.0, 0.3 * opacity),
-            offset: iced::Vector::new(0.0, tokens.size(4.0)),
-            blur_radius: tokens.size(8.0),
         },
         ..Default::default()
     }

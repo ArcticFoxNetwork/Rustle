@@ -769,7 +769,6 @@ pub enum IconId {
     Edit,
     Delete,
     Search,
-    Sort,
     Like,
     Download,
 }

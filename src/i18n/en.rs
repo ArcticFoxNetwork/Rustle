@@ -228,9 +228,9 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::ActionSeekBackward, "Seek Backward");
     m.insert(Key::ActionGoHome, "Go Home");
     m.insert(Key::ActionGoSearch, "Search");
-    m.insert(Key::ActionGoQueue, "Queue");
+    m.insert(Key::ActionGoQueue, "Playlist");
     m.insert(Key::ActionGoSettings, "Settings");
-    m.insert(Key::ActionToggleQueue, "Toggle Queue");
+    m.insert(Key::ActionToggleQueue, "Toggle Playlist");
     m.insert(Key::ActionToggleSidebar, "Toggle Sidebar");
     m.insert(Key::ActionToggleFullscreen, "Fullscreen");
     m.insert(Key::ActionEscape, "Cancel/Close");
@@ -244,7 +244,6 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::ArtistTypeLabel, "Artist");
     m.insert(Key::PlaylistLikes, "{} likes");
     m.insert(Key::PlaylistSongCount, "{} songs");
-    m.insert(Key::PlaylistCustomSort, "Custom Sort");
     m.insert(Key::PlaylistHeaderNumber, "#");
     m.insert(Key::PlaylistHeaderTitle, "Title");
     m.insert(Key::PlaylistHeaderAlbum, "Album");
@@ -296,9 +295,9 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
     m.insert(Key::AudioEngineSpectrum, "Spectrum");
 
     // Queue Panel
-    m.insert(Key::QueueTitle, "Play Queue");
+    m.insert(Key::QueueTitle, "Playlist");
     m.insert(Key::QueueSongCount, "{} songs");
-    m.insert(Key::QueueEmpty, "Queue is empty");
+    m.insert(Key::QueueEmpty, "Playlist is empty");
 
     // Playlist View
     m.insert(Key::PlaylistNoSongs, "No songs");

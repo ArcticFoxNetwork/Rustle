@@ -154,31 +154,32 @@ fn view_for_context<'a>(
     gradient_progress: f32,
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
-    let header = build_header(playlist, image_state, locale, description_expanded, context);
     let controls = build_controls(
         playlist,
         icon_animations,
         search_animation,
         search_expanded,
         search_query,
-        locale,
         current_user_id,
+        context,
+    );
+    let header = build_header(
+        playlist,
+        image_state,
+        locale,
+        description_expanded,
+        controls,
         context,
     );
 
     // Filter songs by index so the full playlist is not cloned on every view rebuild.
     let filtered_indices = playlist_view::filter_song_indices(&playlist.songs, search_query);
 
-    // Content with gradient that extends through controls
-    let header_and_controls = column![header, controls,].spacing(0).width(Fill);
-
     let gradient_target = playlist.gradient_snapshot();
 
-    let gradient_section = container(header_and_controls)
-        .width(Fill)
-        .style(move |theme| {
-            detail_gradient_style(theme, gradient_source, gradient_target, gradient_progress)
-        });
+    let gradient_section = container(header).width(Fill).style(move |theme| {
+        detail_gradient_style(theme, gradient_source, gradient_target, gradient_progress)
+    });
 
     // Build song list header using the reusable component
     let columns = if playlist.is_local {
@@ -408,13 +409,14 @@ mod gradient_tests {
 }
 
 /// Build the playlist header
-fn build_header(
+fn build_header<'a>(
     playlist: &PlaylistView,
     image_state: &ImageState,
     locale: Locale,
     description_expanded: bool,
+    controls: Element<'a, Message>,
     context: ResponsiveContext,
-) -> Element<'static, Message> {
+) -> Element<'a, Message> {
     let tokens = context.tokens;
     let header_metrics = detail_header_metrics(context);
     let cover_size = header_metrics.artwork_size;
@@ -663,18 +665,24 @@ fn build_header(
 
     let stats = row(stats_items).align_y(Alignment::Center);
 
-    // Info column - description closer to title, farther from stats
+    // Match the reference hierarchy: the title owns the flexible top row,
+    // optional description fills the remaining middle space, and metadata plus
+    // actions/search stay pinned beside the bottom of the cover.
+    let title_row = row![title, Space::new().width(tokens.space(12.0)), type_label,]
+        .align_y(Alignment::Center)
+        .width(Fill);
     let info = column![
-        type_label,
-        Space::new().height(tokens.space(12.0)),
-        title,
+        title_row,
         Space::new().height(tokens.space(6.0)),
-        description,
-        Space::new().height(tokens.space(12.0)),
+        container(description).height(Fill).clip(true),
+        Space::new().height(tokens.space(6.0)),
         stats,
+        Space::new().height(tokens.space(8.0)),
+        controls,
     ]
     .spacing(0)
-    .width(Fill);
+    .width(Fill)
+    .height(Length::Fixed(cover_size));
 
     detail_header::view(cover, info, context, detail_header::VerticalAlignment::End)
 }
@@ -742,7 +750,6 @@ pub(crate) fn build_controls<'a>(
     search_animation: &crate::ui::animation::SingleHoverAnimation,
     search_expanded: bool,
     search_query: &str,
-    locale: Locale,
     current_user_id: Option<u64>,
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
@@ -831,32 +838,6 @@ pub(crate) fn build_controls<'a>(
         .center_y(container_size),
     )
     .on_enter(Message::HoverIcon(Some(IconId::PlayButton)))
-    .on_exit(Message::HoverIcon(None));
-
-    // Sort button with animated color
-    let sort_color = get_icon_color(IconId::Sort);
-    let sort_btn = mouse_area(
-        button(
-            row![
-                text(locale.get(Key::PlaylistCustomSort))
-                    .size(tokens.text(TextRole::Body))
-                    .color(sort_color),
-                Space::new().width(tokens.space(6.0)),
-                svg(svg::Handle::from_memory(icons::LIST.as_bytes()))
-                    .width(tokens.icon(crate::ui::responsive::IconRole::Medium))
-                    .height(tokens.icon(crate::ui::responsive::IconRole::Medium))
-                    .style(move |_theme, _status| svg::Style {
-                        color: Some(sort_color),
-                    })
-            ]
-            .align_y(Alignment::Center),
-        )
-        .height(tokens.target(TargetRole::Control))
-        .padding([tokens.space(5.0), tokens.space(10.0)])
-        .style(theme::transparent_btn)
-        .on_press(Message::PlayHero),
-    )
-    .on_enter(Message::HoverIcon(Some(IconId::Sort)))
     .on_exit(Message::HoverIcon(None));
 
     // Build controls row
@@ -1086,14 +1067,8 @@ pub(crate) fn build_controls<'a>(
         .into()
     };
 
-    let mut utility_items: Vec<Element<'a, Message>> = vec![search_component];
-    if !is_artist && !is_album {
-        utility_items.push(Space::new().width(tokens.space(20.0)).into());
-        utility_items.push(sort_btn.into());
-    }
-
     let actions = row(action_items).align_y(Alignment::Center).spacing(0);
-    let utilities = row(utility_items)
+    let utilities = row![search_component]
         .align_y(Alignment::Center)
         .spacing(0)
         .width(Length::Fit);
@@ -1103,7 +1078,7 @@ pub(crate) fn build_controls<'a>(
     // utility lane intrinsic reserves its complete width first; the left lane
     // then receives all remaining space and naturally pushes the tools to the
     // right without a profile-specific second row.
-    let controls = container(
+    container(
         row![
             container(actions).align_left(action_lane_width),
             container(utilities).align_right(utility_lane_width),
@@ -1113,14 +1088,9 @@ pub(crate) fn build_controls<'a>(
         .width(Fill),
     )
     .width(Fill)
-    .padding(
-        Padding::new(tokens.space(16.0))
-            .left(tokens.space(24.0))
-            .right(tokens.space(24.0)),
-    );
-
-    // No background - gradient continues from header
-    controls.into()
+    .height(Length::Fixed(container_size))
+    .align_y(Alignment::Center)
+    .into()
 }
 
 #[inline]
