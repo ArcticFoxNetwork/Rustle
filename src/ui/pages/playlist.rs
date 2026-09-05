@@ -783,6 +783,7 @@ fn capsule_action_button<'a>(
     let icon_size = tokens.icon(IconRole::Medium);
     let horizontal_padding = tokens.space(14.0);
     let content_gap = tokens.space(7.0);
+    let vertical_padding = ((height - icon_size) / 2.0).max(0.0);
 
     let icon = svg(svg::Handle::from_memory(icon_svg.as_bytes()))
         .width(icon_size)
@@ -817,19 +818,17 @@ fn capsule_action_button<'a>(
                 )
             }),
         });
-    let content =
-        container(row![icon, Space::new().width(content_gap), label].align_y(Alignment::Center))
-            .height(height)
-            .center_y(height)
-            .padding(
-                Padding::new(0.0)
-                    .left(horizontal_padding)
-                    .right(horizontal_padding),
-            );
+    let content = row![icon, Space::new().width(content_gap), label]
+        .height(icon_size)
+        .align_y(Alignment::Center);
 
     let control = button(content)
-        .height(height)
-        .padding(0)
+        .height(Length::Fixed(height))
+        .padding(
+            Padding::new(vertical_padding)
+                .left(horizontal_padding)
+                .right(horizontal_padding),
+        )
         .style(move |theme, status| {
             let background = if emphasized {
                 emphasized_capsule_background(
@@ -859,10 +858,14 @@ fn capsule_action_button<'a>(
         })
         .on_press(on_press);
 
-    mouse_area(control)
-        .on_enter(Message::HoverIcon(Some(icon_id)))
-        .on_exit(Message::HoverIcon(None))
-        .into()
+    container(
+        mouse_area(control)
+            .on_enter(Message::HoverIcon(Some(icon_id)))
+            .on_exit(Message::HoverIcon(None)),
+    )
+    .height(Length::Fixed(height))
+    .align_y(Alignment::Center)
+    .into()
 }
 
 fn emphasized_capsule_background(hover_progress: f32, pressed: bool) -> Color {

@@ -409,12 +409,13 @@ pub fn view<'a>(
         .height(Length::Fixed(title_bar_height)),
     );
 
-    // Top chrome must own real layout height. The lyrics shader consumes its
-    // exact widget bounds, so overlaying chrome and compensating with inner
-    // padding leaves the renderer free to occupy the covered region.
-    let foreground = column![top_chrome, container(content).width(Fill).height(Fill),]
-        .width(Fill)
-        .height(Fill);
+    // Top chrome owns real layout height, while the body also clips every draw
+    // path to that reduced rectangle. The shader primitive is normally clipped
+    // to its own bounds by Iced, but the explicit body clip additionally keeps
+    // transition children and multi-pass lyric effects out of the reserved
+    // chrome region.
+    let lyrics_body = container(content).width(Fill).height(Fill).clip(true);
+    let foreground = column![top_chrome, lyrics_body].width(Fill).height(Fill);
 
     let slide_offset = (1.0 - animation_progress) * tokens.space(30.0);
 
