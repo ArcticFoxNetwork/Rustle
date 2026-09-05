@@ -13,7 +13,9 @@ use crate::image::ImageKind;
 use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::cover_image;
 use crate::ui::overlay::{self, ModalKind, OverlayKind};
-use crate::ui::responsive::{ChromeRole, RadiusRole, ResponsiveContext, TargetRole, TextRole};
+use crate::ui::responsive::{
+    ChromeRole, CoverRadiusRole, RadiusRole, ResponsiveContext, TargetRole, TextRole,
+};
 use crate::ui::theme;
 use crate::ui::{components, pages, widgets};
 
@@ -707,9 +709,9 @@ impl App {
                                                     .get(ImageKind::PlaylistCover, pl_id),
                                                 ImageKind::PlaylistCover,
                                                 context.tokens.size(40.0),
-                                                context.tokens.radius(
-                                                    crate::ui::responsive::RadiusRole::Medium,
-                                                ),
+                                                context
+                                                    .tokens
+                                                    .cover_radius(CoverRadiusRole::Thumbnail),
                                                 context.tokens,
                                             );
                                             col = col.push(
@@ -796,9 +798,9 @@ impl App {
                                                     cover_handle,
                                                     ImageKind::LocalPlaylistCover,
                                                     context.tokens.size(40.0),
-                                                    context.tokens.radius(
-                                                        crate::ui::responsive::RadiusRole::Medium,
-                                                    ),
+                                                    context
+                                                        .tokens
+                                                        .cover_radius(CoverRadiusRole::Thumbnail),
                                                     context.tokens,
                                                 );
                                                 col = col.push(

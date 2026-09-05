@@ -20,7 +20,9 @@ use iced::{Alignment, Color, Element, Fill, Length, Padding};
 use crate::app::{ImageState, Message};
 use crate::i18n::{Key, Locale};
 use crate::ui::animation::{SmoothScrollEvent, SmoothScrollTarget};
-use crate::ui::responsive::{LayoutProfile, ResponsiveContext, TargetRole, TextRole, UiTokens};
+use crate::ui::responsive::{
+    CoverRadiusRole, LayoutProfile, ResponsiveContext, TargetRole, TextRole, UiTokens,
+};
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::widgets::{VirtualList, VirtualListState};
 use crate::ui::{icons, theme};
@@ -501,7 +503,7 @@ fn build_song_row(
         cover_handle,
         crate::image::ImageKind::SongCover,
         tokens.size(44.0),
-        tokens.radius(crate::ui::responsive::RadiusRole::Small),
+        tokens.cover_radius(CoverRadiusRole::Thumbnail),
         tokens,
     );
 

@@ -15,7 +15,7 @@ use iced::advanced::widget::{Operation, Tree, Widget, tree};
 use iced::mouse::{self, Cursor};
 use iced::time::Instant;
 use iced::widget::container;
-use iced::{Color, Element, Event, Length, Rectangle, Size, Vector};
+use iced::{Color, Element, Event, Length, Rectangle, Size, Transformation, Vector};
 
 const DEFAULT_DURATION: Duration = Duration::from_millis(160);
 type StyleFn<'a, Theme> = Box<dyn Fn(&Theme, f32) -> container::Style + 'a>;
@@ -29,6 +29,7 @@ where
     style: StyleFn<'a, Theme>,
     duration: Duration,
     enabled: bool,
+    hover_scale: f32,
     svg_overlay: Option<SvgOverlay>,
 }
 
@@ -50,6 +51,7 @@ where
             style: Box::new(|_, _| container::Style::default()),
             duration: DEFAULT_DURATION,
             enabled: true,
+            hover_scale: 1.0,
             svg_overlay: None,
         }
     }
@@ -72,6 +74,20 @@ where
     #[must_use]
     pub fn duration(mut self, duration: Duration) -> Self {
         self.duration = duration;
+        self
+    }
+
+    /// Scales the rendered content around its center as hover progresses.
+    ///
+    /// The widget's layout and hit-test bounds remain unchanged, which makes
+    /// this suitable for icon buttons embedded in fixed card/row slots.
+    #[must_use]
+    pub fn scale_on_hover(mut self, scale: f32) -> Self {
+        self.hover_scale = if scale.is_finite() {
+            scale.max(1.0)
+        } else {
+            1.0
+        };
         self
     }
 
@@ -238,34 +254,51 @@ where
         };
         let state = tree.state.downcast_ref::<State>();
         let style = (self.style)(theme, state.progress);
+        let scale = hover_scale_at_progress(self.hover_scale, state.progress);
+        let draw_contents =
+            |renderer: &mut Renderer, cursor: Cursor, child_viewport: &Rectangle| {
+                container::draw_background(renderer, &style, bounds);
+                self.content.as_widget().draw(
+                    &tree.children[0],
+                    renderer,
+                    theme,
+                    &renderer::Style {
+                        text_color: style.text_color.unwrap_or(renderer_style.text_color),
+                    },
+                    layout,
+                    cursor,
+                    child_viewport,
+                );
 
-        container::draw_background(renderer, &style, bounds);
-        self.content.as_widget().draw(
-            &tree.children[0],
-            renderer,
-            theme,
-            &renderer::Style {
-                text_color: style.text_color.unwrap_or(renderer_style.text_color),
-            },
-            layout,
-            cursor,
-            &clipped_viewport,
-        );
-
-        if let Some(overlay) = &self.svg_overlay {
-            let overlay_bounds = Rectangle {
-                x: bounds.center_x() - overlay.size.width / 2.0,
-                y: bounds.center_y() - overlay.size.height / 2.0,
-                width: overlay.size.width,
-                height: overlay.size.height,
+                if let Some(overlay) = &self.svg_overlay {
+                    let overlay_bounds = Rectangle {
+                        x: bounds.center_x() - overlay.size.width / 2.0,
+                        y: bounds.center_y() - overlay.size.height / 2.0,
+                        width: overlay.size.width,
+                        height: overlay.size.height,
+                    };
+                    renderer.draw_svg(
+                        svg::Svg::new(overlay.handle.clone())
+                            .color(overlay.color)
+                            .opacity(state.progress),
+                        overlay_bounds,
+                        *child_viewport,
+                    );
+                }
             };
-            renderer.draw_svg(
-                svg::Svg::new(overlay.handle.clone())
-                    .color(overlay.color)
-                    .opacity(state.progress),
-                overlay_bounds,
-                clipped_viewport,
-            );
+
+        if scale > 1.0 + f32::EPSILON {
+            let transformation = Transformation::translate(bounds.center_x(), bounds.center_y())
+                * Transformation::scale(scale)
+                * Transformation::translate(-bounds.center_x(), -bounds.center_y());
+            let inverse = transformation.inverse();
+            let transformed_viewport = *viewport * inverse;
+
+            renderer.with_transformation(transformation, |renderer| {
+                draw_contents(renderer, cursor * inverse, &transformed_viewport);
+            });
+        } else {
+            draw_contents(renderer, cursor, &clipped_viewport);
         }
     }
 
@@ -330,14 +363,25 @@ fn ease_out_cubic(value: f32) -> f32 {
     1.0 - (1.0 - value).powi(3)
 }
 
+fn hover_scale_at_progress(max_scale: f32, progress: f32) -> f32 {
+    1.0 + (max_scale.max(1.0) - 1.0) * progress.clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::ease_out_cubic;
+    use super::{ease_out_cubic, hover_scale_at_progress};
 
     #[test]
     fn easing_keeps_hover_progress_bounded() {
         assert_eq!(ease_out_cubic(0.0), 0.0);
         assert_eq!(ease_out_cubic(1.0), 1.0);
         assert!(ease_out_cubic(0.5) > 0.5);
+    }
+
+    #[test]
+    fn hover_scale_interpolates_without_changing_layout_bounds() {
+        assert_eq!(hover_scale_at_progress(1.06, 0.0), 1.0);
+        assert_eq!(hover_scale_at_progress(1.06, 1.0), 1.06);
+        assert_eq!(hover_scale_at_progress(0.8, 1.0), 1.0);
     }
 }

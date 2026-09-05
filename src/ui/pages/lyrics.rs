@@ -20,8 +20,8 @@ use crate::ui::effects::textured_background::TexturedBackgroundProgram;
 use crate::ui::icons;
 use crate::ui::overlay;
 use crate::ui::responsive::{
-    IconRole, LyricsPageLayout, RadiusRole, ResponsiveContext, TargetRole, TextRole,
-    lyrics_media_width, lyrics_page_layout,
+    CoverRadiusRole, IconRole, LyricsPageLayout, RadiusRole, ResponsiveContext, TargetRole,
+    TextRole, lyrics_media_width, lyrics_page_layout, top_bar_height,
 };
 use crate::ui::theme::{self, BOLD_WEIGHT};
 use crate::ui::widgets::{self, ControlSize, SliderSize};
@@ -59,8 +59,7 @@ pub fn view<'a>(
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
     let tokens = context.tokens;
-    const TITLE_BAR_HEIGHT: f32 = 64.0;
-    let title_bar_height = tokens.size(TITLE_BAR_HEIGHT);
+    let title_bar_height = top_bar_height(&context);
 
     let content: Element<'a, Message> = match lyrics_page_layout(context) {
         LyricsPageLayout::Split => {
@@ -235,14 +234,15 @@ pub fn view<'a>(
     .on_press(Message::WindowDrag);
 
     // Back button overlay in top-left corner
-    let back_btn = button(
+    let back_btn = button(widgets::centered_button_content(
         svg(svg::Handle::from_memory(icons::CHEVRON_DOWN.as_bytes()))
             .width(back_icon_size)
             .height(back_icon_size)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::text_primary(_theme)),
             }),
-    )
+        window_button_size,
+    ))
     .width(window_button_size)
     .height(window_button_size)
     .padding(0)
@@ -325,35 +325,37 @@ pub fn view<'a>(
         }
     };
 
-    let settings_btn = button(
+    let settings_btn = button(widgets::centered_button_content(
         svg(svg::Handle::from_memory(icons::SETTINGS.as_bytes()))
             .width(window_icon_size)
             .height(window_icon_size)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::text_primary(_theme)),
             }),
-    )
+        window_button_size,
+    ))
     .width(window_button_size)
     .height(window_button_size)
     .padding(0)
     .style(icon_btn_style)
     .on_press(Message::OpenSettingsWithCloseLyrics);
 
-    let minimize_btn = button(
+    let minimize_btn = button(widgets::centered_button_content(
         svg(svg::Handle::from_memory(icons::MINIMIZE.as_bytes()))
             .width(window_icon_size)
             .height(window_icon_size)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::text_primary(_theme)),
             }),
-    )
+        window_button_size,
+    ))
     .width(window_button_size)
     .height(window_button_size)
     .padding(0)
     .style(icon_btn_style)
     .on_press(Message::WindowMinimize);
 
-    let maximize_btn = button(
+    let maximize_btn = button(widgets::centered_button_content(
         svg(svg::Handle::from_memory(
             icons::maximize_restore(is_maximized).as_bytes(),
         ))
@@ -362,21 +364,23 @@ pub fn view<'a>(
         .style(|_theme, _status| svg::Style {
             color: Some(theme::text_primary(_theme)),
         }),
-    )
+        window_button_size,
+    ))
     .width(window_button_size)
     .height(window_button_size)
     .padding(0)
     .style(icon_btn_style)
     .on_press(Message::WindowMaximize);
 
-    let close_btn = button(
+    let close_btn = button(widgets::centered_button_content(
         svg(svg::Handle::from_memory(icons::CLOSE.as_bytes()))
             .width(window_icon_size)
             .height(window_icon_size)
             .style(|_theme, _status| svg::Style {
                 color: Some(theme::text_primary(_theme)),
             }),
-    )
+        window_button_size,
+    ))
     .width(window_button_size)
     .height(window_button_size)
     .padding(0)
@@ -503,7 +507,7 @@ fn build_artwork_panel<'a>(
         image_state.get(cover_kind, cover_id),
         cover_kind,
         media_width,
-        tokens.radius(RadiusRole::Large),
+        tokens.cover_radius(CoverRadiusRole::Hero),
         tokens,
     );
 

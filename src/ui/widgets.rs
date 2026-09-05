@@ -16,6 +16,8 @@
 //! - **Widgets** (this module): Composable UI patterns
 //! - **Components** (`crate::ui::components`): Business-specific UI with Message handling
 
+mod centered_button_content;
+pub mod cover_play_button;
 mod crossfade_image;
 pub mod detail_header;
 mod foreground_reveal;
@@ -37,6 +39,7 @@ pub use crate::ui::primitives::{
     ProgressRing, VirtualList, VirtualListState, view_progress_ring_styled,
 };
 
+pub use centered_button_content::centered_button_content;
 pub use crossfade_image::{ContentPosition, crossfade_image};
 pub use foreground_reveal::foreground_reveal;
 pub use hover_popup::hover_popup;

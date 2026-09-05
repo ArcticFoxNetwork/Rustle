@@ -20,7 +20,7 @@ use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::detail_description;
 use crate::ui::components::playlist_view::{self, PlaylistColumns, SongItem};
 use crate::ui::responsive::{
-    RadiusRole, ResponsiveContext, TargetRole, TextRole, detail_header_metrics,
+    CoverRadiusRole, RadiusRole, ResponsiveContext, TargetRole, TextRole, detail_header_metrics,
 };
 use crate::ui::theme::BOLD_WEIGHT;
 use crate::ui::widgets::{VirtualListState, detail_header};
@@ -423,7 +423,7 @@ fn build_header(
         cover_handle,
         crate::image::ImageKind::PlaylistCover,
         cover_size,
-        tokens.radius(RadiusRole::Medium),
+        tokens.cover_radius(CoverRadiusRole::Hero),
         tokens,
     );
 

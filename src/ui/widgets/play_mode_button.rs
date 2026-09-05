@@ -30,7 +30,7 @@ impl ButtonSize {
 
     fn icon_size(self, tokens: UiTokens) -> f32 {
         let reference = if matches!(self, Self::Small) {
-            20.0
+            22.0
         } else {
             22.0
         };
@@ -39,7 +39,7 @@ impl ButtonSize {
 
     fn padding(self, tokens: UiTokens) -> f32 {
         let reference = if matches!(self, Self::Small) {
-            8.0
+            9.0
         } else {
             10.0
         };
@@ -118,7 +118,7 @@ mod tests {
     #[test]
     fn hover_backgrounds_are_circular_at_every_size() {
         let tokens = UiTokens::default();
-        assert_eq!(ButtonSize::Small.radius(tokens), 18.0);
+        assert_eq!(ButtonSize::Small.radius(tokens), 20.0);
         assert_eq!(ButtonSize::Large.radius(tokens), 21.0);
     }
 }

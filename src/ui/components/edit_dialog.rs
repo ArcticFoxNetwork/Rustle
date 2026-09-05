@@ -5,7 +5,9 @@ use iced::{Alignment, Color, Element, Fill};
 
 use crate::app::Message;
 use crate::i18n::{Key, Locale};
-use crate::ui::responsive::{LayoutProfile, RadiusRole, ResponsiveContext, TextRole};
+use crate::ui::responsive::{
+    CoverRadiusRole, LayoutProfile, RadiusRole, ResponsiveContext, TextRole,
+};
 use crate::ui::{icons, theme, widgets};
 
 /// Render the playlist editor with token-scaled controls and a stacked tablet fallback.
@@ -21,6 +23,7 @@ pub fn view_body<'a>(
 ) -> Element<'a, Message> {
     let tokens = context.tokens;
     let cover_size = tokens.size(120.0);
+    let cover_radius = tokens.cover_radius(CoverRadiusRole::Card);
 
     // Cover
     let cover_content: Element<'a, Message> = if let Some(path) = cover_path {
@@ -28,6 +31,7 @@ pub fn view_body<'a>(
             .width(cover_size)
             .height(cover_size)
             .content_fit(iced::ContentFit::Cover)
+            .border_radius(cover_radius)
             .into()
     } else {
         container(
@@ -46,7 +50,7 @@ pub fn view_body<'a>(
         .style(move |theme| iced::widget::container::Style {
             background: Some(iced::Background::Color(theme::surface_container(theme))),
             border: iced::Border {
-                radius: tokens.radius(RadiusRole::Medium).into(),
+                radius: cover_radius.into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -88,7 +92,7 @@ pub fn view_body<'a>(
             .height(cover_size)
             .style(move |_theme| iced::widget::container::Style {
                 border: iced::Border {
-                    radius: tokens.radius(RadiusRole::Medium).into(),
+                    radius: cover_radius.into(),
                     width: tokens.size(1.0),
                     color: Color::from_rgba(1.0, 1.0, 1.0, 0.06)
                 },

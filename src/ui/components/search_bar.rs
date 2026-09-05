@@ -32,14 +32,14 @@ impl SearchBarStyle {
         let tokens = &context.tokens;
         Self {
             width,
-            height: tokens.size(36.0),
+            height: tokens.size(42.0),
             icon_size: tokens.icon(IconRole::TopBarSearch),
-            horizontal_padding: tokens.space(12.0),
-            icon_spacing: tokens.space(8.0),
-            input_padding: tokens.space(8.0),
-            text_size: tokens.text(TextRole::Label),
-            radius: tokens.size(18.0),
-            max_width: tokens.size(320.0),
+            horizontal_padding: tokens.space(14.0),
+            icon_spacing: tokens.space(10.0),
+            input_padding: tokens.space(10.0),
+            text_size: tokens.text(TextRole::BodyLarge),
+            radius: tokens.size(21.0),
+            max_width: tokens.size(360.0),
         }
     }
 }

@@ -11,7 +11,8 @@ use crate::image::ImageKind;
 use crate::ui::animation::SmoothScrollTarget;
 use crate::ui::components::cover_image;
 use crate::ui::responsive::{
-    LayoutProfile, RadiusRole, ResponsiveContext, TargetRole, TextRole, top_bar_height,
+    CoverRadiusRole, LayoutProfile, RadiusRole, ResponsiveContext, TargetRole, TextRole,
+    top_bar_height,
 };
 use crate::ui::theme;
 
@@ -704,7 +705,7 @@ fn download_cover(
         handle,
         kind,
         tokens.size(56.0),
-        tokens.radius(RadiusRole::Medium),
+        tokens.cover_radius(CoverRadiusRole::Thumbnail),
         tokens,
     )
 }

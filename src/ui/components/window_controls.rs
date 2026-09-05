@@ -40,7 +40,7 @@ pub fn view<'a>(
     let forward_icon_opacity: f32 = if can_go_forward { 1.0 } else { 0.5 };
 
     // Navigation buttons (left side)
-    let back_button = button(
+    let back_button = button(widgets::centered_button_content(
         svg(svg::Handle::from_memory(BACK_ICON.as_bytes()))
             .width(nav_icon_size)
             .height(nav_icon_size)
@@ -52,7 +52,8 @@ pub fn view<'a>(
                 }),
             })
             .opacity(back_icon_opacity),
-    )
+        button_size,
+    ))
     .width(button_size)
     .height(button_size)
     .padding(0)
@@ -69,7 +70,7 @@ pub fn view<'a>(
     )
     .padding(tokens.space(5.0));
 
-    let forward_button = button(
+    let forward_button = button(widgets::centered_button_content(
         svg(svg::Handle::from_memory(FORWARD_ICON.as_bytes()))
             .width(nav_icon_size)
             .height(nav_icon_size)
@@ -81,7 +82,8 @@ pub fn view<'a>(
                 }),
             })
             .opacity(forward_icon_opacity),
-    )
+        button_size,
+    ))
     .width(button_size)
     .height(button_size)
     .padding(0)
@@ -101,13 +103,13 @@ pub fn view<'a>(
     // Keep back and forward as separate circular controls.
     let nav_buttons = container(
         row![back_btn, forward_btn]
-            .spacing(tokens.space(8.0))
+            .spacing(tokens.space(10.0))
             .align_y(Alignment::Center),
     )
-    .padding(Padding::new(0.0).left(tokens.space(16.0)));
+    .padding(Padding::new(0.0).left(tokens.space(20.0)));
 
     // User info (avatar + username + API-backed membership badge)
-    let avatar_size = tokens.size(24.0);
+    let avatar_size = tokens.size(28.0);
     let avatar_handle = is_logged_in
         .then(|| user_info.and_then(|info| image_state.get(ImageKind::UserAvatar, info.user_id)))
         .flatten();
@@ -123,13 +125,13 @@ pub fn view<'a>(
                 )
             {
                 let vip_badge = widgets::crossfade_image(Some(handle.clone()))
-                    // Match the adjacent 16px nickname. Width remains Shrink,
+                    // Match the adjacent nickname. Width remains Shrink,
                     // so Iced derives it from the official image aspect ratio.
-                    .height(tokens.text(TextRole::BodyLarge))
+                    .height(tokens.text(TextRole::Subtitle))
                     .content_fit(ContentFit::Contain);
                 row![
                     text(info.nickname.clone())
-                        .size(tokens.text(TextRole::BodyLarge))
+                        .size(tokens.text(TextRole::Subtitle))
                         .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT))
                         .style(|theme| text::Style {
                             color: Some(theme::text_primary(theme))
@@ -141,7 +143,7 @@ pub fn view<'a>(
                 .into()
             } else {
                 text(info.nickname.clone())
-                    .size(tokens.text(TextRole::BodyLarge))
+                    .size(tokens.text(TextRole::Subtitle))
                     .font(iced::Font::DEFAULT.weight(theme::BOLD_WEIGHT))
                     .style(|theme| text::Style {
                         color: Some(theme::text_primary(theme)),
@@ -150,7 +152,7 @@ pub fn view<'a>(
             }
         } else {
             text("未登录")
-                .size(tokens.text(TextRole::Body))
+                .size(tokens.text(TextRole::BodyLarge))
                 .style(|theme| text::Style {
                     color: Some(theme::text_muted(theme)),
                 })
@@ -158,7 +160,7 @@ pub fn view<'a>(
         }
     } else {
         text("未登录")
-            .size(tokens.text(TextRole::Body))
+            .size(tokens.text(TextRole::BodyLarge))
             .style(|theme| text::Style {
                 color: Some(theme::text_muted(theme)),
             })
@@ -176,7 +178,7 @@ pub fn view<'a>(
     } else {
         row![
             avatar_target,
-            Space::new().width(tokens.space(6.0)),
+            Space::new().width(tokens.space(8.0)),
             user_text
         ]
         .height(button_size)
@@ -214,7 +216,7 @@ pub fn view<'a>(
     };
 
     // Window control buttons (right side)
-    let settings_button = button(
+    let settings_button = button(widgets::centered_button_content(
         svg(svg::Handle::from_memory(
             crate::ui::icons::SETTINGS.as_bytes(),
         ))
@@ -223,7 +225,8 @@ pub fn view<'a>(
         .style(|theme, _status| svg::Style {
             color: Some(theme::text_secondary(theme)),
         }),
-    )
+        button_size,
+    ))
     .width(button_size)
     .height(button_size)
     .padding(0)
@@ -236,14 +239,15 @@ pub fn view<'a>(
     )
     .padding(tokens.space(5.0));
 
-    let minimize_button = button(
+    let minimize_button = button(widgets::centered_button_content(
         svg(svg::Handle::from_memory(MINIMIZE_ICON.as_bytes()))
             .width(icon_size)
             .height(icon_size)
             .style(|theme, _status| svg::Style {
                 color: Some(theme::text_secondary(theme)),
             }),
-    )
+        button_size,
+    ))
     .width(button_size)
     .height(button_size)
     .padding(0)
@@ -256,7 +260,7 @@ pub fn view<'a>(
     )
     .padding(tokens.space(5.0));
 
-    let maximize_button = button(
+    let maximize_button = button(widgets::centered_button_content(
         svg(svg::Handle::from_memory(
             crate::ui::icons::maximize_restore(is_maximized).as_bytes(),
         ))
@@ -265,7 +269,8 @@ pub fn view<'a>(
         .style(|theme, _status| svg::Style {
             color: Some(theme::text_secondary(theme)),
         }),
-    )
+        button_size,
+    ))
     .width(button_size)
     .height(button_size)
     .padding(0)
@@ -283,14 +288,15 @@ pub fn view<'a>(
     )
     .padding(tokens.space(5.0));
 
-    let close_button = button(
+    let close_button = button(widgets::centered_button_content(
         svg(svg::Handle::from_memory(CLOSE_ICON.as_bytes()))
             .width(icon_size)
             .height(icon_size)
             .style(|theme, _status| svg::Style {
                 color: Some(theme::text_secondary(theme)),
             }),
-    )
+        button_size,
+    ))
     .width(button_size)
     .height(button_size)
     .padding(0)
@@ -315,14 +321,15 @@ pub fn view<'a>(
     .on_press(Message::WindowDrag);
 
     let menu_button: Element<'a, Message> = if context.profile == LayoutProfile::Narrow {
-        let button = button(
+        let button = button(widgets::centered_button_content(
             svg(svg::Handle::from_memory(crate::ui::icons::LIST.as_bytes()))
                 .width(icon_size)
                 .height(icon_size)
                 .style(|theme, _status| svg::Style {
                     color: Some(theme::text_secondary(theme)),
                 }),
-        )
+            button_size,
+        ))
         .width(button_size)
         .height(button_size)
         .padding(0)
@@ -343,14 +350,14 @@ pub fn view<'a>(
     // compact profiles already reduce account identity to the avatar before
     // any functional control needs to move or disappear.
     let flexible_gap = if context.profile.is_compact() {
-        tokens.space(4.0)
+        tokens.space(6.0)
     } else {
-        tokens.space(12.0)
+        tokens.space(14.0)
     };
     let action_gap = if context.profile.is_compact() {
-        tokens.space(4.0)
+        tokens.space(5.0)
     } else {
-        tokens.space(6.0)
+        tokens.space(8.0)
     };
     let controls: Element<'a, Message> = container(
         row![
@@ -375,7 +382,7 @@ pub fn view<'a>(
     .width(Fill)
     .height(Length::Fixed(top_height))
     .align_y(Alignment::Center)
-    .padding(Padding::new(0.0).right(tokens.space(12.0)))
+    .padding(Padding::new(0.0).right(tokens.space(16.0)))
     .into();
 
     // Native Iced scrollbars do not support a top-only track inset. Cover the

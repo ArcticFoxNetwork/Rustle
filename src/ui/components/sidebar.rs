@@ -12,8 +12,8 @@ use crate::image::ImageKind;
 use crate::ui::animation::{HoverAnimations, SmoothScrollTarget};
 use crate::ui::components::importing_card::{self, ImportingPlaylist};
 use crate::ui::responsive::{
-    ChromeRole, IconRole, ResponsiveContext, SidebarPresentation, TargetRole, TextRole,
-    bounded_width, sidebar_presentation,
+    ChromeRole, CoverRadiusRole, IconRole, RadiusRole, ResponsiveContext, SidebarPresentation,
+    TargetRole, TextRole, bounded_width, sidebar_presentation,
 };
 use crate::ui::theme::{self, BOLD_WEIGHT};
 
@@ -52,7 +52,7 @@ impl SidebarMetrics {
             text_size: tokens.text(TextRole::BodyLarge),
             header_text_size: tokens.text(TextRole::Body),
             title_size: tokens.text(TextRole::Title),
-            icon_size: tokens.icon(IconRole::Large),
+            icon_size: tokens.icon(IconRole::Sidebar),
             icon_gap: tokens.space(16.0),
             item_spacing: tokens.space(SIDEBAR_ITEM_SPACING),
             content_padding: tokens.space(16.0),
@@ -65,9 +65,9 @@ impl SidebarMetrics {
             header_padding: tokens.space(10.0),
             content_bottom: tokens.space(14.0),
             cover_size: tokens.size(42.0),
-            cover_radius: tokens.size(5.0),
+            cover_radius: tokens.cover_radius(CoverRadiusRole::Thumbnail),
             target_size: tokens.target(TargetRole::Icon),
-            button_radius: tokens.radius(crate::ui::responsive::RadiusRole::Medium),
+            button_radius: tokens.radius(RadiusRole::Large),
             tokens: *tokens,
         }
     }

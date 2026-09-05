@@ -29,12 +29,12 @@ impl ControlSize {
     }
 
     fn play_button_size(self, tokens: UiTokens) -> f32 {
-        let reference = if self.is_small() { 40.0 } else { 64.0 };
+        let reference = if self.is_small() { 44.0 } else { 64.0 };
         tokens.size(reference * self.emphasis())
     }
 
     fn play_icon_size(self, tokens: UiTokens) -> f32 {
-        let reference = if self.is_small() { 20.0 } else { 28.0 };
+        let reference = if self.is_small() { 22.0 } else { 28.0 };
         tokens.size(reference * self.emphasis())
     }
 
@@ -43,17 +43,17 @@ impl ControlSize {
     }
 
     fn skip_button_padding(self, tokens: UiTokens) -> f32 {
-        let reference = if self.is_small() { 8.0 } else { 12.0 };
+        let reference = if self.is_small() { 9.0 } else { 12.0 };
         tokens.space(reference * self.emphasis())
     }
 
     fn skip_button_radius(self, tokens: UiTokens) -> f32 {
-        let reference = if self.is_small() { 20.0 } else { 26.0 };
+        let reference = if self.is_small() { 22.0 } else { 26.0 };
         tokens.size(reference * self.emphasis())
     }
 
     fn spacing(self, tokens: UiTokens) -> f32 {
-        let reference = if self.is_small() { 8.0 } else { 16.0 };
+        let reference = if self.is_small() { 10.0 } else { 16.0 };
         tokens.space(reference * self.emphasis())
     }
 

@@ -365,6 +365,7 @@ pub enum IconRole {
     Small,
     Medium,
     Large,
+    Sidebar,
     TopBarNavigation,
     TopBarAction,
     TopBarSearch,
@@ -379,10 +380,14 @@ impl IconRole {
             Self::Small => (16.0, 14.0),
             Self::Medium => (20.0, 18.0),
             Self::Large => (24.0, 20.0),
-            Self::TopBarNavigation => (7.0, 6.0),
-            Self::TopBarAction => (5.0, 4.5),
-            Self::TopBarSearch => (5.5, 5.0),
-            Self::WindowControl => (15.0, 14.0),
+            Self::Sidebar => (24.0, 20.0),
+            // These are visual sizes inside separate interaction targets. They
+            // intentionally match the pre-regression semantic roles now that
+            // fixed buttons no longer stretch their children.
+            Self::TopBarNavigation => (22.0, 20.0),
+            Self::TopBarAction => (18.0, 16.0),
+            Self::TopBarSearch => (18.0, 16.0),
+            Self::WindowControl => (17.0, 15.0),
             Self::Hero => (32.0, 24.0),
         }
     }
@@ -402,7 +407,7 @@ impl TargetRole {
         match self {
             Self::Icon => (36.0, MIN_INTERACTION_TARGET),
             Self::Control => (40.0, MIN_INTERACTION_TARGET),
-            Self::WindowControl => (36.0, MIN_INTERACTION_TARGET),
+            Self::WindowControl => (42.0, MIN_INTERACTION_TARGET),
         }
     }
 }
@@ -414,6 +419,28 @@ pub enum RadiusRole {
     Medium,
     Large,
     Pill,
+}
+
+/// Semantic corner radii for square and rectangular artwork.
+///
+/// Circular avatars remain driven by their dimensions, while the player-bar
+/// cover deliberately keeps its component-local radius.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CoverRadiusRole {
+    Thumbnail,
+    Card,
+    Hero,
+}
+
+impl CoverRadiusRole {
+    #[inline]
+    fn reference(self) -> f32 {
+        match self {
+            Self::Thumbnail => 10.0,
+            Self::Card => 18.0,
+            Self::Hero => 24.0,
+        }
+    }
 }
 
 impl RadiusRole {
@@ -532,22 +559,22 @@ impl CardRole {
     fn reference(self) -> CardMetrics {
         match self {
             Self::Playlist => CardMetrics {
-                width: 161.0,
-                height: 217.0,
-                gap: 24.0,
-                radius: 10.0,
+                width: 168.0,
+                height: 228.0,
+                gap: 20.0,
+                radius: 18.0,
             },
             Self::Detail => CardMetrics {
                 width: 200.0,
                 height: 200.0,
                 gap: 20.0,
-                radius: 16.0,
+                radius: 18.0,
             },
             Self::Feature => CardMetrics {
                 width: 320.0,
-                height: 180.0,
+                height: 204.0,
                 gap: 24.0,
-                radius: 14.0,
+                radius: 20.0,
             },
         }
     }
@@ -556,16 +583,19 @@ impl CardRole {
 /// Resolve playlist-card geometry for the current composition.
 ///
 /// A full-height half-width window has enough physical area for five useful
-/// cards, while a ceiling-scale expanded viewport uses a slightly denser card
-/// rhythm so it does not drop below the nine columns already available at
-/// 1080P. Smaller portrait tablets and ordinary desktop viewports retain their
+/// cards. Expanded layouts continuously tighten the enlarged reference card
+/// rhythm as the root rem grows from 1080P toward 2K, preserving an eight-card
+/// desktop row even when a maximized window is slightly shorter than the
+/// display because of compositor chrome. Smaller portrait tablets retain their
 /// established card size.
 #[inline]
 pub fn playlist_card_metrics(context: ResponsiveContext) -> CardMetrics {
     const WIDE_TABLET_MIN_WIDTH: f32 = 900.0;
     const WIDE_TABLET_CARD_WIDTH: f32 = 148.0;
-    const TWO_K_EXPANDED_CARD_WIDTH: f32 = 155.0;
-    const PLAYLIST_FOOTER_HEIGHT: f32 = 56.0;
+    const EXPANDED_CARD_WIDTH: f32 = 183.0;
+    const TWO_K_EXPANDED_CARD_WIDTH: f32 = 179.0;
+    const PLAYLIST_FOOTER_HEIGHT: f32 = 60.0;
+    const EXPANDED_CARD_GAP: f32 = 24.0;
     const WIDE_TABLET_CARD_GAP: f32 = 18.0;
     const TWO_K_EXPANDED_CARD_GAP: f32 = 19.0;
 
@@ -573,8 +603,6 @@ pub fn playlist_card_metrics(context: ResponsiveContext) -> CardMetrics {
     let metrics = tokens.card(CardRole::Playlist);
     let use_wide_tablet_metrics = context.profile == LayoutProfile::Tablet
         && context.width() >= tokens.size(WIDE_TABLET_MIN_WIDTH);
-    let use_two_k_expanded_metrics =
-        context.profile == LayoutProfile::Expanded && context.root_rem.scale() >= REM_SCALE_CEILING;
 
     if use_wide_tablet_metrics {
         let width = tokens.size(WIDE_TABLET_CARD_WIDTH);
@@ -584,12 +612,18 @@ pub fn playlist_card_metrics(context: ResponsiveContext) -> CardMetrics {
             gap: tokens.space(WIDE_TABLET_CARD_GAP),
             radius: metrics.radius,
         }
-    } else if use_two_k_expanded_metrics {
-        let width = tokens.size(TWO_K_EXPANDED_CARD_WIDTH);
+    } else if context.profile == LayoutProfile::Expanded {
+        let density_progress =
+            ((context.root_rem.scale() - 1.0) / (REM_SCALE_CEILING - 1.0)).clamp(0.0, 1.0);
+        let reference_width = EXPANDED_CARD_WIDTH
+            + (TWO_K_EXPANDED_CARD_WIDTH - EXPANDED_CARD_WIDTH) * density_progress;
+        let reference_gap =
+            EXPANDED_CARD_GAP + (TWO_K_EXPANDED_CARD_GAP - EXPANDED_CARD_GAP) * density_progress;
+        let width = tokens.size(reference_width);
         CardMetrics {
             width,
             height: width + tokens.size(PLAYLIST_FOOTER_HEIGHT),
-            gap: tokens.space(TWO_K_EXPANDED_CARD_GAP),
+            gap: tokens.space(reference_gap),
             radius: metrics.radius,
         }
     } else {
@@ -612,7 +646,7 @@ impl ChromeRole {
     fn reference(self) -> f32 {
         match self {
             Self::TopBar => theme::TOP_BAR_HEIGHT,
-            Self::PlayerBar => 80.0,
+            Self::PlayerBar => 88.0,
             Self::Sidebar => 280.0,
             Self::SidebarRail => 68.0,
             Self::ResizeHandle => 6.0,
@@ -706,6 +740,12 @@ impl UiTokens {
     /// Resolve a named surface radius.
     #[inline]
     pub fn radius(&self, role: RadiusRole) -> f32 {
+        self.space(role.reference())
+    }
+
+    /// Resolve a named artwork radius.
+    #[inline]
+    pub fn cover_radius(&self, role: CoverRadiusRole) -> f32 {
         self.space(role.reference())
     }
 
@@ -977,23 +1017,26 @@ mod tests {
     }
 
     #[test]
-    fn top_bar_icons_are_visually_compact_without_shrinking_hit_targets() {
+    fn top_bar_and_sidebar_icons_keep_distinct_visual_and_target_contracts() {
         let reference = ResponsiveContext::from_viewport(Size::new(1_920.0, 1_080.0));
         let two_k = ResponsiveContext::from_viewport(Size::new(2_560.0, 1_440.0));
 
-        assert_approx(reference.tokens.icon(IconRole::TopBarNavigation), 7.0);
-        assert_approx(reference.tokens.icon(IconRole::TopBarAction), 5.0);
-        assert_approx(reference.tokens.icon(IconRole::TopBarSearch), 5.5);
+        assert_approx(reference.tokens.icon(IconRole::Sidebar), 24.0);
+        assert_approx(reference.tokens.icon(IconRole::TopBarNavigation), 22.0);
+        assert_approx(reference.tokens.icon(IconRole::TopBarAction), 18.0);
+        assert_approx(reference.tokens.icon(IconRole::TopBarSearch), 18.0);
+        assert_approx(reference.tokens.target(TargetRole::WindowControl), 42.0);
         assert!(
             reference.tokens.icon(IconRole::TopBarNavigation)
                 < reference.tokens.target(TargetRole::WindowControl)
         );
         assert!(
             reference.tokens.icon(IconRole::TopBarAction)
-                < reference.tokens.icon(IconRole::WindowControl)
+                < reference.tokens.target(TargetRole::WindowControl)
         );
         assert!(
-            reference.tokens.icon(IconRole::TopBarSearch) < reference.tokens.icon(IconRole::Small)
+            reference.tokens.icon(IconRole::TopBarSearch)
+                < reference.tokens.target(TargetRole::WindowControl)
         );
         assert_approx(
             two_k.tokens.icon(IconRole::TopBarNavigation)
@@ -1003,19 +1046,27 @@ mod tests {
     }
 
     #[test]
-    fn playlist_card_density_preserves_fullscreen_and_half_width_columns() {
+    fn playlist_card_density_preserves_eight_desktop_and_five_half_width_columns() {
         let full = ResponsiveContext::from_viewport(Size::new(1_920.0, 1_080.0));
         let two_k = ResponsiveContext::from_viewport(Size::new(2_560.0, 1_440.0));
+        let maximized_two_k = ResponsiveContext::from_viewport(Size::new(2_558.0, 1_398.0));
         let half_1080 = ResponsiveContext::from_viewport(Size::new(960.0, 1_080.0));
         let half_2k = ResponsiveContext::from_viewport(Size::new(1_280.0, 1_440.0));
         let small_tablet = ResponsiveContext::from_viewport(Size::new(768.0, 1_024.0));
 
-        assert_approx(playlist_card_metrics(full).width, 161.0);
-        assert_approx(playlist_card_metrics(two_k).width, 620.0 / 3.0);
-        assert!(
-            playlist_card_metrics(two_k).width * 9.0 + playlist_card_metrics(two_k).gap * 8.0
-                <= 2_093.0
-        );
+        assert_approx(playlist_card_metrics(full).width, 183.0);
+        assert_approx(playlist_card_metrics(two_k).width, 716.0 / 3.0);
+        for (context, available_width) in [
+            (full, 1_650.0),
+            (two_k, 2_093.0),
+            (maximized_two_k, 2_093.0),
+        ] {
+            let metrics = playlist_card_metrics(context);
+            assert_eq!(
+                calculate_grid_columns(available_width, metrics.width, metrics.gap),
+                8
+            );
+        }
         assert_approx(playlist_card_metrics(half_1080).width, 148.0);
         assert_approx(playlist_card_metrics(half_1080).gap, 18.0);
         assert!(
@@ -1029,8 +1080,20 @@ mod tests {
         );
         assert_approx(
             playlist_card_metrics(small_tablet).width,
-            small_tablet.tokens.size(161.0),
+            small_tablet.tokens.size(168.0),
         );
+    }
+
+    #[test]
+    fn artwork_radii_and_home_feature_height_use_shared_tokens() {
+        let tokens = UiTokens::default();
+
+        assert_approx(tokens.cover_radius(CoverRadiusRole::Thumbnail), 10.0);
+        assert_approx(tokens.cover_radius(CoverRadiusRole::Card), 18.0);
+        assert_approx(tokens.cover_radius(CoverRadiusRole::Hero), 24.0);
+        assert_approx(tokens.card(CardRole::Feature).height, 204.0);
+        assert_approx(tokens.card(CardRole::Playlist).radius, 18.0);
+        assert_approx(tokens.chrome(ChromeRole::PlayerBar), 88.0);
     }
 
     #[test]
@@ -1285,14 +1348,14 @@ mod tests {
     #[test]
     fn top_bar_height_follows_the_root_rem() {
         let fixtures = [
-            (Size::new(1_920.0, 1_080.0), 60.0),
-            (Size::new(2_560.0, 1_440.0), 80.0),
-            (Size::new(960.0, 1_080.0), 60.0),
-            (Size::new(1_280.0, 1_440.0), 80.0),
-            (Size::new(768.0, 1_024.0), 512.0 / 9.0),
-            (Size::new(720.0, 800.0), 54.0),
-            (Size::new(960.0, 540.0), 54.0),
-            (Size::new(560.0, 800.0), 54.0),
+            (Size::new(1_920.0, 1_080.0), 68.0),
+            (Size::new(2_560.0, 1_440.0), 272.0 / 3.0),
+            (Size::new(960.0, 1_080.0), 68.0),
+            (Size::new(1_280.0, 1_440.0), 272.0 / 3.0),
+            (Size::new(768.0, 1_024.0), 8_704.0 / 135.0),
+            (Size::new(720.0, 800.0), 61.2),
+            (Size::new(960.0, 540.0), 61.2),
+            (Size::new(560.0, 800.0), 61.2),
         ];
 
         for (viewport, expected_height) in fixtures {

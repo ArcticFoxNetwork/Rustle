@@ -29,7 +29,7 @@ pub const TEXT_SIZE_DISPLAY: f32 = 48.0;
 // ============================================================================
 
 /// 1080P reference height resolved by the shared chrome token.
-pub const TOP_BAR_HEIGHT: f32 = 60.0;
+pub const TOP_BAR_HEIGHT: f32 = 68.0;
 pub const TOP_BAR_BACKGROUND_ALPHA: f32 = 0.78;
 /// 1080P reference width of Iced's default vertical scrollbar at the right edge.
 pub const TOP_BAR_SCROLLBAR_GUTTER_WIDTH: f32 = 10.0;

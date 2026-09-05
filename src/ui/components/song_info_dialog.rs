@@ -6,7 +6,9 @@ use iced::{Border, Color, Element, Length};
 
 use crate::app::{Message, SongEditDialogState};
 use crate::i18n::{Key, Locale};
-use crate::ui::responsive::{LayoutProfile, RadiusRole, ResponsiveContext, TextRole, UiTokens};
+use crate::ui::responsive::{
+    CoverRadiusRole, LayoutProfile, RadiusRole, ResponsiveContext, TextRole, UiTokens,
+};
 use crate::ui::{theme, widgets};
 
 // Visual dimensions are 1080P reference pixels resolved through `UiTokens`.
@@ -103,6 +105,7 @@ fn edit_cover_block<'a>(
     tokens: crate::ui::responsive::UiTokens,
 ) -> Element<'a, Message> {
     let cover_size = tokens.size(COVER_SIZE);
+    let cover_radius = tokens.cover_radius(CoverRadiusRole::Card);
     let handle = path
         .as_ref()
         .filter(|p| p.exists())
@@ -111,7 +114,7 @@ fn edit_cover_block<'a>(
         handle.as_ref(),
         crate::image::ImageKind::SongCover,
         cover_size,
-        tokens.radius(RadiusRole::Medium),
+        cover_radius,
         tokens,
     );
     let label = replace_label.to_string();
@@ -134,7 +137,7 @@ fn edit_cover_block<'a>(
         container(img)
             .width(cover_size)
             .height(cover_size)
-            .style(move |theme| cover_border(theme, tokens.radius(RadiusRole::Medium), tokens)),
+            .style(move |theme| cover_border(theme, cover_radius, tokens)),
         iced::widget::Space::new().height(tokens.space(6.0)),
         replace_button,
     ]

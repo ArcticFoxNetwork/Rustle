@@ -960,8 +960,8 @@ mod tests {
     #[test]
     fn search_card_results_use_complete_columns_at_all_validation_viewports() {
         let fixtures = [
-            (Size::new(1_920.0, 1_080.0), 1_650.0, 9),
-            (Size::new(2_560.0, 1_440.0), 2_093.0, 9),
+            (Size::new(1_920.0, 1_080.0), 1_650.0, 8),
+            (Size::new(2_560.0, 1_440.0), 2_093.0, 8),
             (Size::new(960.0, 1_080.0), 828.0, 5),
             (Size::new(1_280.0, 1_440.0), 1_104.0, 5),
             (Size::new(768.0, 1_024.0), 642.0, 3),
