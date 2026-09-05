@@ -447,3 +447,13 @@ impl Locale {
         t(self.language, key)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{Key, Language, t};
+
+    #[test]
+    fn chinese_queue_song_count_separates_number_and_unit() {
+        assert_eq!(t(Language::Chinese, Key::QueueSongCount), "{} 首");
+    }
+}

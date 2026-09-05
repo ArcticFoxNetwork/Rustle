@@ -264,7 +264,7 @@ static TRANSLATIONS: LazyLock<HashMap<Key, &'static str>> = LazyLock::new(|| {
 
     // Queue Panel
     m.insert(Key::QueueTitle, "播放列表");
-    m.insert(Key::QueueSongCount, "{}首");
+    m.insert(Key::QueueSongCount, "{} 首");
     m.insert(Key::QueueEmpty, "播放列表为空");
 
     // Playlist View
