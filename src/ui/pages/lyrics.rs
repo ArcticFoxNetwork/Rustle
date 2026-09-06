@@ -409,16 +409,12 @@ pub fn view<'a>(
         .height(Length::Fixed(title_bar_height)),
     );
 
-    // Match ordinary pages: the overlay does not participate in layout, so a
-    // real leading spacer reserves the complete top-bar region first. This
-    // gives simple content and the Shader one shared body rectangle below the
-    // chrome, while clipping keeps transition/effect draws inside that body.
-    let top_inset = title_bar_height + tokens.space(4.0);
+    // Keep the lyrics surface full-window so the transparent top chrome can sit
+    // above lyric text and effects without removing the top-bar region from the
+    // renderer's bounds. `opaque` on the chrome captures presses only; it does
+    // not paint a background over the lyrics.
     let lyrics_body = container(content).width(Fill).height(Fill).clip(true);
-    let content_below_chrome = column![Space::new().height(Length::Fixed(top_inset)), lyrics_body,]
-        .width(Fill)
-        .height(Fill);
-    let foreground = iced::widget::stack![content_below_chrome, top_chrome]
+    let foreground = iced::widget::stack![lyrics_body, top_chrome]
         .width(Fill)
         .height(Fill);
 
