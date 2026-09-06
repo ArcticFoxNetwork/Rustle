@@ -11,9 +11,7 @@ use crate::i18n::Key;
 fn visible_recommended_playlists(playlists: &[PlaylistSummary]) -> Vec<PlaylistSummary> {
     playlists
         .iter()
-        .filter(|playlist| {
-            playlist.id != PRIVATE_RADAR_PLAYLIST_ID && !playlist.name.contains("私人雷达")
-        })
+        .filter(|playlist| playlist.id != PRIVATE_RADAR_PLAYLIST_ID)
         .cloned()
         .collect()
 }
@@ -205,7 +203,7 @@ mod tests {
     }
 
     #[test]
-    fn recommendation_row_excludes_private_radar_duplicates() {
+    fn recommendation_row_excludes_private_radar_by_id_only() {
         let playlists = vec![
             playlist(PRIVATE_RADAR_PLAYLIST_ID, "私人雷达"),
             playlist(2, "我的私人雷达歌单"),
@@ -214,8 +212,9 @@ mod tests {
 
         let visible = visible_recommended_playlists(&playlists);
 
-        assert_eq!(visible.len(), 1);
-        assert_eq!(visible[0].id, 3);
+        assert_eq!(visible.len(), 2);
+        assert_eq!(visible[0].id, 2);
+        assert_eq!(visible[1].id, 3);
     }
 
     #[test]

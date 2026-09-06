@@ -8,8 +8,7 @@ use crate::app::{ImageState, Message};
 use crate::image::ImageKind;
 use crate::ui::animation::HoverAnimations;
 use crate::ui::responsive::{
-    CardMetrics, ResponsiveContext, calculate_grid_columns_clamped, playlist_card_metrics,
-    playlist_card_metrics_for_width,
+    CardMetrics, ResponsiveContext, playlist_card_metrics, playlist_grid_layout_for_width,
 };
 use crate::ui::widgets::playlist_card;
 
@@ -43,9 +42,9 @@ pub fn view_single_row<'a>(
     context: ResponsiveContext,
 ) -> Element<'a, Message> {
     responsive(move |size| -> Element<'a, Message> {
-        let metrics = playlist_card_metrics_for_width(context, size.width);
-        let columns =
-            calculate_grid_columns_clamped(size.width, metrics.width, metrics.gap, usize::MAX);
+        let layout = playlist_grid_layout_for_width(context, size.width, 8);
+        let metrics = layout.metrics;
+        let columns = layout.columns;
         let cards = playlists
             .iter()
             .take(columns)
@@ -81,9 +80,9 @@ pub fn view<'a>(
     }
 
     responsive(move |size| -> Element<'a, Message> {
-        let metrics = playlist_card_metrics_for_width(context, size.width);
-        let columns =
-            calculate_grid_columns_clamped(size.width, metrics.width, metrics.gap, usize::MAX);
+        let layout = playlist_grid_layout_for_width(context, size.width, 8);
+        let metrics = layout.metrics;
+        let columns = layout.columns;
         let rows = items
             .chunks(columns)
             .map(|chunk| {
@@ -104,14 +103,11 @@ pub fn view<'a>(
 
 #[cfg(test)]
 mod tests {
-    use crate::ui::responsive::{
-        ResponsiveContext, calculate_grid_columns_clamped, playlist_card_metrics_for_width,
-    };
+    use crate::ui::responsive::{ResponsiveContext, playlist_grid_layout_for_width};
     use iced::Size;
 
     fn visible_column_count(available_width: f32, context: ResponsiveContext) -> usize {
-        let metrics = playlist_card_metrics_for_width(context, available_width);
-        calculate_grid_columns_clamped(available_width, metrics.width, metrics.gap, usize::MAX)
+        playlist_grid_layout_for_width(context, available_width, 8).columns
     }
 
     #[test]
@@ -124,9 +120,10 @@ mod tests {
     #[test]
     fn contextual_grid_uses_complete_cards_for_validation_viewports() {
         let fixtures = [
-            (Size::new(1_920.0, 1_080.0), 1_650.0, 8),
-            (Size::new(2_560.0, 1_440.0), 2_093.0, 8),
-            (Size::new(2_558.0, 1_398.0), 2_093.0, 8),
+            (Size::new(1_440.0, 900.0), 1_116.0, 6),
+            (Size::new(1_920.0, 1_080.0), 1_560.0, 8),
+            (Size::new(2_560.0, 1_440.0), 2_080.0, 8),
+            (Size::new(2_558.0, 1_398.0), 2_078.5, 8),
             (Size::new(960.0, 1_080.0), 828.0, 5),
             (Size::new(1_280.0, 1_440.0), 1_104.0, 5),
             (Size::new(1_280.0, 720.0), 969.0, 5),
@@ -142,6 +139,28 @@ mod tests {
                 visible_column_count(available_width, context),
                 expected_columns,
                 "unexpected complete playlist-card columns for {viewport:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn expanded_rows_fill_six_or_eight_complete_cards_without_touching_half_width() {
+        let fixtures = [
+            (Size::new(1_440.0, 900.0), 1_116.0, 6),
+            (Size::new(1_920.0, 1_080.0), 1_560.0, 8),
+            (Size::new(2_560.0, 1_440.0), 2_080.0, 8),
+            (Size::new(960.0, 1_080.0), 828.0, 5),
+        ];
+
+        for (viewport, available_width, expected_columns) in fixtures {
+            let context = ResponsiveContext::from_viewport(viewport);
+            let layout = playlist_grid_layout_for_width(context, available_width, 8);
+            assert_eq!(layout.columns, expected_columns);
+            assert!(layout.metrics.width > 0.0);
+            assert!(
+                layout.metrics.width * expected_columns as f32
+                    + layout.metrics.gap * expected_columns.saturating_sub(1) as f32
+                    <= available_width + 0.001
             );
         }
     }

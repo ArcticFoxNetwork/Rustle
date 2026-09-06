@@ -40,8 +40,6 @@ pub const TABLET_MAX_ASPECT_RATIO: f32 = 1.15;
 pub const MIN_USABLE_CONTENT_WIDTH: f32 = 200.0;
 /// Minimum hit target for an interactive control.
 pub const MIN_INTERACTION_TARGET: f32 = 36.0;
-/// Reference-space reduction for the trailing inset of Discover playlist rows.
-pub const DISCOVER_TRAILING_SPACE_REDUCTION: f32 = 5.0;
 /// Half-window playlist-card presentation begins at this logical width.
 const HALF_WINDOW_PLAYLIST_MIN_WIDTH: f32 = 900.0;
 /// Reference minimum width for one three-column shortcut table. This is a
@@ -474,6 +472,13 @@ pub struct CardMetrics {
     pub radius: f32,
 }
 
+/// Complete playlist-grid geometry for one measured layout pass.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PlaylistGridLayout {
+    pub metrics: CardMetrics,
+    pub columns: usize,
+}
+
 /// Shared geometry for the horizontal identity header used by playlist,
 /// album, user, and artist detail pages.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -609,8 +614,8 @@ pub fn playlist_card_metrics(context: ResponsiveContext) -> CardMetrics {
     const HALF_WINDOW_END_WIDTH: f32 = 1_280.0;
     const HALF_WINDOW_START_CARD_WIDTH: f32 = 151.2;
     const HALF_WINDOW_END_CARD_WIDTH: f32 = 179.2;
-    const EXPANDED_CARD_WIDTH: f32 = 183.0;
-    const TWO_K_EXPANDED_CARD_WIDTH: f32 = 179.0;
+    const EXPANDED_CARD_WIDTH: f32 = 174.0;
+    const TWO_K_EXPANDED_CARD_WIDTH: f32 = 178.0;
     const PLAYLIST_FOOTER_HEIGHT: f32 = 60.0;
     const EXPANDED_CARD_GAP: f32 = 24.0;
     const HALF_WINDOW_CARD_GAP: f32 = 18.0;
@@ -681,6 +686,38 @@ pub fn playlist_card_metrics_for_width(
     }
 
     metrics
+}
+
+/// Resolve playlist-grid columns and fit complete desktop rows to their local
+/// measured width.
+///
+/// Expanded desktop keeps the established six-card default composition and
+/// grows to at most eight cards as the actual content lane becomes wider.
+/// Fitting the selected row after column selection removes the platform- and
+/// DPI-dependent sliver of unused space without changing the half-window
+/// presentation, which continues to use its existing five-card policy.
+#[inline]
+pub fn playlist_grid_layout_for_width(
+    context: ResponsiveContext,
+    available_width: f32,
+    max_columns: usize,
+) -> PlaylistGridLayout {
+    let mut metrics = playlist_card_metrics_for_width(context, available_width);
+    let columns =
+        calculate_grid_columns_clamped(available_width, metrics.width, metrics.gap, max_columns);
+
+    if context.profile == LayoutProfile::Expanded && columns > 0 {
+        let available_width = positive_dimension(available_width);
+        let gaps = metrics.gap * (columns.saturating_sub(1) as f32);
+        let fitted_width = ((available_width - gaps) / columns as f32).max(0.0);
+        if fitted_width > 0.0 {
+            let footer_height = (metrics.height - metrics.width).max(0.0);
+            metrics.width = fitted_width;
+            metrics.height = fitted_width + footer_height;
+        }
+    }
+
+    PlaylistGridLayout { metrics, columns }
 }
 
 #[inline]
@@ -1112,8 +1149,8 @@ mod tests {
         let half_height_2k = ResponsiveContext::from_viewport(Size::new(1_280.0, 720.0));
         let small_tablet = ResponsiveContext::from_viewport(Size::new(768.0, 1_024.0));
 
-        assert_approx(playlist_card_metrics(full).width, 183.0);
-        assert_approx(playlist_card_metrics(two_k).width, 716.0 / 3.0);
+        assert_approx(playlist_card_metrics(full).width, 174.0);
+        assert_approx(playlist_card_metrics(two_k).width, 712.0 / 3.0);
         for (context, available_width) in [
             (full, 1_650.0),
             (two_k, 2_093.0),

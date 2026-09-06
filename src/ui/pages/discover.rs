@@ -9,8 +9,7 @@ use crate::i18n::{Key, Locale};
 use crate::image::ImageKind;
 use crate::ui::components::{feature_card, playlist_grid};
 use crate::ui::responsive::{
-    CardRole, DISCOVER_TRAILING_SPACE_REDUCTION, ResponsiveContext, TextRole, UiTokens,
-    calculate_grid_columns_clamped, top_bar_height,
+    CardRole, ResponsiveContext, TextRole, UiTokens, calculate_grid_columns_clamped, top_bar_height,
 };
 use crate::ui::theme;
 use crate::ui::widgets::{self, section_header};
@@ -23,8 +22,7 @@ fn personal_fm_action() -> Message {
 }
 
 fn page_padding(tokens: UiTokens) -> Padding {
-    let inset = tokens.space(32.0);
-    Padding::new(inset).right((inset - tokens.size(DISCOVER_TRAILING_SPACE_REDUCTION)).max(0.0))
+    Padding::new(tokens.space(32.0))
 }
 
 pub fn view<'a>(

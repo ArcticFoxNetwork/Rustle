@@ -221,11 +221,12 @@ pub fn view<'a>(
         }
     };
     let window_button_size = tokens.target(TargetRole::WindowControl);
+    let control_radius = window_button_size / 2.0;
     let window_icon_size = tokens.icon(IconRole::WindowControl);
     let back_icon_size = tokens.icon(IconRole::Large);
 
     // Back button overlay in top-left corner
-    let back_btn = button(widgets::centered_button_content(
+    let back_button: iced::widget::Button<'_, Message> = button(widgets::centered_button_content(
         svg(svg::Handle::from_memory(icons::CHEVRON_DOWN.as_bytes()))
             .width(back_icon_size)
             .height(back_icon_size)
@@ -237,30 +238,34 @@ pub fn view<'a>(
     .width(window_button_size)
     .height(window_button_size)
     .padding(0)
-    .style(move |_theme, status| {
-        let bg = match status {
-            button::Status::Hovered => Color::from_rgba(1.0, 1.0, 1.0, 0.12),
-            button::Status::Pressed => Color::from_rgba(1.0, 1.0, 1.0, 0.2),
-            _ => Color::TRANSPARENT,
-        };
-        button::Style {
-            background: Some(iced::Background::Color(bg)),
+    .style(move |_theme, _status| button::Style {
+        background: Some(iced::Background::Color(Color::TRANSPARENT)),
+        border: iced::Border {
+            radius: control_radius.into(),
+            ..Default::default()
+        },
+        ..Default::default()
+    })
+    .on_press(Message::CloseLyricsPage);
+    let back_btn: Element<'a, Message> = widgets::hover_surface(back_button)
+        .style(move |theme, progress| container::Style {
+            background: (progress > 0.0)
+                .then(|| iced::Background::Color(theme::hover_bg_alpha(theme, 0.14 * progress))),
             border: iced::Border {
-                radius: tokens.radius(RadiusRole::Pill).into(),
+                radius: control_radius.into(),
                 ..Default::default()
             },
             ..Default::default()
-        }
-    })
-    .on_press(Message::CloseLyricsPage);
+        })
+        .into();
 
     // Top-right buttons - using unified window control styles
     let icon_btn_style = move |_theme: &iced::Theme, status: button::Status| {
         let base = button::Style {
-            background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
+            background: Some(iced::Background::Color(Color::TRANSPARENT)),
             text_color: theme::text_primary(_theme),
             border: iced::Border {
-                radius: tokens.size(6.0).into(),
+                radius: control_radius.into(),
                 ..Default::default()
             },
             shadow: iced::Shadow::default(),
@@ -269,16 +274,7 @@ pub fn view<'a>(
 
         match status {
             button::Status::Hovered => button::Style {
-                background: Some(iced::Background::Color(Color::from_rgba(
-                    1.0, 1.0, 1.0, 0.1,
-                ))),
                 text_color: theme::text_primary(_theme),
-                ..base
-            },
-            button::Status::Pressed => button::Style {
-                background: Some(iced::Background::Color(Color::from_rgba(
-                    1.0, 1.0, 1.0, 0.2,
-                ))),
                 ..base
             },
             _ => base,
@@ -287,10 +283,10 @@ pub fn view<'a>(
 
     let close_btn_style = move |_theme: &iced::Theme, status: button::Status| {
         let base = button::Style {
-            background: Some(iced::Background::Color(iced::Color::TRANSPARENT)),
+            background: None,
             text_color: theme::text_primary(_theme),
             border: iced::Border {
-                radius: tokens.size(6.0).into(),
+                radius: control_radius.into(),
                 ..Default::default()
             },
             shadow: iced::Shadow::default(),
@@ -299,16 +295,6 @@ pub fn view<'a>(
 
         match status {
             button::Status::Hovered => button::Style {
-                background: Some(iced::Background::Color(iced::Color::from_rgb(
-                    0.8, 0.2, 0.2,
-                ))),
-                text_color: theme::text_primary(_theme),
-                ..base
-            },
-            button::Status::Pressed => button::Style {
-                background: Some(iced::Background::Color(iced::Color::from_rgb(
-                    0.6, 0.15, 0.15,
-                ))),
                 text_color: theme::text_primary(_theme),
                 ..base
             },
@@ -316,54 +302,96 @@ pub fn view<'a>(
         }
     };
 
-    let settings_btn = button(widgets::centered_button_content(
-        svg(svg::Handle::from_memory(icons::SETTINGS.as_bytes()))
-            .width(window_icon_size)
-            .height(window_icon_size)
-            .style(|_theme, _status| svg::Style {
-                color: Some(theme::text_primary(_theme)),
-            }),
-        window_button_size,
-    ))
-    .width(window_button_size)
-    .height(window_button_size)
-    .padding(0)
-    .style(icon_btn_style)
-    .on_press(Message::OpenSettingsWithCloseLyrics);
-
-    let minimize_btn = button(widgets::centered_button_content(
-        svg(svg::Handle::from_memory(icons::MINIMIZE.as_bytes()))
-            .width(window_icon_size)
-            .height(window_icon_size)
-            .style(|_theme, _status| svg::Style {
-                color: Some(theme::text_primary(_theme)),
-            }),
-        window_button_size,
-    ))
-    .width(window_button_size)
-    .height(window_button_size)
-    .padding(0)
-    .style(icon_btn_style)
-    .on_press(Message::WindowMinimize);
-
-    let maximize_btn = button(widgets::centered_button_content(
-        svg(svg::Handle::from_memory(
-            icons::maximize_restore(is_maximized).as_bytes(),
+    let settings_button: iced::widget::Button<'_, Message> =
+        button(widgets::centered_button_content(
+            svg(svg::Handle::from_memory(icons::SETTINGS.as_bytes()))
+                .width(window_icon_size)
+                .height(window_icon_size)
+                .style(|_theme, _status| svg::Style {
+                    color: Some(theme::text_primary(_theme)),
+                }),
+            window_button_size,
         ))
-        .width(window_icon_size)
-        .height(window_icon_size)
-        .style(|_theme, _status| svg::Style {
-            color: Some(theme::text_primary(_theme)),
-        }),
-        window_button_size,
-    ))
-    .width(window_button_size)
-    .height(window_button_size)
-    .padding(0)
-    .style(icon_btn_style)
-    .on_press(Message::WindowMaximize);
+        .width(window_button_size)
+        .height(window_button_size)
+        .padding(0)
+        .style(icon_btn_style)
+        .on_press(Message::OpenSettingsWithCloseLyrics);
+    let settings_btn: Element<'a, Message> = widgets::hover_surface(settings_button)
+        .style(move |theme, progress| container::Style {
+            background: Some(iced::Background::Color(theme::hover_bg_alpha(
+                theme,
+                0.14 * progress,
+            ))),
+            border: iced::Border {
+                radius: control_radius.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into();
 
-    let close_btn = button(widgets::centered_button_content(
+    let minimize_button: iced::widget::Button<'_, Message> =
+        button(widgets::centered_button_content(
+            svg(svg::Handle::from_memory(icons::MINIMIZE.as_bytes()))
+                .width(window_icon_size)
+                .height(window_icon_size)
+                .style(|_theme, _status| svg::Style {
+                    color: Some(theme::text_primary(_theme)),
+                }),
+            window_button_size,
+        ))
+        .width(window_button_size)
+        .height(window_button_size)
+        .padding(0)
+        .style(icon_btn_style)
+        .on_press(Message::WindowMinimize);
+    let minimize_btn: Element<'a, Message> = widgets::hover_surface(minimize_button)
+        .style(move |theme, progress| container::Style {
+            background: Some(iced::Background::Color(theme::hover_bg_alpha(
+                theme,
+                0.14 * progress,
+            ))),
+            border: iced::Border {
+                radius: control_radius.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into();
+
+    let maximize_button: iced::widget::Button<'_, Message> =
+        button(widgets::centered_button_content(
+            svg(svg::Handle::from_memory(
+                icons::maximize_restore(is_maximized).as_bytes(),
+            ))
+            .width(window_icon_size)
+            .height(window_icon_size)
+            .style(|_theme, _status| svg::Style {
+                color: Some(theme::text_primary(_theme)),
+            }),
+            window_button_size,
+        ))
+        .width(window_button_size)
+        .height(window_button_size)
+        .padding(0)
+        .style(icon_btn_style)
+        .on_press(Message::WindowMaximize);
+    let maximize_btn: Element<'a, Message> = widgets::hover_surface(maximize_button)
+        .style(move |theme, progress| container::Style {
+            background: Some(iced::Background::Color(theme::hover_bg_alpha(
+                theme,
+                0.14 * progress,
+            ))),
+            border: iced::Border {
+                radius: control_radius.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into();
+
+    let close_button: iced::widget::Button<'_, Message> = button(widgets::centered_button_content(
         svg(svg::Handle::from_memory(icons::CLOSE.as_bytes()))
             .width(window_icon_size)
             .height(window_icon_size)
@@ -377,6 +405,22 @@ pub fn view<'a>(
     .padding(0)
     .style(close_btn_style)
     .on_press(Message::RequestClose);
+    let close_btn: Element<'a, Message> = widgets::hover_surface(close_button)
+        .style(move |theme, progress| container::Style {
+            background: (progress > 0.0).then(|| {
+                iced::Background::Color(theme::lerp_color(
+                    Color::TRANSPARENT,
+                    theme::close_button_hover(theme),
+                    progress,
+                ))
+            }),
+            border: iced::Border {
+                radius: control_radius.into(),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+        .into();
 
     let top_right_buttons = row![
         settings_btn,

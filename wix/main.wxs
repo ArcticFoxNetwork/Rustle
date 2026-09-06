@@ -59,9 +59,8 @@
             <Directory Id="ProgramFiles64Folder">
                 <Directory Id="APPLICATIONFOLDER" Name="Rustle">
                     <Component Id="ApplicationFiles" Guid="B69F50DB-BEBD-4632-8FE3-716BD15B2F8A">
-                        <File Id="RustleExe" Name="rustle.exe" Source="$(var.CargoTargetBinDir)\rustle.exe" KeyPath="no" />
+                        <File Id="RustleExe" Name="rustle.exe" Source="$(var.CargoTargetBinDir)\rustle.exe" KeyPath="yes" />
                         <RemoveFolder Id="RemoveApplicationFolder" On="uninstall" />
-                        <RegistryValue Root="HKLM" Key="Software\FeiXiangShi\Rustle" Name="InstallPath" Type="string" Value="[APPLICATIONFOLDER]" KeyPath="yes" />
                     </Component>
                 </Directory>
             </Directory>

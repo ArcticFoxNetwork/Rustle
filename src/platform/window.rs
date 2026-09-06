@@ -87,8 +87,13 @@ pub fn native_window_handle(id: iced::window::Id) -> Task<Option<usize>> {
 /// Get platform-specific window settings
 pub fn window_settings() -> iced::window::Settings {
     iced::window::Settings {
-        // Give the default desktop composition enough room for one additional
-        // playlist card while keeping the same responsive reference policy.
+        // Windows' borderless client area needs the tighter default width for
+        // a complete six-card playlist row after shell insets are reserved.
+        #[cfg(target_os = "windows")]
+        size: iced::Size::new(1440.0, 900.0),
+        // Preserve the existing default on platforms whose compositor already
+        // provides the expected playlist density.
+        #[cfg(not(target_os = "windows"))]
         size: iced::Size::new(1560.0, 900.0),
         exit_on_close_request: false,
         decorations: false,
